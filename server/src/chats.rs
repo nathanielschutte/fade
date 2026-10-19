@@ -10,6 +10,7 @@ use crate::{
     db::{is_base64, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
     friends::require_friend,
+    version,
     ws::Event,
     SharedState,
 };
@@ -58,6 +59,9 @@ pub async fn list(
 pub struct NewText {
     /// base64 of IV || AES-GCM ciphertext. The server can't read it.
     ciphertext: String,
+    /// Clients from before formats existed don't send one; they wrote format 1.
+    #[serde(default = "version::default_format")]
+    format: i64,
 }
 
 pub async fn send_text(
@@ -67,6 +71,7 @@ pub async fn send_text(
     Json(req): Json<NewText>,
 ) -> AppResult<Json<Message>> {
     require_friend(&state, me.id, friend_id).await?;
+    version::check_format(req.format)?;
     if req.ciphertext.len() > MAX_CIPHERTEXT_CHARS {
         return Err(AppError::bad("That message is too long."));
     }
@@ -76,12 +81,13 @@ pub async fn send_text(
     }
 
     let message = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (sender_id, recipient_id, kind, ciphertext, created_at)
-         VALUES (?, ?, 'text', ?, ?) RETURNING {MESSAGE_COLS}"
+        "INSERT INTO messages (sender_id, recipient_id, kind, ciphertext, format, created_at)
+         VALUES (?, ?, 'text', ?, ?, ?) RETURNING {MESSAGE_COLS}"
     ))
     .bind(me.id)
     .bind(friend_id)
     .bind(&req.ciphertext)
+    .bind(req.format)
     .bind(now())
     .fetch_one(&state.db)
     .await?;

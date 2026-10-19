@@ -80,6 +80,12 @@ impl Hub {
         }
     }
 
+    /// (users with at least one open socket, total open sockets)
+    pub fn online(&self) -> (usize, usize) {
+        let conns = self.conns.lock().unwrap();
+        (conns.len(), conns.values().map(Vec::len).sum())
+    }
+
     pub fn send_both(&self, a: i64, b: i64, event: &Event) {
         self.send(a, event);
         if a != b {

@@ -127,6 +127,12 @@ async function keyFor(friendId) {
 /** Adds `text` to a text message: the plaintext, or null if it can't be decrypted. */
 async function decrypt(m) {
   if (m.kind !== "text") return m;
+  // A newer app wrote this in a scheme this one doesn't know.
+  m.unsupported = (m.format ?? 1) !== e2e.FORMAT;
+  if (m.unsupported) {
+    m.text = null;
+    return m;
+  }
   if (!state.plaintext.has(m.id)) {
     let text = null;
     try {
@@ -259,6 +265,7 @@ function enterApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
   $("#signed-in-as").textContent = `Signed in as ${state.me.username}`;
+  $("#admin-link").hidden = !state.me.is_admin;
   refreshChats();
   refreshRequests();
   connectSocket();
@@ -429,7 +436,10 @@ function renderMessages() {
     }
     if (m.kind === "text") {
       items.push(m.text == null
-        ? el("li", { class: `msg undecryptable ${mine ? "mine" : ""}`, text: "Couldn't decrypt this message." })
+        ? el("li", {
+            class: `msg undecryptable ${mine ? "mine" : ""}`,
+            text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it." : "Couldn't decrypt this message.",
+          })
         : el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.text }));
       if (m.id === lastMineTextId && m.read_at) {
         items.push(el("li", { class: "msg-meta", text: "Seen" }));
@@ -472,7 +482,7 @@ $("#composer").addEventListener("submit", async (e) => {
   input.value = "";
   try {
     const ciphertext = await e2e.encryptText(await keyFor(friendId), text, state.me.id, friendId);
-    const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext } });
+    const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext, format: e2e.FORMAT } });
     state.plaintext.set(m.id, text);
     await upsertMessage(m);
     if (state.activeId === friendId) renderMessages();
@@ -517,6 +527,7 @@ async function handleEvent(ev) {
   switch (ev.type) {
     case "ready":
       state.wsRetry = 0;
+      checkForUpdate();
       // Anything could have happened while disconnected.
       refreshChats();
       refreshRequests();
@@ -558,6 +569,19 @@ async function handleEvent(ev) {
       break;
   }
 }
+
+// A deploy restarts the server, which drops every socket, so a reconnect is
+// the moment to notice this tab is running an older build than the server.
+async function checkForUpdate() {
+  try {
+    const { build } = await (await fetch("/api/config", { cache: "no-store" })).json();
+    const loaded = state.config?.build;
+    $("#update-banner").hidden = !(build && loaded && build !== loaded && loaded !== "dev");
+  } catch {
+    // Offline; the next reconnect checks again.
+  }
+}
+$("#update-reload").addEventListener("click", () => location.reload());
 
 // ---------- friends ----------
 
@@ -640,6 +664,7 @@ for (const btn of document.querySelectorAll("[data-close]")) {
 const camera = {
   stream: null,
   facing: "user",
+  mirror: true,                // selfie view: preview and photo both flipped, like a mirror
   blob: null,
   previewUrl: null,
 };
@@ -662,7 +687,13 @@ async function startStream() {
       video: { facingMode: camera.facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
-    $("#camera-video").srcObject = camera.stream;
+    // Mirror whatever the browser says is a front camera, as Snapchat does, so the
+    // photo matches the preview. Laptop webcams report no facing; treat them as front.
+    const facing = camera.stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+    camera.mirror = (facing || camera.facing) !== "environment";
+    const video = $("#camera-video");
+    video.classList.toggle("mirrored", camera.mirror);
+    video.srcObject = camera.stream;
   } catch {
     cameraMessage("Camera access is blocked. Allow it in your browser settings, or choose a photo instead.");
   }
@@ -764,7 +795,7 @@ $("#shutter").addEventListener("click", async () => {
   try {
     // Freeze the frame first; the video keeps moving while we compress.
     const frame = await createImageBitmap(video);
-    const blob = await compressPhoto(frame, frame.width, frame.height, camera.facing === "user");
+    const blob = await compressPhoto(frame, frame.width, frame.height, camera.mirror);
     frame.close();
     showPreview(blob);
   } catch (err) {
@@ -808,7 +839,7 @@ $("#send-snap").addEventListener("click", async () => {
     if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
       throw new Error("That photo is too large to send.");
     }
-    const m = await getJSON(`/chats/${friendId}/snaps`, {
+    const m = await getJSON(`/chats/${friendId}/snaps?format=${e2e.FORMAT}`, {
       method: "POST",
       body: sealed,
       headers: { "Content-Type": "application/octet-stream" },
@@ -828,6 +859,10 @@ $("#send-snap").addEventListener("click", async () => {
 const viewer = { url: null, timer: null };
 
 async function viewSnap(m) {
+  if ((m.format ?? 1) !== e2e.FORMAT) {
+    alert("This snap was sent from a newer version of napsack. Reload the page to open it.");
+    return;
+  }
   let sealed;
   try {
     sealed = new Uint8Array(await (await api(`/snaps/${m.id}`)).arrayBuffer());

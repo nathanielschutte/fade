@@ -395,3 +395,106 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
   /* Keep the timer, drop the dissolve. */
   .viewer.running img, .viewer.running .viewer-tint { animation: none; }
 }
+
+/* ---------- admin ----------
+   Same tokens as the app. One recessive grid line, one sage series, text in ink. */
+
+.admin-body { height: auto; min-height: 100%; }
+.admin-bar { position: sticky; top: 0; z-index: 2; background: var(--ink); padding-right: var(--pad); }
+.admin-bar .button { display: inline-flex; align-items: center; min-height: 2.25rem; text-decoration: none; font-size: var(--step--1); }
+.admin-tag {
+  margin-left: 0.35rem; padding: 0.1rem 0.45rem;
+  border: 1px solid var(--rule); border-radius: 999px;
+  color: var(--fixer); font-size: var(--step--1); font-weight: 500; vertical-align: middle;
+}
+.admin-updated { margin-left: auto; color: var(--fixer); font-size: var(--step--1); }
+.admin {
+  max-width: 68rem; margin: 0 auto;
+  padding: 1.25rem var(--pad) 3rem;
+  display: grid; gap: 1rem;
+}
+.admin-message { padding: 3rem var(--pad); text-align: center; color: var(--fixer); }
+.admin-message a { color: var(--sage); }
+.muted { color: var(--fixer); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 0.75rem; }
+.tile, .panel {
+  background: var(--deep);
+  border: 1px solid var(--rule); border-radius: var(--radius-m);
+}
+.tile { padding: 0.9rem 1rem; display: grid; gap: 0.15rem; }
+.tile-label { font-size: var(--step--1); color: var(--fixer); }
+.tile-value { font-size: 1.9rem; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.tile-sub { font-size: var(--step--1); color: var(--fixer); }
+
+.panel { padding: 1rem 1.1rem 1.1rem; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; margin-bottom: 0.75rem; }
+.panel-head h2 { font-size: var(--step-0); font-weight: 600; }
+.panel-note { font-size: var(--step--1); color: var(--fixer); }
+.panel-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; }
+
+.facts { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 0.45rem 1rem; font-size: var(--step--1); }
+.facts dt { color: var(--fixer); }
+.facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Chart: columns are the hit targets; bars sit on one baseline with 2px gaps. */
+.chart { position: relative; padding-top: 1.25rem; }
+.chart-max {
+  position: absolute; top: 0; left: 0;
+  font-size: 0.75rem; color: var(--fixer); font-variant-numeric: tabular-nums;
+}
+.chart-cols {
+  height: 11rem;
+  display: grid; grid-template-columns: repeat(14, 1fr); gap: 2px;
+  border-top: 1px dashed var(--rule);
+}
+.chart-col { display: grid; grid-template-rows: 1fr auto; min-width: 0; cursor: default; outline-offset: 0; border-radius: 4px; }
+.chart-col:hover, .chart-col:focus-visible { background: rgba(228, 236, 230, 0.04); }
+.chart-bar-area { display: flex; align-items: flex-end; border-bottom: 1px solid var(--fixer); padding: 0 12%; }
+.chart-bar { width: 100%; min-height: 2px; background: var(--sage); border-radius: 4px 4px 0 0; }
+.chart-bar.empty { background: transparent; }
+.chart-col:hover .chart-bar, .chart-col:focus-visible .chart-bar { background: var(--sage-hover); }
+.chart-x {
+  height: 1.4rem; padding-top: 0.3rem;
+  font-size: 0.7rem; color: var(--fixer); text-align: center; white-space: nowrap;
+}
+.chart-tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  display: grid; gap: 0.1rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--wash); border: 1px solid var(--rule); border-radius: var(--radius-s);
+  font-size: var(--step--1); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.tip-sub { color: var(--fixer); }
+
+.chart-table { margin-top: 0.75rem; font-size: var(--step--1); }
+.chart-table summary { cursor: pointer; color: var(--fixer); }
+.table-scroll { overflow-x: auto; }
+.admin table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
+.admin th, .admin td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.admin th { color: var(--fixer); font-weight: 500; }
+.admin .num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin tbody tr:last-child td { border-bottom: 0; }
+.chart-table table { margin-top: 0.5rem; }
+.foot-links { display: flex; align-items: center; gap: 1rem; }
+.admin-bar .button { color: var(--paper); }
+.admin-bar .wordmark { white-space: nowrap; }
+@media (max-width: 520px) {
+  .admin-updated { display: none; }
+  .admin-bar .button { margin-left: auto; }
+}
+/* Front camera: the preview is a mirror, and the photo is saved the same way. */
+.camera-stage video.mirrored { transform: scaleX(-1); }
+
+/* Shown when the server is running a newer build than this tab. */
+.update-banner {
+  position: fixed; z-index: 20;
+  left: 50%; transform: translateX(-50%);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  background: var(--wash); border: 1px solid var(--rule); border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-size: var(--step--1); white-space: nowrap;
+}
+.update-banner .button { min-height: 2.1rem; }

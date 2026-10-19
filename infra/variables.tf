@@ -50,6 +50,18 @@ variable "invite_code" {
   }
 }
 
+variable "github_repo" {
+  description = "owner/name of the GitHub repo allowed to deploy releases (infra/github.tf). Empty disables CI deploys."
+  type        = string
+  default     = "nathanielschutte/fade"
+}
+
+variable "admin_usernames" {
+  description = "Usernames that can open /admin (stats only, never message content). Register these accounts before sharing the invite code."
+  type        = list(string)
+  default     = ["nate"]
+}
+
 variable "snap_pool_mb" {
   description = "Max RAM for all unopened snaps combined. Keep well under instance memory."
   type        = number

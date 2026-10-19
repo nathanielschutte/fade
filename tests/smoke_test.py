@@ -1,6 +1,6 @@
-"""End-to-end API smoke test. Run against a fresh server:
-    FADE_INVITE_CODE=letmein FADE_DATABASE_URL=sqlite:///tmp/fade-test.db cargo run
-    python3 scripts/smoke_test.py http://127.0.0.1:8080 letmein
+"""End-to-end API smoke test. scripts/test.sh runs it against a fresh server,
+or point it at one yourself:
+    python3 tests/smoke_test.py http://127.0.0.1:8080 letmein
 
 Encryption happens in the browser (static/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
@@ -9,8 +9,8 @@ them byte-for-byte without needing to understand them.
 import asyncio, base64, json, os, sys, uuid
 import requests, websockets
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8080"
-INVITE = sys.argv[2] if len(sys.argv) > 2 else None
+BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
+INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
 
 b64 = lambda raw: base64.b64encode(raw).decode()
 AUTH_KEY = b64(os.urandom(32))
@@ -43,6 +43,27 @@ async def ws_events(token, bucket, ready):
             if ev["type"] == "ready": ready.set(); continue
             bucket.append(ev)
 
+def check_versions(token):
+    """/config describes the server; old native clients get 426 everywhere else."""
+    cfg = ok(call("GET", "/config")).json()
+    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1], cfg
+    assert cfg["server_version"] and cfg["build"], cfg
+    min_ios = cfg["min_client_versions"].get("ios")
+    if not min_ios:
+        print("  (no minimum iOS version configured; skipping 426 checks)")
+        return
+    major, minor, patch = (int(x) for x in min_ios.split("."))
+    older = f"ios/{major}.{minor}.{patch - 1}" if patch else f"ios/{major}.{max(minor - 1, 0)}.99"
+    if (major, minor, patch) == (0, 0, 0):
+        return
+    r = call("GET", "/me", token, headers={"X-Napsack-Client": older + "+7"})
+    assert r.status_code == 426 and "Update to" in r.json()["error"], (r.status_code, r.text)
+    ok(call("GET", "/me", token, headers={"X-Napsack-Client": f"ios/{min_ios}+1"}))
+    ok(call("GET", "/config", headers={"X-Napsack-Client": older}))   # /config always answers
+    ok(call("GET", "/me", token, headers={"X-Napsack-Client": "android/0.0.1"}))  # no minimum set
+    ok(call("GET", "/me", token))                                         # web client: no header
+    print(f"  version gate: {older} -> 426, ios/{min_ios} ok")
+
 async def main():
     tag = uuid.uuid4().hex[:6]
     if INVITE:
@@ -53,6 +74,7 @@ async def main():
     ra = ok(register(f"alex_{tag}")).json()
     rb = ok(register(f"sam_{tag}")).json()
     a, b, b_tok = ra["user"], rb["user"], rb["token"]
+    check_versions(b_tok)
     ok(register(f"ALEX_{tag}"), 409)
 
     # Sign-in uses the derived auth key and hands back the wrapped private key unchanged.
@@ -84,8 +106,9 @@ async def main():
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"text": "plaintext"}), 422)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": "hello there"}), 400)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(9000))}), 400)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct, "format": 2}), 400)
     m = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct})).json()
-    assert m["ciphertext"] == ct and "body" not in m
+    assert m["ciphertext"] == ct and "body" not in m and m["format"] == 1
     chats = ok(call("GET", "/friends", b_tok)).json()
     assert chats[0]["unread"] == 1 and chats[0]["last_message"]["ciphertext"] == ct
     ok(call("POST", f"/chats/{a['id']}/read", b_tok))

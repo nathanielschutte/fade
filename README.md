@@ -9,7 +9,10 @@ server/         Rust (axum + SQLite). One binary that serves the API and the web
   static/       Web client: plain HTML/CSS/ES modules, no build step, no Node. crypto.js holds all E2E code.
   migrations/   SQLite schema
 infra/          Terraform for AWS
-scripts/        deploy.sh, ssh.sh, smoke_test.py
+scripts/        test.sh, deploy.sh, rollback.sh, ssh.sh
+tests/          API smoke test and browser (Playwright) tests
+docs/           how-napsack-works.md, RELEASING.md, mobile.md
+.github/        CI on every push; server releases on server-v* tags
 ```
 
 ## Run locally
@@ -22,13 +25,14 @@ FADE_INVITE_CODE=letmein cargo run          # require an invite code to sign up
 
 The camera works on `localhost` because browsers treat it as a secure context. To try it from your phone over LAN you need HTTPS, so deploy instead, or tunnel through something like `tailscale serve`.
 
-The smoke test exercises the API end to end, including WebSocket events. Encryption happens in the browser, so it sends opaque payloads and checks the server stores and returns them untouched:
+### Tests
+
+`scripts/test.sh` builds the server, starts it on a throwaway database, and runs everything CI runs: unit tests, the API smoke test (which sends opaque encrypted payloads and checks the server stores and returns them untouched, plus the version checks), and browser tests that drive the real web client in Chrome through sign-up, encrypted chat, snaps, safety codes, the admin panel, and camera mirroring.
 
 ```sh
-pip install requests websockets
-FADE_INVITE_CODE=letmein FADE_DATABASE_URL=sqlite:///tmp/fade-test.db cargo run &
-python3 scripts/smoke_test.py http://127.0.0.1:8080 letmein
-cargo test                                  # unit tests
+pip install -r tests/requirements.txt
+scripts/test.sh                  # everything (needs Chrome)
+scripts/test.sh --no-browser     # skip the browser tests
 ```
 
 ### Configuration (environment)
@@ -42,6 +46,8 @@ cargo test                                  # unit tests
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted snap. The client compresses every photo to 200 KB or less |
 | `FADE_SNAP_POOL_MB` | `128` | RAM ceiling for all unopened snaps |
 | `FADE_SESSION_DAYS` | `90` | |
+| `FADE_ADMINS` | unset (panel off) | Comma-separated usernames allowed into `/admin` |
+| `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([docs/RELEASING.md](docs/RELEASING.md)) |
 
 ## Deploy to AWS
 
@@ -55,9 +61,12 @@ cd ..
 rustup target add aarch64-unknown-linux-musl
 cargo install cargo-zigbuild && pip install ziglang
 
-scripts/deploy.sh          # build, copy over SSH, restart; prints the URL
+scripts/deploy.sh          # build, copy over SSH, restart, check the live build
 scripts/ssh.sh             # shell on the box; extra args run a command
+scripts/rollback.sh        # list kept builds, or roll back to one
 ```
+
+The normal way to ship the server is a `server-v*` tag, which GitHub Actions tests, builds, and deploys. `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [docs/RELEASING.md](docs/RELEASING.md).
 
 SSH uses `~/.ssh/id_ed25519` by default (`ssh_public_key_path`). With `ssh_allowed_cidrs` empty, port 22 stays closed and SSH is tunneled through SSM, which needs the AWS CLI and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html). Set it to e.g. `["203.0.113.7/32"]` to connect directly instead. To use plain `ssh fade`, scp, or VS Code Remote-SSH, run `terraform -chdir=infra output -raw ssh_config >> ~/.ssh/config`.
 
@@ -67,7 +76,7 @@ With no `domain` set, the app is served at `https://<elastic-ip-with-dashes>.ssl
 
 What you get: one Graviton `t4g.nano` running Amazon Linux 2023, Caddy for TLS, and the app under a hardened systemd unit. The DB and certs sit on a separate encrypted EBS volume with daily snapshots. You get in over SSH as `ec2-user`, which has sudo. The SSH host keys live on the data volume, so replacing the instance doesn't trigger host-key warnings.
 
-Changing config: edit tfvars, run `terraform apply` (which updates the SSM parameter), then `scripts/ssh.sh sudo systemctl restart fade`. Rollback: `scripts/ssh.sh 'sudo cp /usr/local/bin/fade-server.prev /usr/local/bin/fade-server && sudo systemctl restart fade'`.
+Changing config: edit tfvars, run `terraform apply` (which updates the SSM parameter), then `scripts/ssh.sh sudo systemctl restart fade`. Rollback: `scripts/rollback.sh`.
 
 ### Rough monthly cost (us-east-1, on-demand)
 
@@ -82,6 +91,8 @@ Changing config: edit tfvars, run `terraform apply` (which updates the SSM param
 The first 100 GB/month of outbound data is free. Check current prices before relying on these numbers. The IPv4 charge is the biggest line after compute. Putting CloudFront in front could eventually remove it, but that's not worth the complexity yet.
 
 ## End-to-end encryption
+
+For a fuller walkthrough with diagrams, see [docs/how-napsack-works.md](docs/how-napsack-works.md).
 
 All of it is in [server/static/crypto.js](server/static/crypto.js), using the browser's built-in WebCrypto.
 
@@ -114,15 +125,15 @@ Known limits:
 
 ## API
 
-All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which works the same way for a mobile app. Errors look like `{"error": "human readable"}`.
+All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which works the same way for a mobile app. Errors look like `{"error": "human readable"}`. Native apps also send `X-Napsack-Client: ios/<version>+<build>`; see [docs/RELEASING.md](docs/RELEASING.md) for the compatibility rules every change has to follow.
 
 | | |
 |---|---|
-| `GET  /config` | `{invite_required, snap_max_bytes, snap_ttl_hours}` (no auth) |
+| `GET  /config` | `{invite_required, snap_max_bytes, snap_ttl_hours, api_version, server_version, build, message_formats, min_client_versions}` (no auth, never version-blocked) |
 | `POST /auth/register` | `{username, auth_key, public_key, wrapped_private_key, invite_code?}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
-| `GET  /me` | |
+| `GET  /me` | `{id, username, is_admin}` |
 | `GET  /friends` | Chat list: `[{id, username, public_key, last_message, unread}]`, newest first |
 | `DELETE /friends/{id}` | Unfriend |
 | `GET  /friends/requests` | `{incoming: [...], outgoing: [...]}` |
@@ -130,23 +141,27 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /friends/requests/{id}/accept` | |
 | `DELETE /friends/requests/{id}` | Decline or cancel |
 | `GET  /chats/{friend}/messages?before=&limit=` | Oldest first |
-| `POST /chats/{friend}/messages` | `{ciphertext}`: base64 of IV ‖ AES-GCM output |
+| `POST /chats/{friend}/messages` | `{ciphertext, format?}`: base64 of IV ‖ AES-GCM output; `format` defaults to 1 |
 | `POST /chats/{friend}/read` | Marks their texts as read |
-| `POST /chats/{friend}/snaps` | Encrypted image bytes (IV ‖ AES-GCM output) |
+| `POST /chats/{friend}/snaps?format=1` | Encrypted image bytes (IV ‖ AES-GCM output) |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
+| `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /ws` | WebSocket. First frame: `{"type":"auth","token":"..."}` |
 
 WebSocket events: `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
 
-## Toward mobile
+Messages include `format` (the encryption scheme, 1 today) so clients know how to decrypt them.
 
-The API is already client-agnostic: bearer tokens, JSON, raw image upload, and one WebSocket. For the app itself, I'd lean toward native or Flutter rather than another web wrapper. You'll want a real camera pipeline, a secure keystore for tokens and the E2E private key, and push notifications. A native client would reuse the same crypto (P-256 ECDH, HKDF, AES-GCM, PBKDF2) and the same additional-data strings. Push needs a server addition: store device tokens, then send through APNs/FCM when a user has no open socket. That's the main backend change mobile will require.
+## The iOS app
 
-## Next steps worth considering
+Planned in [docs/mobile.md](docs/mobile.md): Expo (React Native, TypeScript), sharing the web client's encryption code and checked against common test vectors, built and shipped through EAS so it can be developed from Windows.
 
-- Login rate limiting (per IP and per username)
-- Push notifications (see above)
-- Group chats (a `chats` table plus membership; messages reference a chat instead of a recipient)
-- Letting the sender pick a snap timer
-- Password change (re-wrap the private key and swap the auth key in one request)
-- Forward secrecy for messages
+## Next up
+
+1. **The iOS app, with push notifications.** [docs/mobile.md](docs/mobile.md). A messenger without notifications only works while it's open.
+2. **Recovery key and password change.** Today a forgotten password locks you out and loses your history. A recovery key shown once at sign-up (it wraps the private key too) fixes both, and makes password change a re-wrap.
+3. **Account safety basics.** Rate-limit sign-in attempts, list signed-in devices with "sign out everywhere", and let people delete their account.
+4. **Disappearing texts.** A per-chat timer after which the server deletes the ciphertext. Fits the product, and means less data held.
+5. **Group chats.** Needs its own encryption design (pairwise fan-out is simplest for small groups), so it comes after the app.
+
+Smaller ideas: sender-chosen snap timers, typing indicators, reactions, and forward secrecy.

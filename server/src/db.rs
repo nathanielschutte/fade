@@ -17,7 +17,12 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .max_connections(5)
         .connect_with(opts)
         .await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    // A rolled-back binary must start against a database a newer release already
+    // migrated, so don't fail on migrations this build doesn't know. That's only
+    // safe because migrations are additive (docs/RELEASING.md).
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator.run(&pool).await?;
     Ok(pool)
 }
 
@@ -43,6 +48,8 @@ pub struct Message {
     pub kind: String,
     /// Texts only: base64 of IV || AES-GCM ciphertext. Only the two friends can decrypt it.
     pub ciphertext: Option<String>,
+    /// Encryption scheme of `ciphertext` (or of the snap bytes). See version::MESSAGE_FORMATS.
+    pub format: i64,
     /// For snaps: "pending", "opened", or "expired"
     pub snap_state: Option<String>,
     pub created_at: i64,
@@ -50,7 +57,7 @@ pub struct Message {
 }
 
 pub const MESSAGE_COLS: &str =
-    "id, sender_id, recipient_id, kind, ciphertext, snap_state, created_at, read_at";
+    "id, sender_id, recipient_id, kind, ciphertext, format, snap_state, created_at, read_at";
 
 pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<Option<Message>> {
     sqlx::query_as::<_, Message>(&format!("SELECT {MESSAGE_COLS} FROM messages WHERE id = ?"))
@@ -64,10 +71,9 @@ pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<Option<Messag
 pub fn is_base64(s: &str, max_len: usize) -> bool {
     !s.is_empty()
         && s.len() <= max_len
-        && s.len() % 4 == 0
+        && s.len().is_multiple_of(4)
         && s.trim_end_matches('=').len() + 2 >= s.len()
-        && s
-            .trim_end_matches('=')
+        && s.trim_end_matches('=')
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
 }

@@ -11,6 +11,9 @@ const subtle = globalThis.crypto.subtle;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+/** The scheme this file implements. Stored with every message; see server/src/version.rs. */
+export const FORMAT = 1;
+
 const PBKDF2_ITERATIONS = 600_000;
 const ECDH = { name: "ECDH", namedCurve: "P-256" };
 const AES = { name: "AES-GCM", length: 256 };

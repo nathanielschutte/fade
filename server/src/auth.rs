@@ -54,14 +54,28 @@ fn hash_token(token: &str) -> String {
 }
 
 pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option<UserPublic>> {
-    sqlx::query_as::<_, UserPublic>(
+    let at = now();
+    let user = sqlx::query_as::<_, UserPublic>(
         "SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ? AND s.expires_at > ?",
     )
     .bind(hash_token(token))
-    .bind(now())
+    .bind(at)
     .fetch_optional(db)
-    .await
+    .await?;
+    if let Some(u) = &user {
+        // Coarse on purpose: one write a minute per user at most.
+        sqlx::query(
+            "UPDATE users SET last_seen_at = ?
+             WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+        )
+        .bind(at)
+        .bind(u.id)
+        .bind(at - 60)
+        .execute(db)
+        .await?;
+    }
+    Ok(user)
 }
 
 async fn create_session(state: &SharedState, user_id: i64) -> AppResult<String> {
@@ -104,9 +118,29 @@ pub struct Login {
 #[derive(Serialize)]
 pub struct SessionResponse {
     token: String,
-    user: UserPublic,
+    user: Me,
     public_key: String,
     wrapped_private_key: String,
+}
+
+/// The signed-in user as they see themselves.
+#[derive(Serialize)]
+pub struct Me {
+    id: i64,
+    username: String,
+    /// Shows the admin link. The admin API checks again on every request.
+    is_admin: bool,
+}
+
+impl Me {
+    fn new(state: &SharedState, user: UserPublic) -> Self {
+        let is_admin = state.config.is_admin(&user.username);
+        Self {
+            id: user.id,
+            username: user.username,
+            is_admin,
+        }
+    }
 }
 
 /// Auth keys are 32 bytes, base64 (44 chars). Allow some slack for future formats.
@@ -114,7 +148,9 @@ fn validate_auth_key(key: &str) -> AppResult<()> {
     if is_base64(key, 128) {
         Ok(())
     } else {
-        Err(AppError::bad("Sign-in data was malformed. Reload the page and try again."))
+        Err(AppError::bad(
+            "Sign-in data was malformed. Reload the page and try again.",
+        ))
     }
 }
 
@@ -153,7 +189,9 @@ pub async fn register(
     validate_auth_key(&req.auth_key)?;
     // P-256 SPKI is 91 bytes; a wrapped PKCS#8 key is ~180. Generous caps.
     if !is_base64(&req.public_key, 512) || !is_base64(&req.wrapped_private_key, 2048) {
-        return Err(AppError::bad("Key data was malformed. Reload the page and try again."));
+        return Err(AppError::bad(
+            "Key data was malformed. Reload the page and try again.",
+        ));
     }
 
     // Argon2 is deliberately slow; keep it off the async workers. The auth key
@@ -192,7 +230,7 @@ pub async fn register(
     let token = create_session(&state, user.id).await?;
     Ok(Json(SessionResponse {
         token,
-        user,
+        user: Me::new(&state, user),
         public_key: req.public_key,
         wrapped_private_key: req.wrapped_private_key,
     }))
@@ -234,7 +272,7 @@ pub async fn login(
     let token = create_session(&state, id).await?;
     Ok(Json(SessionResponse {
         token,
-        user: UserPublic { id, username },
+        user: Me::new(&state, UserPublic { id, username }),
         public_key,
         wrapped_private_key,
     }))
@@ -253,6 +291,6 @@ pub async fn logout(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-pub async fn me(AuthUser(user): AuthUser) -> Json<UserPublic> {
-    Json(user)
+pub async fn me(State(state): State<SharedState>, AuthUser(user): AuthUser) -> Json<Me> {
+    Json(Me::new(&state, user))
 }

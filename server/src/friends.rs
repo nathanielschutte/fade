@@ -137,12 +137,14 @@ async fn make_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<()> {
     .bind(a)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT OR IGNORE INTO friendships (user_lo, user_hi, created_at) VALUES (?, ?, ?)")
-        .bind(lo)
-        .bind(hi)
-        .bind(now())
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO friendships (user_lo, user_hi, created_at) VALUES (?, ?, ?)",
+    )
+    .bind(lo)
+    .bind(hi)
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await
 }
 
@@ -151,11 +153,12 @@ pub async fn send_request(
     AuthUser(me): AuthUser,
     Json(req): Json<AddFriend>,
 ) -> AppResult<Json<Value>> {
-    let target = sqlx::query_as::<_, UserPublic>("SELECT id, username FROM users WHERE username = ?")
-        .bind(req.username.trim())
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::not_found("No one has that username."))?;
+    let target =
+        sqlx::query_as::<_, UserPublic>("SELECT id, username FROM users WHERE username = ?")
+            .bind(req.username.trim())
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::not_found("No one has that username."))?;
 
     if target.id == me.id {
         return Err(AppError::bad("That's you."));
@@ -190,7 +193,9 @@ pub async fn send_request(
         "requested"
     };
 
-    state.hub.send_both(me.id, target.id, &Event::FriendsChanged);
+    state
+        .hub
+        .send_both(me.id, target.id, &Event::FriendsChanged);
     Ok(Json(json!({ "status": status, "user": target })))
 }
 
@@ -255,4 +260,3 @@ pub async fn require_friend(state: &SharedState, me: i64, friend: i64) -> AppRes
         Err(AppError::not_found("You can only message friends."))
     }
 }
-

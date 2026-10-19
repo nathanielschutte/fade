@@ -13,7 +13,7 @@ use std::{
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
     Json,
@@ -24,6 +24,7 @@ use crate::{
     db::{self, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
     friends::require_friend,
+    version,
     ws::Event,
     SharedState,
 };
@@ -63,6 +64,12 @@ impl SnapStore {
             pool_bytes,
             ttl,
         }
+    }
+
+    /// (snaps held, bytes held, pool limit in bytes)
+    pub fn usage(&self) -> (usize, usize, usize) {
+        let inner = self.inner.lock().unwrap();
+        (inner.snaps.len(), inner.total_bytes, self.pool_bytes)
     }
 
     fn has_room(&self, len: usize) -> bool {
@@ -125,13 +132,22 @@ const MIN_SNAP_BYTES: usize = 29;
 
 /// Body is the encrypted image: IV || AES-GCM ciphertext. No multipart needed.
 /// The server can't see or check the image, only its size.
+#[derive(serde::Deserialize)]
+pub struct UploadParams {
+    /// `?format=1`. Optional; clients from before formats existed wrote format 1.
+    #[serde(default = "version::default_format")]
+    format: i64,
+}
+
 pub async fn upload(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(friend_id): Path<i64>,
+    Query(params): Query<UploadParams>,
     body: Bytes,
 ) -> AppResult<Json<Message>> {
     require_friend(&state, me.id, friend_id).await?;
+    version::check_format(params.format)?;
 
     if body.len() < MIN_SNAP_BYTES {
         return Err(AppError::bad("That snap wasn't encrypted correctly."));
@@ -146,11 +162,12 @@ pub async fn upload(
     }
 
     let message = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (sender_id, recipient_id, kind, snap_state, created_at)
-         VALUES (?, ?, 'snap', 'pending', ?) RETURNING {MESSAGE_COLS}"
+        "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, created_at)
+         VALUES (?, ?, 'snap', ?, 'pending', ?) RETURNING {MESSAGE_COLS}"
     ))
     .bind(me.id)
     .bind(friend_id)
+    .bind(params.format)
     .bind(now())
     .fetch_one(&state.db)
     .await?;
@@ -215,7 +232,10 @@ pub async fn view(
                     .send_both(sender_id, me.id, &Event::MessageUpdated { message });
             }
             let mut headers = HeaderMap::new();
-            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            );
             headers.insert(
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("no-store, private, max-age=0"),
@@ -309,5 +329,4 @@ mod tests {
         assert_eq!(swept, vec![(1, 1, 2)]);
         assert!(store.has_room(100));
     }
-
 }

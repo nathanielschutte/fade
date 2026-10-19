@@ -1,0 +1,95 @@
+name: Release server
+
+# Push a tag like server-v0.2.0 (matching server/Cargo.toml) to ship it.
+# See docs/RELEASING.md for the checklist and the compatibility rules.
+on:
+  push:
+    tags: ["server-v*"]
+
+concurrency:
+  group: release-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC -> the fade-github-deploy role in AWS; no stored keys
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # Add required reviewers to this environment in GitHub to gate production deploys.
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      APP_URL: ${{ vars.APP_URL }}
+      TARGET: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches Cargo.toml
+        run: |
+          TAG="${GITHUB_REF_NAME#server-v}"
+          CARGO=$(sed -n 's/^version = "\(.*\)"/\1/p' server/Cargo.toml | head -1)
+          [ "$TAG" = "$CARGO" ] || { echo "tag $TAG != Cargo.toml $CARGO"; exit 1; }
+          echo "VERSION=$CARGO" >> "$GITHUB_ENV"
+          echo "BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test
+        run: |
+          pip install -r tests/requirements.txt
+          scripts/test.sh --no-browser
+
+      - name: Build
+        run: |
+          pip install ziglang==0.13.0.post1
+          cargo install cargo-zigbuild --locked
+          cd server && FADE_BUILD="$BUILD" cargo zigbuild --release --target "$TARGET"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload
+        run: |
+          BIN="server/target/$TARGET/release/fade-server"
+          aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server-$VERSION-$BUILD" --only-show-errors
+          aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server" --only-show-errors
+
+      - name: Deploy
+        run: |
+          # Looked up by tag, so a replaced instance needs no config change here.
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:App,Values=$APP_NAME" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          [ "$(echo "$INSTANCE_ID" | wc -w)" = 1 ] || { echo "expected one running instance, got: $INSTANCE_ID"; exit 1; }
+          CMD=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=["/usr/local/bin/fade-update"]' \
+            --query Command.CommandId --output text)
+          aws ssm wait command-executed --command-id "$CMD" --instance-id "$INSTANCE_ID" || true
+          aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE_ID" \
+            --query '[Status, StandardOutputContent, StandardErrorContent]' --output text
+          STATUS=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE_ID" --query Status --output text)
+          [ "$STATUS" = "Success" ]
+
+      - name: Verify
+        run: |
+          for _ in $(seq 1 15); do
+            LIVE=$(curl -sf "$APP_URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
+            [ "$LIVE" = "$BUILD" ] && { echo "$APP_URL is running $VERSION ($BUILD)"; exit 0; }
+            sleep 2
+          done
+          echo "expected build $BUILD, live is ${LIVE:-unreachable}"; exit 1

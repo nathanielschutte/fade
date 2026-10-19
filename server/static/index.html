@@ -36,6 +36,10 @@
 
 <!-- Main app -->
 <div id="app" class="app" hidden>
+  <div class="update-banner" id="update-banner" role="status" hidden>
+    napsack was updated.
+    <button type="button" class="button primary" id="update-reload">Reload</button>
+  </div>
   <aside class="list-pane" aria-label="Chats">
     <header class="bar">
       <span class="wordmark small" aria-hidden="true">napsack</span>
@@ -106,7 +110,10 @@
   </section>
   <footer class="sheet-foot">
     <span id="signed-in-as"></span>
-    <button type="button" class="link" id="sign-out">Sign out</button>
+    <span class="foot-links">
+      <a class="link" id="admin-link" href="/admin" hidden>Admin</a>
+      <button type="button" class="link" id="sign-out">Sign out</button>
+    </span>
   </footer>
 </dialog>
 

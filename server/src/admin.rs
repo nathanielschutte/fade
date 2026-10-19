@@ -1,0 +1,153 @@
+//! Admin stats for usernames listed in FADE_ADMINS. Counts and timestamps
+//! only: nothing here reads message ciphertext, keys, or anything a user wrote.
+
+use axum::{extract::State, Json};
+use serde::Serialize;
+use serde_json::{json, Value};
+use sqlx::{FromRow, SqlitePool};
+
+use crate::{
+    auth::AuthUser,
+    db::now,
+    error::{AppError, AppResult},
+    version, SharedState,
+};
+
+const DAY: i64 = 86_400;
+const CHART_DAYS: i64 = 14;
+
+#[derive(Serialize, FromRow)]
+struct UserRow {
+    id: i64,
+    username: String,
+    created_at: i64,
+    last_seen_at: Option<i64>,
+    friends: i64,
+    texts_sent: i64,
+    snaps_sent: i64,
+}
+
+#[derive(Serialize)]
+struct Day {
+    /// Start of the day, UTC, in Unix seconds.
+    day: i64,
+    texts: i64,
+    snaps: i64,
+    signups: i64,
+}
+
+async fn count(db: &SqlitePool, sql: &str, binds: &[i64]) -> sqlx::Result<i64> {
+    let mut q = sqlx::query_scalar::<_, i64>(sql);
+    for b in binds {
+        q = q.bind(*b);
+    }
+    q.fetch_one(db).await
+}
+
+/// Per-day counts for the last CHART_DAYS days, zero-filled.
+async fn daily(db: &SqlitePool, at: i64) -> sqlx::Result<Vec<Day>> {
+    let first = (at / DAY - (CHART_DAYS - 1)) * DAY;
+    let msgs: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT created_at / 86400, SUM(kind = 'text'), SUM(kind = 'snap')
+         FROM messages WHERE created_at >= ? GROUP BY 1",
+    )
+    .bind(first)
+    .fetch_all(db)
+    .await?;
+    let signups: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT created_at / 86400, COUNT(*) FROM users WHERE created_at >= ? GROUP BY 1",
+    )
+    .bind(first)
+    .fetch_all(db)
+    .await?;
+
+    Ok((0..CHART_DAYS)
+        .map(|i| {
+            let d = first / DAY + i;
+            let (texts, snaps) = msgs
+                .iter()
+                .find(|m| m.0 == d)
+                .map(|m| (m.1, m.2))
+                .unwrap_or((0, 0));
+            let signups = signups.iter().find(|s| s.0 == d).map(|s| s.1).unwrap_or(0);
+            Day {
+                day: d * DAY,
+                texts,
+                snaps,
+                signups,
+            }
+        })
+        .collect())
+}
+
+pub async fn stats(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<Value>> {
+    // 404, not 403: non-admins shouldn't learn the panel exists.
+    if !state.config.is_admin(&me.username) {
+        return Err(AppError::not_found("Not found."));
+    }
+    let db = &state.db;
+    let at = now();
+    let (day_ago, week_ago) = (at - DAY, at - 7 * DAY);
+
+    let users = sqlx::query_as::<_, UserRow>(
+        "SELECT u.id, u.username, u.created_at, u.last_seen_at,
+            (SELECT COUNT(*) FROM friendships f WHERE f.user_lo = u.id OR f.user_hi = u.id) AS friends,
+            (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'text') AS texts_sent,
+            (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'snap') AS snaps_sent
+         FROM users u ORDER BY u.created_at DESC LIMIT 500",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let (online_users, sockets) = state.hub.online();
+    let (snaps_held, snap_bytes, snap_pool) = state.snaps.usage();
+    let db_bytes = count(
+        db,
+        "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+        &[],
+    )
+    .await?;
+
+    Ok(Json(json!({
+        "generated_at": at,
+        "users": {
+            "total": count(db, "SELECT COUNT(*) FROM users", &[]).await?,
+            "new_24h": count(db, "SELECT COUNT(*) FROM users WHERE created_at >= ?", &[day_ago]).await?,
+            "new_7d": count(db, "SELECT COUNT(*) FROM users WHERE created_at >= ?", &[week_ago]).await?,
+            "active_24h": count(db, "SELECT COUNT(*) FROM users WHERE last_seen_at >= ?", &[day_ago]).await?,
+            "active_7d": count(db, "SELECT COUNT(*) FROM users WHERE last_seen_at >= ?", &[week_ago]).await?,
+            "online": online_users,
+            "sockets": sockets,
+            "list": users,
+        },
+        "messages": {
+            "texts": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'text'", &[]).await?,
+            "snaps": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'snap'", &[]).await?,
+            "texts_24h": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'text' AND created_at >= ?", &[day_ago]).await?,
+            "snaps_24h": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'snap' AND created_at >= ?", &[day_ago]).await?,
+            "snaps_pending": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'snap' AND snap_state = 'pending'", &[]).await?,
+            "snaps_opened": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'snap' AND snap_state = 'opened'", &[]).await?,
+            "snaps_expired": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'snap' AND snap_state = 'expired'", &[]).await?,
+            "daily": daily(db, at).await?,
+        },
+        "social": {
+            "friendships": count(db, "SELECT COUNT(*) FROM friendships", &[]).await?,
+            "pending_requests": count(db, "SELECT COUNT(*) FROM friend_requests", &[]).await?,
+            "active_sessions": count(db, "SELECT COUNT(*) FROM sessions WHERE expires_at > ?", &[at]).await?,
+        },
+        "server": {
+            "version": version::SERVER_VERSION,
+            "build": version::BUILD,
+            "uptime_secs": state.started_at.elapsed().as_secs(),
+            "db_bytes": db_bytes,
+            "snaps_in_memory": snaps_held,
+            "snap_bytes_in_memory": snap_bytes,
+            "snap_pool_bytes": snap_pool,
+            "snap_ttl_hours": state.config.snap_ttl.as_secs() / 3600,
+            "invite_required": state.config.invite_code.is_some(),
+        },
+    })))
+}

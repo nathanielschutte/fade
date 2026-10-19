@@ -1,9 +1,11 @@
+mod admin;
 mod auth;
 mod chats;
 mod db;
 mod error;
 mod friends;
 mod snaps;
+mod version;
 mod web;
 mod ws;
 
@@ -12,6 +14,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use axum::{
     extract::DefaultBodyLimit,
     http::{header, HeaderValue},
+    middleware,
     routing::{delete, get, post},
     Router,
 };
@@ -31,6 +34,10 @@ pub struct Config {
     /// Ceiling on RAM used by all pending snaps combined.
     pub snap_pool_bytes: usize,
     pub session_days: i64,
+    /// Lowercased usernames allowed into the admin panel.
+    pub admins: Vec<String>,
+    /// Oldest native client version still allowed, per platform. See version.rs.
+    pub min_client_versions: Vec<(String, version::Semver)>,
 }
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> {
@@ -56,7 +63,22 @@ impl Config {
             snap_max_bytes: env_or::<usize>("FADE_SNAP_MAX_KB", 512)? * 1024,
             snap_pool_bytes: env_or::<usize>("FADE_SNAP_POOL_MB", 128)? * 1024 * 1024,
             session_days: env_or("FADE_SESSION_DAYS", 90)?,
+            admins: std::env::var("FADE_ADMINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            min_client_versions: version::parse_min_versions(
+                &std::env::var("FADE_MIN_CLIENT_VERSIONS").unwrap_or_default(),
+            )
+            .map_err(|e| anyhow::anyhow!("FADE_MIN_CLIENT_VERSIONS: {e}"))?,
         })
+    }
+
+    /// Usernames are case-insensitive everywhere else, so here too.
+    pub fn is_admin(&self, username: &str) -> bool {
+        self.admins.contains(&username.to_lowercase())
     }
 }
 
@@ -65,6 +87,7 @@ pub struct AppState {
     pub hub: ws::Hub,
     pub snaps: snaps::SnapStore,
     pub config: Config,
+    pub started_at: std::time::Instant,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -88,18 +111,27 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(orphaned, "marked snaps from previous run as expired");
     }
 
+    if config.admins.is_empty() {
+        tracing::info!("no FADE_ADMINS set; the admin panel is off");
+    }
     let bind = config.bind;
     let state = Arc::new(AppState {
         db,
         hub: ws::Hub::default(),
         snaps: snaps::SnapStore::new(config.snap_pool_bytes, config.snap_ttl),
         config,
+        started_at: std::time::Instant::now(),
     });
 
     snaps::spawn_sweeper(state.clone());
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!(%bind, "fade server listening");
+    tracing::info!(
+        %bind,
+        version = version::SERVER_VERSION,
+        build = version::BUILD,
+        "fade server listening"
+    );
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -109,8 +141,9 @@ async fn main() -> anyhow::Result<()> {
 fn router(state: SharedState) -> Router {
     let snap_limit = state.config.snap_max_bytes;
 
+    // Everything except /config goes through the client version check, so an
+    // outdated app can still read /config and learn that it needs updating.
     let api = Router::new()
-        .route("/config", get(web::config))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
@@ -121,7 +154,10 @@ fn router(state: SharedState) -> Router {
             "/friends/requests",
             get(friends::list_requests).post(friends::send_request),
         )
-        .route("/friends/requests/{user_id}", delete(friends::delete_request))
+        .route(
+            "/friends/requests/{user_id}",
+            delete(friends::delete_request),
+        )
         .route("/friends/requests/{user_id}/accept", post(friends::accept))
         .route(
             "/chats/{friend_id}/messages",
@@ -133,7 +169,13 @@ fn router(state: SharedState) -> Router {
             post(snaps::upload).layer(DefaultBodyLimit::max(snap_limit)),
         )
         .route("/snaps/{id}", get(snaps::view))
-        .route("/ws", get(ws::handler));
+        .route("/admin/stats", get(admin::stats))
+        .route("/ws", get(ws::handler))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            version::require_supported_client,
+        ))
+        .route("/config", get(web::config));
 
     Router::new()
         .nest("/api", api)
@@ -156,8 +198,7 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
             s.recv().await;
         }

@@ -8,3 +8,4 @@ infra/*.tfstate*
 infra/tf.plan*
 infra/.ssh_config
 infra/terraform.tfvars
+__pycache__/

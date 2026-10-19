@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b2822">
+  <meta name="robots" content="noindex">
+  <title>napsack admin</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="admin-body">
+
+<header class="bar admin-bar">
+  <span class="wordmark small">napsack <span class="admin-tag">admin</span></span>
+  <span class="admin-updated" id="updated"></span>
+  <a class="button" href="/">Back to chats</a>
+</header>
+
+<main class="admin" id="admin" hidden>
+  <section class="tiles" aria-label="Summary">
+    <div class="tile"><span class="tile-label">Users</span><span class="tile-value" id="t-users"></span><span class="tile-sub" id="t-users-sub"></span></div>
+    <div class="tile"><span class="tile-label">Active today</span><span class="tile-value" id="t-active"></span><span class="tile-sub" id="t-active-sub"></span></div>
+    <div class="tile"><span class="tile-label">Online now</span><span class="tile-value" id="t-online"></span><span class="tile-sub" id="t-online-sub"></span></div>
+    <div class="tile"><span class="tile-label">Texts</span><span class="tile-value" id="t-texts"></span><span class="tile-sub" id="t-texts-sub"></span></div>
+    <div class="tile"><span class="tile-label">Snaps</span><span class="tile-value" id="t-snaps"></span><span class="tile-sub" id="t-snaps-sub"></span></div>
+  </section>
+
+  <section class="panel" aria-labelledby="chart-title">
+    <header class="panel-head">
+      <h2 id="chart-title">Messages per day</h2>
+      <span class="panel-note">Last 14 days, UTC. Texts and snaps combined.</span>
+    </header>
+    <div class="chart" id="chart" role="img" aria-describedby="chart-table-wrap"></div>
+    <details class="chart-table" id="chart-table-wrap">
+      <summary>Show as table</summary>
+      <div class="table-scroll"><table id="chart-table"></table></div>
+    </details>
+  </section>
+
+  <div class="panel-row">
+    <section class="panel" aria-labelledby="snaps-title">
+      <header class="panel-head"><h2 id="snaps-title">Snaps</h2></header>
+      <dl class="facts" id="snap-facts"></dl>
+    </section>
+    <section class="panel" aria-labelledby="social-title">
+      <header class="panel-head"><h2 id="social-title">Social</h2></header>
+      <dl class="facts" id="social-facts"></dl>
+    </section>
+    <section class="panel" aria-labelledby="server-title">
+      <header class="panel-head"><h2 id="server-title">Server</h2></header>
+      <dl class="facts" id="server-facts"></dl>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="users-title">
+    <header class="panel-head">
+      <h2 id="users-title">Users</h2>
+      <span class="panel-note">Counts only. Message content is end-to-end encrypted and never visible here.</span>
+    </header>
+    <div class="table-scroll">
+      <table class="users-table">
+        <thead><tr><th>Username</th><th>Joined</th><th>Last seen</th><th class="num">Friends</th><th class="num">Texts sent</th><th class="num">Snaps sent</th></tr></thead>
+        <tbody id="users"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<p class="admin-message" id="message">Loading…</p>
+<div class="chart-tip" id="tip" role="status" hidden></div>
+
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

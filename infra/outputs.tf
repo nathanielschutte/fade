@@ -39,6 +39,17 @@ output "ssh_config" {
   ))
 }
 
+output "github_actions_variables" {
+  description = "Set these as repository variables in GitHub (Settings > Secrets and variables > Actions > Variables)."
+  value = var.github_repo == "" ? {} : {
+    AWS_DEPLOY_ROLE_ARN = aws_iam_role.github_deploy[0].arn
+    AWS_REGION          = var.region
+    ARTIFACTS_BUCKET    = aws_s3_bucket.artifacts.id
+    APP_NAME            = var.app_name
+    APP_URL             = "https://${local.domain}"
+  }
+}
+
 output "shell" {
   description = "Open a shell on the box (needs the Session Manager plugin)."
   value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.app.id}"
