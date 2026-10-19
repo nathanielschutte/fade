@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b2822">
+  <title>napsack</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Sign in / create account -->
+<main id="auth" class="auth" hidden>
+  <h1 class="wordmark">napsack</h1>
+  <p class="tagline">Private chats and photos for close friends. End-to-end encrypted.</p>
+
+  <form id="auth-form" class="auth-form" novalidate>
+    <label class="field">
+      <span>Username</span>
+      <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="20">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input name="password" type="password" autocomplete="current-password" required minlength="8">
+      <small class="field-hint" id="password-hint" hidden>Your password also unlocks your messages. If you forget it, they can't be recovered.</small>
+    </label>
+    <label class="field" id="invite-field" hidden>
+      <span>Invite code</span>
+      <input name="invite_code" autocomplete="off" autocapitalize="none" spellcheck="false">
+    </label>
+    <p class="form-error" id="auth-error" role="alert"></p>
+    <button type="submit" class="button primary" id="auth-submit">Sign in</button>
+  </form>
+  <button type="button" class="link" id="auth-toggle">New here? Create an account</button>
+</main>
+
+<!-- Main app -->
+<div id="app" class="app" hidden>
+  <aside class="list-pane" aria-label="Chats">
+    <header class="bar">
+      <span class="wordmark small" aria-hidden="true">napsack</span>
+      <button type="button" class="icon-button" id="friends-button" aria-label="Friends">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M17 5.5a3 3 0 0 1 0 5.6M18.5 14.3c1.6.8 2.6 2.6 3 5.2"/></svg>
+        <span class="badge" id="request-badge" hidden></span>
+      </button>
+    </header>
+    <ul class="chat-list" id="chat-list"></ul>
+    <div class="empty" id="chat-empty" hidden>
+      <p>No friends yet. Add someone by their username to start a chat.</p>
+      <button type="button" class="button primary" id="empty-add">Add a friend</button>
+    </div>
+  </aside>
+
+  <section class="chat-pane" id="chat-pane" aria-label="Conversation">
+    <p class="placeholder" id="chat-placeholder">Pick a chat to start.</p>
+    <div class="chat" id="chat" hidden>
+      <header class="bar">
+        <button type="button" class="icon-button back" id="back-button" aria-label="Back to chats">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h2 class="chat-title" id="chat-title"></h2>
+        <button type="button" class="lock-button" id="safety-button" aria-label="Encryption and safety code">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+          <span>Encrypted</span>
+        </button>
+      </header>
+      <p class="key-warning" id="key-warning" role="alert" hidden>
+        <strong><span id="key-warning-name"></span>'s safety code changed.</strong>
+        napsack keys never change, so someone may be trying to read this chat. Messages are blocked.
+      </p>
+      <ol class="messages" id="messages" aria-live="polite"></ol>
+      <form class="composer" id="composer">
+        <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a snap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </button>
+        <input id="composer-input" placeholder="Message" maxlength="2000" autocomplete="off" aria-label="Message">
+        <button type="submit" class="button send">Send</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<!-- Friends -->
+<dialog id="friends-dialog" class="sheet" aria-labelledby="friends-title">
+  <header class="sheet-head">
+    <h2 id="friends-title">Friends</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <form id="add-friend-form" class="add-friend">
+    <label class="field">
+      <span>Add by username</span>
+      <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <button type="submit" class="button primary">Send request</button>
+    <p class="form-note" id="add-friend-note" role="status"></p>
+  </form>
+  <section id="incoming-section" hidden>
+    <h3>Wants to be friends</h3>
+    <ul class="people" id="incoming-list"></ul>
+  </section>
+  <section id="outgoing-section" hidden>
+    <h3>Waiting on them</h3>
+    <ul class="people" id="outgoing-list"></ul>
+  </section>
+  <footer class="sheet-foot">
+    <span id="signed-in-as"></span>
+    <button type="button" class="link" id="sign-out">Sign out</button>
+  </footer>
+</dialog>
+
+<!-- Safety code -->
+<dialog id="safety-dialog" class="sheet" aria-labelledby="safety-title">
+  <header class="sheet-head">
+    <h2 id="safety-title">End-to-end encrypted</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="sheet-text">Messages and snaps with <span id="safety-name"></span> are encrypted on your device. Only the two of you can read them, not even the napsack server.</p>
+  <p class="sheet-text">To be sure no one is in the middle, check that <span id="safety-name-2"></span> sees the same code:</p>
+  <p class="safety-code" id="safety-code"></p>
+</dialog>
+
+<!-- Camera -->
+<dialog id="camera-dialog" class="camera" aria-label="Take a snap">
+  <div class="camera-stage">
+    <video id="camera-video" playsinline muted autoplay></video>
+    <img id="camera-preview" alt="Your snap" hidden>
+    <p class="camera-message" id="camera-message" hidden></p>
+  </div>
+  <div class="camera-controls" id="capture-controls">
+    <button type="button" class="icon-button" data-close aria-label="Close camera">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <button type="button" class="shutter" id="shutter" aria-label="Take photo"></button>
+    <div class="camera-side">
+      <button type="button" class="icon-button" id="flip-camera" aria-label="Switch camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M20 4v4h-4M4 20v-4h4"/></svg>
+      </button>
+      <label class="icon-button" aria-label="Choose a photo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 16l5-5 4 4 2-2 5 5"/></svg>
+        <input type="file" id="file-input" accept="image/*" hidden>
+      </label>
+    </div>
+  </div>
+  <div class="camera-controls" id="send-controls" hidden>
+    <button type="button" class="button" id="retake">Retake</button>
+    <button type="button" class="button primary" id="send-snap">Send</button>
+  </div>
+</dialog>
+
+<!-- Snap viewer -->
+<div id="viewer" class="viewer" hidden role="dialog" aria-label="Snap">
+  <img id="viewer-image" alt="Snap" draggable="false">
+  <div class="viewer-tint" aria-hidden="true"></div>
+  <div class="viewer-timer" aria-hidden="true"><span id="viewer-bar"></span></div>
+  <p class="viewer-from" id="viewer-from"></p>
+  <p class="viewer-hint">Tap to close</p>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

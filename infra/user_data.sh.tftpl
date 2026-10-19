@@ -1,0 +1,197 @@
+#!/bin/bash
+# Bootstrap for ${app_name}, rendered by Terraform templatefile().
+# In this file, a doubled dollar sign escapes a literal shell $${VAR}.
+set -euxo pipefail
+exec > >(tee -a /var/log/${app_name}-bootstrap.log) 2>&1
+
+APP="${app_name}"
+REGION="${region}"
+DOMAIN="${domain}"
+DATA="/var/lib/${app_name}"
+
+# ---------- keep snap bytes off disk ----------
+# Snaps live only in process RAM. No swap means the kernel can't page them out,
+# and no core dumps means a crash can't write them out either.
+swapoff -a || true
+sed -i '/\sswap\s/d' /etc/fstab
+mkdir -p /etc/systemd/coredump.conf.d
+printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' > /etc/systemd/coredump.conf.d/disable.conf
+echo 'kernel.core_pattern=|/bin/false' > /etc/sysctl.d/50-no-core.conf
+sysctl --system
+
+# ---------- data volume ----------
+# On Nitro instances EBS shows up as NVMe; match it by serial (the volume id).
+DEV=""
+for _ in $(seq 1 60); do
+  DEV=$(lsblk -dno NAME,SERIAL | awk '$2 == "${volume_serial}" { print "/dev/" $1 }')
+  [ -n "$DEV" ] && break
+  sleep 5
+done
+[ -n "$DEV" ] || { echo "data volume never attached"; exit 1; }
+
+blkid "$DEV" || mkfs.xfs "$DEV"
+mkdir -p "$DATA"
+UUID=$(blkid -s UUID -o value "$DEV")
+grep -q "$UUID" /etc/fstab || echo "UUID=$UUID $DATA xfs defaults,nofail,noatime 0 2" >> /etc/fstab
+systemctl daemon-reload
+mount -a
+
+id "$APP" &>/dev/null || useradd --system --home-dir "$DATA" --shell /sbin/nologin "$APP"
+id caddy &>/dev/null || useradd --system --home-dir "$DATA/caddy" --shell /sbin/nologin caddy
+install -d -o "$APP" -g "$APP" -m 0750 "$DATA/db"
+install -d -o caddy -g caddy -m 0750 "$DATA/caddy"
+
+# ---------- SSH host keys ----------
+# Keep them on the data volume so a replaced instance has the same identity
+# and ssh doesn't warn that the host key changed.
+install -d -m 0700 "$DATA/ssh-host-keys"
+if ls "$DATA"/ssh-host-keys/ssh_host_*_key >/dev/null 2>&1; then
+  cp -p "$DATA"/ssh-host-keys/ssh_host_* /etc/ssh/
+  systemctl restart sshd
+else
+  cp -p /etc/ssh/ssh_host_* "$DATA/ssh-host-keys/"
+fi
+
+# ---------- Caddy (TLS + reverse proxy) ----------
+CADDY_VERSION="${caddy_version}"
+if ! /usr/local/bin/caddy version 2>/dev/null | grep -q "v$CADDY_VERSION"; then
+  cd /tmp
+  TARBALL="caddy_$${CADDY_VERSION}_linux_arm64.tar.gz"
+  BASE="https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION"
+  curl -fsSL --retry 10 --retry-connrefused -O "$BASE/$TARBALL"
+  curl -fsSL --retry 10 --retry-connrefused -O "$BASE/caddy_$${CADDY_VERSION}_checksums.txt"
+  grep " $TARBALL\$" "caddy_$${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+  tar -xzf "$TARBALL" -C /usr/local/bin caddy
+  chmod 0755 /usr/local/bin/caddy
+fi
+
+mkdir -p /etc/caddy
+{
+  if [ -n "${acme_email}" ]; then
+    printf '{\n\temail %s\n}\n\n' "${acme_email}"
+  fi
+  cat <<CADDY
+$DOMAIN {
+	encode zstd gzip
+	request_body {
+		max_size 8MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+CADDY
+} > /etc/caddy/Caddyfile
+
+cat > /etc/systemd/system/caddy.service <<UNIT
+[Unit]
+Description=Caddy
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=$DATA
+
+[Service]
+User=caddy
+Group=caddy
+Environment=XDG_DATA_HOME=$DATA/caddy XDG_CONFIG_HOME=$DATA/caddy
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=$DATA/caddy
+LimitNOFILE=65536
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ---------- app ----------
+
+# Pulls config from SSM on every start; lands in tmpfs, never on disk.
+cat > /usr/local/bin/$APP-env <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+install -d -m 0700 /run/${app_name}
+aws ssm get-parameter --region ${region} --name "${env_param}" --with-decryption \
+  --query Parameter.Value --output text > /run/${app_name}/env.tmp
+chmod 0600 /run/${app_name}/env.tmp
+mv /run/${app_name}/env.tmp /run/${app_name}/env
+SCRIPT
+chmod 0755 /usr/local/bin/$APP-env
+
+# Installs a release and restarts. Keeps the previous binary for rollback.
+#   fade-update <file>   install a binary copied up over SSH (scripts/deploy.sh)
+#   fade-update          pull the latest release from S3 (used at boot)
+cat > /usr/local/bin/$APP-update <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+BIN=/usr/local/bin/fade-server
+if [ $# -gt 0 ]; then
+  install -m 0755 "$1" "$BIN.new"
+  rm -f "$1"
+else
+  aws s3 cp "s3://${bucket}/releases/fade-server" "$BIN.new" --region ${region} --only-show-errors
+  chmod 0755 "$BIN.new"
+fi
+[ -f "$BIN" ] && cp -f "$BIN" "$BIN.prev"
+mv -f "$BIN.new" "$BIN"
+systemctl restart ${app_name}
+sleep 2
+systemctl is-active ${app_name}
+echo "deployed: $(sha256sum "$BIN" | cut -c1-12)"
+SCRIPT
+chmod 0755 /usr/local/bin/$APP-update
+
+cat > /etc/systemd/system/$APP.service <<UNIT
+[Unit]
+Description=$APP server
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=$DATA
+ConditionPathExists=/usr/local/bin/fade-server
+
+[Service]
+User=$APP
+Group=$APP
+ExecStartPre=+/usr/local/bin/$APP-env
+# "-": the file doesn't exist yet when ExecStartPre runs (it creates it).
+# systemd re-reads it before ExecStart.
+EnvironmentFile=-/run/$APP/env
+Environment=FADE_BIND=127.0.0.1:8080
+Environment=FADE_DATABASE_URL=sqlite://$DATA/db/fade.db
+Environment=RUST_LOG=fade_server=info
+ExecStart=/usr/local/bin/fade-server
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=$DATA/db
+LimitCORE=0
+MemoryMax=400M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now caddy
+systemctl enable $APP
+
+# If a build was already uploaded (e.g. instance replaced), start it now.
+# Otherwise the first scripts/deploy.sh will.
+if aws s3 ls "s3://${bucket}/releases/fade-server" --region "$REGION" >/dev/null 2>&1; then
+  /usr/local/bin/$APP-update
+else
+  echo "No release uploaded yet; run scripts/deploy.sh"
+fi

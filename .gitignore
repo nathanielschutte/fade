@@ -1,0 +1,10 @@
+server/target/
+*.db
+*.db-wal
+*.db-shm
+infra/.terraform/
+infra/*.tfstate*
+# Saved plans contain variable and SSM values in plain text.
+infra/tf.plan*
+infra/.ssh_config
+infra/terraform.tfvars

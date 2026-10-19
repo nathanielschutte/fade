@@ -1,0 +1,397 @@
+/* napsack: a quiet, dark forest green.
+   Low-contrast greens for surfaces, soft off-white text, and one muted sage
+   accent for actions and for snaps you haven't opened. Nothing glows. */
+
+:root {
+  --ink: #1b2822;     /* base */
+  --deep: #15201b;    /* recessed: inputs, list pane */
+  --wash: #26372f;    /* raised: hover, selection */
+  --paper: #e4ece6;   /* primary text */
+  --fixer: #9db3a6;   /* secondary text */
+  --sage: #93c5a3;    /* accent: primary actions, unopened snaps */
+  --sage-hover: #a6d2b4;
+  --on-sage: #12201a; /* text on the accent */
+  --danger: #e8a598;
+  --rule: rgba(228, 236, 230, 0.12);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.5625rem;
+  --step-5: clamp(2.75rem, 12vw, 4rem);
+
+  --pad: 1rem;
+  --radius-s: 6px;
+  --radius-m: 14px;
+  --bar-h: 3.5rem;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+[hidden] { display: none !important; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
+h1, h2, h3, p { margin: 0; }
+
+svg {
+  width: 1.5rem; height: 1.5rem;
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ---------- shared controls ---------- */
+
+.button {
+  min-height: 2.75rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: transparent;
+  font-weight: 600;
+}
+.button:hover { background: var(--wash); }
+.button.primary { background: var(--sage); color: var(--on-sage); border-color: var(--sage); }
+.button.primary:hover { background: var(--sage-hover); border-color: var(--sage-hover); }
+.button:disabled { opacity: 0.5; cursor: default; }
+
+.icon-button {
+  position: relative;
+  display: inline-grid; place-items: center;
+  width: 2.75rem; height: 2.75rem;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.icon-button:hover { background: var(--wash); }
+
+.link {
+  border: 0; background: none; padding: 0.5rem 0;
+  color: var(--fixer); text-decoration: underline; text-underline-offset: 3px;
+}
+.link:hover { color: var(--paper); }
+
+.field { display: grid; gap: 0.35rem; }
+.field span { font-size: var(--step--1); color: var(--fixer); }
+.field input, .composer input {
+  width: 100%;
+  min-height: 2.875rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--deep);
+}
+.field input:focus, .composer input:focus { outline: none; border-color: var(--sage); }
+.field input:disabled, .composer input:disabled { opacity: 0.5; }
+.field-hint { font-size: var(--step--1); color: var(--fixer); }
+
+.form-error { min-height: 1.4em; color: var(--danger); font-size: var(--step--1); }
+.form-note { min-height: 1.4em; color: var(--fixer); font-size: var(--step--1); }
+
+.badge {
+  position: absolute; top: 0.35rem; right: 0.35rem;
+  min-width: 1.1rem; height: 1.1rem; padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--sage); color: var(--on-sage);
+  font-size: 0.7rem; font-weight: 700; line-height: 1.1rem;
+}
+
+/* ---------- wordmark ---------- */
+
+.wordmark {
+  font-size: var(--step-5);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--sage);
+}
+.wordmark.small { font-size: var(--step-1); letter-spacing: -0.01em; }
+
+/* ---------- auth ---------- */
+
+.auth {
+  min-height: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: max(12vh, 3rem) 1.5rem 2rem;
+  display: flex; flex-direction: column; gap: 1.25rem;
+}
+.tagline { color: var(--fixer); font-size: var(--step-1); max-width: 24ch; line-height: 1.3; }
+.auth-form { display: grid; gap: 0.9rem; margin-top: 1.5rem; }
+.auth-form .button { margin-top: 0.25rem; }
+.auth .link { align-self: flex-start; }
+
+/* ---------- app layout ---------- */
+
+.app { height: 100dvh; display: flex; }
+.bar {
+  height: var(--bar-h);
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0 0.5rem 0 var(--pad);
+  border-bottom: 1px solid var(--rule);
+}
+
+.list-pane {
+  width: 100%;
+  display: flex; flex-direction: column;
+  background: var(--deep);
+}
+.chat-pane { display: none; flex: 1; min-width: 0; }
+
+/* Mobile: one pane at a time. */
+.app.in-chat .list-pane { display: none; }
+.app.in-chat .chat-pane { display: flex; }
+
+@media (min-width: 760px) {
+  .list-pane { width: 21rem; flex: none; border-right: 1px solid var(--rule); }
+  .chat-pane, .app.in-chat .chat-pane { display: flex; }
+  .app.in-chat .list-pane { display: flex; }
+  .back { display: none; }
+}
+
+/* ---------- chat list ---------- */
+
+.chat-list { list-style: none; margin: 0; padding: 0.25rem 0; overflow-y: auto; flex: 1; }
+.chat-item {
+  width: 100%;
+  display: grid; grid-template-columns: 0.75rem 1fr auto; align-items: center; gap: 0.75rem;
+  padding: 0.8rem var(--pad);
+  border: 0; background: none; text-align: left;
+}
+.chat-item:hover { background: rgba(38, 55, 47, 0.6); }
+.chat-item[aria-current="true"] { background: var(--wash); }
+.chat-name { font-weight: 600; font-size: var(--step-0); }
+.chat-status {
+  display: block;
+  color: var(--fixer); font-size: var(--step--1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-time { color: var(--fixer); font-size: var(--step--1); align-self: start; padding-top: 0.15rem; }
+
+/* The marker says what's waiting: a sage square for a snap, a paper dot for text. */
+.marker { width: 0.75rem; height: 0.75rem; }
+.marker.snap { background: var(--sage); border-radius: 2px; }
+.marker.text { background: var(--paper); border-radius: 50%; transform: scale(0.7); }
+.chat-item.has-unread .chat-status { color: var(--paper); font-weight: 600; }
+.chat-item.has-snap .chat-status { color: var(--sage); }
+
+.empty { padding: 2rem var(--pad); display: grid; gap: 1rem; justify-items: start; color: var(--fixer); }
+
+/* ---------- conversation ---------- */
+
+.placeholder { margin: auto; color: var(--fixer); }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat .bar { justify-content: flex-start; padding-left: 0.25rem; }
+.chat-title { font-size: var(--step-1); font-weight: 600; padding-left: 0.5rem; }
+
+.lock-button {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  min-height: 2.25rem; padding: 0 0.75rem 0 0.6rem;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: transparent; color: var(--fixer);
+  font-size: var(--step--1);
+}
+.lock-button svg { width: 1rem; height: 1rem; }
+.lock-button:hover { background: var(--wash); color: var(--paper); }
+
+.key-warning {
+  flex: none;
+  margin: 0.75rem var(--pad) 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--danger); border-radius: var(--radius-s);
+  color: var(--danger); font-size: var(--step--1);
+}
+
+.messages {
+  list-style: none; margin: 0;
+  flex: 1; overflow-y: auto;
+  padding: 1rem var(--pad) 0.5rem;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.messages > :first-child { margin-top: auto; }
+
+/* Left-aligned like a transcript; a rule on the left tells you who's talking. */
+.sender {
+  margin-top: 0.9rem;
+  font-size: var(--step--1); font-weight: 600;
+  color: var(--fixer);
+}
+.sender.mine { color: var(--paper); }
+.msg {
+  max-width: 34rem;
+  padding: 0.15rem 0 0.15rem 0.75rem;
+  border-left: 2px solid var(--fixer);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.msg.mine { border-left-color: var(--sage); }
+.msg.undecryptable { color: var(--fixer); font-style: italic; }
+.msg-meta { padding-left: 0.75rem; font-size: 0.75rem; color: var(--fixer); }
+
+.snap-chip {
+  display: inline-flex; align-items: center; gap: 0.6rem;
+  margin: 0.1rem 0;
+  padding: 0.5rem 0.9rem 0.5rem 0.6rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: transparent;
+  font-weight: 600;
+}
+.snap-chip .marker { flex: none; }
+.snap-chip.done { color: var(--fixer); font-weight: 400; }
+.snap-chip.done .marker { background: none; border: 1.5px solid var(--fixer); border-radius: 2px; }
+button.snap-chip { cursor: pointer; border-color: var(--sage); }
+button.snap-chip:hover { background: rgba(147, 197, 163, 0.12); }
+
+.composer {
+  flex: none;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem var(--pad) max(0.6rem, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--rule);
+}
+.composer input { border-radius: 999px; }
+.composer .send { flex: none; }
+.snap-button { flex: none; color: var(--sage); }
+.snap-button:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- sheets ---------- */
+
+dialog { color: var(--paper); }
+dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
+
+.sheet {
+  width: min(28rem, 100vw);
+  max-height: min(40rem, 90dvh);
+  padding: 0 1.25rem 1rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-m);
+  background: var(--ink);
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 0 0.5rem; }
+.sheet-head h2 { font-size: var(--step-1); font-weight: 600; }
+.sheet-text { color: var(--fixer); margin-bottom: 0.75rem; }
+.safety-code {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.9rem;
+  border-radius: var(--radius-s);
+  background: var(--deep);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--step-1); letter-spacing: 0.04em; word-spacing: 0.3em;
+  text-align: center; color: var(--paper);
+  white-space: pre-line;
+}
+.sheet h3 { font-size: var(--step--1); color: var(--fixer); font-weight: 600; margin: 1.25rem 0 0.25rem; }
+.add-friend { display: grid; gap: 0.6rem; }
+.add-friend .button { justify-self: start; }
+.people { list-style: none; margin: 0; padding: 0; }
+.person {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+.person-name { flex: 1; font-weight: 600; }
+.person .button { min-height: 2.25rem; padding: 0 0.85rem; font-size: var(--step--1); }
+.sheet-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 1.5rem; padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--fixer); font-size: var(--step--1);
+}
+
+/* ---------- camera ---------- */
+
+.camera {
+  width: 100vw; height: 100dvh; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0;
+  background: #000;
+  display: none; flex-direction: column;
+}
+.camera[open] { display: flex; }
+.camera-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.camera-stage video, .camera-stage img { width: 100%; height: 100%; object-fit: contain; }
+.camera-message { position: absolute; max-width: 22rem; padding: 1rem; text-align: center; color: var(--fixer); }
+.camera-controls {
+  flex: none;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 1rem 1.25rem max(1.25rem, env(safe-area-inset-bottom));
+}
+#send-controls { display: flex; justify-content: space-between; }
+#send-controls[hidden] { display: none; }
+.camera-side { justify-self: end; display: flex; gap: 0.25rem; }
+.shutter {
+  width: 4.5rem; height: 4.5rem;
+  border-radius: 50%;
+  border: 4px solid var(--paper);
+  background: rgba(228, 236, 230, 0.15);
+}
+.shutter:active { background: var(--paper); }
+
+/* ---------- snap viewer ----------
+   As the timer runs, the photo sinks into the background green and blurs away. */
+
+.viewer {
+  position: fixed; inset: 0; z-index: 10;
+  background: var(--ink);
+  display: grid; place-items: center;
+  cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.viewer img {
+  max-width: 100%; max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.viewer-tint {
+  position: absolute; inset: 0;
+  background: var(--ink);
+  mix-blend-mode: color;
+  opacity: 0;
+  pointer-events: none;
+}
+.viewer.running img { animation: fade-out var(--view-ms) linear forwards; }
+.viewer.running .viewer-tint { animation: tint-in var(--view-ms) linear forwards; }
+
+@keyframes fade-out {
+  0%, 55% { filter: none; opacity: 1; }
+  100% { filter: blur(18px) brightness(0.8); opacity: 0; }
+}
+@keyframes tint-in {
+  0%, 30% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.viewer-timer {
+  position: absolute; top: max(0.75rem, env(safe-area-inset-top)); left: 1rem; right: 1rem;
+  height: 3px; background: rgba(228, 236, 230, 0.2); border-radius: 2px; overflow: hidden;
+}
+.viewer-timer span { display: block; height: 100%; background: var(--sage); transform-origin: left; }
+.viewer.running .viewer-timer span { animation: drain var(--view-ms) linear forwards; }
+@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+.viewer-from {
+  position: absolute; top: calc(max(0.75rem, env(safe-area-inset-top)) + 0.75rem); left: 1rem;
+  font-weight: 700; text-shadow: 0 1px 6px rgba(12, 20, 16, 0.8);
+}
+.viewer-hint {
+  position: absolute; bottom: max(1rem, env(safe-area-inset-bottom));
+  font-size: var(--step--1); color: var(--fixer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the timer, drop the dissolve. */
+  .viewer.running img, .viewer.running .viewer-tint { animation: none; }
+}
