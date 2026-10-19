@@ -3,7 +3,9 @@ invite_code = "change-me-to-something-long"
 
 # Optional
 # domain     = "chat.example.com"   # first: terraform apply -target=aws_eip.app, point an A record at the IP, then a full apply
+# redirect_domains = ["old.example.com"]   # old hostnames that redirect to domain
 # acme_email = "you@example.com"
 # region     = "us-east-1"
 # ssh_allowed_cidrs   = ["203.0.113.7/32"]   # open port 22 to your IP; empty = SSH via SSM tunnel
-# ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+# ssh_public_keys = ["ssh-ed25519 AAAA... you@laptop"]   # one per machine you work from
+# ssh_public_key_path = "~/.ssh/id_ed25519.pub"           # used when ssh_public_keys is empty

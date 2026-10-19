@@ -151,3 +151,55 @@ pub async fn stats(
         },
     })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::tests::temp_db;
+
+    #[tokio::test]
+    async fn daily_counts_are_zero_filled_and_bucketed_by_utc_day() {
+        let db = temp_db().await;
+        let today = 20_000 * DAY + 3_600; // 01:00 UTC on some day
+        for (id, created) in [(1, today - 2 * DAY), (2, today)] {
+            sqlx::query(
+                "INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at)
+                 VALUES (?, ?, 'h', 'k', 'w', ?)",
+            )
+            .bind(id)
+            .bind(format!("u{id}"))
+            .bind(created)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        for (kind, created) in [
+            ("text", today),
+            ("text", today - 60),
+            ("snap", today - DAY),
+            ("text", today - 30 * DAY),
+        ] {
+            sqlx::query(
+                "INSERT INTO messages (sender_id, recipient_id, kind, created_at) VALUES (1, 2, ?, ?)",
+            )
+            .bind(kind)
+            .bind(created)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+
+        let days = daily(&db, today).await.unwrap();
+        assert_eq!(days.len(), CHART_DAYS as usize);
+        let last = &days[13];
+        assert_eq!(
+            (last.day, last.texts, last.snaps, last.signups),
+            (20_000 * DAY, 2, 0, 1)
+        );
+        assert_eq!((days[12].texts, days[12].snaps), (0, 1));
+        assert_eq!(days[11].signups, 1);
+        // 30 days ago is outside the window; everything else in it is zero.
+        let total: i64 = days.iter().map(|d| d.texts + d.snaps).sum();
+        assert_eq!(total, 3);
+    }
+}

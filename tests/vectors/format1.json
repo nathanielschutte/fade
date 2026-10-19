@@ -1,0 +1,32 @@
+{
+  "about": "napsack message format 1 test vectors. Generated once from server/static/crypto.js; never regenerate.",
+  "password": {
+    "username": "Alice",
+    "password": "correct horse battery staple",
+    "auth_key": "sRAT2DNGy4uk0Ha0rJa1OgkVhMHnHWmc5DAnLukY/Xg=",
+    "wrapped_private_key": "oWxnXfNsWd4K5BeHokBM64ZrmPM+lHZlY4H3M695OOhzWorKqWk6j/UI/YRWvkvRwuOKXg9lRIbYfGYnBTL2YYELqd2aOcCfkoUJhZhK4i55W57dKoA2ZN3CulHavAwIgWpQ2ZvY1lRnjG35OLs4xj+JO6akdOTG5gK4krEZsK/+xrkDZqhMQ6JBuSv9PVSr2wZ6EKwse94QLcurmFtd0X7dMisaxg=="
+  },
+  "alice": {
+    "id": 7,
+    "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3raIOdVqgZDKq35R6fm3N+BVRwcY+vIC3yhMxHxJLPWhRANCAAS5dZFjzFmOfsSLYI72+61/SJp57fiPHbXqUJLY4MvRle+YQMaKOS383rK9eyr4b7kfhnjrjKySblf8asAUcoBN",
+    "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuXWRY8xZjn7Ei2CO9vutf0iaee34jx216lCS2ODL0ZXvmEDGijkt/N6yvXsq+G+5H4Z464yskm5X/GrAFHKATQ=="
+  },
+  "bob": {
+    "id": 3,
+    "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgpBXBdm5lSVBFNolk0UFe9YsWGIWDyULzWg4eDEh7JVWhRANCAATb8+UGUneS7y8pUhdLvTTouNpXxxe9+dboWw7KyzPkecmNR8pQLFhgNV3C+GxvJlrPWsfAQQ98/UZW4JRlwput",
+    "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2/PlBlJ3ku8vKVIXS7006LjaV8cXvfnW6FsOyssz5HnJjUfKUCxYYDVdwvhsbyZaz1rHwEEPfP1GVuCUZcKbrQ=="
+  },
+  "text": {
+    "from": 7,
+    "to": 3,
+    "plaintext": "see you at 8 🌿",
+    "ciphertext": "EO6spqf3RFS6WfCdV/FIUEr5Zan2QO2iU2HTK80rN6StUcHQE+CBNJ47OVQV"
+  },
+  "snap": {
+    "from": 7,
+    "to": 3,
+    "plaintext_b64": "CzBVep/E6Q4zWH2ix+wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW+yBFao+02f4jSG2St9wBJg==",
+    "ciphertext_b64": "CNg7tAWuQ8UWBBVdoJN2gzRbEkPOowgkY0jYXiGT0AP9xbvINUTK1OfYZiwKn0QcsKSnZdbfzNVJAw0geygKeqYGjBMA9cG4rApte1iwEXVdUzthKlDyHkV7RuU="
+  },
+  "safety_code": "61548 09284 26040 46325 06059 02103"
+}

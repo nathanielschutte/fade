@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the server, run it on a throwaway database, and run every test against it:
-# unit tests, the API smoke test, and (unless --no-browser) the browser tests.
+# unit tests, crypto vector checks, the API smoke test, and (unless --no-browser)
+# the browser tests, which include crypto.js's unit tests against the pinned vectors.
 #
 #   scripts/test.sh               everything
 #   scripts/test.sh --no-browser  skip Playwright (no Chrome needed)
@@ -18,6 +19,9 @@ PY="${PYTHON:-$(command -v python3 || command -v python)}"
 
 echo "==> unit tests"
 (cd server && cargo test --quiet)
+
+echo "==> crypto vectors (independent implementation)"
+"$PY" tests/vectors/check_format1.py
 
 echo "==> building server"
 (cd server && cargo build --quiet)

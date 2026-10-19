@@ -14,7 +14,7 @@ jobs:
     name: Server and web client
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -30,7 +30,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         working-directory: server
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -41,12 +41,12 @@ jobs:
       # Unit tests, API smoke test, and browser tests against a throwaway server.
       # GitHub's Ubuntu runners ship Google Chrome, which the browser tests use.
       - name: Test
-        run: scripts/test.sh
+        run: bash scripts/test.sh
         env:
           NAPSACK_SHOTS: ${{ runner.temp }}/shots
       - name: Keep screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: screenshots
           path: ${{ runner.temp }}/shots
@@ -56,7 +56,7 @@ jobs:
     name: Terraform
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
       - run: terraform fmt -check -recursive
         working-directory: infra

@@ -108,8 +108,84 @@ pub async fn expire_orphaned_snaps(db: &SqlitePool) -> sqlx::Result<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::is_base64;
+pub mod tests {
+    use super::*;
+
+    /// A fresh, fully migrated database in a temp file. The pool has several
+    /// connections, so an in-memory database (one per connection) won't do.
+    pub async fn temp_db() -> SqlitePool {
+        let path = std::env::temp_dir().join(format!(
+            "fade-test-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap()
+    }
+
+    /// The never-delete rule, enforced: no migration may drop, delete, rename,
+    /// or overwrite anything. 0002 is the one exception, from before real users.
+    /// A genuinely needed backfill (`UPDATE ... WHERE col IS NULL`) gets a
+    /// reviewed exception here, never a silent one.
+    #[test]
+    fn migrations_never_destroy_data() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if name == "0002_e2e.sql" {
+                continue;
+            }
+            let sql: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_uppercase();
+            let words: Vec<&str> = sql
+                .split(|c: char| c.is_whitespace() || c == ';' || c == '(')
+                .filter(|w| !w.is_empty())
+                .collect();
+            for pair in words.windows(2) {
+                let banned = matches!(
+                    (pair[0], pair[1]),
+                    ("DROP", "TABLE" | "COLUMN")
+                        | ("DELETE", "FROM")
+                        | ("REPLACE", "INTO")
+                        | ("RENAME", _)
+                        | ("TRUNCATE", _)
+                ) || (pair[0] == "UPDATE" && pair[1] != "CASCADE");
+                assert!(!banned, "{name} contains `{} {}`", pair[0], pair[1]);
+            }
+            checked += 1;
+        }
+        assert!(checked >= 3);
+    }
+
+    #[tokio::test]
+    async fn migrations_apply_cleanly_and_are_rerunnable() {
+        let db = temp_db().await;
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        assert_eq!(versions.first(), Some(&1));
+        assert_eq!(versions.len() as i64, *versions.last().unwrap());
+        // Running them again is a no-op, as on every server start.
+        let mut m = sqlx::migrate!("./migrations");
+        m.set_ignore_missing(true);
+        m.run(&db).await.unwrap();
+    }
+
+    #[test]
+    fn pairs_are_ordered() {
+        assert_eq!(pair(5, 2), (2, 5));
+        assert_eq!(pair(2, 5), (2, 5));
+    }
 
     #[test]
     fn base64_shape() {

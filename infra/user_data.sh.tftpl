@@ -41,6 +41,18 @@ id caddy &>/dev/null || useradd --system --home-dir "$DATA/caddy" --shell /sbin/
 install -d -o "$APP" -g "$APP" -m 0750 "$DATA/db"
 install -d -o caddy -g caddy -m 0750 "$DATA/caddy"
 
+# ---------- SSH access ----------
+# Every key in ssh_public_keys, not just the one EC2 installed, so access
+# doesn't depend on which machine last ran terraform.
+install -d -m 0700 -o ec2-user -g ec2-user /home/ec2-user/.ssh
+cat > /home/ec2-user/.ssh/authorized_keys <<'KEYS'
+%{ for key in ssh_keys ~}
+${key}
+%{ endfor ~}
+KEYS
+chown ec2-user:ec2-user /home/ec2-user/.ssh/authorized_keys
+chmod 0600 /home/ec2-user/.ssh/authorized_keys
+
 # ---------- SSH host keys ----------
 # Keep them on the data volume so a replaced instance has the same identity
 # and ssh doesn't warn that the host key changed.
@@ -82,6 +94,13 @@ $DOMAIN {
 	}
 	reverse_proxy 127.0.0.1:8080
 }
+%{ for old in redirects ~}
+
+# Old address: keep links working.
+${old} {
+	redir https://$DOMAIN{uri} permanent
+}
+%{ endfor ~}
 CADDY
 } > /etc/caddy/Caddyfile
 

@@ -22,12 +22,12 @@ server/            Rust server; also serves the web client
   static/          web client (plain JS, no build step)
 shared/            code both clients use, plain JS modules with JSDoc types
   crypto/          the format 1 implementation, moved out of server/static/crypto.js
-  crypto/vectors.json   test vectors: fixed inputs and the exact bytes they must produce
 mobile/            the Expo app (TypeScript)
+tests/vectors/     format1.json: fixed inputs and the exact bytes they must produce (exists today)
 ```
 
 - **Shared crypto, no build step for the web.** The crypto moves to `shared/crypto/` as plain ES modules with JSDoc types. The server keeps compiling it into the binary for the web client, and the mobile app imports the same files through Metro. Storage is the only platform-specific part: IndexedDB on the web, the iOS Keychain on the phone. It moves behind a small interface.
-- **Test vectors keep the two in lockstep.** A script runs the web implementation over fixed inputs (password, salts, keys, IVs) and records every intermediate value and ciphertext in `vectors.json`. The web tests and the mobile tests both check against it, and CI fails if either disagrees.
+- **Test vectors keep the two in lockstep.** [`tests/vectors/format1.json`](../tests/vectors/format1.json) pins a password, two key pairs, a wrapped key, a text, a picture, and a safety code, generated once from the web implementation and cross-checked by an independent Python implementation. The web tests (`tests/e2e/test_crypto_vectors.py`) check against it today; the mobile tests will check the same file, and CI fails if any client disagrees.
 - **Keys on the phone.** The unwrapped private key goes in the iOS Keychain (via `expo-secure-store`), readable only while the phone is unlocked and never synced to iCloud or other devices. The password-derived sign-in works exactly as on the web, so history works on the phone from day one.
 - **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this".
 
@@ -65,7 +65,7 @@ Release order always follows [RELEASING.md](RELEASING.md): server first, then th
 
 ## First milestones
 
-1. **Crypto spike.** Move the crypto to `shared/`, generate test vectors, and prove `react-native-quick-crypto` reproduces them byte for byte on a real iPhone, including 600,000-round PBKDF2 in about a second. If it can't, the fallback is the audited `@noble` libraries, but PBKDF2 would be slow in pure JavaScript, so this is the biggest risk and goes first.
+1. **Crypto spike.** Move the crypto to `shared/`, and prove `react-native-quick-crypto` reproduces them byte for byte on a real iPhone, including 600,000-round PBKDF2 in about a second. If it can't, the fallback is the audited `@noble` libraries, but PBKDF2 would be slow in pure JavaScript, so this is the biggest risk and goes first.
 2. **Skeleton.** Sign in, chat list, chat screen, sending and reading texts, against production.
 3. **Camera and snaps.** Mirrored front camera and the same 200 KB compression as the web.
 4. **Push notifications.** Device tokens on the server and APNs delivery. The server can't read messages, so notifications say who sent something, never what.

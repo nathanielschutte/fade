@@ -10,6 +10,12 @@ variable "region" {
   default     = "us-east-1"
 }
 
+variable "ssh_public_keys" {
+  description = "Public keys (the key text, not file paths) allowed to SSH as ec2-user. List one per machine you work from, e.g. Windows and WSL, so it doesn't matter where terraform runs. Empty falls back to ssh_public_key_path."
+  type        = list(string)
+  default     = []
+}
+
 variable "ssh_public_key_path" {
   description = "Public key installed for ec2-user. The matching private key (same path minus .pub) is used by scripts/ssh.sh and deploy.sh."
   type        = string
@@ -32,6 +38,12 @@ variable "domain" {
   description = "Hostname to serve on. Leave empty to use <elastic-ip>.sslip.io, which works with Let's Encrypt and needs no DNS setup."
   type        = string
   default     = ""
+}
+
+variable "redirect_domains" {
+  description = "Old hostnames that should permanently redirect to `domain`. Their DNS must still point at the elastic IP so Caddy can get certificates for them."
+  type        = list(string)
+  default     = []
 }
 
 variable "acme_email" {

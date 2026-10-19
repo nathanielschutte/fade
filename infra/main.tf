@@ -26,8 +26,9 @@ data "aws_ssm_parameter" "al2023_arm64" {
 }
 
 locals {
-  az     = data.aws_availability_zones.available.names[0]
-  domain = var.domain != "" ? var.domain : "${replace(aws_eip.app.public_ip, ".", "-")}.sslip.io"
+  ssh_keys = length(var.ssh_public_keys) > 0 ? var.ssh_public_keys : [trimspace(file(pathexpand(var.ssh_public_key_path)))]
+  az       = data.aws_availability_zones.available.names[0]
+  domain   = var.domain != "" ? var.domain : "${replace(aws_eip.app.public_ip, ".", "-")}.sslip.io"
   env_file = join("\n", [
     "FADE_INVITE_CODE=${var.invite_code}",
     "FADE_ADMINS=${join(",", var.admin_usernames)}",
@@ -237,9 +238,10 @@ resource "aws_volume_attachment" "data" {
 
 # ---------- instance ----------
 
+# EC2 installs one key; the boot script adds the rest of ssh_public_keys.
 resource "aws_key_pair" "admin" {
   key_name   = "${var.app_name}-admin"
-  public_key = file(pathexpand(var.ssh_public_key_path))
+  public_key = local.ssh_keys[0]
 }
 
 resource "aws_instance" "app" {
@@ -270,6 +272,8 @@ resource "aws_instance" "app" {
     bucket        = aws_s3_bucket.artifacts.id
     env_param     = aws_ssm_parameter.env.name
     domain        = local.domain
+    redirects     = var.redirect_domains
+    ssh_keys      = local.ssh_keys
     acme_email    = var.acme_email
     volume_serial = replace(aws_ebs_volume.data.id, "-", "")
     caddy_version = var.caddy_version

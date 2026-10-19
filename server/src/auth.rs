@@ -294,3 +294,53 @@ pub async fn logout(
 pub async fn me(State(state): State<SharedState>, AuthUser(user): AuthUser) -> Json<Me> {
     Json(Me::new(&state, user))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usernames() {
+        for ok in ["nate", "a_b.c", "abc", "x2345678901234567890"] {
+            assert!(validate_username(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "ab",
+            "x23456789012345678901",
+            "has space",
+            "dash-name",
+            "émile",
+            "",
+        ] {
+            assert!(validate_username(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn auth_keys_are_base64_and_bounded() {
+        // What the client sends: 32 bytes, standard base64.
+        assert!(validate_auth_key("q3V0Jm9XcLk2eY1aGfQ8m0Ht2pWQv4Lr1nZ7uIcS0dE=").is_ok());
+        assert!(validate_auth_key("correct horse battery staple").is_err());
+        assert!(validate_auth_key(&"A".repeat(132)).is_err());
+    }
+
+    #[test]
+    fn tokens_hash_to_stable_hex() {
+        let h = hash_token("abc");
+        assert_eq!(h.len(), 64);
+        assert_eq!(h, hash_token("abc"));
+        assert_ne!(h, hash_token("abd"));
+        // SHA-256("abc"), so a change to the scheme can't slip by unnoticed.
+        assert_eq!(
+            h,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn secrets_compare_by_value() {
+        assert!(same_secret("letmein", "letmein"));
+        assert!(!same_secret("letmein", "letmeout"));
+        assert!(!same_secret("", "letmein"));
+    }
+}

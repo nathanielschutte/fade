@@ -26,7 +26,7 @@ jobs:
       APP_URL: ${{ vars.APP_URL }}
       TARGET: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check the tag matches Cargo.toml
         run: |
@@ -42,14 +42,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Test
         run: |
           pip install -r tests/requirements.txt
-          scripts/test.sh --no-browser
+          bash scripts/test.sh --no-browser
 
       - name: Build
         run: |
@@ -93,3 +93,4 @@ jobs:
             sleep 2
           done
           echo "expected build $BUILD, live is ${LIVE:-unreachable}"; exit 1
+1

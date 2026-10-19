@@ -1,0 +1,6 @@
+# LF everywhere. Shell scripts and the instance boot script (infra/user_data.sh.tftpl)
+# break with Windows line endings: a CRLF boot script would leave the server
+# unable to start or mount the data volume.
+* text=auto eol=lf
+*.png binary
+*.deb binary
