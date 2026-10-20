@@ -1,0 +1,6 @@
+{
+  "name": "napsack-shared",
+  "private": true,
+  "type": "module",
+  "description": "Code every napsack client uses. Plain ES modules, no build step."
+}

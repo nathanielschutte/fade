@@ -9,7 +9,9 @@ use crate::{version, SharedState};
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
-const CRYPTO_JS: &str = include_str!("../static/crypto.js");
+// Shared with the iOS app; see shared/crypto/crypto.js.
+const CRYPTO_JS: &str = include_str!("../../shared/crypto/crypto.js");
+const KEYSTORE_JS: &str = include_str!("../static/keystore.js");
 const FAVICON_SVG: &str = include_str!("../static/favicon.svg");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const ADMIN_JS: &str = include_str!("../static/admin.js");
@@ -27,6 +29,7 @@ pub fn routes() -> Router<SharedState> {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/crypto.js", get(crypto_js))
+        .route("/keystore.js", get(keystore_js))
         .route("/style.css", get(style_css))
         .route("/admin", get(admin))
         .route("/favicon.svg", get(favicon))
@@ -103,6 +106,16 @@ async fn crypto_js() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-cache"),
         ],
         CRYPTO_JS,
+    )
+}
+
+async fn keystore_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        KEYSTORE_JS,
     )
 }
 

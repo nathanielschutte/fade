@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Build the server, run it on a throwaway database, and run every test against it:
 # unit tests, crypto vector checks, the API smoke test, and (unless --no-browser)
-# the browser tests, which include crypto.js's unit tests against the pinned vectors.
+# the browser tests, which include shared/crypto's checks against the pinned vectors.
 #
 #   scripts/test.sh               everything
 #   scripts/test.sh --no-browser  skip Playwright (no Chrome needed)
 #
-# Needs: cargo, python3 with tests/requirements.txt installed, and Chrome
+# Needs: cargo, Node.js 22+, python3 with tests/requirements.txt installed, and Chrome
 # (or E2E_CHROME=bundled after `python3 -m playwright install chromium`).
 # Works in WSL, Linux, macOS, and CI. On this Windows machine, Smart App Control
 # blocks freshly built binaries, so run it in WSL (setup: CLAUDE.md).
@@ -37,6 +37,12 @@ echo "==> unit tests"
 echo "==> crypto vectors (independent implementation)"
 "$PY" tests/vectors/check_format1.py
 "$PY" tests/vectors/check_format2.py
+
+echo "==> shared crypto against the vectors (Node)"
+# WSL installs Node with nvm, which non-interactive shells don't load.
+if ! command -v node >/dev/null && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi
+command -v node >/dev/null || { echo "Node.js is required (see CLAUDE.md, Environment notes)"; exit 1; }
+node --test "shared/**/*.test.js"
 
 echo "==> building server"
 (cd server && cargo build --quiet)

@@ -9,7 +9,9 @@ napsack is a small private messenger: texts and view-once pictures between frien
 Same for pictures: people see **pic** ("Tap to view pic", "Pics sent"); the code, API, database, and encryption strings say `snap` (`snap_state`, `/api/snaps`, `napsack/v1/snap/...`). Never show "snap" in the UI (`tests/e2e/test_chat.py` checks), and never rename the internal `snap` identifiers.
 
 - `server/`: Rust (axum + SQLite). Serves the API and the web client, which is compiled into the binary.
-- `server/static/`: web client. Plain HTML/CSS/ES modules, no build step, no framework. `crypto.js` is the whole encryption scheme.
+- `server/static/`: web client. Plain HTML/CSS/ES modules, no build step, no framework.
+- `shared/crypto/crypto.js`: the whole encryption scheme, used by every client. The server serves it to the web as `/crypto.js`; the iOS app bundles it. Nothing platform-specific goes in it (key storage lives with each client).
+- `mobile/`: the iOS app (Expo, React Native, TypeScript). Plan and setup: [mobile.md](docs/mobile.md).
 - `infra/`: Terraform for AWS (one EC2 instance, Caddy, a separate EBS data volume).
 - `tests/`: API smoke test, browser tests, pinned crypto vectors. `scripts/`: test, deploy, rollback, ssh.
 - `docs/`: [plan.md](docs/plan.md) (task tracker), [RELEASING.md](docs/RELEASING.md) (versioning and compatibility rules), [how-napsack-works.md](docs/how-napsack-works.md) (encryption), [mobile.md](docs/mobile.md) (iOS plan).
@@ -74,7 +76,7 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 - User-facing errors say what happened and what to do, plainly (`AppError::bad("...")`).
 - The web client has a strict CSP: no inline scripts or `style` attributes. Set styles through CSSOM (`el.style.height = ...`) and keep CSS in `style.css`. No third-party scripts, fonts, or CDNs.
 - Keep the web client build-free. Add a dependency only when it does real work, and say why in the change.
-- Encryption: anything in `crypto.js` that changes bytes on the wire is a new message format, never an edit to format 1. The pinned vectors in `tests/vectors/format1.json` are never regenerated. If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.
+- Encryption: anything in `shared/crypto/crypto.js` that changes bytes on the wire is a new message format, never an edit to an existing one. The pinned vectors in `tests/vectors/` are never regenerated. Every client runs `shared/crypto/vector-checks.js` against them (Node in `scripts/test.sh`, the iPhone from the app). If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.
 - Never log, print, or commit secrets: tokens, auth keys, invite codes, `terraform.tfvars`, saved plans, or anything decrypted. The server never has plaintext, and logs and the admin panel show counts and events only.
 
 ## Security
@@ -112,6 +114,8 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 - From Git Bash, call WSL as `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -lc '...'`. Without the env var, Git Bash rewrites `/mnt/...` paths, and without `-l`, cargo isn't on PATH. For anything with nested quotes, write a script file and run that.
 - `server/target` is shared between Windows and WSL builds: the Windows binary is `fade-server.exe`, the Linux one has no extension.
 - `scripts/deploy.sh` needs zig, which lives in the WSL venv: `source server/.venv/bin/activate` first.
+- **Node lives in WSL too** (nvm, Node 24 LTS), for the shared crypto test and the iOS app. Non-interactive shells need `. ~/.nvm/nvm.sh`. Expo docs change every SDK: check the versioned docs for the SDK in `mobile/package.json` before writing Expo or EAS code (`mobile/AGENTS.md`).
+- `wsl.exe` swallows `$VARIABLES` in commands passed from Git Bash. Put anything with variables in a script file and run `wsl.exe -d Ubuntu -- bash /mnt/c/.../script.sh`.
 - Production shell: `scripts/ssh.sh` (SSH tunneled through SSM; port 22 is closed).
 - Git on Windows doesn't record executable bits. A new script needs `git update-index --chmod=+x scripts/<name>.sh`, and CI calls scripts through `bash` anyway.
 - Everything is LF (`.gitattributes`). A CRLF boot script would stop the server from starting and mounting its data, so don't override it.

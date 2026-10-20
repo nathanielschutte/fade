@@ -2,7 +2,7 @@
 or point it at one yourself:
     python3 tests/smoke_test.py http://127.0.0.1:8080 letmein
 
-Encryption happens in the browser (static/crypto.js), so this test sends
+Encryption happens in the client (shared/crypto/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """

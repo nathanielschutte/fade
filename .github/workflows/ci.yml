@@ -30,6 +30,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         working-directory: server
 
+      # Runs shared/crypto against the pinned vectors (the code the iOS app shares).
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -51,6 +56,31 @@ jobs:
           name: screenshots
           path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
+
+  mobile:
+    name: iOS app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Dependencies match the Expo SDK
+        run: npx expo-doctor
+      # Bundles the JavaScript the way a build would, including shared/crypto,
+      # without building or signing the native app (that's EAS, in the cloud).
+      - name: Bundle for iOS
+        run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/ios-bundle"
+        env:
+          EXPO_NO_TELEMETRY: "1"
 
   infra:
     name: Terraform

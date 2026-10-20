@@ -13,7 +13,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|
 | 1 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
 | 2 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
-| 3 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
+| 3 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
 | 4 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
 | 5 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
 | 6 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
@@ -85,7 +85,8 @@ Production runs **0.13.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F1. iOS app
 - iOS app. This is the big one.
 - Plan and milestones: [mobile.md](mobile.md). Push notifications are part of it.
-- Needs: Apple Developer Program, Expo account.
+- Needs: Apple Developer Program (requested 2026-10-19, pending), Expo account (done).
+- Started (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` is an Expo SDK 58 app whose one screen runs every vector check on the phone. Next: `eas init`, register the iPhone, first development build, read the results. Status in [mobile.md](mobile.md#first-milestones).
 
 #### F2. Password reset and recovery
 - Password reset flow - email?  Admin recovery key for support.

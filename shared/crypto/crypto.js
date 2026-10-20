@@ -1,4 +1,14 @@
-// End-to-end encryption, using only the browser's built-in WebCrypto.
+// End-to-end encryption, shared by every napsack client: the web app (served
+// by the server as /crypto.js) and the iOS app (bundled from this file). It
+// uses only the standard WebCrypto API (`crypto.subtle`), TextEncoder/
+// TextDecoder, and atob/btoa, which browsers, Node, and React Native (with
+// react-native-quick-crypto) all provide. Nothing platform-specific belongs
+// here; key storage lives with each client.
+//
+// Changing bytes on the wire means a new message format (docs/RELEASING.md).
+// tests/vectors/format1.json and format2.json pin the exact output, and every
+// client is tested against them.
+//
 //
 // Password -> PBKDF2 (salted with the username) -> master secret, split by HKDF into:
 //   auth key: sent to the server in place of the password
@@ -181,37 +191,3 @@ export async function safetyCode(publicB64A, publicB64B) {
   for (let i = 0; i < 12; i += 2) groups.push(String(((digest[i] << 8) | digest[i + 1]) % 100000).padStart(5, "0"));
   return groups.join(" ");
 }
-
-// ---------- local key storage ----------
-// The unwrapped private key is a non-extractable CryptoKey kept in IndexedDB,
-// so a reload doesn't need the password. Signing out deletes it.
-
-const DB_NAME = "napsack";
-const STORE = "keys";
-
-function idb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbDo(mode, fn) {
-  const db = await idb();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const req = fn(tx.objectStore(STORE));
-      tx.oncomplete = () => resolve(req?.result);
-      tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-
-export const saveLocal = (key, value) => idbDo("readwrite", (s) => s.put(value, key));
-export const loadLocal = (key) => idbDo("readonly", (s) => s.get(key));
-export const deleteLocal = (key) => idbDo("readwrite", (s) => s.delete(key));

@@ -14,10 +14,11 @@ COUNT = 130
 # user's own key from the browser, without typing them one by one.
 SEND_MANY = """async ([friendName, count]) => {
   const e2e = await import('/crypto.js');
+  const keystore = await import('/keystore.js');
   const auth = { Authorization: 'Bearer ' + localStorage.getItem('fade.token') };
   const me = await (await fetch('/api/me', { headers: auth })).json();
   const friend = (await (await fetch('/api/friends', { headers: auth })).json()).find(f => f.username === friendName);
-  const identity = await e2e.loadLocal('identity');
+  const identity = await keystore.loadLocal('identity');
   const key = await e2e.pairKey(identity.privateKey, friend.public_key, me.id, friend.id);
   for (let i = 1; i <= count; i++) {
     const ciphertext = await e2e.encryptText(key, `msg ${i}`, me.id, friend.id);

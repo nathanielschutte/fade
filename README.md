@@ -6,7 +6,9 @@ A minimal private messenger for a few friends. You get a list of chats with your
 
 ```
 server/         Rust (axum + SQLite). One binary that serves the API and the web client.
-  static/       Web client: plain HTML/CSS/ES modules, no build step, no Node. crypto.js holds all E2E code.
+  static/       Web client: plain HTML/CSS/ES modules, no build step, no Node.
+shared/crypto/  All E2E code (crypto.js), shared by the web client and the iOS app
+mobile/         The iOS app (Expo); see docs/mobile.md
   migrations/   SQLite schema
 infra/          Terraform for AWS
 scripts/        test.sh, deploy.sh, rollback.sh, ssh.sh
@@ -96,7 +98,7 @@ The first 100 GB/month of outbound data is free. Check current prices before rel
 
 For a fuller walkthrough with diagrams, see [docs/how-napsack-works.md](docs/how-napsack-works.md).
 
-All of it is in [server/static/crypto.js](server/static/crypto.js), using the browser's built-in WebCrypto.
+All of it is in [shared/crypto/crypto.js](shared/crypto/crypto.js), using the standard WebCrypto API (built into browsers; native on iOS through react-native-quick-crypto).
 
 - **Sign-in.** The password never leaves the browser. PBKDF2-SHA256 (600k iterations, salted with the lowercased username) turns it into a master secret, and HKDF splits that into an *auth key*, sent in place of the password (the server Argon2-hashes it), and a *wrap key*, which never leaves the device.
 - **Identity.** Each account has a P-256 key pair made at sign-up. The server stores the public key and the private key encrypted (AES-GCM) with the wrap key. Signing in on any device downloads that blob and unwraps it locally, which is why history works on a new phone. The unwrapped key is kept as a non-extractable `CryptoKey` in IndexedDB, and signing out deletes it.

@@ -2,7 +2,7 @@
 
 A tour of the app for the people who run it, with most of the time spent on the end-to-end encryption: what happens to your password, where keys live, and what the server can and can't see.
 
-The exact strings and numbers here come from [`server/static/crypto.js`](../server/static/crypto.js) and [`server/static/app.js`](../server/static/app.js). If you change those, update this doc in the same change.
+The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shared/crypto/crypto.js) and [`server/static/app.js`](../server/static/app.js). If you change those, update this doc in the same change.
 
 - [At a glance](#at-a-glance)
 - [The parts](#the-parts)
@@ -32,7 +32,7 @@ Every direct text and every pic is encrypted in the sender's browser and decrypt
 
 **The server** is one Rust program (axum and SQLite). It serves the API, a WebSocket for live updates, and the web app itself: the HTML, CSS and JavaScript are compiled into the binary, so a deploy is a single file.
 
-**The web app** is plain JavaScript with no framework and no build step. All of the encryption lives in one file, `crypto.js`, and uses only WebCrypto, the cryptography built into every modern browser. There are no third-party crypto libraries to trust.
+**The web app** is plain JavaScript with no framework and no build step. All of the encryption lives in one file, `shared/crypto/crypto.js`, and uses only WebCrypto, the cryptography built into every modern browser. The iOS app uses the very same file. There are no third-party crypto libraries to trust.
 
 **The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. Unopened pics wait on that disk as ciphertext (see [Pics](#pics)).
 

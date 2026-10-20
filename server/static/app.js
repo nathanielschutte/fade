@@ -3,6 +3,7 @@
 // Texts and snaps are encrypted here before upload; see crypto.js.
 
 import * as e2e from "/crypto.js";
+import * as keystore from "/keystore.js";
 
 const APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
@@ -164,7 +165,7 @@ async function checkPins(chats) {
     chat.keyChanged = Boolean(pinned) && pinned !== chat.public_key;
     if (chat.keyChanged) report("warn", "friend key changed; chat blocked", { friend_id: chat.id });
   }
-  if (changed) await e2e.saveLocal(pinsKey(), state.pins);
+  if (changed) await keystore.saveLocal(pinsKey(), state.pins);
 }
 
 async function keyFor(friendId) {
@@ -202,10 +203,10 @@ async function decrypt(m) {
 }
 
 async function loadIdentity() {
-  const id = await e2e.loadLocal(IDENTITY_KEY).catch(() => null);
+  const id = await keystore.loadLocal(IDENTITY_KEY).catch(() => null);
   if (!id || id.userId !== state.me.id) return false;
   state.identity = id;
-  state.pins = (await e2e.loadLocal(pinsKey()).catch(() => null)) || {};
+  state.pins = (await keystore.loadLocal(pinsKey()).catch(() => null)) || {};
   return true;
 }
 
@@ -278,8 +279,8 @@ $("#auth-form").addEventListener("submit", async (e) => {
     state.token = res.token;
     state.me = res.user;
     state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
-    await e2e.saveLocal(IDENTITY_KEY, state.identity);
-    state.pins = (await e2e.loadLocal(pinsKey()).catch(() => null)) || {};
+    await keystore.saveLocal(IDENTITY_KEY, state.identity);
+    state.pins = (await keystore.loadLocal(pinsKey()).catch(() => null)) || {};
     localStorage.setItem(TOKEN_KEY, res.token);
     form.reset();
     report("info", register ? "signed up" : "signed in");
@@ -308,7 +309,7 @@ function signOutLocally() {
   state.groupMessages.clear();
   state.groupHistory.clear();
   localStorage.removeItem(TOKEN_KEY);
-  e2e.deleteLocal(IDENTITY_KEY).catch(() => {});
+  keystore.deleteLocal(IDENTITY_KEY).catch(() => {});
   const ws = state.ws;
   state.ws = null;
   ws?.close();
