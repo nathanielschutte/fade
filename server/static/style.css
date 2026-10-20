@@ -316,6 +316,12 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 .camera[open] { display: flex; }
 .camera-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; }
 .camera-stage video, .camera-stage img { width: 100%; height: 100%; object-fit: contain; }
+.snap-caption {
+  position: absolute; left: 0.75rem; right: 0.75rem; bottom: 1rem;
+  padding: 0.65rem 0.9rem; border: 1px solid var(--rule); border-radius: 999px;
+  background: rgba(12, 20, 16, 0.7); color: var(--paper); font: inherit;
+}
+.snap-caption:focus { outline: none; border-color: var(--sage); }
 .camera-message { position: absolute; max-width: 22rem; padding: 1rem; text-align: center; color: var(--fixer); }
 .camera-controls {
   flex: none;
@@ -379,6 +385,13 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 .viewer-from {
   position: absolute; top: calc(max(0.75rem, env(safe-area-inset-top)) + 0.75rem); left: 1rem;
   font-weight: 700; text-shadow: 0 1px 6px rgba(12, 20, 16, 0.8);
+}
+/* Across the lower third, like it was written on the photo. */
+.viewer-caption {
+  position: absolute; left: 0; right: 0; bottom: 30%;
+  margin: 0; padding: 0.6rem 1rem;
+  background: rgba(12, 20, 16, 0.6);
+  text-align: center; overflow-wrap: anywhere;
 }
 .viewer-hint {
   position: absolute; bottom: max(1rem, env(safe-area-inset-bottom));
@@ -549,7 +562,7 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .profile-id h2 { overflow-wrap: anywhere; }
 .profile-sub { color: var(--fixer); font-size: var(--step--1); }
 
-/* Initial on a muted tint until profile pictures exist. */
+/* A picture, or an initial on a muted tint. */
 .avatar {
   flex: none; display: inline-grid; place-items: center;
   width: 3.25rem; height: 3.25rem; border-radius: 50%;

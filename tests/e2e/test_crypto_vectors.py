@@ -11,8 +11,9 @@ from playwright.async_api import async_playwright
 from common import BASE, launch
 
 VECTORS = os.path.join(os.path.dirname(__file__), "..", "vectors", "format1.json")
+VECTORS_2 = os.path.join(os.path.dirname(__file__), "..", "vectors", "format2.json")
 
-CHECKS = """async (v) => {
+CHECKS = """async ([v, v2]) => {
   const e2e = await import('/crypto.js');
   const s = crypto.subtle;
   const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
@@ -59,7 +60,27 @@ CHECKS = """async (v) => {
   // Safety code
   check('safety code matches vector', await e2e.safetyCode(v.alice.spki, v.bob.spki) === v.safety_code);
   check('safety code is symmetric', await e2e.safetyCode(v.bob.spki, v.alice.spki) === v.safety_code);
-  check('format is 1', e2e.FORMAT === 1);
+  check('texts are format 1', e2e.FORMAT === 1 && e2e.TEXT_FORMAT === 1);
+
+  // Format 2: a pic with a caption sealed inside
+  check('pics are format 2', e2e.SNAP_FORMAT === 2);
+  for (const name of ['pic', 'pic_no_caption']) {
+    const p = v2[name];
+    const got = await e2e.decryptPic(kb, e2e.fromB64(p.ciphertext_b64), 2, p.from, p.to);
+    check(`recipient decrypts format 2 ${name}`, got.caption === p.caption && e2e.toB64(got.photo) === p.photo_b64);
+    check(`packs ${name} like the vector`, e2e.toB64(e2e.packPic(e2e.fromB64(p.photo_b64), p.caption)) === p.plaintext_b64);
+  }
+  const p2 = v2.pic;
+  check('format 2 cannot be read as format 1', await fails(() => e2e.decryptPic(kb, e2e.fromB64(p2.ciphertext_b64), 1, p2.from, p2.to)));
+  check('format 1 cannot be read as format 2', await fails(() => e2e.decryptPic(kb, e2e.fromB64(v.snap.ciphertext_b64), 2, v.snap.from, v.snap.to)));
+  const old = await e2e.decryptPic(kb, e2e.fromB64(v.snap.ciphertext_b64), 1, v.snap.from, v.snap.to);
+  check('format 1 pics still open, with no caption', old.caption === '' && e2e.toB64(old.photo) === v.snap.plaintext_b64);
+  check('swapped sender fails for format 2', await fails(() => e2e.decryptPic(kb, e2e.fromB64(p2.ciphertext_b64), 2, p2.to, p2.from)));
+  const sealed = await e2e.encryptPic(ka, new Uint8Array([1, 2, 3]), 'hi \\u{1F44B}', v.alice.id, v.bob.id);
+  const back = await e2e.decryptPic(kb, sealed, 2, v.alice.id, v.bob.id);
+  check('format 2 round-trips', back.caption === 'hi \\u{1F44B}' && back.photo.join() === '1,2,3');
+  check('long captions are refused', await fails(async () => e2e.packPic(new Uint8Array(1), 'x'.repeat(e2e.MAX_CAPTION_BYTES + 1))));
+  check('malformed envelopes are refused', await fails(async () => e2e.unpackPic(new Uint8Array([0xff, 0xff, 1]))));
   return results;
 }"""
 
@@ -67,11 +88,13 @@ CHECKS = """async (v) => {
 async def main():
     with open(VECTORS, encoding="utf-8") as f:
         vectors = json.load(f)
+    with open(VECTORS_2, encoding="utf-8") as f:
+        vectors_2 = json.load(f)
     async with async_playwright() as pw:
         browser = await launch(pw)
         page = await browser.new_page()
         await page.goto(BASE)
-        results = await page.evaluate(CHECKS, vectors)
+        results = await page.evaluate(CHECKS, [vectors, vectors_2])
         await browser.close()
     for name, ok in results.items():
         print(f"  {'ok  ' if ok else 'FAIL'} {name}")

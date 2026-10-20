@@ -8,6 +8,7 @@ mod group_pics;
 mod groups;
 mod images;
 mod logs;
+mod people;
 mod profiles;
 mod ratelimit;
 mod snaps;
@@ -39,8 +40,8 @@ pub struct Config {
     /// How long an unopened snap is held in RAM before it's dropped.
     pub snap_ttl: Duration,
     pub snap_max_bytes: usize,
-    /// Ceiling on RAM used by all pending snaps combined.
-    pub snap_pool_bytes: usize,
+    /// Ceiling on disk used by all unopened direct pics combined.
+    pub snap_disk_bytes: usize,
     pub session_days: i64,
     /// Lowercased usernames allowed into the admin panel.
     pub admins: Vec<String>,
@@ -74,10 +75,10 @@ impl Config {
             invite_code: std::env::var("FADE_INVITE_CODE")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
-            snap_ttl: Duration::from_secs(env_or::<u64>("FADE_SNAP_TTL_HOURS", 24)? * 3600),
+            snap_ttl: Duration::from_secs(env_or::<u64>("FADE_SNAP_TTL_HOURS", 24 * 30)? * 3600),
             // Clients compress to ~200 KB; this is the hard ceiling on what the server accepts.
             snap_max_bytes: env_or::<usize>("FADE_SNAP_MAX_KB", 512)? * 1024,
-            snap_pool_bytes: env_or::<usize>("FADE_SNAP_POOL_MB", 128)? * 1024 * 1024,
+            snap_disk_bytes: env_or::<usize>("FADE_SNAP_DISK_MB", 256)? * 1024 * 1024,
             session_days: env_or("FADE_SESSION_DAYS", 90)?,
             admins: std::env::var("FADE_ADMINS")
                 .unwrap_or_default()
@@ -116,7 +117,6 @@ impl Config {
 pub struct AppState {
     pub db: SqlitePool,
     pub hub: ws::Hub,
-    pub snaps: snaps::SnapStore,
     pub config: Config,
     pub started_at: std::time::Instant,
     /// Recent log entries for the admin log viewer.
@@ -160,11 +160,10 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.pic_dir)
         .map_err(|e| anyhow::anyhow!("creating {}: {e}", config.pic_dir.display()))?;
 
-    // Snap bytes don't survive a restart (by design), so any snap still marked
-    // pending from a previous run is gone. Make the DB agree.
-    let orphaned = db::expire_orphaned_snaps(&db).await?;
-    if orphaned > 0 {
-        tracing::info!(orphaned, "marked pics from previous run as expired");
+    // Unopened pics wait on disk; make the database and the files agree.
+    let (lost, strays) = snaps::reconcile(&db, &config.pic_dir).await?;
+    if lost > 0 || strays > 0 {
+        tracing::info!(lost, strays, "reconciled unopened pics with their files");
     }
 
     if config.admins.is_empty() {
@@ -174,7 +173,6 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         db,
         hub: ws::Hub::default(),
-        snaps: snaps::SnapStore::new(config.snap_pool_bytes, config.snap_ttl),
         config,
         started_at: std::time::Instant::now(),
         logs: log_buffer,
@@ -218,6 +216,21 @@ fn router(state: SharedState) -> Router {
         .route("/friends", get(friends::list_chats))
         .route("/friends/{user_id}", delete(friends::remove))
         .route("/users/{user_id}/profile", get(profiles::get))
+        .route(
+            "/users/{user_id}/avatar/{avatar_id}",
+            get(people::get_avatar),
+        )
+        .route("/me/name", axum::routing::put(people::set_display_name))
+        .route(
+            "/me/avatar",
+            post(people::set_avatar)
+                .delete(people::clear_avatar)
+                .layer(DefaultBodyLimit::max(people::AVATAR_MAX_BYTES)),
+        )
+        .route(
+            "/friends/{user_id}/nickname",
+            axum::routing::put(people::set_nickname),
+        )
         .route("/groups", get(groups::list).post(groups::create))
         .route("/groups/{group_id}", get(groups::get).patch(groups::rename))
         .route("/groups/{group_id}/members", post(groups::add_member))

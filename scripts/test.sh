@@ -36,6 +36,7 @@ echo "==> unit tests"
 
 echo "==> crypto vectors (independent implementation)"
 "$PY" tests/vectors/check_format1.py
+"$PY" tests/vectors/check_format2.py
 
 echo "==> building server"
 (cd server && cargo build --quiet)
@@ -53,24 +54,34 @@ export NAPSACK_ADMIN="e2e_admin"
 export NAPSACK_DB="$TMP/test.db"
 export NAPSACK_SHOTS="${NAPSACK_SHOTS:-$TMP/shots}"
 
-FADE_BIND="127.0.0.1:$PORT" \
-FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
-FADE_INVITE_CODE="$NAPSACK_INVITE" \
-FADE_ADMINS="$NAPSACK_ADMIN" \
-FADE_MIN_CLIENT_VERSIONS="ios=1.2.0" \
-RUST_LOG="${RUST_LOG:-fade_server=warn}" \
-  "$BIN" > "$TMP/server.log" 2>&1 &
-SERVER_PID=$!
-trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
-
-for _ in $(seq 1 50); do
-  curl -sf "$NAPSACK_URL/api/config" >/dev/null && break
-  sleep 0.2
-done
-curl -sf "$NAPSACK_URL/api/config" >/dev/null || { cat "$TMP/server.log"; echo "server didn't start"; exit 1; }
+start_server() {
+  FADE_BIND="127.0.0.1:$PORT" \
+  FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
+  FADE_INVITE_CODE="$NAPSACK_INVITE" \
+  FADE_ADMINS="$NAPSACK_ADMIN" \
+  FADE_MIN_CLIENT_VERSIONS="ios=1.2.0" \
+  RUST_LOG="${RUST_LOG:-fade_server=warn}" \
+    "$BIN" >> "$TMP/server.log" 2>&1 &
+  SERVER_PID=$!
+  for _ in $(seq 1 50); do
+    curl -sf "$NAPSACK_URL/api/config" >/dev/null && break
+    sleep 0.2
+  done
+  curl -sf "$NAPSACK_URL/api/config" >/dev/null || { cat "$TMP/server.log"; echo "server didn't start"; exit 1; }
+}
+trap 'kill ${SERVER_PID:-} 2>/dev/null || true' EXIT
+start_server
 
 echo "==> API smoke test"
 "$PY" tests/smoke_test.py
+
+echo "==> unopened pics survive a restart"
+export NAPSACK_RESTART_STATE="$TMP/restart.json"
+"$PY" tests/restart_test.py before
+kill "$SERVER_PID"
+wait "$SERVER_PID" 2>/dev/null || true
+start_server
+"$PY" tests/restart_test.py after
 
 if [ "$BROWSER" = 1 ]; then
   for t in tests/e2e/test_*.py; do

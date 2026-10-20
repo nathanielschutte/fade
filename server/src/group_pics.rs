@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
     Json,
@@ -59,7 +59,7 @@ pub fn sniff_image(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn image_response(mime: &str, data: Vec<u8>) -> Response {
+pub fn image_response(mime: &str, data: Vec<u8>) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -178,14 +178,39 @@ async fn rebroadcast(state: &SharedState, pic: i64) -> AppResult<()> {
     Ok(())
 }
 
+pub const MAX_CAPTION_CHARS: usize = 200;
+
+#[derive(serde::Deserialize)]
+pub struct UploadParams {
+    /// `?caption=...`: shown with the pic when it's opened. Query strings are never logged.
+    #[serde(default)]
+    caption: String,
+}
+
+/// One line, checked like any other text people see (text.rs). Blank is none.
+fn clean_caption(raw: &str) -> AppResult<Option<String>> {
+    crate::text::check_name(raw).map_err(|_| {
+        AppError::bad("Captions can't contain line breaks or invisible characters.")
+    })?;
+    let caption = raw.trim();
+    if caption.chars().count() > MAX_CAPTION_CHARS {
+        return Err(AppError::bad(format!(
+            "Captions can be at most {MAX_CAPTION_CHARS} characters."
+        )));
+    }
+    Ok((!caption.is_empty()).then(|| caption.to_owned()))
+}
+
 /// `POST /api/groups/{id}/pics`: raw image body (the client compresses it).
 pub async fn upload(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(group): Path<i64>,
+    Query(params): Query<UploadParams>,
     body: Bytes,
 ) -> AppResult<Json<GroupMessage>> {
     groups::require_member(&state.db, group, me.id).await?;
+    let caption = clean_caption(&params.caption)?;
     if body.len() < MIN_IMAGE_BYTES {
         return Err(AppError::bad("That pic was empty."));
     }
@@ -216,13 +241,14 @@ pub async fn upload(
     let at = now();
     let mut tx = state.db.begin().await?;
     let pic: i64 = sqlx::query_scalar(
-        "INSERT INTO group_pics (group_id, sender_id, bytes, mime, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO group_pics (group_id, sender_id, bytes, mime, caption, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(group)
     .bind(me.id)
     .bind(body.len() as i64)
     .bind(mime)
+    .bind(caption.as_deref())
     .bind(at)
     .bind(at + state.config.group_pic_ttl.as_secs() as i64)
     .fetch_one(&mut *tx)
@@ -264,6 +290,9 @@ pub async fn upload(
     Ok(Json(message))
 }
 
+/// sender, mime, discarded_at, expires_at, message id, caption
+type PicRow = (i64, String, Option<i64>, i64, i64, Option<String>);
+
 /// `GET /api/groups/{id}/pics/{pic_id}`: view once, for members who were there
 /// when it was sent (not the sender).
 pub async fn view(
@@ -272,8 +301,8 @@ pub async fn view(
     Path((group, pic)): Path<(i64, i64)>,
 ) -> AppResult<Response> {
     let (_, visible_after) = groups::require_member(&state.db, group, me.id).await?;
-    let row: Option<(i64, String, Option<i64>, i64, i64)> = sqlx::query_as(
-        "SELECT p.sender_id, p.mime, p.discarded_at, p.expires_at, gm.id
+    let row: Option<PicRow> = sqlx::query_as(
+        "SELECT p.sender_id, p.mime, p.discarded_at, p.expires_at, gm.id, p.caption
          FROM group_pics p JOIN group_messages gm ON gm.pic_id = p.id
          WHERE p.id = ? AND p.group_id = ?",
     )
@@ -282,7 +311,7 @@ pub async fn view(
     .fetch_optional(&state.db)
     .await?;
     let not_found = || AppError::not_found("Pic not found.");
-    let (sender, mime, discarded, expires_at, message_id) = row.ok_or_else(not_found)?;
+    let (sender, mime, discarded, expires_at, message_id, caption) = row.ok_or_else(not_found)?;
     if message_id <= visible_after {
         return Err(not_found()); // sent before they joined
     }
@@ -326,7 +355,29 @@ pub async fn view(
     );
     discard_if_everyone_opened(&state, pic).await?;
     rebroadcast(&state, pic).await?;
-    Ok(image_response(&mime, data))
+    let mut response = image_response(&mime, data);
+    if let Some(caption) = caption {
+        // Headers are ASCII; the client decodes this with decodeURIComponent.
+        if let Ok(value) = HeaderValue::from_str(&percent_encode(&caption)) {
+            response
+                .headers_mut()
+                .insert(header::HeaderName::from_static("x-napsack-caption"), value);
+        }
+    }
+    Ok(response)
+}
+
+/// Percent-encodes everything but unreserved characters (RFC 3986).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// Every minute: discard expired group pics, and any that everyone left in
@@ -455,5 +506,18 @@ mod tests {
         assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
         assert_eq!(sniff_image(b"<svg onload=alert(1)>"), None);
         assert_eq!(sniff_image(b"GIF89a"), None);
+    }
+
+    #[test]
+    fn captions_are_one_clean_line_and_encode_safely() {
+        assert_eq!(
+            clean_caption("  sunset 🌅 ").unwrap().as_deref(),
+            Some("sunset 🌅")
+        );
+        assert_eq!(clean_caption("   ").unwrap(), None);
+        assert!(clean_caption("two\nlines").is_err());
+        assert!(clean_caption("a\u{202E}b").is_err());
+        assert!(clean_caption(&"x".repeat(201)).is_err());
+        assert_eq!(percent_encode("a b/é<"), "a%20b%2F%C3%A9%3C");
     }
 }

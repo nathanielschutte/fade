@@ -33,6 +33,16 @@ async def befriend(asker, asked, name_of_asked, name_of_asker):
     await asked.click("#friends-dialog [data-close]")
 
 
+# A real PNG made in the page, handed to a file input the way a person would pick one.
+PICK_IMAGE = """async (selector) => {
+  const c = document.createElement('canvas'); c.width = 900; c.height = 600;
+  const g = c.getContext('2d'); g.fillStyle = '#c84'; g.fillRect(0, 0, 900, 600); g.fillStyle = '#fff'; g.fillRect(300, 150, 300, 300);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], 'me.png', { type: 'image/png' }));
+  const input = document.querySelector(selector); input.files = dt.files; input.dispatchEvent(new Event('change'));
+}"""
+
+
 def stat(page, label):
     return page.locator("#profile-stats dt", has_text=label).locator("xpath=following-sibling::dd[1]")
 
@@ -58,7 +68,7 @@ async def main():
         await expect(ana.locator("#my-name")).to_have_text(ANA)
         await ana.click("#my-profile")
         await expect(ana.locator("#profile-name")).to_have_text(ANA)
-        await expect(ana.locator("#profile-sub")).to_contain_text("Joined")
+        await expect(ana.locator("#profile-sub")).to_contain_text(f"@{ANA} · joined")
         await expect(stat(ana, "Texts sent")).to_have_text("2")
         await expect(stat(ana, "Friends")).to_have_text("2")
         await expect(ana.locator("#profile-people .person-name")).to_have_text([BEN, CAL])
@@ -67,7 +77,7 @@ async def main():
         # Click through to Ben's profile.
         await ana.locator("#profile-people .person-link", has_text=BEN).click()
         await expect(ana.locator("#profile-name")).to_have_text(BEN)
-        await expect(ana.locator("#profile-sub")).to_contain_text("Friends since")
+        await expect(ana.locator("#profile-sub")).to_contain_text("friends since")
         await expect(stat(ana, "Texts between you")).to_have_text("2")
         await expect(stat(ana, "Their friends")).to_have_text("2")
         await expect(ana.locator("#profile-people-title")).to_have_text("Friends you share")
@@ -79,10 +89,54 @@ async def main():
         await expect(ana.locator("#profile-dialog")).not_to_be_visible()
         await expect(ana.locator("#chat-title")).to_have_text(BEN)
 
+        # Ana names herself and adds a picture; her friends see both, live.
+        await ana.click("#my-profile")
+        await ana.fill("#profile-name-input", "  Ana   Banana ")
+        await ana.press("#profile-name-input", "Enter")
+        await expect(ana.locator("#profile-edit-note")).to_have_text("Saved.")
+        await expect(ana.locator("#profile-name")).to_have_text("Ana Banana")
+        await expect(ana.locator("#my-name")).to_have_text("Ana Banana")
+        await ana.evaluate(PICK_IMAGE, "#profile-picture-input")
+        await expect(ana.locator("#profile-edit-note")).to_have_text("Picture updated.", timeout=10000)
+        await expect(ana.locator("#profile-avatar img")).to_be_visible()
+        await expect(ana.locator("#my-avatar img")).to_be_visible()
+        await shot(ana, "profile-edit", full_page=False)
+        await ana.click("#profile-dialog [data-close]")
+        ana_row = ben.locator(".chat-item", has_text="Ana Banana")
+        await expect(ana_row).to_be_visible(timeout=10000)
+        await expect(ana_row.locator(".avatar img")).to_be_visible(timeout=10000)
+
+        # Ben gives her a nickname only he sees; the username stays visible as the identity.
+        await ana_row.click()
+        await expect(ben.locator("#chat-sub")).to_have_text(f"@{ANA}")
+        await ben.click("#chat-title")
+        await expect(ben.locator("#profile-name-label")).to_have_text("Nickname")
+        await ben.fill("#profile-name-input", "Sis")
+        await ben.press("#profile-name-input", "Enter")
+        await expect(ben.locator("#profile-name")).to_have_text("Sis", timeout=10000)
+        await expect(ben.locator("#profile-sub")).to_contain_text(f"@{ANA} · goes by “Ana Banana”")
+        await ben.click("#profile-dialog [data-close]")
+        await expect(ben.locator("#chat-title")).to_have_text("Sis")
+        await expect(ben.locator(".chat-item .chat-name", has_text="Sis")).to_be_visible()
+        await expect(ben.locator(".sender", has_text="Sis").first).to_be_visible()
+        await shot(ben, "nickname", full_page=False)
+        await expect(cal.locator(".chat-item .chat-name", has_text="Ana Banana")).to_be_visible(timeout=10000)
+        assert await cal.locator(".chat-item", has_text="Sis").count() == 0, "nicknames are private"
+
+        # Removing the picture goes back to the initial, for everyone.
+        await ana.click("#my-profile")
+        await ana.click("#profile-picture-clear")
+        await expect(ana.locator("#profile-edit-note")).to_have_text("Picture removed.", timeout=10000)
+        await expect(ana.locator("#profile-avatar img")).to_have_count(0)
+        await ana.click("#profile-dialog [data-close]")
+        await expect(ben.locator(".chat-item", has_text="Sis").locator(".avatar img")).to_have_count(0, timeout=10000)
+        await expect(ben.locator(".chat-item", has_text="Sis").locator(".avatar")).to_have_text("S")
+        print("names, private nicknames, and pictures: set, seen live, removed")
+
         # On a phone, the chat title opens the friend's profile and nothing overflows.
-        await cal.locator(".chat-item", has_text=ANA).click()
+        await cal.locator(".chat-item", has_text="Ana Banana").click()
         await cal.click("#chat-title")
-        await expect(cal.locator("#profile-name")).to_have_text(ANA)
+        await expect(cal.locator("#profile-name")).to_have_text("Ana Banana")
         await expect(stat(cal, "Texts between you")).to_have_text("0")
         await expect(stat(cal, "First message")).to_have_text("—")
         await expect(cal.locator("#profile-people .person-name")).to_have_text([BEN])

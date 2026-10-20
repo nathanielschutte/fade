@@ -150,7 +150,7 @@ function render(s) {
     ["Expired unopened", n(m.snaps_expired)],
     ["Open rate", viewed ? `${Math.round((m.snaps_opened / viewed) * 100)}%` : "—"],
     ["Group pics on disk", `${n(server.group_pics_pending)} · ${bytes(server.group_pic_bytes)} of ${bytes(server.group_pic_disk_bytes)}`],
-    ["Held in memory", `${n(server.snaps_in_memory)} · ${bytes(server.snap_bytes_in_memory)} of ${bytes(server.snap_pool_bytes)}`],
+    ["Direct pics on disk", `${n(server.snaps_waiting)} · ${bytes(server.snap_bytes_waiting)} of ${bytes(server.snap_disk_bytes)}`],
   ]);
   facts("#social-facts", [
     ["Friendships", n(social.friendships)],
@@ -163,7 +163,7 @@ function render(s) {
     ["Version", `${server.version} (${server.build})`],
     ["Uptime", uptime(server.uptime_secs)],
     ["Database", bytes(server.db_bytes)],
-    ["Pic lifetime", `${server.snap_ttl_hours} h`],
+    ["Pic lifetime", server.snap_ttl_hours % 24 ? `${server.snap_ttl_hours} h` : `${server.snap_ttl_hours / 24} days`],
     ["Sign-up", server.invite_required ? "Invite code required" : "Open"],
     ["Last backup", backupText(server.backup)],
     ["Memory", resourceText(server.resources, "mem")],

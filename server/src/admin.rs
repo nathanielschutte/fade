@@ -113,7 +113,7 @@ pub async fn stats(
     .await?;
 
     let (online_users, sockets) = state.hub.online();
-    let (snaps_held, snap_bytes, snap_pool) = state.snaps.usage();
+    let (snaps_held, snap_bytes) = crate::snaps::usage(db).await?;
     let db_bytes = count(
         db,
         "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
@@ -156,9 +156,9 @@ pub async fn stats(
             "build": version::BUILD,
             "uptime_secs": state.started_at.elapsed().as_secs(),
             "db_bytes": db_bytes,
-            "snaps_in_memory": snaps_held,
-            "snap_bytes_in_memory": snap_bytes,
-            "snap_pool_bytes": snap_pool,
+            "snaps_waiting": snaps_held,
+            "snap_bytes_waiting": snap_bytes,
+            "snap_disk_bytes": state.config.snap_disk_bytes,
             "snap_ttl_hours": state.config.snap_ttl.as_secs() / 3600,
             "invite_required": state.config.invite_code.is_some(),
             "backup": backup_status(&state.config.backup_status_path),

@@ -48,6 +48,8 @@ pub enum Profile {
     Me {
         id: i64,
         username: String,
+        display_name: Option<String>,
+        avatar_id: Option<i64>,
         joined_at: i64,
         friends: Vec<FriendEntry>,
         stats: MyStats,
@@ -55,6 +57,10 @@ pub enum Profile {
     Friend {
         id: i64,
         username: String,
+        display_name: Option<String>,
+        /// What you call them; only you see it.
+        nickname: Option<String>,
+        avatar_id: Option<i64>,
         joined_at: i64,
         friends_since: i64,
         friend_count: i64,
@@ -154,10 +160,13 @@ pub async fn get(
     let db = &state.db;
     if id == me.id {
         let (username, joined_at) = joined(db, me.id).await?.ok_or(AppError::Unauthorized)?;
+        let (display_name, avatar_id) = crate::people::own_profile(db, me.id).await?;
         tracing::debug!(user_id = me.id, "viewed own profile");
         return Ok(Json(Profile::Me {
             id: me.id,
             username,
+            display_name,
+            avatar_id,
             joined_at,
             friends: friends_of(db, me.id).await?,
             stats: my_stats(db, me.id).await?,
@@ -183,10 +192,15 @@ pub async fn get(
         .bind(id)
         .fetch_one(db)
         .await?;
+    let (display_name, avatar_id) = crate::people::own_profile(db, id).await?;
+    let nickname = crate::people::nickname(db, me.id, id).await?;
     tracing::debug!(user_id = me.id, friend_id = id, "viewed friend profile");
     Ok(Json(Profile::Friend {
         id,
         username,
+        display_name,
+        nickname,
+        avatar_id,
         joined_at,
         friends_since,
         friend_count,

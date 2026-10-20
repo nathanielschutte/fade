@@ -71,7 +71,7 @@ pub async fn send_text(
     Json(req): Json<NewText>,
 ) -> AppResult<Json<Message>> {
     require_friend(&state, me.id, friend_id).await?;
-    version::check_format(req.format)?;
+    version::check_text_format(req.format)?;
     if req.ciphertext.len() > MAX_CIPHERTEXT_CHARS {
         return Err(AppError::bad("That message is too long."));
     }

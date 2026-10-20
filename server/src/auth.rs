@@ -131,16 +131,22 @@ pub struct Me {
     username: String,
     /// Shows the admin link. The admin API checks again on every request.
     is_admin: bool,
+    /// What your friends see you as (people.rs).
+    display_name: Option<String>,
+    avatar_id: Option<i64>,
 }
 
 impl Me {
-    fn new(state: &SharedState, user: UserPublic) -> Self {
+    async fn load(state: &SharedState, user: UserPublic) -> AppResult<Self> {
         let is_admin = state.config.is_admin(&user.username);
-        Self {
+        let (display_name, avatar_id) = crate::people::own_profile(&state.db, user.id).await?;
+        Ok(Self {
             id: user.id,
             username: user.username,
             is_admin,
-        }
+            display_name,
+            avatar_id,
+        })
     }
 }
 
@@ -249,7 +255,7 @@ pub async fn register(
     tracing::info!(ip = %who.ip, user_id = user.id, username = %user.username, "account created");
     Ok(Json(SessionResponse {
         token,
-        user: Me::new(&state, user),
+        user: Me::load(&state, user).await?,
         public_key: req.public_key,
         wrapped_private_key: req.wrapped_private_key,
     }))
@@ -307,7 +313,7 @@ pub async fn login(
     tracing::info!(ip = %who.ip, user_id = id, %username, "signed in");
     Ok(Json(SessionResponse {
         token,
-        user: Me::new(&state, UserPublic { id, username }),
+        user: Me::load(&state, UserPublic { id, username }).await?,
         public_key,
         wrapped_private_key,
     }))
@@ -332,8 +338,8 @@ pub async fn logout(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-pub async fn me(State(state): State<SharedState>, AuthUser(user): AuthUser) -> Json<Me> {
-    Json(Me::new(&state, user))
+pub async fn me(State(state): State<SharedState>, AuthUser(user): AuthUser) -> AppResult<Json<Me>> {
+    Ok(Json(Me::load(&state, user).await?))
 }
 
 #[cfg(test)]

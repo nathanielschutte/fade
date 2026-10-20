@@ -1,15 +1,13 @@
-//! Snaps are view-once photos, encrypted in the sender's browser. The server
-//! only ever holds ciphertext, and only in this process's memory: never
-//! written to the database, disk, or object storage. A snap is
-//! removed the moment its recipient fetches it, when it expires, or when the
-//! server restarts. The database keeps a metadata row so the chat can show
-//! "Opened" or "Expired".
+//! Pics in direct chats ("snaps" internally) are view-once photos, encrypted
+//! in the sender's browser. The server only ever holds ciphertext.
+//!
+//! An unopened pic waits in a file on the data volume (`<pic_dir>/direct/`)
+//! until its recipient opens it or it expires (30 days by default), so
+//! restarts and deploys don't lose it. Opening or expiring it discards the
+//! file: that's the feature, not data loss. The database row stays, so the
+//! chat can show "Opened" or "Expired".
 
-use std::{
-    collections::HashMap,
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Duration};
 
 use axum::{
     body::Bytes,
@@ -18,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use sqlx::SqlitePool;
 
 use crate::{
     auth::AuthUser,
@@ -29,112 +28,57 @@ use crate::{
     SharedState,
 };
 
-struct Snap {
-    sender_id: i64,
-    recipient_id: i64,
-    data: Bytes,
-    expires_at: Instant,
-}
-
-#[derive(Default)]
-struct Inner {
-    snaps: HashMap<i64, Snap>,
-    total_bytes: usize,
-}
-
-pub struct SnapStore {
-    inner: Mutex<Inner>,
-    pool_bytes: usize,
-    ttl: Duration,
-}
-
-pub enum Take {
-    Found {
-        data: Bytes,
-        sender_id: i64,
-    },
-    /// Not held (already opened, expired, or lost in a restart).
-    Missing,
-}
-
-impl SnapStore {
-    pub fn new(pool_bytes: usize, ttl: Duration) -> Self {
-        Self {
-            inner: Mutex::new(Inner::default()),
-            pool_bytes,
-            ttl,
-        }
-    }
-
-    /// (snaps held, bytes held, pool limit in bytes)
-    pub fn usage(&self) -> (usize, usize, usize) {
-        let inner = self.inner.lock().unwrap();
-        (inner.snaps.len(), inner.total_bytes, self.pool_bytes)
-    }
-
-    fn has_room(&self, len: usize) -> bool {
-        self.inner.lock().unwrap().total_bytes + len <= self.pool_bytes
-    }
-
-    fn put(&self, id: i64, snap: Snap) -> bool {
-        let mut inner = self.inner.lock().unwrap();
-        let len = snap.data.len();
-        if inner.total_bytes + len > self.pool_bytes {
-            return false;
-        }
-        inner.total_bytes += len;
-        inner.snaps.insert(id, snap);
-        true
-    }
-
-    /// Removes and returns the snap, but only for its recipient.
-    /// Anyone else gets `Missing` and the snap stays put.
-    fn take(&self, id: i64, recipient_id: i64) -> Take {
-        let mut inner = self.inner.lock().unwrap();
-        let is_recipient = inner
-            .snaps
-            .get(&id)
-            .is_some_and(|s| s.recipient_id == recipient_id);
-        if !is_recipient {
-            return Take::Missing;
-        }
-        let snap = inner.snaps.remove(&id).expect("checked above");
-        inner.total_bytes -= snap.data.len();
-        Take::Found {
-            data: snap.data,
-            sender_id: snap.sender_id,
-        }
-    }
-
-    /// Drops expired snaps. Returns (message_id, sender_id, recipient_id) for each.
-    fn sweep(&self) -> Vec<(i64, i64, i64)> {
-        let now = Instant::now();
-        let mut inner = self.inner.lock().unwrap();
-        let expired: Vec<i64> = inner
-            .snaps
-            .iter()
-            .filter(|(_, s)| s.expires_at <= now)
-            .map(|(id, _)| *id)
-            .collect();
-        let mut out = Vec::with_capacity(expired.len());
-        for id in expired {
-            if let Some(s) = inner.snaps.remove(&id) {
-                inner.total_bytes -= s.data.len();
-                out.push((id, s.sender_id, s.recipient_id));
-            }
-        }
-        out
-    }
-}
-
 /// 12-byte IV + 16-byte AES-GCM tag. Anything shorter can't be a real snap.
 const MIN_SNAP_BYTES: usize = 29;
+
+pub fn dir(pic_dir: &std::path::Path) -> PathBuf {
+    pic_dir.join("direct")
+}
+
+fn snap_path(state: &SharedState, id: i64) -> PathBuf {
+    dir(&state.config.pic_dir).join(format!("{id}.bin"))
+}
+
+/// (count, bytes) of unopened pics waiting on disk.
+pub async fn usage(db: &SqlitePool) -> sqlx::Result<(i64, i64)> {
+    sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(snap_bytes), 0) FROM messages
+         WHERE kind = 'snap' AND snap_state = 'pending'",
+    )
+    .fetch_one(db)
+    .await
+}
+
+/// Moves a pending snap to `opened` or `expired` and discards its file.
+/// Returns the updated message if this call made the change (so exactly one
+/// caller wins when two race).
+async fn finish(state: &SharedState, id: i64, to: &str) -> sqlx::Result<Option<Message>> {
+    let changed = sqlx::query(
+        "UPDATE messages SET snap_state = ?, read_at = COALESCE(read_at, ?)
+         WHERE id = ? AND kind = 'snap' AND snap_state = 'pending'",
+    )
+    .bind(to)
+    .bind(now())
+    .bind(id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Ok(None);
+    }
+    if let Err(e) = tokio::fs::remove_file(snap_path(state, id)).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(message_id = id, error = %e, "couldn't remove pic file");
+        }
+    }
+    db::get_message(&state.db, id).await
+}
 
 /// Body is the encrypted image: IV || AES-GCM ciphertext. No multipart needed.
 /// The server can't see or check the image, only its size.
 #[derive(serde::Deserialize)]
 pub struct UploadParams {
-    /// `?format=1`. Optional; clients from before formats existed wrote format 1.
+    /// `?format=2`. Optional; clients from before formats existed wrote format 1.
     #[serde(default = "version::default_format")]
     format: i64,
 }
@@ -147,7 +91,7 @@ pub async fn upload(
     body: Bytes,
 ) -> AppResult<Json<Message>> {
     require_friend(&state, me.id, friend_id).await?;
-    version::check_format(params.format)?;
+    version::check_snap_format(params.format)?;
 
     if body.len() < MIN_SNAP_BYTES {
         return Err(AppError::bad("That pic wasn't encrypted correctly."));
@@ -155,58 +99,51 @@ pub async fn upload(
     if body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
     }
-    if !state.snaps.has_room(body.len()) {
-        return Err(AppError::Unavailable(
-            "The server is holding too many unopened snaps. Try again later.".into(),
-        ));
-    }
-
-    // The row and the bytes go in together: if the memory pool fills up between
-    // the check above and here, the transaction rolls back and nothing is kept.
-    let mut tx = state.db.begin().await?;
-    let message = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, created_at)
-         VALUES (?, ?, 'snap', ?, 'pending', ?) RETURNING {MESSAGE_COLS}"
-    ))
-    .bind(me.id)
-    .bind(friend_id)
-    .bind(params.format)
-    .bind(now())
-    .fetch_one(&mut *tx)
-    .await?;
-    let bytes = body.len();
-
-    let stored = state.snaps.put(
-        message.id,
-        Snap {
-            sender_id: me.id,
-            recipient_id: friend_id,
-            data: body,
-            expires_at: Instant::now() + state.snaps.ttl,
-        },
-    );
-    if !stored {
-        tx.rollback().await?;
+    let (_, held) = usage(&state.db).await?;
+    if held as usize + body.len() > state.config.snap_disk_bytes {
         tracing::warn!(
             from = me.id,
             to = friend_id,
-            bytes,
-            "pic rejected: memory pool full"
+            held,
+            "pic rejected: disk cap reached"
         );
         return Err(AppError::Unavailable(
             "The server is holding too many unopened pics. Try again later.".into(),
         ));
     }
+
+    // The row and the file go in together: the file is written (then renamed,
+    // so a crash never leaves half a pic) before the row commits.
+    let mut tx = state.db.begin().await?;
+    let message = sqlx::query_as::<_, Message>(&format!(
+        "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, snap_bytes, created_at)
+         VALUES (?, ?, 'snap', ?, 'pending', ?, ?) RETURNING {MESSAGE_COLS}"
+    ))
+    .bind(me.id)
+    .bind(friend_id)
+    .bind(params.format)
+    .bind(body.len() as i64)
+    .bind(now())
+    .fetch_one(&mut *tx)
+    .await?;
+    let path = snap_path(&state, message.id);
+    let tmp = path.with_extension("tmp");
+    tokio::fs::write(&tmp, &body)
+        .await
+        .map_err(|e| AppError::Internal(format!("writing pic: {e}")))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|e| AppError::Internal(format!("saving pic: {e}")))?;
     if let Err(e) = tx.commit().await {
-        // Don't hold bytes for a message that doesn't exist.
-        state.snaps.take(message.id, friend_id);
+        let _ = tokio::fs::remove_file(&path).await; // no file for a message that doesn't exist
         return Err(e.into());
     }
     tracing::info!(
         message_id = message.id,
         from = me.id,
         to = friend_id,
-        bytes,
+        bytes = body.len(),
+        format = params.format,
         "pic sent"
     );
 
@@ -220,132 +157,201 @@ pub async fn upload(
     Ok(Json(message))
 }
 
-async fn set_snap_state(
-    state: &SharedState,
-    id: i64,
-    snap_state: &str,
-) -> AppResult<Option<Message>> {
-    sqlx::query(
-        "UPDATE messages SET snap_state = ?, read_at = COALESCE(read_at, ?)
-         WHERE id = ? AND kind = 'snap'",
-    )
-    .bind(snap_state)
-    .bind(now())
-    .bind(id)
-    .execute(&state.db)
-    .await?;
-    Ok(db::get_message(&state.db, id).await?)
+fn notify(state: &SharedState, message: Message) {
+    state.hub.send_both(
+        message.sender_id,
+        message.recipient_id,
+        &Event::MessageUpdated { message },
+    );
 }
 
-/// View-once: the first successful fetch by the recipient removes the snap.
+/// View-once: the first successful fetch by the recipient discards the pic.
 pub async fn view(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    match state.snaps.take(id, me.id) {
-        Take::Found { data, sender_id } => {
-            tracing::info!(message_id = id, from = sender_id, to = me.id, "pic opened");
-            if let Some(message) = set_snap_state(&state, id, "opened").await? {
-                state
-                    .hub
-                    .send_both(sender_id, me.id, &Event::MessageUpdated { message });
-            }
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/octet-stream"),
-            );
-            headers.insert(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("no-store, private, max-age=0"),
-            );
-            headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
-            Ok((headers, data).into_response())
-        }
-        Take::Missing => {
+    // Only the recipient learns anything about it.
+    let m = match db::get_message(&state.db, id).await? {
+        Some(m) if m.recipient_id == me.id && m.kind == "snap" => m,
+        _ => {
             tracing::debug!(message_id = id, user_id = me.id, "pic not available");
-            // Only reveal anything to the actual recipient.
-            let msg = db::get_message(&state.db, id).await?;
-            match msg {
-                Some(m) if m.recipient_id == me.id && m.kind == "snap" => {
-                    if m.snap_state.as_deref() == Some("pending") {
-                        if let Some(message) = set_snap_state(&state, id, "expired").await? {
-                            state.hub.send_both(
-                                message.sender_id,
-                                me.id,
-                                &Event::MessageUpdated { message },
-                            );
-                        }
-                    }
-                    Err(AppError::Gone(
-                        "This pic was already opened or has expired.".into(),
-                    ))
-                }
-                _ => Err(AppError::not_found("Pic not found.")),
-            }
+            return Err(AppError::not_found("Pic not found."));
         }
+    };
+    let gone = || AppError::Gone("This pic was already opened or has expired.".into());
+    if m.snap_state.as_deref() != Some("pending") {
+        return Err(gone());
     }
+    if m.created_at + state.config.snap_ttl.as_secs() as i64 <= now() {
+        if let Some(message) = finish(&state, id, "expired").await? {
+            notify(&state, message);
+        }
+        return Err(gone());
+    }
+    let data = match tokio::fs::read(snap_path(&state, id)).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(message_id = id, error = %e, "pic file missing");
+            if let Some(message) = finish(&state, id, "expired").await? {
+                notify(&state, message);
+            }
+            return Err(gone());
+        }
+    };
+    // Two tabs opening at once: only one gets the pic.
+    let Some(message) = finish(&state, id, "opened").await? else {
+        return Err(gone());
+    };
+    tracing::info!(
+        message_id = id,
+        from = m.sender_id,
+        to = me.id,
+        "pic opened"
+    );
+    notify(&state, message);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, private, max-age=0"),
+    );
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    Ok((headers, data).into_response())
 }
 
-/// Every minute: drop expired pics and tell both people. (Expired sessions
-/// stay in the table; they just stop working.)
+/// At startup: a pending pic whose file is gone can never be opened (it was
+/// held in memory by a release before 0.13.0, or the disk lost it), so mark it
+/// expired. Files with no pending pic (a crash mid-upload) are discarded.
+pub async fn reconcile(db: &SqlitePool, pic_dir: &std::path::Path) -> anyhow::Result<(u64, u64)> {
+    let dir = dir(pic_dir);
+    tokio::fs::create_dir_all(&dir).await?;
+    let pending: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut lost = 0;
+    for id in &pending {
+        if !tokio::fs::try_exists(dir.join(format!("{id}.bin"))).await? {
+            lost += sqlx::query(
+                "UPDATE messages SET snap_state = 'expired' WHERE id = ? AND snap_state = 'pending'",
+            )
+            .bind(id)
+            .execute(db)
+            .await?
+            .rows_affected();
+        }
+    }
+    let mut strays = 0;
+    let mut entries = tokio::fs::read_dir(&dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let keep = name
+            .strip_suffix(".bin")
+            .and_then(|id| id.parse::<i64>().ok())
+            .is_some_and(|id| pending.contains(&id));
+        if !keep {
+            tokio::fs::remove_file(entry.path()).await?;
+            strays += 1;
+        }
+    }
+    Ok((lost, strays))
+}
+
+/// Every minute: expire pics nobody opened in time, and tell both people.
 pub fn spawn_sweeper(state: SharedState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         loop {
             tick.tick().await;
-            let expired = state.snaps.sweep();
-            if !expired.is_empty() {
-                tracing::info!(count = expired.len(), "pics expired unopened");
-            }
-            for (id, sender, recipient) in expired {
-                match set_snap_state(&state, id, "expired").await {
-                    Ok(Some(message)) => {
-                        state
-                            .hub
-                            .send_both(sender, recipient, &Event::MessageUpdated { message })
-                    }
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!(?e, id, "failed to mark pic expired"),
-                }
+            if let Err(e) = sweep(&state).await {
+                tracing::warn!(error = ?e, "pic sweep failed");
             }
         }
     });
 }
 
+async fn sweep(state: &SharedState) -> sqlx::Result<()> {
+    let cutoff = now() - state.config.snap_ttl.as_secs() as i64;
+    let due: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending' AND created_at <= ?",
+    )
+    .bind(cutoff)
+    .fetch_all(&state.db)
+    .await?;
+    if !due.is_empty() {
+        tracing::info!(count = due.len(), "pics expired unopened");
+    }
+    for id in due {
+        if let Some(message) = finish(state, id, "expired").await? {
+            notify(state, message);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::tests::temp_db;
 
-    fn snap(sender: i64, recipient: i64, len: usize, ttl: Duration) -> Snap {
-        Snap {
-            sender_id: sender,
-            recipient_id: recipient,
-            data: Bytes::from(vec![0u8; len]),
-            expires_at: Instant::now() + ttl,
+    #[tokio::test]
+    async fn reconcile_expires_lost_pics_and_removes_strays() {
+        let db = temp_db().await;
+        for (id, name) in [(1, "ana"), (2, "ben")] {
+            sqlx::query(
+                "INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at)
+                 VALUES (?, ?, 'h', 'k', 'w', 0)",
+            )
+            .bind(id)
+            .bind(name)
+            .execute(&db)
+            .await
+            .unwrap();
         }
-    }
+        for id in [10, 11, 12] {
+            let state = if id == 12 { "opened" } else { "pending" };
+            sqlx::query(
+                "INSERT INTO messages (id, sender_id, recipient_id, kind, snap_state, snap_bytes, created_at)
+                 VALUES (?, 1, 2, 'snap', ?, 5, 0)",
+            )
+            .bind(id)
+            .bind(state)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        let root = std::env::temp_dir().join(format!("fade-snaps-{}", std::process::id()));
+        let d = dir(&root);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("10.bin"), b"held").unwrap(); // 10 survives
+        std::fs::write(d.join("12.bin"), b"stray").unwrap(); // already opened
+        std::fs::write(d.join("99.tmp"), b"half").unwrap(); // crashed upload
+                                                            // 11 has no file: it was lost.
 
-    #[test]
-    fn view_once_and_recipient_only() {
-        let store = SnapStore::new(1000, Duration::from_secs(60));
-        assert!(store.put(1, snap(10, 20, 100, Duration::from_secs(60))));
-        // Sender can't open it, and trying doesn't consume it.
-        assert!(matches!(store.take(1, 10), Take::Missing));
-        assert!(matches!(store.take(1, 20), Take::Found { .. }));
-        assert!(matches!(store.take(1, 20), Take::Missing));
-        assert_eq!(store.inner.lock().unwrap().total_bytes, 0);
-    }
-
-    #[test]
-    fn pool_limit_and_expiry() {
-        let store = SnapStore::new(150, Duration::from_secs(60));
-        assert!(store.put(1, snap(1, 2, 100, Duration::ZERO)));
-        assert!(!store.has_room(100));
-        assert!(!store.put(2, snap(1, 2, 100, Duration::from_secs(60))));
-        let swept = store.sweep();
-        assert_eq!(swept, vec![(1, 1, 2)]);
-        assert!(store.has_room(100));
+        assert_eq!(reconcile(&db, &root).await.unwrap(), (1, 2));
+        let states: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id, snap_state FROM messages ORDER BY id")
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            states,
+            vec![
+                (10, "pending".into()),
+                (11, "expired".into()),
+                (12, "opened".into())
+            ]
+        );
+        assert!(
+            d.join("10.bin").exists() && !d.join("12.bin").exists() && !d.join("99.tmp").exists()
+        );
+        assert_eq!(usage(&db).await.unwrap(), (1, 5));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -207,6 +207,20 @@
     </button>
   </header>
   <p class="form-note" id="profile-message" role="status" hidden></p>
+  <form id="profile-name-form" class="rename-form" hidden>
+    <label class="field">
+      <span id="profile-name-label">Your name</span>
+      <input name="name" id="profile-name-input" maxlength="30" autocomplete="off">
+    </label>
+    <button type="submit" class="button">Save</button>
+  </form>
+  <p class="field-hint" id="profile-name-hint" hidden></p>
+  <div class="picture-row" id="profile-picture-row" hidden>
+    <label class="button" for="profile-picture-input">Change picture</label>
+    <input type="file" id="profile-picture-input" accept="image/*" hidden>
+    <button type="button" class="button" id="profile-picture-clear">Remove picture</button>
+  </div>
+  <p class="form-note" id="profile-edit-note" role="status"></p>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>
     <h3 id="profile-people-title"></h3>
@@ -233,6 +247,7 @@
   <div class="camera-stage">
     <video id="camera-video" playsinline muted autoplay></video>
     <img id="camera-preview" alt="Your pic" hidden>
+    <input id="snap-caption" class="snap-caption" type="text" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" hidden>
     <p class="camera-message" id="camera-message" hidden></p>
   </div>
   <div class="camera-controls" id="capture-controls">
@@ -262,6 +277,7 @@
   <div class="viewer-tint" aria-hidden="true"></div>
   <div class="viewer-timer" aria-hidden="true"><span id="viewer-bar"></span></div>
   <p class="viewer-from" id="viewer-from"></p>
+  <p class="viewer-caption" id="viewer-caption" hidden></p>
   <p class="viewer-hint">Tap to close</p>
 </div>
 

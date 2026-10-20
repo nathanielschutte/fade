@@ -134,6 +134,16 @@ window.addEventListener("unhandledrejection", (e) => report("error", "unhandled 
 const friendOf = (m) => (m.sender_id === state.me.id ? m.recipient_id : m.sender_id);
 const chatById = (id) => state.chats.find((c) => c.id === id);
 
+/** What I call a friend: my nickname for them, else their display name, else their username. */
+const chatName = (c) => c.nickname || c.display_name || c.username;
+
+/** The same for anyone: friends by what I call them, me by my display name, others by username. */
+function personName(id, username) {
+  if (id === state.me?.id) return state.me.display_name || state.me.username;
+  const c = chatById(id);
+  return c ? chatName(c) : username;
+}
+
 // ---------- encryption ----------
 
 const pinsKey = () => `pins:${state.me.id}`;
@@ -173,7 +183,7 @@ async function keyFor(friendId) {
 async function decrypt(m) {
   if (m.kind !== "text") return m;
   // A newer app wrote this in a scheme this one doesn't know.
-  m.unsupported = (m.format ?? 1) !== e2e.FORMAT;
+  m.unsupported = (m.format ?? 1) !== e2e.TEXT_FORMAT;
   if (m.unsupported) {
     m.text = null;
     return m;
@@ -316,13 +326,28 @@ $("#sign-out").addEventListener("click", async () => {
 function enterApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
-  $("#my-name").textContent = state.me.username;
-  paintAvatar($("#my-avatar"), state.me);
+  renderAccountBar();
   $("#admin-link").hidden = !state.me.is_admin;
   refreshChats();
   refreshGroups();
   refreshRequests();
   connectSocket();
+}
+
+function renderAccountBar() {
+  $("#my-name").textContent = personName(state.me.id);
+  paintAvatar($("#my-avatar"), state.me);
+}
+
+/** My display name or picture may have changed in another tab. */
+async function refreshMe() {
+  try {
+    state.me = await getJSON("/me");
+  } catch (err) {
+    report("warn", "loading me failed", errorFields(err));
+    return;
+  }
+  renderAccountBar();
 }
 
 async function refreshChats() {
@@ -338,6 +363,7 @@ async function refreshChats() {
   renderChatList();
   renderChatHeader();
   if (state.activeId && !chatById(state.activeId)) closeChat(); // unfriended
+  else if (state.activeId) renderMessages(); // sender names follow renames
 }
 
 let refreshTimer = null;
@@ -391,9 +417,9 @@ function renderChatList() {
   const rows = [
     ...state.chats.map((chat) => ({
       at: chat.last_message?.created_at ?? 0,
-      name: chat.username,
+      name: chatName(chat),
       row: chatRow({
-        name: chat.username, status: chatStatus(chat), time: chat.last_message?.created_at,
+        name: chatName(chat), status: chatStatus(chat), time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
         avatar: paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat),
       }),
@@ -425,10 +451,6 @@ async function openChat(friendId) {
   $("#app").classList.add("in-chat");
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
-  $("#chat-title").textContent = chat.username;
-  $("#chat-title").setAttribute("aria-label", `${chat.username}: view profile`);
-  paintAvatar($("#chat-avatar"), chat);
-  $("#chat-avatar").classList.remove("group");
   const switching = $("#messages").dataset.friend !== String(friendId);
   if (switching) {
     $("#messages").dataset.friend = String(friendId);
@@ -474,6 +496,12 @@ $("#back-button").addEventListener("click", closeChat);
 function renderChatHeader() {
   const chat = chatById(state.activeId);
   if (!chat) return;
+  $("#chat-title").textContent = chatName(chat);
+  $("#chat-title").setAttribute("aria-label", `${chatName(chat)}: view profile`);
+  // The username is the identity; show it whenever the name on screen differs.
+  $("#chat-sub").textContent = `@${chat.username}`;
+  $("#chat-sub").hidden = chatName(chat) === chat.username;
+  paintAvatar($("#chat-avatar"), chat);
   $("#key-warning").hidden = !chat.keyChanged;
   $("#key-warning-name").textContent = chat.username;
   $("#composer-input").disabled = chat.keyChanged;
@@ -564,7 +592,7 @@ function renderMessages() {
   const h = state.history.get(state.activeId);
   if (msgs.length && h) {
     if (h.loading) items.push(el("li", { class: "msg-meta history-edge", text: "Loading earlier messages…" }));
-    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of your chat with ${chat?.username ?? "them"}.` }));
+    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of your chat with ${chat ? chatName(chat) : "them"}.` }));
   }
   let prevSender = null;
   for (const m of msgs) {
@@ -572,7 +600,7 @@ function renderMessages() {
     if (m.sender_id !== prevSender) {
       items.push(el("li", {
         class: `sender ${mine ? "mine" : ""}`,
-        text: `${mine ? "Me" : chat?.username ?? ""}  ${clockTime(m.created_at)}`,
+        text: `${mine ? "Me" : chat ? chatName(chat) : ""}  ${clockTime(m.created_at)}`,
       }));
       prevSender = m.sender_id;
     }
@@ -625,7 +653,7 @@ $("#composer").addEventListener("submit", async (e) => {
   input.value = "";
   try {
     const ciphertext = await e2e.encryptText(await keyFor(friendId), text, state.me.id, friendId);
-    const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext, format: e2e.FORMAT } });
+    const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext, format: e2e.TEXT_FORMAT } });
     state.plaintext.set(m.id, text);
     await upsertMessage(m);
     if (state.activeId === friendId) renderMessages();
@@ -713,8 +741,11 @@ async function handleEvent(ev) {
       break;
     }
     case "friends_changed":
-      refreshChats();
+      await refreshChats();
       refreshRequests();
+      refreshMe();
+      refreshGroups(); // names in group lists come from the friends list
+      if (state.activeGroupId) renderMessages();
       break;
     case "group_message": {
       const m = ev.message;
@@ -761,15 +792,15 @@ function refreshGroupsSoon() {
 function groupEventText(m) {
   let e = {};
   try { e = JSON.parse(m.body); } catch {}
-  const actor = m.sender_id === state.me.id ? "You" : m.sender_name;
-  const target = e.target === state.me.id ? "you" : e.target_name;
+  const actor = m.sender_id === state.me.id ? "You" : personName(m.sender_id, m.sender_name);
+  const target = e.target === state.me.id ? "you" : personName(e.target, e.target_name);
   switch (e.type) {
     case "created": return `${actor} created the group “${e.name}”`;
     case "added": return `${actor} added ${target}`;
     case "removed": return `${actor} removed ${target}`;
     case "left": return `${actor} left`;
     case "renamed": return `${actor} renamed the group to “${e.name}”`;
-    case "owner": return e.target === state.me.id ? "You're now the owner" : `${e.target_name} is now the owner`;
+    case "owner": return e.target === state.me.id ? "You're now the owner" : `${personName(e.target, e.target_name)} is now the owner`;
     case "picture": return `${actor} changed the group picture`;
     default: return "The group changed";
   }
@@ -781,11 +812,11 @@ function groupStatus(g) {
   if (m.pic) {
     const mine = m.sender_id === state.me.id;
     const waiting = !mine && !m.pic.discard_reason && !m.pic.viewers.includes(state.me.id);
-    return { text: mine ? "You sent a pic" : `${m.sender_name} sent a pic`, marker: waiting ? "snap" : g.unread ? "text" : null };
+    return { text: mine ? "You sent a pic" : `${personName(m.sender_id, m.sender_name)} sent a pic`, marker: waiting ? "snap" : g.unread ? "text" : null };
   }
   const text = m.kind === "event"
     ? groupEventText(m)
-    : `${m.sender_id === state.me.id ? "You" : m.sender_name}: ${m.body}`;
+    : `${m.sender_id === state.me.id ? "You" : personName(m.sender_id, m.sender_name)}: ${m.body}`;
   return { text, marker: g.unread ? "text" : null };
 }
 
@@ -915,7 +946,7 @@ function renderGroupMessages() {
     }
     const mine = m.sender_id === state.me.id;
     if (m.sender_id !== prevSender) {
-      items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : m.sender_name}  ${clockTime(m.created_at)}` }));
+      items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : personName(m.sender_id, m.sender_name)}  ${clockTime(m.created_at)}` }));
       prevSender = m.sender_id;
     }
     if (m.pic) items.push(el("li", { class: `msg ${mine ? "mine" : ""}` }, groupPicChip(m, mine)));
@@ -946,21 +977,24 @@ function groupPicChip(m, mine) {
 }
 
 async function viewGroupPic(m) {
-  let blob;
+  let res;
   try {
-    blob = await (await api(`/groups/${m.group_id}/pics/${m.pic.id}`)).blob();
+    res = await api(`/groups/${m.group_id}/pics/${m.pic.id}`);
   } catch (err) {
     if (err.status !== 410) alert(err.message); // 410: opened elsewhere or expired; the socket updates the chat
     return;
   }
-  showInViewer(blob, `${m.sender_name} · ${groupById(m.group_id)?.name ?? ""}`);
+  let caption = "";
+  try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
+  showInViewer(await res.blob(), `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`, caption);
 }
 
 async function sendGroupPic(groupId) {
   const btn = $("#send-snap");
   btn.disabled = true;
   try {
-    const m = await getJSON(`/groups/${groupId}/pics`, {
+    const caption = encodeURIComponent($("#snap-caption").value.trim());
+    const m = await getJSON(`/groups/${groupId}/pics${caption ? `?caption=${caption}` : ""}`, {
       method: "POST", body: camera.blob, headers: { "Content-Type": "image/jpeg" },
     });
     upsertGroupMessage(m);
@@ -973,8 +1007,8 @@ async function sendGroupPic(groupId) {
   }
 }
 
-/** Square-cropped to 256px and kept small; group pictures live in the database. */
-async function groupPictureBlob(file) {
+/** Square-cropped to 256px and kept small; group and profile pictures live in the database. */
+async function squarePictureBlob(file) {
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   const side = Math.min(bitmap.width, bitmap.height);
   const canvas = document.createElement("canvas");
@@ -994,7 +1028,7 @@ $("#group-picture-input").addEventListener("change", async (e) => {
   const g = state.groupDetail;
   if (!file || !g) return;
   await groupAction(async () => {
-    const blob = await groupPictureBlob(file);
+    const blob = await squarePictureBlob(file);
     await api(`/groups/${g.id}/avatar`, { method: "POST", body: blob, headers: { "Content-Type": "image/jpeg" } });
   }, "Group picture updated.");
 });
@@ -1022,14 +1056,14 @@ function friendPicker(friends, checked = new Set()) {
       el("label", { class: "person pick" },
         el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
         avatar,
-        el("span", { class: "person-name", text: f.username })));
+        el("span", { class: "person-name", text: chatName(f) })));
   });
 }
 
 $("#new-group-button").addEventListener("click", () => {
   $("#new-group-form").reset();
   $("#new-group-note").textContent = "";
-  const friends = [...state.chats].sort((a, b) => a.username.localeCompare(b.username));
+  const friends = [...state.chats].sort((a, b) => chatName(a).localeCompare(chatName(b)));
   $("#new-group-friends").replaceChildren(...friendPicker(friends));
   if (!friends.length) $("#new-group-friends").append(el("li", { class: "muted", text: "Add some friends first." }));
   $("#new-group-dialog").showModal();
@@ -1079,21 +1113,21 @@ async function openGroupInfo(groupId) {
     return el("li", { class: "person" },
       avatar,
       friend
-        ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, m.username)
-        : el("span", { class: "person-name", text: me ? `${m.username} (you)` : m.username }),
+        ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, personName(m.id, m.username))
+        : el("span", { class: "person-name", text: me ? `${personName(m.id, m.username)} (you)` : m.username }),
       m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
       g.role === "owner" && !me
         ? el("button", { type: "button", class: "button", onclick: () => removeFromGroup(g, m) }, "Remove")
         : null);
   }));
   const inGroup = new Set(g.members.map((m) => m.id));
-  const addable = state.chats.filter((f) => !inGroup.has(f.id)).sort((a, b) => a.username.localeCompare(b.username));
+  const addable = state.chats.filter((f) => !inGroup.has(f.id)).sort((a, b) => chatName(a).localeCompare(chatName(b)));
   $("#group-add-section").hidden = addable.length === 0;
   $("#group-add").replaceChildren(...addable.map((f) => {
     const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
     paintAvatar(avatar, f);
     return el("li", { class: "person" }, avatar,
-      el("span", { class: "person-name", text: f.username }),
+      el("span", { class: "person-name", text: chatName(f) }),
       el("button", { type: "button", class: "button primary", onclick: () => addToGroup(g, f) }, "Add"));
   }));
   const leave = $("#leave-group");
@@ -1117,9 +1151,9 @@ async function groupAction(fn, done) {
 }
 
 const addToGroup = (g, f) => groupAction(
-  () => api(`/groups/${g.id}/members`, { method: "POST", json: { user_id: f.id } }), `Added ${f.username}.`);
+  () => api(`/groups/${g.id}/members`, { method: "POST", json: { user_id: f.id } }), `Added ${chatName(f)}.`);
 const removeFromGroup = (g, m) => groupAction(
-  () => api(`/groups/${g.id}/members/${m.id}`, { method: "DELETE" }), `Removed ${m.username}.`);
+  () => api(`/groups/${g.id}/members/${m.id}`, { method: "DELETE" }), `Removed ${personName(m.id, m.username)}.`);
 
 $("#rename-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1169,39 +1203,49 @@ $("#update-reload").addEventListener("click", () => location.reload());
 
 const longDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
-/** A stand-in until profile pictures exist: initial on a tint picked from the id. */
-function paintAvatar(node, user) {
-  node.textContent = (user.username[0] || "?").toUpperCase();
-  node.dataset.tint = String(user.id % 6);
-  node.dataset.picture = ""; // a group picture still loading for this node is now stale
+/** An initial on a tint picked from the id: the fallback for any picture. */
+function paintInitial(node, label, id) {
+  node.textContent = (Array.from(label || "?")[0] || "?").toUpperCase();
+  node.dataset.tint = String(id % 6);
+  node.dataset.picture = ""; // a picture still loading for this node is now stale
+  node.classList.remove("group");
   return node;
 }
 
-// Group pictures are fetched with the session (they're members-only) and kept
-// as object URLs, keyed by picture id, so each is downloaded once.
-const avatarUrls = new Map();
+// Pictures are fetched with the session (friends-only and members-only) and
+// kept as object URLs, keyed by picture id, so each is downloaded once.
+const pictureUrls = new Map();
 
-async function groupAvatarUrl(g) {
-  if (!g.avatar_id) return null;
-  const key = `${g.id}:${g.avatar_id}`;
-  if (!avatarUrls.has(key)) {
-    avatarUrls.set(key, api(`/groups/${g.id}/avatar/${g.avatar_id}`)
+function pictureUrl(key, path) {
+  if (!pictureUrls.has(key)) {
+    pictureUrls.set(key, api(path)
       .then((r) => r.blob())
       .then((b) => URL.createObjectURL(b))
-      .catch((err) => { avatarUrls.delete(key); report("warn", "group picture failed to load", { group_id: g.id, ...errorFields(err) }); return null; }));
+      .catch((err) => { pictureUrls.delete(key); report("warn", "picture failed to load", { key, ...errorFields(err) }); return null; }));
   }
-  return avatarUrls.get(key);
+  return pictureUrls.get(key);
+}
+
+function showPicture(node, key, path) {
+  node.dataset.picture = key;
+  pictureUrl(key, path).then((url) => {
+    if (url && node.dataset.picture === key) node.replaceChildren(el("img", { src: url, alt: "" }));
+  });
+}
+
+/** A person's picture, or their initial. Friends and I are looked up for the newest one. */
+function paintAvatar(node, user) {
+  const known = user.id === state.me?.id ? state.me : chatById(user.id);
+  paintInitial(node, personName(user.id, user.username), user.id);
+  const avatarId = known ? known.avatar_id : user.avatar_id;
+  if (avatarId) showPicture(node, `u${user.id}:${avatarId}`, `/users/${user.id}/avatar/${avatarId}`);
+  return node;
 }
 
 function paintGroupAvatar(node, g) {
-  paintAvatar(node, { id: g.id, username: g.name });
+  paintInitial(node, g.name, g.id);
   node.classList.add("group");
-  if (!g.avatar_id) return node;
-  const key = `${g.id}:${g.avatar_id}`;
-  node.dataset.picture = key;
-  groupAvatarUrl(g).then((url) => {
-    if (url && node.dataset.picture === key) node.replaceChildren(el("img", { src: url, alt: "" }));
-  });
+  if (g.avatar_id) showPicture(node, `g${g.id}:${g.avatar_id}`, `/groups/${g.id}/avatar/${g.avatar_id}`);
   return node;
 }
 
@@ -1213,6 +1257,7 @@ async function openProfile(userId) {
   const dialog = $("#profile-dialog");
   const msg = $("#profile-message");
   for (const id of ["#profile-stats", "#profile-people", "#profile-actions"]) $(id).replaceChildren();
+  hideProfileEdit();
   $("#profile-people-section").hidden = true;
   msg.hidden = true;
   if (!dialog.open) dialog.showModal();
@@ -1227,13 +1272,18 @@ async function openProfile(userId) {
     msg.hidden = false;
     return;
   }
+  const shown = p.kind === "me" ? p.display_name || p.username : p.nickname || p.display_name || p.username;
   paintAvatar($("#profile-avatar"), p);
-  $("#profile-name").textContent = p.username;
+  $("#profile-name").textContent = shown;
+  renderProfileEdit(p);
+  // Usernames are the identity, so they're always shown; and their own name, if I renamed them.
+  const id = [`@${p.username}`];
+  if (p.kind === "friend" && p.nickname && p.display_name) id.push(`goes by “${p.display_name}”`);
 
   let people = [];
   if (p.kind === "me") {
     const s = p.stats;
-    $("#profile-sub").textContent = `Joined ${longDate(p.joined_at)}`;
+    $("#profile-sub").textContent = [...id, `joined ${longDate(p.joined_at)}`].join(" · ");
     $("#profile-stats").append(
       ...stat("Texts sent", s.texts_sent),
       ...stat("Texts received", s.texts_received),
@@ -1246,7 +1296,7 @@ async function openProfile(userId) {
     people = p.friends;
   } else {
     const t = p.together;
-    $("#profile-sub").textContent = `Friends since ${longDate(p.friends_since)}`;
+    $("#profile-sub").textContent = [...id, `friends since ${longDate(p.friends_since)}`].join(" · ");
     $("#profile-stats").append(
       ...stat("Texts between you", t.texts),
       ...stat("Pics between you", t.pics),
@@ -1259,7 +1309,7 @@ async function openProfile(userId) {
     $("#profile-actions").append(el("button", {
       type: "button", class: "button primary",
       onclick: () => { dialog.close(); openChat(p.id); },
-    }, `Message ${p.username}`));
+    }, `Message ${shown}`));
   }
 
   $("#profile-people-section").hidden = people.length === 0 && p.kind !== "me";
@@ -1269,10 +1319,73 @@ async function openProfile(userId) {
     return el("li", {},
       el("button", { type: "button", class: "person person-link", onclick: () => openProfile(f.id) },
         avatar,
-        el("span", { class: "person-name", text: f.username }),
+        el("span", { class: "person-name", text: personName(f.id, f.username) }),
         el("span", { class: "person-meta", text: `since ${longDate(f.since)}` })));
   }));
 }
+
+// Your profile: your display name and picture. A friend's: your private nickname for them.
+const profileEdit = { profile: null };
+
+function renderProfileEdit(p) {
+  profileEdit.profile = p;
+  const mine = p.kind === "me";
+  const input = $("#profile-name-input");
+  $("#profile-name-form").hidden = false;
+  $("#profile-name-label").textContent = mine ? "Your name" : "Nickname";
+  input.placeholder = mine ? p.username : p.display_name || p.username;
+  input.value = (mine ? p.display_name : p.nickname) ?? "";
+  $("#profile-name-hint").textContent = mine
+    ? "What your friends see. Your username stays the same."
+    : `Only you see this. Leave it empty to use ${p.display_name ? "their name" : "their username"}.`;
+  $("#profile-name-hint").hidden = false;
+  $("#profile-picture-row").hidden = !mine;
+  $("#profile-picture-clear").hidden = !p.avatar_id;
+  $("#profile-edit-note").textContent = "";
+}
+
+function hideProfileEdit() {
+  for (const id of ["#profile-name-form", "#profile-name-hint", "#profile-picture-row"]) $(id).hidden = true;
+  $("#profile-edit-note").textContent = "";
+}
+
+async function profileAction(fn, done) {
+  const p = profileEdit.profile;
+  if (!p) return;
+  try {
+    await fn(p);
+  } catch (err) {
+    $("#profile-edit-note").textContent = err.message;
+    return;
+  }
+  // The socket refreshes everything else; reopen to show what changed.
+  if (p.kind === "me") await refreshMe();
+  else await refreshChats();
+  await openProfile(p.id);
+  $("#profile-edit-note").textContent = done;
+}
+
+$("#profile-name-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("#profile-name-input").value;
+  $("#profile-name-input").blur();
+  profileAction((p) => p.kind === "me"
+    ? api("/me/name", { method: "PUT", json: { name } })
+    : api(`/friends/${p.id}/nickname`, { method: "PUT", json: { name } }), name.trim() ? "Saved." : "Cleared.");
+});
+
+$("#profile-picture-input").addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
+  profileAction(async () => {
+    const blob = await squarePictureBlob(file);
+    await api("/me/avatar", { method: "POST", body: blob, headers: { "Content-Type": "image/jpeg" } });
+  }, "Picture updated.");
+});
+
+$("#profile-picture-clear").addEventListener("click", () =>
+  profileAction(() => api("/me/avatar", { method: "DELETE" }), "Picture removed."));
 
 $("#my-profile").addEventListener("click", () => openProfile(state.me.id));
 $("#chat-title").addEventListener("click", () => {
@@ -1407,6 +1520,8 @@ function showCapture() {
   $("#camera-video").hidden = false;
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
+  $("#snap-caption").hidden = true;
+  $("#snap-caption").value = "";
 }
 
 function clearPreview() {
@@ -1429,8 +1544,10 @@ function showPreview(blob) {
   cameraMessage("");
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
-  const name = state.activeGroupId ? groupById(state.activeGroupId)?.name : chatById(state.activeId)?.username;
+  const chat = chatById(state.activeId);
+  const name = state.activeGroupId ? groupById(state.activeGroupId)?.name : chat && chatName(chat);
   $("#send-snap").textContent = name ? `Send to ${name}` : "Send";
+  $("#snap-caption").hidden = false;
 }
 
 // Redrawing through a canvas downsizes the photo and strips EXIF (including GPS).
@@ -1483,6 +1600,8 @@ $("#camera-button").addEventListener("click", () => {
 $("#camera-dialog").addEventListener("close", () => {
   stopStream();
   clearPreview();
+  $("#snap-caption").value = ""; // sent or abandoned, it shouldn't linger in the page
+  $("#snap-caption").hidden = true;
 });
 
 $("#flip-camera").addEventListener("click", () => {
@@ -1524,6 +1643,13 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
+$("#snap-caption").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("#send-snap").click();
+  }
+});
+
 $("#retake").addEventListener("click", () => {
   showCapture();
   if (!camera.stream) startStream();
@@ -1537,11 +1663,13 @@ $("#send-snap").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     const photo = new Uint8Array(await camera.blob.arrayBuffer());
-    const sealed = await e2e.encryptSnap(await keyFor(friendId), photo, state.me.id, friendId);
+    // Format 2: the caption is sealed in with the photo, so only the friend sees it.
+    const caption = $("#snap-caption").value.trim();
+    const sealed = await e2e.encryptPic(await keyFor(friendId), photo, caption, state.me.id, friendId);
     if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
       throw new Error("That photo is too large to send.");
     }
-    const m = await getJSON(`/chats/${friendId}/snaps?format=${e2e.FORMAT}`, {
+    const m = await getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}`, {
       method: "POST",
       body: sealed,
       headers: { "Content-Type": "application/octet-stream" },
@@ -1561,7 +1689,7 @@ $("#send-snap").addEventListener("click", async () => {
 const viewer = { url: null, timer: null };
 
 async function viewSnap(m) {
-  if ((m.format ?? 1) !== e2e.FORMAT) {
+  if (![1, 2].includes(m.format ?? 1)) {
     alert("This pic was sent from a newer version of napsack. Reload the page to open it.");
     return;
   }
@@ -1573,21 +1701,23 @@ async function viewSnap(m) {
     if (err.status !== 410) alert(err.message);
     return;
   }
-  let photo;
+  let pic;
   try {
-    photo = await e2e.decryptSnap(await keyFor(m.sender_id), sealed, m.sender_id, m.recipient_id);
+    pic = await e2e.decryptPic(await keyFor(m.sender_id), sealed, m.format ?? 1, m.sender_id, m.recipient_id);
   } catch {
     alert("This pic couldn't be decrypted.");
     return;
   }
-  showInViewer(new Blob([photo], { type: "image/jpeg" }), chatById(friendOf(m))?.username || "");
+  showInViewer(new Blob([pic.photo], { type: "image/jpeg" }), personName(m.sender_id, ""), pic.caption);
 }
 
-function showInViewer(blob, from) {
+function showInViewer(blob, from, caption = "") {
   viewer.url = URL.createObjectURL(blob);
   const v = $("#viewer");
   const img = $("#viewer-image");
   $("#viewer-from").textContent = from;
+  $("#viewer-caption").textContent = caption;
+  $("#viewer-caption").hidden = !caption;
   v.style.setProperty("--view-ms", `${VIEW_MS}ms`);
   img.onload = () => {
     v.classList.add("running");

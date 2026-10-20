@@ -15,21 +15,32 @@ pub const API_VERSION: u32 = 1;
 
 /// Encryption formats the server will store. The server can't read messages,
 /// so this just stops a client from writing a format no released client reads.
-/// Format 1 is the scheme in docs/how-napsack-works.md.
-pub const MESSAGE_FORMATS: &[i64] = &[1];
+/// Both are described in docs/how-napsack-works.md: format 1 is the original
+/// scheme; format 2 is a pic with a caption sealed inside (pics only).
+pub const MESSAGE_FORMATS: &[i64] = &[1, 2];
+const TEXT_FORMATS: &[i64] = &[1];
+const SNAP_FORMATS: &[i64] = &[1, 2];
 
 pub fn default_format() -> i64 {
     1
 }
 
-pub fn check_format(format: i64) -> Result<(), AppError> {
-    if MESSAGE_FORMATS.contains(&format) {
+fn check(allowed: &[i64], format: i64) -> Result<(), AppError> {
+    if allowed.contains(&format) {
         Ok(())
     } else {
         Err(AppError::bad(format!(
-            "This server doesn't accept message format {format} yet."
+            "This server doesn't accept message format {format} here."
         )))
     }
+}
+
+pub fn check_text_format(format: i64) -> Result<(), AppError> {
+    check(TEXT_FORMATS, format)
+}
+
+pub fn check_snap_format(format: i64) -> Result<(), AppError> {
+    check(SNAP_FORMATS, format)
 }
 
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");

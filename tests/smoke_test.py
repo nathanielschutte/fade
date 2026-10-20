@@ -6,7 +6,7 @@ Encryption happens in the browser (static/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """
-import asyncio, base64, json, os, struct, sys, uuid, zlib
+import asyncio, base64, json, os, struct, sys, urllib.parse, uuid, zlib
 import requests, websockets
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
@@ -142,12 +142,17 @@ def check_groups(tag, a, a_tok, b, b_tok):
     ok(call("POST", f"/groups/{gid}/pics", b_tok, data=b"\xff\xd8\xff\xe0" + os.urandom(4000)), 400)  # JPEG magic, garbage inside
     ok(call("POST", f"/groups/{gid}/pics", b_tok, data=png(1, 1, claim=(100_000, 100_000))), 400)    # decompression bomb
     ok(call("POST", f"/groups/{gid}/pics", d_tok, data=jpeg), 404)
-    pm = ok(call("POST", f"/groups/{gid}/pics", b_tok, data=jpeg, headers={"Content-Type": "image/jpeg"})).json()
+    ok(call("POST", f"/groups/{gid}/pics", b_tok, data=jpeg, params={"caption": "a\u202eb"}), 400)
+    ok(call("POST", f"/groups/{gid}/pics", b_tok, data=jpeg, params={"caption": "x" * 201}), 400)
+    pm = ok(call("POST", f"/groups/{gid}/pics", b_tok, data=jpeg, headers={"Content-Type": "image/jpeg"},
+                 params={"caption": " sunset 🌅 <b>hi</b> "})).json()
+    assert "sunset" not in json.dumps(pm), "the caption stays hidden until the pic is opened"
     pic = pm["pic"]
     assert pm["pic_id"] == pic["id"] and pic["viewers"] == [] and pic["discard_reason"] is None and pm["body"] == ""
     ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", b_tok), 400)          # sender can't open it
     ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", d_tok), 404)          # outsider
     r = ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", a_tok))
+    assert urllib.parse.unquote(r.headers["X-Napsack-Caption"]) == "sunset 🌅 <b>hi</b>"
     assert r.content.startswith(b"\xff\xd8\xff") and r.headers["Content-Type"] == "image/jpeg" and r.headers["Cache-Control"] == "no-store"
     assert not any(contains(r.content, n) for n in (b"<script", b"<html", b"Exif", b"GPS")), "hidden payload survived"
     assert "sandbox" in r.headers["Content-Security-Policy"] and r.headers["X-Content-Type-Options"] == "nosniff"
@@ -194,6 +199,60 @@ def check_groups(tag, a, a_tok, b, b_tok):
     ok(call("GET", f"/groups/{gid}", a_tok), 404)
     print("  groups: membership rules, history from joining, owner handover")
 
+def check_people(tag, a, a_tok, b, b_tok):
+    """Display names, private nicknames, profile pictures: friends only, all kept."""
+    rs = ok(register(f"stranger_{tag}")).json(); s, s_tok = rs["user"], rs["token"]
+    friend_view = lambda tok, who: [c for c in ok(call("GET", "/friends", tok)).json() if c["id"] == who["id"]][0]
+
+    assert ok(call("GET", "/me", a_tok)).json()["display_name"] is None
+    for bad in ["x" * 31, "evil‮gpj", "two\nlines", "nul\u0000", "zero​width"]:
+        ok(call("PUT", "/me/name", a_tok, json={"name": bad}), 400)
+    ok(call("PUT", "/me/name", a_tok, json={"name": "  Alex   the Great "}))
+    assert ok(call("GET", "/me", a_tok)).json()["display_name"] == "Alex the Great"
+    assert friend_view(b_tok, a)["display_name"] == "Alex the Great"
+    assert ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()["display_name"] == "Alex the Great"
+    ok(call("PUT", "/me/name", a_tok, json={"name": "'; DROP TABLE users; --"}))       # just a name
+    assert friend_view(b_tok, a)["display_name"] == "'; DROP TABLE users; --"
+    ok(call("PUT", "/me/name", a_tok, json={"name": "Alex the Great"}))
+
+    # Strangers see none of it: no profile, no picture, and requests show only usernames.
+    ok(call("GET", f"/users/{a['id']}/profile", s_tok), 404)
+    ok(call("POST", "/friends/requests", s_tok, json={"username": a["username"]}))
+    assert "Alex the Great" not in json.dumps(ok(call("GET", "/friends/requests", s_tok)).json())
+    ok(call("DELETE", f"/friends/requests/{s['id']}", a_tok))
+
+    # A nickname is seen only by whoever set it.
+    ok(call("PUT", f"/friends/{a['id']}/nickname", b_tok, json={"name": "Captain Nickname"}))
+    assert friend_view(b_tok, a)["nickname"] == "Captain Nickname"
+    assert ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()["nickname"] == "Captain Nickname"
+    for tok in (a_tok, s_tok):
+        assert "Captain" not in json.dumps(ok(call("GET", "/friends", tok)).json())
+    assert "Captain" not in json.dumps(ok(call("GET", f"/users/{b['id']}/profile", a_tok)).json())
+    assert "Captain" not in json.dumps(ok(call("GET", "/me", a_tok)).json())
+    ok(call("PUT", f"/friends/{a['id']}/nickname", s_tok, json={"name": "x"}), 404)  # not friends
+    ok(call("PUT", f"/friends/{a['id']}/nickname", b_tok, json={"name": "‮oops"}), 400)
+    ok(call("PUT", f"/friends/{a['id']}/nickname", b_tok, json={"name": "  "}))      # clears
+    assert friend_view(b_tok, a)["nickname"] is None
+
+    # Profile pictures: rebuilt like every image the server sees; friends only.
+    ok(call("POST", "/me/avatar", a_tok, data=b"<svg onload=x>" + b" " * 100), 400)
+    ok(call("POST", "/me/avatar", a_tok, data=png(1, 1, claim=(100_000, 100_000))), 400)
+    ok(call("POST", "/me/avatar", a_tok, data=b"\xff\xd8\xff" + b"x" * 200_000), 413)
+    av = ok(call("POST", "/me/avatar", a_tok, data=png(80, 80) + b"<script>alert(1)</script>")).json()["avatar_id"]
+    assert ok(call("GET", "/me", a_tok)).json()["avatar_id"] == av and friend_view(b_tok, a)["avatar_id"] == av
+    r = ok(call("GET", f"/users/{a['id']}/avatar/{av}", b_tok))
+    assert r.content.startswith(b"\xff\xd8\xff") and not contains(r.content, b"<script")
+    assert "sandbox" in r.headers["Content-Security-Policy"] and r.headers["Content-Type"] == "image/jpeg"
+    ok(call("GET", f"/users/{a['id']}/avatar/{av}", a_tok))
+    ok(call("GET", f"/users/{a['id']}/avatar/{av}", s_tok), 404)
+    av2 = ok(call("POST", "/me/avatar", a_tok, data=png(64, 64))).json()["avatar_id"]
+    ok(call("GET", f"/users/{a['id']}/avatar/{av}", b_tok), 404)                    # replaced: not served
+    ok(call("DELETE", "/me/avatar", a_tok))
+    assert ok(call("GET", "/me", a_tok)).json()["avatar_id"] is None and friend_view(b_tok, a)["avatar_id"] is None
+    ok(call("GET", f"/users/{a['id']}/avatar/{av2}", b_tok), 404)
+    print("  people: names, private nicknames, pictures; friends only")
+
+
 def check_rate_limits(tag):
     """Failed sign-ins lock a username for a while; one address can't hammer sign-up."""
     name = f"lock_{tag}"
@@ -236,7 +295,7 @@ async def ws_events(token, bucket, ready):
 def check_versions(token):
     """/config describes the server; old native clients get 426 everywhere else."""
     cfg = ok(call("GET", "/config")).json()
-    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1], cfg
+    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2] and cfg["snap_ttl_hours"] == 720, cfg
     assert cfg["server_version"] and cfg["build"], cfg
     min_ios = cfg["min_client_versions"].get("ios")
     if not min_ios:
@@ -325,9 +384,10 @@ async def main():
 
     # Snaps: opaque bytes, view-once.
     ok(call("POST", f"/chats/{b['id']}/snaps", a_tok, data=b"tiny"), 400)
-    snap = ok(call("POST", f"/chats/{b['id']}/snaps", a_tok, data=SNAP,
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=3", a_tok, data=SNAP), 400)
+    snap = ok(call("POST", f"/chats/{b['id']}/snaps?format=2", a_tok, data=SNAP,
                    headers={"Content-Type": "application/octet-stream"})).json()
-    assert snap["snap_state"] == "pending" and snap["ciphertext"] is None
+    assert snap["snap_state"] == "pending" and snap["ciphertext"] is None and snap["format"] == 2
     ok(call("GET", f"/snaps/{snap['id']}", a_tok), 404)          # sender can't open it
     r = ok(call("GET", f"/snaps/{snap['id']}", b_tok))
     assert r.content == SNAP and "no-store" in r.headers["Cache-Control"]
@@ -387,6 +447,7 @@ async def main():
     assert len(history) == 122, len(history)
     assert [c["id"] for c in ok(call("GET", "/friends", a_tok)).json()] == [b["id"]]
 
+    check_people(tag, a, a_tok, b, b_tok)
     check_groups(tag, a, a_tok, b, b_tok)
 
     # Signing out revokes the session; it doesn't come back.

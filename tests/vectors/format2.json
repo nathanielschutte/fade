@@ -1,0 +1,19 @@
+{
+  "about": "napsack message format 2 test vectors (pic + caption). Keys are format1.json. Generated once from server/static/crypto.js; never regenerate.",
+  "pic": {
+    "from": 7,
+    "to": 3,
+    "caption": "sunset at the lake 🌅",
+    "photo_b64": "BzxxptsQRXqv5BlOg7jtIleMwfYrYJXK/zRpntMIPXKn3BFGe7DlGk+Eue4jWI3C9yxhlssANWqf1Ak+c6jdEg==",
+    "plaintext_b64": "ABdzdW5zZXQgYXQgdGhlIGxha2Ug8J+MhQc8cabbEEV6r+QZToO47SJXjMH2K2CVyv80aZ7TCD1yp9wRRnuw5RpPhLnuI1iNwvcsYZbLADVqn9QJPnOo3RI=",
+    "ciphertext_b64": "1Y2COJnRLAPTEnxorhfeMxaBrfxbZiDtF8rx/JiYikRH60c5cyAX0LuOcO3J7SCM0D+XuqS5HsYa1hZJ3eur8da3iVBgcF4y2viz5RRq00oc8s1cmvYWxvhEL22i76D0FyEGP8u8EPJaARFDJfaaUVoo6+sK"
+  },
+  "pic_no_caption": {
+    "from": 7,
+    "to": 3,
+    "caption": "",
+    "photo_b64": "BzxxptsQRXqv5BlOg7jtIleMwfYrYJXK/zRpntMIPXKn3BFGe7DlGk+Eue4jWI3C9yxhlssANWqf1Ak+c6jdEg==",
+    "plaintext_b64": "AAAHPHGm2xBFeq/kGU6DuO0iV4zB9itglcr/NGme0wg9cqfcEUZ7sOUaT4S57iNYjcL3LGGWywA1ap/UCT5zqN0S",
+    "ciphertext_b64": "yNSTczMMwIXR8g6Z1ExAJ04byLCPDxmpxYwavYlv8XfKJu3xXP27uZSvwufgu3T829ebIPt44bkZWjJqwZBK3e/Hho4+4OAN+yPJrlqiSdUBYUZm7hpUqMhsESjQyw=="
+  }
+}

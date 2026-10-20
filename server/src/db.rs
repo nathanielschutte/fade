@@ -114,15 +114,6 @@ pub async fn are_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<bool> 
     Ok(row.is_some())
 }
 
-pub async fn expire_orphaned_snaps(db: &SqlitePool) -> sqlx::Result<u64> {
-    let r = sqlx::query(
-        "UPDATE messages SET snap_state = 'expired' WHERE kind = 'snap' AND snap_state = 'pending'",
-    )
-    .execute(db)
-    .await?;
-    Ok(r.rows_affected())
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;

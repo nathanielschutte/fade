@@ -131,6 +131,7 @@ async def main():
         await ana.wait_for_timeout(500)
         await ana.click("#shutter")
         await expect(ana.locator("#send-snap")).to_have_text(f"Send to {GROUP}")
+        await ana.fill("#snap-caption", "<i>road</i> ✨ trip")
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=10000)
         await expect(ana.locator(".snap-chip.done", has_text="Pic sent")).to_be_visible()
@@ -138,6 +139,8 @@ async def main():
         await ben.locator("button.snap-chip", has_text="Tap to view pic").click()
         await expect(ben.locator("#viewer-image")).to_be_visible()
         await expect(ben.locator("#viewer-from")).to_contain_text(ANA)
+        await expect(ben.locator("#viewer-caption")).to_have_text("<i>road</i> ✨ trip")  # as text
+        assert await ben.locator("#viewer-caption i").count() == 0
         await ben.click("#viewer")
         await expect(ben.locator(".snap-chip.done", has_text="Viewed")).to_be_visible(timeout=10000)
         await expect(ana.locator(".snap-chip.done", has_text="Opened by 1")).to_be_visible(timeout=10000)

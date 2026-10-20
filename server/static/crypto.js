@@ -11,8 +11,16 @@ const subtle = globalThis.crypto.subtle;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** The scheme this file implements. Stored with every message; see server/src/version.rs. */
+/**
+ * Message formats, stored with every message (server/src/version.rs). Texts
+ * are format 1. Pics are format 2: a caption sealed in with the photo. Old
+ * format 1 pics stay readable forever.
+ */
 export const FORMAT = 1;
+export const TEXT_FORMAT = 1;
+export const SNAP_FORMAT = 2;
+/** Encoded caption limit (200 characters in the UI; emoji take up to 4 bytes each). */
+export const MAX_CAPTION_BYTES = 1000;
 
 const PBKDF2_ITERATIONS = 600_000;
 const ECDH = { name: "ECDH", namedCurve: "P-256" };
@@ -125,6 +133,41 @@ export async function encryptSnap(key, bytes, senderId, recipientId) {
 
 export async function decryptSnap(key, bytes, senderId, recipientId) {
   return open(key, bytes, messageAad("snap", senderId, recipientId));
+}
+
+// ---------- format 2: pic with a caption ----------
+// Plaintext: caption length (2 bytes, big-endian) || caption (UTF-8) || JPEG.
+// Same pair key; the associated data says v2, so a format 2 pic can't be
+// passed off as format 1 or the other way round.
+
+const picAad = (senderId, recipientId) => `napsack/v2/snap/${senderId}/${recipientId}`;
+
+export function packPic(photo, caption = "") {
+  const c = enc.encode(caption);
+  if (c.length > MAX_CAPTION_BYTES) throw new Error("That caption is too long.");
+  const out = new Uint8Array(2 + c.length + photo.length);
+  out[0] = c.length >> 8;
+  out[1] = c.length & 0xff;
+  out.set(c, 2);
+  out.set(photo, 2 + c.length);
+  return out;
+}
+
+export function unpackPic(body) {
+  const n = (body[0] << 8) | body[1];
+  if (body.length < 2 + n || n > MAX_CAPTION_BYTES) throw new Error("malformed pic");
+  return { caption: dec.decode(body.subarray(2, 2 + n)), photo: body.subarray(2 + n) };
+}
+
+export async function encryptPic(key, photo, caption, senderId, recipientId) {
+  return seal(key, packPic(photo, caption), picAad(senderId, recipientId));
+}
+
+/** Any pic format -> { photo, caption }. Format 1 pics have no caption. */
+export async function decryptPic(key, bytes, format, senderId, recipientId) {
+  if (format === 1) return { photo: await decryptSnap(key, bytes, senderId, recipientId), caption: "" };
+  if (format === 2) return unpackPic(await open(key, bytes, picAad(senderId, recipientId)));
+  throw new Error(`unknown pic format ${format}`);
 }
 
 /**

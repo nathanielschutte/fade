@@ -10,6 +10,7 @@ use crate::{
     auth::AuthUser,
     db::{self, now, pair, Message, UserPublic},
     error::{AppError, AppResult},
+    people::{AVATAR_ID, DISPLAY_NAME, NICKNAME},
     ws::Event,
     SharedState,
 };
@@ -18,6 +19,9 @@ use crate::{
 struct ChatRow {
     id: i64,
     username: String,
+    display_name: Option<String>,
+    nickname: Option<String>,
+    avatar_id: Option<i64>,
     public_key: String,
     last_id: Option<i64>,
     unread: i64,
@@ -27,6 +31,12 @@ struct ChatRow {
 pub struct ChatSummary {
     id: i64,
     username: String,
+    /// The name they chose for themselves (people.rs).
+    display_name: Option<String>,
+    /// The name you gave them; only you see it.
+    nickname: Option<String>,
+    /// Their current profile picture: `GET /api/users/{id}/avatar/{avatar_id}`.
+    avatar_id: Option<i64>,
     /// The friend's SPKI public key. Clients pin it on first sight.
     public_key: String,
     last_message: Option<Message>,
@@ -39,25 +49,21 @@ pub async fn list_chats(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
-    let rows = sqlx::query_as::<_, ChatRow>(
+    let rows = sqlx::query_as::<_, ChatRow>(&format!(
         "SELECT u.id, u.username, u.public_key,
+            {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
             (SELECT m.id FROM messages m
-              WHERE (m.sender_id = ? AND m.recipient_id = u.id)
-                 OR (m.sender_id = u.id AND m.recipient_id = ?)
+              WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
+                 OR (m.sender_id = u.id AND m.recipient_id = ?1)
               ORDER BY m.id DESC LIMIT 1) AS last_id,
             (SELECT COUNT(*) FROM messages m
-              WHERE m.sender_id = u.id AND m.recipient_id = ?
+              WHERE m.sender_id = u.id AND m.recipient_id = ?1
                 AND ((m.kind = 'text' AND m.read_at IS NULL)
                   OR (m.kind = 'snap' AND m.snap_state = 'pending'))) AS unread
          FROM friendships f
-         JOIN users u ON u.id = CASE WHEN f.user_lo = ? THEN f.user_hi ELSE f.user_lo END
-         WHERE (f.user_lo = ? OR f.user_hi = ?) AND f.ended_at IS NULL",
-    )
-    .bind(me.id)
-    .bind(me.id)
-    .bind(me.id)
-    .bind(me.id)
-    .bind(me.id)
+         JOIN users u ON u.id = CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+         WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL"
+    ))
     .bind(me.id)
     .fetch_all(&state.db)
     .await?;
@@ -71,6 +77,9 @@ pub async fn list_chats(
         chats.push(ChatSummary {
             id: row.id,
             username: row.username,
+            display_name: row.display_name,
+            nickname: row.nickname,
+            avatar_id: row.avatar_id,
             public_key: row.public_key,
             last_message,
             unread: row.unread,

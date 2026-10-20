@@ -1,7 +1,7 @@
 """Drives the real web client in Chrome: two users exchanging end-to-end
 encrypted texts and snaps, plus key persistence, safety codes, and key pinning.
 Settings come from the environment; see common.py."""
-import asyncio, base64, re, sqlite3, sys, uuid
+import asyncio, base64, os, re, sqlite3, sys, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import BASE, DB, INVITE, launch, shot
@@ -137,8 +137,11 @@ async def main():
         await wait_js(a, "document.querySelector('#camera-video').videoWidth > 100")
         await a.click("#shutter")
         await expect(a.locator("#send-snap")).to_be_visible()
-        await a.click("#send-snap")
+        await a.fill("#snap-caption", "first light over the lake")
+        await shot(a, "caption-compose")
+        await a.press("#snap-caption", "Enter")  # Enter sends
         await expect(a.locator("#camera-dialog")).not_to_be_visible(timeout=10000)
+        await expect(a.locator("#snap-caption")).to_have_value("")
 
         # Snap 2: a 3000x2250 noise image, the worst case for JPEG, through the file picker.
         await a.click("#camera-button")
@@ -168,6 +171,15 @@ async def main():
                     ['aria-label', 'alt', 'title', 'placeholder'].map(k => e.getAttribute(k) || ''))].join(' ')""")
             assert "snap" not in visible.lower(), [w for w in visible.split() if "snap" in w.lower()]
         assert len(snap_uploads) == 2 and all(n <= 200 * 1024 + 28 for n in snap_uploads), snap_uploads
+        if DB:
+            # The caption is sealed in with the photo: not in the database, not readable on disk.
+            assert "first light over the lake".encode() not in open(DB, "rb").read()
+            pics = os.path.join(os.path.dirname(DB), "pics", "direct")
+            held = [open(os.path.join(pics, f), "rb").read() for f in os.listdir(pics)]
+            assert held and all("first light over the lake".encode() not in h for h in held)
+            formats = sqlite3.connect(DB).execute("SELECT DISTINCT format FROM messages WHERE kind = 'snap'").fetchall()
+            assert formats == [(2,)], formats
+            print("caption is end-to-end encrypted; pics wait on disk as ciphertext, format 2")
 
         # Sam opens both: decrypts and shows the image, then it's gone.
         for i in range(2):
@@ -179,7 +191,10 @@ async def main():
             print(f"snap {i + 1} decrypted and shown at {dims[0]}x{dims[1]}")
             assert max(dims) <= 1280
             if i == 0:
+                await expect(b.locator("#viewer-caption")).to_have_text("first light over the lake")
                 await shot(b, "4-viewer")
+            else:
+                await expect(b.locator("#viewer-caption")).to_be_hidden()
             await b.click("#viewer")
         await expect(b.locator("button.snap-chip")).to_have_count(0)
 
