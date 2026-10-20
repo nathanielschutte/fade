@@ -316,7 +316,8 @@ $("#sign-out").addEventListener("click", async () => {
 function enterApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
-  $("#signed-in-as").textContent = `Signed in as ${state.me.username}`;
+  $("#my-name").textContent = state.me.username;
+  paintAvatar($("#my-avatar"), state.me);
   $("#admin-link").hidden = !state.me.is_admin;
   refreshChats();
   refreshGroups();
@@ -362,7 +363,15 @@ function chatStatus(chat) {
   return { text: mine ? `You: ${body}` : body };
 }
 
-function chatRow({ name, status, time, current, onclick, group }) {
+const PREVIEW_CHARS = 140;
+
+/** Previews also end in "…" through CSS; this caps what goes in the DOM at all. */
+function preview(text) {
+  const chars = Array.from(text ?? "");
+  return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS - 1).join("")}…` : chars.join("");
+}
+
+function chatRow({ name, status, time, current, onclick, group, avatar }) {
   const cls = ["chat-item"];
   if (status.marker === "snap") cls.push("has-unread", "has-snap");
   else if (status.marker === "text") cls.push("has-unread");
@@ -370,9 +379,10 @@ function chatRow({ name, status, time, current, onclick, group }) {
   return el("li", {},
     el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick },
       el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
-      el("span", {},
+      avatar,
+      el("span", { class: "chat-text" },
         el("span", { class: "chat-name", text: name }),
-        el("span", { class: "chat-status", text: status.text })),
+        el("span", { class: "chat-status", text: preview(status.text) })),
       el("span", { class: "chat-time", text: time ? relTime(time) : "" }),
     ));
 }
@@ -385,6 +395,7 @@ function renderChatList() {
       row: chatRow({
         name: chat.username, status: chatStatus(chat), time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
+        avatar: paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat),
       }),
     })),
     ...state.groups.map((g) => ({
@@ -393,6 +404,7 @@ function renderChatList() {
       row: chatRow({
         name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
         current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
+        avatar: paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g),
       }),
     })),
   ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
@@ -415,6 +427,8 @@ async function openChat(friendId) {
   $("#chat").hidden = false;
   $("#chat-title").textContent = chat.username;
   $("#chat-title").setAttribute("aria-label", `${chat.username}: view profile`);
+  paintAvatar($("#chat-avatar"), chat);
+  $("#chat-avatar").classList.remove("group");
   const switching = $("#messages").dataset.friend !== String(friendId);
   if (switching) {
     $("#messages").dataset.friend = String(friendId);
@@ -756,6 +770,7 @@ function groupEventText(m) {
     case "left": return `${actor} left`;
     case "renamed": return `${actor} renamed the group to “${e.name}”`;
     case "owner": return e.target === state.me.id ? "You're now the owner" : `${e.target_name} is now the owner`;
+    case "picture": return `${actor} changed the group picture`;
     default: return "The group changed";
   }
 }
@@ -763,6 +778,11 @@ function groupEventText(m) {
 function groupStatus(g) {
   const m = g.last_message;
   if (!m) return { text: `${g.member_count} people` };
+  if (m.pic) {
+    const mine = m.sender_id === state.me.id;
+    const waiting = !mine && !m.pic.discard_reason && !m.pic.viewers.includes(state.me.id);
+    return { text: mine ? "You sent a pic" : `${m.sender_name} sent a pic`, marker: waiting ? "snap" : g.unread ? "text" : null };
+  }
   const text = m.kind === "event"
     ? groupEventText(m)
     : `${m.sender_id === state.me.id ? "You" : m.sender_name}: ${m.body}`;
@@ -773,7 +793,8 @@ function groupStatus(g) {
 function setConversationMode(kind) {
   const group = kind === "group";
   $("#safety-button").hidden = group;
-  $("#camera-button").hidden = group;
+  $("#camera-button").hidden = false;
+  $("#camera-button").disabled = false;
   $("#group-notice").hidden = !group;
   $("#chat-sub").hidden = !group;
   if (group) {
@@ -789,6 +810,7 @@ function renderGroupHeader() {
   $("#chat-title").textContent = g.name;
   $("#chat-title").setAttribute("aria-label", `${g.name}: group info`);
   $("#chat-sub").textContent = `${g.member_count} ${g.member_count === 1 ? "person" : "people"}`;
+  paintGroupAvatar($("#chat-avatar"), g);
 }
 
 async function openGroup(groupId) {
@@ -896,7 +918,8 @@ function renderGroupMessages() {
       items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : m.sender_name}  ${clockTime(m.created_at)}` }));
       prevSender = m.sender_id;
     }
-    items.push(el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.body }));
+    if (m.pic) items.push(el("li", { class: `msg ${mine ? "mine" : ""}` }, groupPicChip(m, mine)));
+    if (m.body) items.push(el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.body }));
   }
   if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
   list.replaceChildren(...items);
@@ -905,6 +928,76 @@ function renderGroupMessages() {
     list.dataset.scrolled = "1";
   }
 }
+
+/** View-once per member. The sender sees how many have opened it. */
+function groupPicChip(m, mine) {
+  const p = m.pic;
+  const seen = p.viewers.includes(state.me.id);
+  if (!mine && !seen && !p.discard_reason) {
+    return el("button", { type: "button", class: "snap-chip", onclick: () => viewGroupPic(m) },
+      el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic");
+  }
+  const label = mine
+    ? p.discard_reason === "opened" ? "Opened by everyone"
+      : p.discard_reason === "expired" ? "Expired"
+      : p.viewers.length ? `Opened by ${p.viewers.length}` : "Pic sent"
+    : seen ? "Viewed" : "Expired";
+  return el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), label);
+}
+
+async function viewGroupPic(m) {
+  let blob;
+  try {
+    blob = await (await api(`/groups/${m.group_id}/pics/${m.pic.id}`)).blob();
+  } catch (err) {
+    if (err.status !== 410) alert(err.message); // 410: opened elsewhere or expired; the socket updates the chat
+    return;
+  }
+  showInViewer(blob, `${m.sender_name} · ${groupById(m.group_id)?.name ?? ""}`);
+}
+
+async function sendGroupPic(groupId) {
+  const btn = $("#send-snap");
+  btn.disabled = true;
+  try {
+    const m = await getJSON(`/groups/${groupId}/pics`, {
+      method: "POST", body: camera.blob, headers: { "Content-Type": "image/jpeg" },
+    });
+    upsertGroupMessage(m);
+    if (state.activeGroupId === groupId) renderMessages();
+    $("#camera-dialog").close();
+  } catch (err) {
+    cameraMessage(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Square-cropped to 256px and kept small; group pictures live in the database. */
+async function groupPictureBlob(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 256;
+  canvas.getContext("2d").drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+  bitmap.close();
+  for (const q of [0.85, 0.7, 0.55]) {
+    const blob = await encodeJpeg(canvas, q);
+    if (blob.size <= 100 * 1024) return blob;
+  }
+  throw new Error("Couldn't make that picture small enough.");
+}
+
+$("#group-picture-input").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  const g = state.groupDetail;
+  if (!file || !g) return;
+  await groupAction(async () => {
+    const blob = await groupPictureBlob(file);
+    await api(`/groups/${g.id}/avatar`, { method: "POST", body: blob, headers: { "Content-Type": "image/jpeg" } });
+  }, "Group picture updated.");
+});
 
 async function sendGroupText(groupId, input, text) {
   input.value = "";
@@ -973,6 +1066,7 @@ async function openGroupInfo(groupId) {
     return;
   }
   state.groupDetail = g;
+  paintGroupAvatar($("#group-avatar"), g);
   $("#group-title").textContent = g.name;
   $("#group-sub").textContent = `${g.members.length} ${g.members.length === 1 ? "person" : "people"} · you're ${g.role === "owner" ? "the owner" : "a member"}`;
   if (document.activeElement !== $("#rename-input")) $("#rename-input").value = g.name;
@@ -1079,6 +1173,36 @@ const longDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { yea
 function paintAvatar(node, user) {
   node.textContent = (user.username[0] || "?").toUpperCase();
   node.dataset.tint = String(user.id % 6);
+  node.dataset.picture = ""; // a group picture still loading for this node is now stale
+  return node;
+}
+
+// Group pictures are fetched with the session (they're members-only) and kept
+// as object URLs, keyed by picture id, so each is downloaded once.
+const avatarUrls = new Map();
+
+async function groupAvatarUrl(g) {
+  if (!g.avatar_id) return null;
+  const key = `${g.id}:${g.avatar_id}`;
+  if (!avatarUrls.has(key)) {
+    avatarUrls.set(key, api(`/groups/${g.id}/avatar/${g.avatar_id}`)
+      .then((r) => r.blob())
+      .then((b) => URL.createObjectURL(b))
+      .catch((err) => { avatarUrls.delete(key); report("warn", "group picture failed to load", { group_id: g.id, ...errorFields(err) }); return null; }));
+  }
+  return avatarUrls.get(key);
+}
+
+function paintGroupAvatar(node, g) {
+  paintAvatar(node, { id: g.id, username: g.name });
+  node.classList.add("group");
+  if (!g.avatar_id) return node;
+  const key = `${g.id}:${g.avatar_id}`;
+  node.dataset.picture = key;
+  groupAvatarUrl(g).then((url) => {
+    if (url && node.dataset.picture === key) node.replaceChildren(el("img", { src: url, alt: "" }));
+  });
+  return node;
 }
 
 function stat(label, value) {
@@ -1150,10 +1274,7 @@ async function openProfile(userId) {
   }));
 }
 
-$("#my-profile").addEventListener("click", () => {
-  $("#friends-dialog").close();
-  openProfile(state.me.id);
-});
+$("#my-profile").addEventListener("click", () => openProfile(state.me.id));
 $("#chat-title").addEventListener("click", () => {
   if (state.activeId) openProfile(state.activeId);
   else if (state.activeGroupId) openGroupInfo(state.activeGroupId);
@@ -1308,7 +1429,7 @@ function showPreview(blob) {
   cameraMessage("");
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
-  const name = chatById(state.activeId)?.username;
+  const name = state.activeGroupId ? groupById(state.activeGroupId)?.name : chatById(state.activeId)?.username;
   $("#send-snap").textContent = name ? `Send to ${name}` : "Send";
 }
 
@@ -1353,7 +1474,7 @@ async function compressPhoto(source, width, height, mirror = false) {
 }
 
 $("#camera-button").addEventListener("click", () => {
-  if (!state.activeId) return;
+  if (!state.activeId && !state.activeGroupId) return;
   $("#camera-dialog").showModal();
   showCapture();
   startStream();
@@ -1409,6 +1530,7 @@ $("#retake").addEventListener("click", () => {
 });
 
 $("#send-snap").addEventListener("click", async () => {
+  if (state.activeGroupId) return sendGroupPic(state.activeGroupId);
   const friendId = state.activeId;
   if (!camera.blob || !friendId) return;
   const btn = $("#send-snap");
@@ -1458,10 +1580,14 @@ async function viewSnap(m) {
     alert("This pic couldn't be decrypted.");
     return;
   }
-  viewer.url = URL.createObjectURL(new Blob([photo], { type: "image/jpeg" }));
+  showInViewer(new Blob([photo], { type: "image/jpeg" }), chatById(friendOf(m))?.username || "");
+}
+
+function showInViewer(blob, from) {
+  viewer.url = URL.createObjectURL(blob);
   const v = $("#viewer");
   const img = $("#viewer-image");
-  $("#viewer-from").textContent = chatById(friendOf(m))?.username || "";
+  $("#viewer-from").textContent = from;
   v.style.setProperty("--view-ms", `${VIEW_MS}ms`);
   img.onload = () => {
     v.classList.add("running");

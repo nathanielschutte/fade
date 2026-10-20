@@ -26,6 +26,21 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
+/// `pics` next to the SQLite file in a `sqlite://path?opts` URL.
+pub fn default_pic_dir(database_url: &str) -> std::path::PathBuf {
+    let path = database_url
+        .trim_start_matches("sqlite://")
+        .trim_start_matches("sqlite:")
+        .split('?')
+        .next()
+        .unwrap_or("");
+    std::path::Path::new(path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."))
+        .join("pics")
+}
+
 pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -225,6 +240,73 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn pic_dir_sits_next_to_the_database() {
+        let p = |u| default_pic_dir(u).to_string_lossy().replace('\\', "/");
+        assert_eq!(
+            p("sqlite:///var/lib/fade/db/fade.db"),
+            "/var/lib/fade/db/pics"
+        );
+        assert_eq!(p("sqlite://fade.db"), "./pics");
+        assert_eq!(p("sqlite:///tmp/x/t.db?mode=rwc"), "/tmp/x/pics");
+    }
+
+    /// SQL injection can't happen when every value is a bound `?` parameter.
+    /// The only SQL built with `format!` may splice in UPPERCASE constants
+    /// (column lists, shared SELECTs), never a variable or positional argument.
+    #[test]
+    fn sql_only_interpolates_constants() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap();
+            let mut rest = src.as_str();
+            while let Some(at) = rest.find("(&format!(") {
+                let before = &rest[..at];
+                rest = &rest[at + "(&format!(".len()..];
+                if !before.trim_end().ends_with('>')
+                    && !before.ends_with("query_as")
+                    && !before.ends_with("query_scalar")
+                    && !before.ends_with("query")
+                {
+                    continue; // not a query
+                }
+                let lit = rest.trim_start();
+                assert!(
+                    lit.starts_with('"'),
+                    "{}: query format! must start with a string literal",
+                    path.display()
+                );
+                let end = lit[1..].find('"').expect("closing quote") + 1;
+                let template = &lit[1..end];
+                let after = lit[end + 1..].trim_start();
+                assert!(
+                    after.starts_with(')'),
+                    "{}: query format! has extra arguments: {}",
+                    path.display(),
+                    &after[..after.len().min(60)]
+                );
+                let mut t = template;
+                while let Some(open) = t.find('{') {
+                    let close = t[open..].find('}').expect("closing brace") + open;
+                    let name = &t[open + 1..close];
+                    assert!(
+                        !name.is_empty() && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                        "{}: query splices in `{{{name}}}`; only UPPERCASE constants are allowed, values must be bound",
+                        path.display()
+                    );
+                    t = &t[close + 1..];
+                }
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 8,
+            "found only {checked} format!-built queries; did the pattern change?"
+        );
     }
 
     #[test]

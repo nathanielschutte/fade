@@ -54,8 +54,8 @@ async def main():
             await ana.press("#composer-input", "Enter")
         await expect(ana.locator(".msg", has_text="profile test")).to_be_visible()
 
-        # Ana's own profile, from the Friends sheet.
-        await ana.click("#friends-button")
+        # Ana's own profile, from the account bar on the main screen.
+        await expect(ana.locator("#my-name")).to_have_text(ANA)
         await ana.click("#my-profile")
         await expect(ana.locator("#profile-name")).to_have_text(ANA)
         await expect(ana.locator("#profile-sub")).to_contain_text("Joined")

@@ -52,7 +52,7 @@ async def main():
         await expect(other.locator("#add-friend-note")).to_contain_text("Request sent")
         await other.click("#friends-dialog [data-close]")
         await admin.click("#friends-button")
-        await expect(admin.locator("#admin-link")).to_be_visible()
+        await expect(admin.locator(".account-bar #admin-link")).to_be_visible()
         await admin.locator("#incoming-list button", has_text="Accept").click()
         await admin.click("#friends-dialog [data-close]")
         await other.locator(".chat-item", has_text=ADMIN).click()

@@ -66,6 +66,9 @@ pub enum Profile {
 /// The other side of each of `user`'s friendships, as a subquery with one `?`.
 const FRIENDS_OF: &str = "SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
      FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL";
+/// The same, for the user bound as `?2`.
+const FRIENDS_OF_2: &str = "SELECT CASE WHEN g.user_lo = ?2 THEN g.user_hi ELSE g.user_lo END
+     FROM friendships g WHERE (g.user_lo = ?2 OR g.user_hi = ?2) AND g.ended_at IS NULL";
 
 async fn joined(db: &SqlitePool, id: i64) -> sqlx::Result<Option<(String, i64)>> {
     sqlx::query_as("SELECT username, created_at FROM users WHERE id = ?")
@@ -133,9 +136,8 @@ pub async fn mutual_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<Vec
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
          WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL
-           AND u.id IN ({})
-         ORDER BY lower(u.username)",
-        FRIENDS_OF.replace("?1", "?2")
+           AND u.id IN ({FRIENDS_OF_2})
+         ORDER BY lower(u.username)"
     ))
     .bind(a)
     .bind(b)

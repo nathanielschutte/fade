@@ -196,7 +196,7 @@ pub async fn register(
     if let Some(expected) = &state.config.invite_code {
         let given = req.invite_code.as_deref().unwrap_or("").trim();
         if !same_secret(given, expected) {
-            tracing::info!(ip = %who.ip, username = %req.username.trim(), "sign-up rejected: wrong invite code");
+            tracing::info!(ip = %who.ip, username = ?req.username.trim(), "sign-up rejected: wrong invite code");
             return Err(AppError::bad("That invite code isn't valid."));
         }
     }
@@ -239,7 +239,7 @@ pub async fn register(
     let user = match inserted {
         Ok(u) => u,
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
-            tracing::debug!(%username, "sign-up rejected: username taken");
+            tracing::debug!(?username, "sign-up rejected: username taken");
             return Err(AppError::Conflict("That username is taken.".into()));
         }
         Err(e) => return Err(e.into()),
@@ -265,12 +265,12 @@ pub async fn login(
     // before the (slow) password check, so guessing can't burn the CPU either.
     let account = req.username.trim().to_lowercase();
     if state.login_fail_limit.exhausted(&account) {
-        tracing::warn!(ip = %who.ip, username = %account, "sign-in rate limited");
+        tracing::warn!(ip = %who.ip, username = ?account, "sign-in rate limited");
         return Err(AppError::TooManyRequests(TOO_MANY.into()));
     }
     let failed = |reason: &str| {
         state.login_fail_limit.allow(&account);
-        tracing::info!(ip = %who.ip, username = %account, reason, "sign-in failed");
+        tracing::info!(ip = %who.ip, username = ?account, reason, "sign-in failed");
         AppError::bad("Wrong username or password.")
     };
     validate_auth_key(&req.auth_key).map_err(|_| failed("malformed key"))?;

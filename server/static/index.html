@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1b2822">
   <title>napsack</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -56,6 +57,14 @@
       <p>No friends yet. Add someone by their username to start a chat.</p>
       <button type="button" class="button primary" id="empty-add">Add a friend</button>
     </div>
+    <footer class="account-bar">
+      <button type="button" class="account-me" id="my-profile" aria-label="Your profile">
+        <span class="avatar small" id="my-avatar" aria-hidden="true"></span>
+        <span class="account-name" id="my-name"></span>
+      </button>
+      <a class="account-link" id="admin-link" href="/admin" hidden>Admin</a>
+      <button type="button" class="account-link" id="sign-out">Sign out</button>
+    </footer>
   </aside>
 
   <section class="chat-pane" id="chat-pane" aria-label="Conversation">
@@ -65,6 +74,7 @@
         <button type="button" class="icon-button back" id="back-button" aria-label="Back to chats">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
         </button>
+        <span class="avatar small chat-avatar" id="chat-avatar" aria-hidden="true"></span>
         <div class="chat-heading">
           <h2 class="chat-title"><button type="button" class="title-button" id="chat-title" aria-label="View profile"></button></h2>
           <span class="chat-sub" id="chat-sub" hidden></span>
@@ -117,14 +127,6 @@
     <h3>Waiting on them</h3>
     <ul class="people" id="outgoing-list"></ul>
   </section>
-  <footer class="sheet-foot">
-    <span id="signed-in-as"></span>
-    <span class="foot-links">
-      <button type="button" class="link" id="my-profile">Your profile</button>
-      <a class="link" id="admin-link" href="/admin" hidden>Admin</a>
-      <button type="button" class="link" id="sign-out">Sign out</button>
-    </span>
-  </footer>
 </dialog>
 
 <!-- New group -->
@@ -154,7 +156,7 @@
 <dialog id="group-dialog" class="sheet" aria-labelledby="group-title">
   <header class="sheet-head">
     <div class="profile-id">
-      <span class="avatar group-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6M13 15c.9-.4 1.9-.6 3-.6 2.7 0 4.9 1.6 5.5 4.6"/></svg></span>
+      <span class="avatar group-avatar" id="group-avatar" aria-hidden="true"></span>
       <div>
         <h2 id="group-title"></h2>
         <p class="profile-sub" id="group-sub"></p>
@@ -172,6 +174,10 @@
     </label>
     <button type="submit" class="button">Rename</button>
   </form>
+  <div class="picture-row">
+    <label class="button" for="group-picture-input">Change group picture</label>
+    <input type="file" id="group-picture-input" accept="image/*" hidden>
+  </div>
   <section>
     <h3 id="group-members-title">Members</h3>
     <ul class="people" id="group-members"></ul>

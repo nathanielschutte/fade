@@ -198,8 +198,7 @@ async def main():
         print("fresh profile + password decrypts history")
 
         # Signing out clears the key; a wrong password can't sign in.
-        await c.click("#friends-button")
-        await c.click("#sign-out")
+        await c.click("#sign-out")  # on the main screen's account bar
         await expect(c.locator("#auth")).to_be_visible()
         assert await c.evaluate("""() => new Promise((res) => {
             const r = indexedDB.open('napsack', 1);

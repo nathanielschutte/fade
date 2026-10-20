@@ -4,11 +4,15 @@ mod chats;
 mod db;
 mod error;
 mod friends;
+mod group_pics;
 mod groups;
+mod images;
 mod logs;
 mod profiles;
 mod ratelimit;
 mod snaps;
+mod sysinfo;
+mod text;
 mod version;
 mod web;
 mod ws;
@@ -40,6 +44,12 @@ pub struct Config {
     pub session_days: i64,
     /// Lowercased usernames allowed into the admin panel.
     pub admins: Vec<String>,
+    /// Where group pic files live until they're opened or expire. Defaults to
+    /// a `pics` folder next to the database, on the same (backed-up) volume.
+    pub pic_dir: std::path::PathBuf,
+    pub group_pic_ttl: Duration,
+    /// Cap on group pic bytes held on disk.
+    pub group_pic_disk_bytes: usize,
     /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/BACKUPS.md).
     pub backup_status_path: String,
     /// Oldest native client version still allowed, per platform. See version.rs.
@@ -75,6 +85,17 @@ impl Config {
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            pic_dir: match std::env::var("FADE_PIC_DIR") {
+                Ok(dir) if !dir.trim().is_empty() => dir.trim().into(),
+                _ => db::default_pic_dir(&env_or(
+                    "FADE_DATABASE_URL",
+                    "sqlite://fade.db".to_string(),
+                )?),
+            },
+            group_pic_ttl: Duration::from_secs(
+                env_or::<u64>("FADE_GROUP_PIC_TTL_HOURS", 24 * 30)? * 3600,
+            ),
+            group_pic_disk_bytes: env_or::<usize>("FADE_GROUP_PIC_DISK_MB", 200)? * 1024 * 1024,
             backup_status_path: env_or(
                 "FADE_BACKUP_STATUS",
                 "/var/lib/fade/backups/last.json".to_string(),
@@ -106,6 +127,10 @@ pub struct AppState {
     pub auth_ip_limit: ratelimit::RateLimit,
     /// Failed sign-ins per username.
     pub login_fail_limit: ratelimit::RateLimit,
+    /// Image uploads (group pics and pictures) per user.
+    pub image_upload_limit: ratelimit::RateLimit,
+    /// Any write to the API, per address.
+    pub write_limit: ratelimit::RateLimit,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -132,6 +157,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let db = db::connect(&config.database_url).await?;
+    std::fs::create_dir_all(&config.pic_dir)
+        .map_err(|e| anyhow::anyhow!("creating {}: {e}", config.pic_dir.display()))?;
 
     // Snap bytes don't survive a restart (by design), so any snap still marked
     // pending from a previous run is gone. Make the DB agree.
@@ -154,9 +181,12 @@ async fn main() -> anyhow::Result<()> {
         client_log_limit: ratelimit::RateLimit::new(300, Duration::from_secs(60)),
         auth_ip_limit: ratelimit::RateLimit::new(30, Duration::from_secs(10 * 60)),
         login_fail_limit: ratelimit::RateLimit::new(10, Duration::from_secs(15 * 60)),
+        image_upload_limit: ratelimit::RateLimit::new(60, Duration::from_secs(10 * 60)),
+        write_limit: ratelimit::RateLimit::new(600, Duration::from_secs(10 * 60)),
     });
 
     snaps::spawn_sweeper(state.clone());
+    group_pics::spawn_sweeper(state.clone());
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(
@@ -201,6 +231,19 @@ fn router(state: SharedState) -> Router {
         )
         .route("/groups/{group_id}/read", post(groups::mark_read))
         .route(
+            "/groups/{group_id}/pics",
+            post(group_pics::upload).layer(DefaultBodyLimit::max(snap_limit)),
+        )
+        .route("/groups/{group_id}/pics/{pic_id}", get(group_pics::view))
+        .route(
+            "/groups/{group_id}/avatar",
+            post(group_pics::set_avatar).layer(DefaultBodyLimit::max(group_pics::AVATAR_MAX_BYTES)),
+        )
+        .route(
+            "/groups/{group_id}/avatar/{avatar_id}",
+            get(group_pics::get_avatar),
+        )
+        .route(
             "/friends/requests",
             get(friends::list_requests).post(friends::send_request),
         )
@@ -230,6 +273,7 @@ fn router(state: SharedState) -> Router {
             state.clone(),
             version::require_supported_client,
         ))
+        .route_layer(middleware::from_fn_with_state(state.clone(), limit_writes))
         .route("/config", get(web::config))
         // Nothing from the API belongs in a cache: it's private, or it changes.
         .layer(SetResponseHeaderLayer::overriding(
@@ -269,6 +313,30 @@ fn router(state: SharedState) -> Router {
         ))
         .layer(middleware::from_fn(log_request))
         .with_state(state)
+}
+
+/// Caps API writes per address, so no one can flood the database. Sign-in
+/// and client logs have their own, tighter limits.
+async fn limit_writes(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = req.uri().path();
+    let exempt = path.contains("/auth/") || path.ends_with("/logs");
+    if req.method() != axum::http::Method::GET && !exempt {
+        if let Some(who) = req.extensions().get::<ratelimit::ClientInfo>() {
+            if !who.local && !state.write_limit.allow(&who.ip) {
+                tracing::warn!(ip = %who.ip, "write rate limited");
+                return error::AppError::TooManyRequests(
+                    "Slow down a little and try again in a few minutes.".into(),
+                )
+                .into_response();
+            }
+        }
+    }
+    next.run(req).await
 }
 
 /// One line per request: who (address, user agent), what (method, route

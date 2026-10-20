@@ -53,6 +53,17 @@ function backupText(b) {
   return `${overdue ? "Overdue, last " : ""}${ago(b.at)} · ${bytes(b.bytes)}`;
 }
 
+function resourceText(r, kind) {
+  if (!r) return "—";
+  if (kind === "mem" && r.mem_total_bytes) {
+    return `${bytes(r.mem_available_bytes)} free of ${bytes(r.mem_total_bytes)} (app ${bytes(r.app_rss_bytes)})`;
+  }
+  if (kind === "disk" && r.disk_total_bytes) {
+    return `${bytes(r.disk_total_bytes - r.disk_free_bytes)} used of ${bytes(r.disk_total_bytes)}`;
+  }
+  return "—";
+}
+
 function facts(target, rows) {
   $(target).replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
 }
@@ -138,6 +149,7 @@ function render(s) {
     ["Opened", n(m.snaps_opened)],
     ["Expired unopened", n(m.snaps_expired)],
     ["Open rate", viewed ? `${Math.round((m.snaps_opened / viewed) * 100)}%` : "—"],
+    ["Group pics on disk", `${n(server.group_pics_pending)} · ${bytes(server.group_pic_bytes)} of ${bytes(server.group_pic_disk_bytes)}`],
     ["Held in memory", `${n(server.snaps_in_memory)} · ${bytes(server.snap_bytes_in_memory)} of ${bytes(server.snap_pool_bytes)}`],
   ]);
   facts("#social-facts", [
@@ -154,6 +166,9 @@ function render(s) {
     ["Pic lifetime", `${server.snap_ttl_hours} h`],
     ["Sign-up", server.invite_required ? "Invite code required" : "Open"],
     ["Last backup", backupText(server.backup)],
+    ["Memory", resourceText(server.resources, "mem")],
+    ["Data disk", resourceText(server.resources, "disk")],
+    ["Load (1 min)", server.resources?.load_1m ?? "—"],
   ]);
 
   $("#users").replaceChildren(...u.list.map((x) => el("tr", {},

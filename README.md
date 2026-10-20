@@ -157,6 +157,8 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
 | `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text}` (plain text, `format` 0) |
 | `POST /groups/{id}/read` | Marks the group read |
+| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic (raw JPEG/PNG/WebP body; re-encoded by the server) · open it, once per member, not the sender. Gone once everyone has opened it, or after 30 days |
+| `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |
 | `POST /logs` | Client diagnostics: `{entries: [{level, message, fields}]}`, up to 50 per request, rate-limited. Never send content; content-like fields are redacted |

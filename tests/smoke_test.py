@@ -6,7 +6,7 @@ Encryption happens in the browser (static/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """
-import asyncio, base64, json, os, sys, uuid
+import asyncio, base64, json, os, struct, sys, uuid, zlib
 import requests, websockets
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
@@ -66,10 +66,29 @@ def check_sensitive_paths():
         assert r.status_code in (400, 404), (path, r.status_code)
         assert not any(m in r.text for m in markers), (path, r.text[:200])
         assert r.headers.get("X-Frame-Options") == "DENY", path
+    icon = requests.get(BASE + "/favicon.svg")
+    assert icon.status_code == 200 and icon.headers["Content-Type"] == "image/svg+xml" and icon.text.startswith("<svg")
+    ico = requests.get(BASE + "/favicon.ico", allow_redirects=False)
+    assert ico.status_code == 308 and ico.headers["Location"] == "/favicon.svg"
     page = requests.get(BASE + "/")
+    assert 'rel="icon" href="/favicon.svg"' in page.text
     assert "default-src 'self'" in page.headers["Content-Security-Policy"]
     assert page.headers["Cross-Origin-Opener-Policy"] == "same-origin"
     print(f"  {len(probes)} sensitive-path probes: all 404, nothing leaked")
+
+def png(w, h, claim=None):
+    """A real PNG, built by hand (no imaging library needed). `claim` lies about the size."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    cw, ch = claim or (w, h)
+    rows = b"".join(b"\0" + b"".join(bytes([(x * 7) % 256, (y * 5) % 256, 90]) for x in range(w)) for y in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", cw, ch, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def contains(blob, needle):
+    return blob.find(needle) != -1
+
 
 def befriend(asker_tok, asked, asked_tok, asker_id):
     ok(call("POST", "/friends/requests", asker_tok, json={"username": asked["username"]}))
@@ -116,6 +135,52 @@ def check_groups(tag, a, a_tok, b, b_tok):
     assert all(x["id"] > m["id"] for x in back), "a rejoined member sees history from rejoining"
     assert json.loads(back[0]["body"]) ["type"] == "added"
 
+    # Group pics: images only, view-once per member, not the sender, gone once everyone's seen it.
+    # Hostile uploads: script hidden after a real image (a polyglot), and fakes.
+    jpeg = png(300, 200) + b"<script>alert(1)</script><html>Exif\0GPSLatitude"
+    ok(call("POST", f"/groups/{gid}/pics", b_tok, data=b"<svg onload=x>" + b" " * 100), 400)
+    ok(call("POST", f"/groups/{gid}/pics", b_tok, data=b"\xff\xd8\xff\xe0" + os.urandom(4000)), 400)  # JPEG magic, garbage inside
+    ok(call("POST", f"/groups/{gid}/pics", b_tok, data=png(1, 1, claim=(100_000, 100_000))), 400)    # decompression bomb
+    ok(call("POST", f"/groups/{gid}/pics", d_tok, data=jpeg), 404)
+    pm = ok(call("POST", f"/groups/{gid}/pics", b_tok, data=jpeg, headers={"Content-Type": "image/jpeg"})).json()
+    pic = pm["pic"]
+    assert pm["pic_id"] == pic["id"] and pic["viewers"] == [] and pic["discard_reason"] is None and pm["body"] == ""
+    ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", b_tok), 400)          # sender can't open it
+    ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", d_tok), 404)          # outsider
+    r = ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", a_tok))
+    assert r.content.startswith(b"\xff\xd8\xff") and r.headers["Content-Type"] == "image/jpeg" and r.headers["Cache-Control"] == "no-store"
+    assert not any(contains(r.content, n) for n in (b"<script", b"<html", b"Exif", b"GPS")), "hidden payload survived"
+    assert "sandbox" in r.headers["Content-Security-Policy"] and r.headers["X-Content-Type-Options"] == "nosniff"
+    ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", a_tok), 410)          # once each
+    r = ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", c_tok))           # cal rejoined before it was sent
+    after_pic = [x for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["id"] == pm["id"]][0]
+    assert sorted(after_pic["pic"]["viewers"]) == sorted([a["id"], c["id"]]) and after_pic["pic"]["discard_reason"] == "opened"
+
+    # Group pictures: any member, images only, members only, every one kept.
+    ok(call("POST", f"/groups/{gid}/avatar", b_tok, data=b"<svg>" + b" " * 200), 400)
+    ok(call("POST", f"/groups/{gid}/avatar", b_tok, data=b"\xff\xd8\xff" + b"x" * 200_000), 413)
+    ok(call("POST", f"/groups/{gid}/avatar", b_tok, data=png(1, 1, claim=(100_000, 100_000))), 400)
+    av = ok(call("POST", f"/groups/{gid}/avatar", b_tok, data=png(64, 64) + b"<script>x</script>")).json()["avatar_id"]
+    assert ok(call("GET", f"/groups/{gid}", a_tok)).json()["avatar_id"] == av
+    avr = ok(call("GET", f"/groups/{gid}/avatar/{av}", c_tok))
+    assert avr.content.startswith(b"\xff\xd8\xff") and not contains(avr.content, b"<script")
+    ok(call("GET", f"/groups/{gid}/avatar/{av}", d_tok), 404)
+    assert json.loads(ok(call("GET", f"/groups/{gid}/messages", a_tok)).json()[-1]["body"])["type"] == "picture"
+
+    for bad in ["evil\u202egpj.exe", "zero\u200bwidth", "nul\u0000", "esc\u001b[31m", "two\nlines"]:
+        ok(call("PATCH", f"/groups/{gid}", b_tok, json={"name": bad}), 400)
+    ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": "a\u202eb"}), 400)
+    ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": "bell\u0007"}), 400)
+    # Injection payloads are just text: stored and returned literally, nothing breaks.
+    for payload in ["'; DROP TABLE users; --", "\" OR 1=1 --", "x'); DELETE FROM group_messages; --",
+                    "<img src=x onerror=alert(1)>", "{{7*7}} ${7*7} %s %n", "line\nbreak\ttab"]:
+        sent = ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": payload})).json()
+        assert sent["body"] == payload.strip(), (sent["body"], payload)
+        assert ok(call("GET", f"/groups/{gid}/messages", a_tok)).json()[-1]["body"] == payload.strip()
+    weird = ok(call("PATCH", f"/groups/{gid}", b_tok, json={"name": "'; DROP TABLE groups; --"})).json()
+    assert weird["name"] == "'; DROP TABLE groups; --"
+    assert len(ok(call("GET", f"/groups/{gid}/messages", a_tok)).json()) > 5, "messages survived"
+
     renamed = ok(call("PATCH", f"/groups/{gid}", b_tok, json={"name": "Road trip 2026"})).json()
     assert renamed["name"] == "Road trip 2026"
 
@@ -124,7 +189,8 @@ def check_groups(tag, a, a_tok, b, b_tok):
     after = ok(call("GET", f"/groups/{gid}", b_tok)).json()
     assert {x["id"]: x["role"] for x in after["members"]} == {b["id"]: "owner", c["id"]: "member"}, after["members"]
     events = [json.loads(x["body"])["type"] for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["kind"] == "event"]
-    assert events[-3:] == ["renamed", "left", "owner"], events
+    assert events[-3:] == ["renamed", "left", "owner"], events  # after "picture"
+    assert "renamed" in events[-5:-3]  # the injection-looking name was just a name
     ok(call("GET", f"/groups/{gid}", a_tok), 404)
     print("  groups: membership rules, history from joining, owner handover")
 
@@ -229,6 +295,14 @@ async def main():
     ok(call("GET", "/users/999999/profile", a_tok), 404)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct}), 404)
 
+    for evil in ["' OR '1'='1", "admin'--", "x\"; DROP TABLE users; --", "%", "_", "nate%", "*"]:
+        r = call("POST", "/friends/requests", a_tok, json={"username": evil})
+        assert r.status_code in (400, 404), (evil, r.status_code, r.text)
+        r = call("POST", "/auth/login", json={"username": evil, "auth_key": "' OR '1'='1"})
+        assert r.status_code in (400, 401, 429), (evil, r.status_code)
+        assert "token" not in r.text
+    for evil in ["bob' --", "a;b", "<script>", "a\u202eb", "nul\u0000"]:
+        assert register(evil).status_code == 400, evil
     assert ok(call("POST", "/friends/requests", a_tok, json={"username": b["username"]})).json()["status"] == "requested"
     reqs = ok(call("GET", "/friends/requests", b_tok)).json()
     assert [r["id"] for r in reqs["incoming"]] == [a["id"]]

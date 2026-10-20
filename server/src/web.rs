@@ -10,6 +10,7 @@ const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const CRYPTO_JS: &str = include_str!("../static/crypto.js");
+const FAVICON_SVG: &str = include_str!("../static/favicon.svg");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const ADMIN_JS: &str = include_str!("../static/admin.js");
 
@@ -28,6 +29,12 @@ pub fn routes() -> Router<SharedState> {
         .route("/crypto.js", get(crypto_js))
         .route("/style.css", get(style_css))
         .route("/admin", get(admin))
+        .route("/favicon.svg", get(favicon))
+        // Browsers ask for /favicon.ico on their own; point them at the SVG.
+        .route(
+            "/favicon.ico",
+            get(|| async { axum::response::Redirect::permanent("/favicon.svg") }),
+        )
         .route("/admin.js", get(|| async { script(ADMIN_JS) }))
 }
 
@@ -41,6 +48,16 @@ async fn admin() -> impl IntoResponse {
             (header::HeaderName::from_static("x-robots-tag"), "noindex"),
         ],
         ADMIN_HTML,
+    )
+}
+
+async fn favicon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        FAVICON_SVG,
     )
 }
 

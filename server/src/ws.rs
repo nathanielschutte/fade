@@ -54,16 +54,21 @@ pub struct Hub {
     next_id: AtomicU64,
 }
 
+/// Live connections one account may hold. Past this, the oldest is closed
+/// (dropping its sender ends its loop), so a stolen or buggy client can't pile
+/// up sockets, while a person opening one more tab still just works.
+pub const MAX_CONNS_PER_USER: usize = 10;
+
 impl Hub {
     fn register(&self, user_id: i64) -> (u64, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.conns
-            .lock()
-            .unwrap()
-            .entry(user_id)
-            .or_default()
-            .push((id, tx));
+        let mut conns = self.conns.lock().unwrap();
+        let list = conns.entry(user_id).or_default();
+        while list.len() >= MAX_CONNS_PER_USER {
+            list.remove(0);
+        }
+        list.push((id, tx));
         (id, rx)
     }
 
@@ -217,4 +222,24 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
         secs = connected.elapsed().as_secs(),
         "socket closed"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connections_per_user_are_capped_oldest_first() {
+        let hub = Hub::default();
+        let mut receivers: Vec<_> = (0..MAX_CONNS_PER_USER + 2)
+            .map(|_| hub.register(7).1)
+            .collect();
+        assert_eq!(hub.online(), (1, MAX_CONNS_PER_USER));
+        // The two oldest were closed; the newest are live.
+        assert!(receivers[0].try_recv().is_err() && receivers[0].is_closed());
+        assert!(receivers[1].is_closed());
+        assert!(!receivers.last().unwrap().is_closed());
+        hub.register(8);
+        assert_eq!(hub.online(), (2, MAX_CONNS_PER_USER + 1));
+    }
 }

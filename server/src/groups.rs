@@ -43,10 +43,14 @@ pub struct GroupMessage {
     pub body: String,
     pub format: i64,
     pub created_at: i64,
+    /// Set on a message that carries a pic (see group_pics.rs).
+    pub pic_id: Option<i64>,
+    #[sqlx(skip)]
+    pub pic: Option<crate::group_pics::PicInfo>,
 }
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
-        gm.kind, gm.body, gm.format, gm.created_at
+        gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id
      FROM group_messages gm JOIN users u ON u.id = gm.sender_id";
 
 #[derive(Debug, Serialize, FromRow)]
@@ -66,6 +70,8 @@ pub struct GroupSummary {
     member_count: i64,
     last_message: Option<GroupMessage>,
     unread: i64,
+    /// Current group picture, for `GET /api/groups/{id}/avatar/{avatar_id}`.
+    avatar_id: Option<i64>,
     /// Always false in version 1. Clients show a notice when it's false.
     encrypted: bool,
 }
@@ -78,6 +84,7 @@ pub struct GroupDetail {
     created_by: i64,
     role: String,
     encrypted: bool,
+    avatar_id: Option<i64>,
     members: Vec<Member>,
 }
 
@@ -88,6 +95,7 @@ fn not_found() -> AppError {
 }
 
 fn clean_name(raw: &str) -> AppResult<String> {
+    crate::text::check_name(raw).map_err(AppError::bad)?;
     let name = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     let chars = name.chars().count();
     if chars == 0 || chars > MAX_NAME_CHARS {
@@ -114,7 +122,7 @@ pub async fn membership(
     .await
 }
 
-async fn require_member(db: &SqlitePool, group: i64, user: i64) -> AppResult<(String, i64)> {
+pub async fn require_member(db: &SqlitePool, group: i64, user: i64) -> AppResult<(String, i64)> {
     membership(db, group, user).await?.ok_or_else(not_found)
 }
 
@@ -137,14 +145,16 @@ pub async fn members(db: &SqlitePool, group: i64) -> sqlx::Result<Vec<Member>> {
     .await
 }
 
-async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<GroupMessage> {
-    sqlx::query_as(&format!("{GM_SELECT} WHERE gm.id = ?"))
+pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<GroupMessage> {
+    let mut m: GroupMessage = sqlx::query_as(&format!("{GM_SELECT} WHERE gm.id = ?"))
         .bind(id)
         .fetch_one(db)
-        .await
+        .await?;
+    crate::group_pics::attach(db, std::slice::from_mut(&mut m)).await?;
+    Ok(m)
 }
 
-async fn post<'e, E: sqlx::SqliteExecutor<'e>>(
+pub async fn post<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,
     group: i64,
     sender: i64,
@@ -173,7 +183,7 @@ async fn username(db: &SqlitePool, id: i64) -> sqlx::Result<String> {
 }
 
 /// Sends a new group message to everyone currently in the group.
-async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
+pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
     let ids = member_ids(&state.db, message.group_id).await?;
     state.hub.send_many(
         &ids,
@@ -198,6 +208,7 @@ async fn detail(db: &SqlitePool, group: i64, role: String) -> AppResult<GroupDet
         created_by,
         role,
         encrypted: false,
+        avatar_id: crate::group_pics::current_avatar(db, group).await?,
         members: members(db, group).await?,
     })
 }
@@ -247,6 +258,7 @@ pub async fn list(
             last_message,
             unread: r.unread,
             encrypted: false,
+            avatar_id: crate::group_pics::current_avatar(&state.db, r.id).await?,
         });
     }
     out.sort_by_key(|g| std::cmp::Reverse(g.last_message.as_ref().map_or(0, |m| m.id)));
@@ -545,6 +557,7 @@ pub async fn messages(
     .fetch_all(&state.db)
     .await?;
     out.reverse();
+    crate::group_pics::attach(&state.db, &mut out).await?;
     Ok(Json(out))
 }
 
@@ -565,6 +578,7 @@ pub async fn send(
     if text.is_empty() {
         return Err(AppError::bad("Write something first."));
     }
+    crate::text::check_message(text).map_err(AppError::bad)?;
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(AppError::bad(format!(
             "Messages can be at most {MAX_TEXT_CHARS} characters."
@@ -614,6 +628,8 @@ mod tests {
     fn names_are_trimmed_and_bounded() {
         assert_eq!(clean_name("  road   trip  ").unwrap(), "road trip");
         assert!(clean_name("   ").is_err());
+        assert!(clean_name("evil\u{202E}gpj").is_err());
+        assert!(clean_name("tab\tname").is_err());
         assert!(clean_name(&"x".repeat(41)).is_err());
         assert_eq!(clean_name(&"é".repeat(40)).unwrap().chars().count(), 40);
     }

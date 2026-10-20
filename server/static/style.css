@@ -168,7 +168,7 @@ svg {
 .chat-list { list-style: none; margin: 0; padding: 0.25rem 0; overflow-y: auto; flex: 1; }
 .chat-item {
   width: 100%;
-  display: grid; grid-template-columns: 0.75rem 1fr auto; align-items: center; gap: 0.75rem;
+  display: grid; grid-template-columns: 0.75rem 2rem minmax(0, 1fr) auto; align-items: center; gap: 0.6rem;
   padding: 0.8rem var(--pad);
   border: 0; background: none; text-align: left;
 }
@@ -304,12 +304,6 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 }
 .person-name { flex: 1; font-weight: 600; }
 .person .button { min-height: 2.25rem; padding: 0 0.85rem; font-size: var(--step--1); }
-.sheet-foot {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 1.5rem; padding-top: 0.75rem;
-  border-top: 1px solid var(--rule);
-  color: var(--fixer); font-size: var(--step--1);
-}
 
 /* ---------- camera ---------- */
 
@@ -476,7 +470,6 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 .admin .num { text-align: right; font-variant-numeric: tabular-nums; }
 .admin tbody tr:last-child td { border-bottom: 0; }
 .chart-table table { margin-top: 0.5rem; }
-.foot-links { display: flex; align-items: center; gap: 1rem; }
 .admin-bar .button { color: var(--paper); white-space: nowrap; }
 .admin-bar .wordmark { white-space: nowrap; }
 @media (max-width: 520px) {
@@ -605,10 +598,6 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 
 .chat-heading { display: flex; flex-direction: column; min-width: 0; }
 .chat-sub { padding-left: 0.5rem; font-size: 0.75rem; color: var(--fixer); line-height: 1.1; }
-.chat-item.is-group .chat-name::before {
-  content: ""; display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.4rem;
-  border: 1.5px solid var(--fixer); border-radius: 2px; vertical-align: 0.05rem;
-}
 .group-notice {
   flex: none;
   margin: 0.6rem var(--pad) 0;
@@ -635,3 +624,39 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .sheet-text.small { font-size: 0.75rem; }
 .button.danger { border-color: var(--danger); color: var(--danger); }
 .button.danger:hover { background: rgba(232, 165, 152, 0.12); }
+
+/* ---------- account bar (bottom of the chat list) ---------- */
+
+.account-bar {
+  flex: none;
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.5rem 0.5rem max(0.5rem, env(safe-area-inset-bottom)) 0.5rem;
+  border-top: 1px solid var(--rule);
+}
+.account-me {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.35rem 0.5rem; border: 0; border-radius: var(--radius-s);
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.account-me:hover { background: var(--wash); }
+.account-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-link {
+  flex: none; padding: 0.45rem 0.6rem; border: 0; border-radius: var(--radius-s);
+  background: none; color: var(--fixer); font: inherit; font-size: var(--step--1);
+  text-decoration: none; cursor: pointer;
+}
+.account-link:hover { background: var(--wash); color: var(--paper); }
+
+/* ---------- chat list text, avatars with pictures ---------- */
+
+/* The text column may shrink, so long previews end in "…" instead of
+   widening the list. */
+.chat-text { min-width: 0; overflow: hidden; }
+.chat-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.chat-avatar { margin-left: 0.25rem; }
+.chat .bar { gap: 0.5rem; }
+.picture-row { display: flex; margin-bottom: 0.25rem; }
+.picture-row .button { display: inline-flex; align-items: center; cursor: pointer; }

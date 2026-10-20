@@ -162,6 +162,10 @@ pub async fn stats(
             "snap_ttl_hours": state.config.snap_ttl.as_secs() / 3600,
             "invite_required": state.config.invite_code.is_some(),
             "backup": backup_status(&state.config.backup_status_path),
+            "group_pics_pending": crate::group_pics::pending(db).await?.0,
+            "group_pic_bytes": crate::group_pics::pending(db).await?.1,
+            "group_pic_disk_bytes": state.config.group_pic_disk_bytes,
+            "resources": crate::sysinfo::snapshot(&state.config.pic_dir),
         },
     })))
 }

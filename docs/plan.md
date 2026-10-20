@@ -12,15 +12,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [Pics last 30 days](#f9-pics-last-30-days) | Features | Planned | Requested; unopened pics are lost on every restart today |
-| 2 | [Account buttons on the main screen](#x2-account-buttons-on-the-main-screen) | Experience | Planned | Requested; profile, admin, and sign out are buried in the Friends sheet |
-| 3 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
-| 4 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
-| 5 | [Profile pic and nicknames](#f5-profile-pic-and-nicknames) | Features | Planned | |
-| 6 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
-| 7 | [Captions on pictures](#f6-captions-on-pictures) | Features | Planned | Needs message format 2 |
-| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
+| 3 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
+| 4 | [Profile pic and nicknames](#f5-profile-pic-and-nicknames) | Features | Planned | |
+| 5 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
+| 6 | [Captions on pictures](#f6-captions-on-pictures) | Features | Planned | Needs message format 2 |
+| 7 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 8 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 9 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -36,10 +35,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Mark inactive instead of deleting](#p4-mark-inactive-instead-of-deleting) | 0.8.0 |
 | [Request auditing and security hardening](#s1-request-auditing-and-security-hardening) | 0.9.0, 0.9.1 |
 | [Group chats](#f7-group-chats) (texts; not end-to-end encrypted yet) | 0.10.0 |
+| [Account bar on the main screen](#x2-account-buttons-on-the-main-screen), favicon | 0.11.0 |
+| Pics and group pictures in group chats (not end-to-end encrypted yet; view-once, 30 days), shorter list previews, server resources in admin | 0.12.0 |
+| Hostile-input hardening: images rebuilt server-side, SQL guard test, text validation, write and socket caps (see CLAUDE.md, Security) | 0.12.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.9.1**. Every release since 0.2.0 shipped with `scripts/deploy.sh` from uncommitted code (build `aa50af4-dirty`), so the next commit should cover all of it.
+Production runs **0.12.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
