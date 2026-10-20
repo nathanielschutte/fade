@@ -1,3 +1,4 @@
 requests==2.32.5
 websockets==15.0.1
 playwright==1.55.0
+cryptography==45.0.7

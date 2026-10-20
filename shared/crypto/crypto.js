@@ -22,12 +22,13 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 /**
- * Message formats, stored with every message (server/src/version.rs). Texts
- * are format 1. Pics are format 2: a caption sealed in with the photo. Old
- * format 1 pics stay readable forever.
+ * Message formats, stored with every message (server/src/version.rs). New
+ * texts and pics are format 2: texts are a JSON envelope (room for replies),
+ * pics carry a caption sealed in with the photo. Reactions are format 2 too.
+ * Format 1 (the original scheme) stays readable forever.
  */
 export const FORMAT = 1;
-export const TEXT_FORMAT = 1;
+export const TEXT_FORMAT = 2;
 export const SNAP_FORMAT = 2;
 /** Encoded caption limit (200 characters in the UI; emoji take up to 4 bytes each). */
 export const MAX_CAPTION_BYTES = 1000;
@@ -264,6 +265,52 @@ export async function decryptPic(key, bytes, format, senderId, recipientId) {
   if (format === 1) return { photo: await decryptSnap(key, bytes, senderId, recipientId), caption: "" };
   if (format === 2) return unpackPic(await open(key, bytes, picAad(senderId, recipientId)));
   throw new Error(`unknown pic format ${format}`);
+}
+
+// ---------- format 2: texts with room to grow, and reactions ----------
+// A format 2 text encrypts a small JSON object instead of the bare text:
+//   {"t": "the text", "re": 123}   ("re", optional: the message it replies to)
+// Readers ignore keys they don't know, so later additions don't need a new format.
+
+const textAad2 = (senderId, recipientId) => `napsack/v2/text/${senderId}/${recipientId}`;
+
+/** The plaintext of a format 2 text: exactly these bytes are encrypted. */
+export function packText(text, replyTo = null) {
+  const body = { t: String(text) };
+  if (replyTo != null) body.re = Number(replyTo);
+  return JSON.stringify(body);
+}
+
+export function unpackText(json) {
+  const body = JSON.parse(json);
+  if (typeof body?.t !== "string") throw new Error("malformed text");
+  return { text: body.t, replyTo: Number.isSafeInteger(body.re) ? body.re : null };
+}
+
+export async function encryptText2(key, text, replyTo, senderId, recipientId) {
+  return toB64(await seal(key, enc.encode(packText(text, replyTo)), textAad2(senderId, recipientId)));
+}
+
+/** Any text format -> { text, replyTo }. Format 1 texts never reply. */
+export async function decryptAnyText(key, b64, format, senderId, recipientId) {
+  if (format === 1) return { text: await decryptText(key, b64, senderId, recipientId), replyTo: null };
+  if (format === 2) return unpackText(dec.decode(await open(key, fromB64(b64), textAad2(senderId, recipientId))));
+  throw new Error(`unknown text format ${format}`);
+}
+
+/** The reactions clients offer (the server checks group reactions against the same set). */
+export const REACTIONS = ["❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F44D}", "\u{1F44E}"];
+
+// A reaction's associated data names the message it's on, so the server
+// can't move it to another message.
+const reactionAad = (senderId, recipientId, messageId) => `napsack/v2/reaction/${senderId}/${recipientId}/${messageId}`;
+
+export async function encryptReaction(key, emoji, senderId, recipientId, messageId) {
+  return toB64(await seal(key, enc.encode(emoji), reactionAad(senderId, recipientId, messageId)));
+}
+
+export async function decryptReaction(key, b64, senderId, recipientId, messageId) {
+  return dec.decode(await open(key, fromB64(b64), reactionAad(senderId, recipientId, messageId)));
 }
 
 /**

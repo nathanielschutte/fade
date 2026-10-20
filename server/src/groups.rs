@@ -45,12 +45,16 @@ pub struct GroupMessage {
     pub created_at: i64,
     /// Set on a message that carries a pic (see group_pics.rs).
     pub pic_id: Option<i64>,
+    /// The message this one replies to, in the same group.
+    pub reply_to: Option<i64>,
     #[sqlx(skip)]
     pub pic: Option<crate::group_pics::PicInfo>,
+    #[sqlx(skip)]
+    pub reactions: Vec<crate::reactions::GroupReaction>,
 }
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
-        gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id
+        gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to
      FROM group_messages gm JOIN users u ON u.id = gm.sender_id";
 
 #[derive(Debug, Serialize, FromRow)]
@@ -151,7 +155,39 @@ pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<GroupMessage>
         .fetch_one(db)
         .await?;
     crate::group_pics::attach(db, std::slice::from_mut(&mut m)).await?;
+    crate::reactions::attach_group(db, std::slice::from_mut(&mut m)).await?;
     Ok(m)
+}
+
+/// Notifies everyone in the group but `sender` ("Ana: new message"), each
+/// with the name they know the sender by.
+pub async fn notify_members(
+    state: &SharedState,
+    group: i64,
+    sender: i64,
+    what: &str,
+) -> sqlx::Result<()> {
+    let name: String = sqlx::query_scalar("SELECT name FROM groups WHERE id = ?")
+        .bind(group)
+        .fetch_one(&state.db)
+        .await?;
+    for member in member_ids(&state.db, group).await? {
+        if member == sender {
+            continue;
+        }
+        let who = crate::people::name_for(&state.db, member, sender).await?;
+        crate::push::notify(
+            state,
+            member,
+            crate::push::Note {
+                title: name.clone(),
+                body: format!("{who}: {what}"),
+                tag: format!("group-{group}"),
+                url: format!("/#group={group}"),
+            },
+        );
+    }
+    Ok(())
 }
 
 pub async fn post<'e, E: sqlx::SqliteExecutor<'e>>(
@@ -278,6 +314,11 @@ pub async fn create(
     AuthUser(me): AuthUser,
     Json(req): Json<NewGroup>,
 ) -> AppResult<Json<GroupDetail>> {
+    if !state.group_create_limit.allow(&me.id.to_string()) {
+        return Err(AppError::TooManyRequests(
+            "That's a lot of new groups for one day. Try again tomorrow.".into(),
+        ));
+    }
     let name = clean_name(&req.name)?;
     let mut ids = req.member_ids;
     ids.sort_unstable();
@@ -558,12 +599,15 @@ pub async fn messages(
     .await?;
     out.reverse();
     crate::group_pics::attach(&state.db, &mut out).await?;
+    crate::reactions::attach_group(&state.db, &mut out).await?;
     Ok(Json(out))
 }
 
 #[derive(Deserialize)]
 pub struct NewText {
     text: String,
+    /// A message in this group to reply to.
+    reply_to: Option<i64>,
 }
 
 /// `POST /api/groups/{id}/messages`: plain text (not end-to-end encrypted in v1).
@@ -573,7 +617,7 @@ pub async fn send(
     Path(group): Path<i64>,
     Json(req): Json<NewText>,
 ) -> AppResult<Json<GroupMessage>> {
-    require_member(&state.db, group, me.id).await?;
+    let (_, visible_after) = require_member(&state.db, group, me.id).await?;
     let text = req.text.trim();
     if text.is_empty() {
         return Err(AppError::bad("Write something first."));
@@ -584,15 +628,42 @@ pub async fn send(
             "Messages can be at most {MAX_TEXT_CHARS} characters."
         )));
     }
-    let id = post(&state.db, group, me.id, "text", text).await?;
+    if let Some(target) = req.reply_to {
+        // Only to a message in this group that the sender can see.
+        let ok: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM group_messages WHERE id = ? AND group_id = ? AND id > ? AND kind = 'text'",
+        )
+        .bind(target)
+        .bind(group)
+        .bind(visible_after)
+        .fetch_optional(&state.db)
+        .await?;
+        if ok.is_none() {
+            return Err(AppError::bad("That message can't be replied to."));
+        }
+    }
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at, reply_to)
+         VALUES (?, ?, 'text', ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(group)
+    .bind(me.id)
+    .bind(text)
+    .bind(FORMAT_PLAINTEXT)
+    .bind(now())
+    .bind(req.reply_to)
+    .fetch_one(&state.db)
+    .await?;
     let message = get_message(&state.db, id).await?;
     tracing::debug!(
         group_id = group,
         message_id = id,
         from = me.id,
+        reply = req.reply_to.is_some(),
         "group text sent"
     );
     broadcast(&state, message.clone()).await?;
+    notify_members(&state, group, me.id, "new message").await?;
     Ok(Json(message))
 }
 

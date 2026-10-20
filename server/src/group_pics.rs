@@ -217,6 +217,7 @@ pub async fn upload(
     if body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
     }
+    crate::guard::check_upload_room(&state)?;
     sniff_image(&body).ok_or_else(|| AppError::bad("Pics must be JPEG, PNG, or WebP images."))?;
     if !state.image_upload_limit.allow(&me.id.to_string()) {
         return Err(AppError::TooManyRequests(
@@ -287,6 +288,7 @@ pub async fn upload(
     );
     let message = groups::get_message(&state.db, id).await?;
     groups::broadcast(&state, message.clone()).await?;
+    groups::notify_members(&state, group, me.id, "sent a pic").await?;
     Ok(Json(message))
 }
 
@@ -433,6 +435,7 @@ pub async fn set_avatar(
     if body.len() < MIN_IMAGE_BYTES || body.len() > AVATAR_MAX_BYTES {
         return Err(AppError::bad("Group pictures must be under 128 KB."));
     }
+    crate::guard::check_upload_room(&state)?;
     sniff_image(&body)
         .ok_or_else(|| AppError::bad("Group pictures must be JPEG, PNG, or WebP images."))?;
     if !state.image_upload_limit.allow(&me.id.to_string()) {

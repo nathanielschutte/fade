@@ -1,6 +1,6 @@
 [package]
 name = "fade-server"
-version = "0.14.0"
+version = "0.16.0"
 edition = "2021"
 
 [dependencies]
@@ -19,6 +19,12 @@ sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
 tower-http = { version = "0.6", features = ["set-header"] }
+# Web Push (src/push.rs): VAPID signing and RFC 8291 payload encryption, all pure Rust.
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+hkdf = "0.12"
+aes-gcm = "0.10"
+# Sends pushes to the browsers' push services over HTTPS (rustls, no OpenSSL).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

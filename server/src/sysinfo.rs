@@ -30,6 +30,11 @@ fn disk(_: &std::path::Path) -> Option<(u64, u64)> {
     None
 }
 
+/// Free bytes on the volume holding `path` (guard.rs uses it to stop writes before the disk fills).
+pub fn disk_free(path: &std::path::Path) -> Option<u64> {
+    disk(path).map(|(_, free)| free)
+}
+
 /// `data_dir` is any folder on the data volume (the pics folder works).
 pub fn snapshot(data_dir: &std::path::Path) -> Value {
     let mem = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();

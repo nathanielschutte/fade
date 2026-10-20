@@ -346,6 +346,20 @@ pub async fn ingest(
         }
         fields.push(("client".into(), client.clone()));
         fields.push(("ip".into(), who.ip.clone()));
+        // Problems also go to the journal (target `napsack_client`, outside the
+        // viewer's filter): they outlive restarts, and can be read over SSH.
+        if matches!(level, "WARN" | "ERROR") {
+            let detail = fields
+                .iter()
+                .map(|(k, v)| format!("{k}={v:?}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if level == "ERROR" {
+                tracing::error!(target: "napsack_client", platform = %platform, message = ?message, detail = %detail, "client reported");
+            } else {
+                tracing::warn!(target: "napsack_client", platform = %platform, message = ?message, detail = %detail, "client reported");
+            }
+        }
         state.logs.push(
             level,
             &format!("{CLIENT_TARGET}{platform}"),

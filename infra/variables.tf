@@ -71,7 +71,7 @@ variable "github_repo" {
 variable "admin_usernames" {
   description = "Usernames that can open /admin (stats only, never message content). Register these accounts before sharing the invite code."
   type        = list(string)
-  default     = ["nate", "chris", "nateschutte", "gayboy1"]
+  default     = ["nate", "chris", "nateschutte", "gayboy1", "ratgirl"]
 }
 
 variable "snap_disk_mb" {

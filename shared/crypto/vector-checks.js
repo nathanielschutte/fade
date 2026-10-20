@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -111,6 +111,35 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
     return (await e2e.decryptText(k2, await e2e.encryptText(k1, "new", 1, v.bob.id), 1, v.bob.id)) === "new";
   });
 
+  // Format 2 texts (replies) and reactions
+  for (const [i, t] of vt.texts.entries()) {
+    await check(`format 2 text ${i + 1} decrypts like the vector`, async () => {
+      const got = await e2e.decryptAnyText(ctx.kb, t.ciphertext, 2, t.from, t.to);
+      return got.text === t.text && got.replyTo === t.reply_to && e2e.packText(t.text, t.reply_to) === t.plaintext;
+    });
+  }
+  await check("format 1 texts still read, with no reply", async () => {
+    const got = await e2e.decryptAnyText(ctx.kb, v.text.ciphertext, 1, v.text.from, v.text.to);
+    return got.text === v.text.plaintext && got.replyTo === null;
+  });
+  await check("a format 2 text can't be read as format 1", () =>
+    fails(() => e2e.decryptAnyText(ctx.kb, vt.texts[0].ciphertext, 1, vt.texts[0].from, vt.texts[0].to)));
+  await check("unknown envelope fields are ignored", () => {
+    const got = e2e.unpackText('{"t":"later","re":7,"future":true}');
+    return got.text === "later" && got.replyTo === 7;
+  });
+  await check("malformed envelopes are refused", () =>
+    ['{"x":1}', "not json", '{"t":5}'].every((j) => { try { e2e.unpackText(j); return false; } catch { return true; } }));
+  const r = vt.reaction;
+  await check("reaction decrypts like the vector", async () =>
+    (await e2e.decryptReaction(ctx.kb, r.ciphertext, r.from, r.to, r.message_id)) === r.emoji);
+  await check("a reaction can't move to another message", () =>
+    fails(() => e2e.decryptReaction(ctx.kb, r.ciphertext, r.from, r.to, r.message_id + 1)));
+  await check("a reaction round-trips", async () => {
+    const ct = await e2e.encryptReaction(ctx.ka, e2e.REACTIONS[1], v.alice.id, v.bob.id, 42);
+    return (await e2e.decryptReaction(ctx.kb, ct, v.alice.id, v.bob.id, 42)) === e2e.REACTIONS[1];
+  });
+
   // Recovery keys and changing the password
   await check("recovery key displays like the vector", () => {
     const bytes = Uint8Array.from(vr.key_bytes_hex.match(/../g), (h) => parseInt(h, 16));
@@ -158,6 +187,6 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
   // Safety code and formats
   await check("safety code matches the vector", async () => (await e2e.safetyCode(v.alice.spki, v.bob.spki)) === v.safety_code);
   await check("safety code is symmetric", async () => (await e2e.safetyCode(v.bob.spki, v.alice.spki)) === v.safety_code);
-  await check("texts are format 1, pics format 2", () => e2e.TEXT_FORMAT === 1 && e2e.SNAP_FORMAT === 2);
+  await check("new texts and pics are format 2", () => e2e.TEXT_FORMAT === 2 && e2e.SNAP_FORMAT === 2);
   return results;
 }

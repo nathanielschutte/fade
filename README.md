@@ -47,6 +47,9 @@ scripts/test.sh --no-browser     # skip the browser tests
 | `FADE_SNAP_TTL_HOURS` | `720` | Unopened direct pics expire after this (30 days) |
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted pic. The client compresses every photo to 200 KB or less |
 | `FADE_SNAP_DISK_MB` | `256` | Disk ceiling for all unopened direct pics |
+| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([SECURITY.md](docs/SECURITY.md)) |
+| `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
+| `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
 | `FADE_SESSION_DAYS` | `90` | |
 | `FADE_ADMINS` | unset (panel off) | Comma-separated usernames allowed into `/admin` |
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
@@ -155,7 +158,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |
 | `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
-| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text}` (plain text, `format` 0) |
+| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text, reply_to?}` (plain text, `format` 0) |
 | `POST /groups/{id}/read` | Marks the group read |
 | `POST /auth/unlock` | `{auth_key}` with a session: returns your password-wrapped key, so the client can wrap it again |
 | `POST /me/password` | `{auth_key, new_auth_key, new_wrapped_private_key}`: same key, new password; other sessions end |
@@ -165,6 +168,10 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/recover/start` · `/finish` | Forgot password, with the recovery key: get the recovery copy of your key, then set a new password. Rate-limited like sign-in |
 | `POST /auth/reset` | `{username, code, new_auth_key, public_key, wrapped_private_key}`: an admin's one-time code; a new key pair, no history |
 | `POST /admin/users/{id}/reset-code` | Admins: issue a reset code (shown once, 24 hours, any older one stops working) |
+| `PUT  /me/settings` | `{share_activity}`: friends see when you're active or typing (mutual) |
+| `POST /push/subscriptions` · `/remove` | This browser's `PushSubscription.toJSON()`, tied to the session · stop. Only known push services are accepted |
+| `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, encrypted emoji; null takes it back. Comes back as `message_updated` |
+| `PUT  /groups/{id}/messages/{id}/reaction` | `{emoji}` from the fixed set; null takes it back |
 | `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |
 | `POST /me/avatar` · `DELETE /me/avatar` | Set your profile picture (raw small image; re-encoded) · remove it. Every picture is kept |
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
@@ -176,7 +183,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /logs` | Client diagnostics: `{entries: [{level, message, fields}]}`, up to 50 per request, rate-limited. Never send content; content-like fields are redacted |
 | `GET  /ws` | WebSocket. First frame: `{"type":"auth","token":"..."}` |
 
-WebSocket events: `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`, `group_message {group_id, message}`, `groups_changed {group_id}`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
+Clients send `{"type":"visibility","visible":bool}` (no push while on screen) and `{"type":"typing","to"|"group":id}` over the socket. WebSocket events: `typing {from, group_id}`, `presence {user_id, active, last_seen_at}`, `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`, `group_message {group_id, message}`, `groups_changed {group_id}`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
 
 Messages include `format` (the encryption scheme, 1 today) so clients know how to decrypt them.
 

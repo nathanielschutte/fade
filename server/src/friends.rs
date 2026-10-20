@@ -24,6 +24,8 @@ struct ChatRow {
     avatar_id: Option<i64>,
     public_key: String,
     key_reset_at: Option<i64>,
+    share_activity: bool,
+    last_seen_at: Option<i64>,
     last_id: Option<i64>,
     unread: i64,
 }
@@ -42,6 +44,10 @@ pub struct ChatSummary {
     public_key: String,
     /// When an admin reset gave them a new key (so a changed safety code has an explanation).
     key_reset_at: Option<i64>,
+    /// Napsack is open for them right now. Only when you both share activity (presence.rs).
+    active_now: Option<bool>,
+    /// When they were last around, under the same rule.
+    last_seen_at: Option<i64>,
     last_message: Option<Message>,
     /// Unread texts plus unopened snaps from this friend.
     unread: i64,
@@ -53,7 +59,7 @@ pub async fn list_chats(
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
-        "SELECT u.id, u.username, u.public_key, u.key_reset_at,
+        "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
@@ -71,6 +77,7 @@ pub async fn list_chats(
     .fetch_all(&state.db)
     .await?;
 
+    let i_share = crate::presence::shares(&state.db, me.id).await?;
     let mut chats = Vec::with_capacity(rows.len());
     for row in rows {
         let last_message = match row.last_id {
@@ -85,6 +92,12 @@ pub async fn list_chats(
             avatar_id: row.avatar_id,
             public_key: row.public_key,
             key_reset_at: row.key_reset_at,
+            active_now: (i_share && row.share_activity).then(|| state.hub.is_online(row.id)),
+            last_seen_at: if i_share && row.share_activity {
+                row.last_seen_at
+            } else {
+                None
+            },
             last_message,
             unread: row.unread,
         });
@@ -160,7 +173,7 @@ pub async fn record_event<'e, E: sqlx::SqliteExecutor<'e>>(
 
 /// `accepter` says yes: pending requests between the two are resolved as
 /// accepted, and the friendship starts (or restarts, if they were friends before).
-async fn make_friends(db: &SqlitePool, accepter: i64, other: i64) -> sqlx::Result<()> {
+pub async fn make_friends(db: &SqlitePool, accepter: i64, other: i64) -> sqlx::Result<()> {
     let (lo, hi) = pair(accepter, other);
     let at = now();
     let mut tx = db.begin().await?;
@@ -196,6 +209,11 @@ pub async fn send_request(
     AuthUser(me): AuthUser,
     Json(req): Json<AddFriend>,
 ) -> AppResult<Json<Value>> {
+    if !state.friend_request_limit.allow(&me.id.to_string()) {
+        return Err(AppError::TooManyRequests(
+            "That's a lot of friend requests for one day. Try again tomorrow.".into(),
+        ));
+    }
     let target =
         sqlx::query_as::<_, UserPublic>("SELECT id, username FROM users WHERE username = ?")
             .bind(req.username.trim())
@@ -250,6 +268,23 @@ pub async fn send_request(
     state
         .hub
         .send_both(me.id, target.id, &Event::FriendsChanged);
+    // Not friends yet, so the username: display names are friends-only.
+    let note = if status == "friends" {
+        crate::push::Note {
+            title: crate::people::name_for(&state.db, target.id, me.id).await?,
+            body: "You're friends now".into(),
+            tag: format!("dm-{}", me.id),
+            url: format!("/#chat={}", me.id),
+        }
+    } else {
+        crate::push::Note {
+            title: "napsack".into(),
+            body: format!("{} wants to be friends", me.username),
+            tag: "requests".into(),
+            url: "/#friends".into(),
+        }
+    };
+    crate::push::notify(&state, target.id, note);
     Ok(Json(json!({ "status": status, "user": target })))
 }
 
@@ -275,6 +310,16 @@ pub async fn accept(
         "friend request accepted"
     );
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
+    crate::push::notify(
+        &state,
+        user_id,
+        crate::push::Note {
+            title: crate::people::name_for(&state.db, user_id, me.id).await?,
+            body: "Accepted your friend request".into(),
+            tag: format!("dm-{}", me.id),
+            url: format!("/#chat={}", me.id),
+        },
+    );
     Ok(Json(json!({ "status": "friends" })))
 }
 

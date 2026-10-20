@@ -34,6 +34,8 @@ locals {
     "FADE_ADMINS=${join(",", var.admin_usernames)}",
     "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
+    # The contact in push notification requests (VAPID); never hardcoded in the server.
+    "FADE_PUBLIC_URL=https://${local.domain}",
     "",
   ])
 }

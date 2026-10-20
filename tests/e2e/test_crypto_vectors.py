@@ -60,7 +60,7 @@ CHECKS = """async ([v, v2]) => {
   // Safety code
   check('safety code matches vector', await e2e.safetyCode(v.alice.spki, v.bob.spki) === v.safety_code);
   check('safety code is symmetric', await e2e.safetyCode(v.bob.spki, v.alice.spki) === v.safety_code);
-  check('texts are format 1', e2e.FORMAT === 1 && e2e.TEXT_FORMAT === 1);
+  check('new texts are format 2', e2e.FORMAT === 1 && e2e.TEXT_FORMAT === 2);
 
   // Format 2: a pic with a caption sealed inside
   check('pics are format 2', e2e.SNAP_FORMAT === 2);

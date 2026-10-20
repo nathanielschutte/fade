@@ -21,6 +21,10 @@ const state = {
   pins: {},                    // friend id -> public key first seen (trust on first use)
   pastPins: {},                // friend id -> keys they had before, accepted by me; still read old messages
   readKeys: new Map(),         // friend id -> chat keys for reading: pinned, then past
+  reactionText: new Map(),     // reaction cache key -> decrypted emoji, or null
+  actionFor: null,             // "d:<id>" or "g:<id>": the message whose reaction/reply row is open
+  replyTo: null,               // { group, id, who, snippet } while composing a reply
+  typing: new Map(),           // "d:<friend>" or "g:<group>:<user>" -> when the "typing" hint ends
   pairKeys: new Map(),         // friend id -> AES key shared with them
   plaintext: new Map(),        // message id -> decrypted text, or null if it couldn't be
   config: null,
@@ -236,27 +240,54 @@ async function keyFor(friendId) {
   return key;
 }
 
-/** Adds `text` to a text message: the plaintext, or null if it can't be decrypted. */
+/**
+ * Adds `text` and `replyTo` to a text (null text if it can't be decrypted),
+ * and `reactionList` ([{ user, emoji }]) to any message.
+ */
 async function decrypt(m) {
+  await decryptReactions(m);
   if (m.kind !== "text") return m;
   // A newer app wrote this in a scheme this one doesn't know.
-  m.unsupported = (m.format ?? 1) !== e2e.TEXT_FORMAT;
+  m.unsupported = ![1, 2].includes(m.format ?? 1);
   if (m.unsupported) {
     m.text = null;
     return m;
   }
   if (!state.plaintext.has(m.id)) {
-    let text = null;
+    let body = null;
     try {
-      text = await withReadKey(friendOf(m), (k) => e2e.decryptText(k, m.ciphertext, m.sender_id, m.recipient_id));
+      body = await withReadKey(friendOf(m), (k) => e2e.decryptAnyText(k, m.ciphertext, m.format ?? 1, m.sender_id, m.recipient_id));
     } catch (err) {
       if (!beforeMyReset(m)) report("warn", "decrypt failed", { message_id: m.id, friend_id: friendOf(m), ...errorFields(err) });
     }
-    state.plaintext.set(m.id, text);
+    state.plaintext.set(m.id, body);
   }
-  m.text = state.plaintext.get(m.id);
+  const body = state.plaintext.get(m.id);
+  m.text = body?.text ?? null;
+  m.replyTo = body?.replyTo ?? null;
   m.beforeReset = m.text == null && beforeMyReset(m);
   return m;
+}
+
+/** Reactions are encrypted too, bound to the message they're on. */
+async function decryptReactions(m) {
+  const out = [];
+  for (const r of m.reactions || []) {
+    const cacheKey = `${m.id}:${r.sender_id}:${r.created_at}`;
+    if (!state.reactionText.has(cacheKey)) {
+      let emoji = null;
+      try {
+        const to = r.sender_id === state.me.id ? friendOf(m) : state.me.id;
+        emoji = await withReadKey(friendOf(m), (k) => e2e.decryptReaction(k, r.ciphertext, r.sender_id, to, m.id));
+      } catch {
+        // unreadable reactions are just not shown
+      }
+      state.reactionText.set(cacheKey, e2e.REACTIONS.includes(emoji) ? emoji : null);
+    }
+    const emoji = state.reactionText.get(cacheKey);
+    if (emoji) out.push({ user: r.sender_id, emoji });
+  }
+  m.reactionList = out;
 }
 
 /** An admin reset gave me a new key: what came before can't be read by anyone now. */
@@ -497,6 +528,8 @@ function showSecurityNote(text) {
 }
 
 async function renderSecurity() {
+  $("#share-activity").checked = Boolean(state.me.share_activity);
+  renderPushStatus();
   $("#security-status").textContent = state.me.has_recovery_key ? "Recovery key saved." : "No recovery key yet.";
   try {
     const s = await getJSON("/me/security");
@@ -638,6 +671,8 @@ function enterApp() {
   $("#app").hidden = false;
   renderAccountBar();
   $("#admin-link").hidden = !state.me.is_admin;
+  syncPush();
+  if (location.hash) openFromLink(location.hash);
   refreshChats();
   refreshGroups();
   refreshRequests();
@@ -648,6 +683,7 @@ function renderAccountBar() {
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
   $("#recovery-nudge").hidden = Boolean(state.me.has_recovery_key);
+  renderPushNudge();
 }
 
 /** My display name or picture may have changed in another tab. */
@@ -730,9 +766,11 @@ function renderChatList() {
       at: chat.last_message?.created_at ?? 0,
       name: chatName(chat),
       row: chatRow({
-        name: chatName(chat), status: chatStatus(chat), time: chat.last_message?.created_at,
+        name: chatName(chat), status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
+        time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
-        avatar: paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat),
+        avatar: el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
+          paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
       }),
     })),
     ...state.groups.map((g) => ({
@@ -756,6 +794,10 @@ function renderChatList() {
 async function openChat(friendId) {
   const chat = chatById(friendId);
   if (!chat) return;
+  if (state.activeId !== friendId) {
+    setReply(null);
+    state.actionFor = null;
+  }
   state.activeId = friendId;
   state.activeGroupId = null;
   setConversationMode("direct");
@@ -810,8 +852,9 @@ function renderChatHeader() {
   $("#chat-title").textContent = chatName(chat);
   $("#chat-title").setAttribute("aria-label", `${chatName(chat)}: view profile`);
   // The username is the identity; show it whenever the name on screen differs.
-  $("#chat-sub").textContent = `@${chat.username}`;
-  $("#chat-sub").hidden = chatName(chat) === chat.username;
+  const sub = [activeText(chat), chatName(chat) !== chat.username ? `@${chat.username}` : ""].filter(Boolean);
+  $("#chat-sub").textContent = sub.join(" · ");
+  $("#chat-sub").hidden = sub.length === 0;
   paintAvatar($("#chat-avatar"), chat);
   $("#key-warning").hidden = !chat.keyChanged;
   $("#key-warning-name").textContent = chat.username;
@@ -949,14 +992,16 @@ function renderMessages() {
       prevSender = m.sender_id;
     }
     if (m.kind === "text") {
-      items.push(m.text == null
-        ? el("li", {
-            class: `msg undecryptable ${mine ? "mine" : ""}`,
-            text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it."
-              : m.beforeReset ? "Sent before your account was reset, so it can't be read."
-              : "Couldn't decrypt this message.",
-          })
-        : el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.text }));
+      if (m.text == null) {
+        items.push(el("li", {
+          class: `msg undecryptable ${mine ? "mine" : ""}`,
+          text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it."
+            : m.beforeReset ? "Sent before your account was reset, so it can't be read."
+            : "Couldn't decrypt this message.",
+        }));
+      } else {
+        items.push(...bubble(m, mine, [el("span", { class: "msg-body", text: m.text })]));
+      }
       if (m.id === lastMineTextId && m.read_at) {
         items.push(el("li", { class: "msg-meta", text: "Seen" }));
       }
@@ -967,7 +1012,7 @@ function renderMessages() {
             el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic")
         : el("span", { class: "snap-chip done" },
             el("span", { class: "marker", "aria-hidden": "true" }), snapLabel(m, mine));
-      items.push(el("li", { class: `msg ${mine ? "mine" : ""}` }, chip));
+      items.push(...bubble(m, mine, [chip]));
     }
   }
   if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
@@ -998,9 +1043,11 @@ $("#composer").addEventListener("submit", async (e) => {
   if (!text || !friendId) return;
   input.value = "";
   try {
-    const ciphertext = await e2e.encryptText(await keyFor(friendId), text, state.me.id, friendId);
+    const replyTo = state.replyTo && !state.replyTo.group ? state.replyTo.id : null;
+    const ciphertext = await e2e.encryptText2(await keyFor(friendId), text, replyTo, state.me.id, friendId);
     const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext, format: e2e.TEXT_FORMAT } });
-    state.plaintext.set(m.id, text);
+    state.plaintext.set(m.id, { text, replyTo });
+    setReply(null);
     await upsertMessage(m);
     if (state.activeId === friendId) renderMessages();
   } catch (err) {
@@ -1008,6 +1055,324 @@ $("#composer").addEventListener("submit", async (e) => {
     alert(err.message);
   }
 });
+
+// ---------- reactions and replies ----------
+
+const msgKey = (m) => (m.group_id ? `g:${m.id}` : `d:${m.id}`);
+const replyTarget = (m) => (m.group_id ? m.reply_to : m.replyTo) ?? null;
+
+function whoSent(m) {
+  if (m.sender_id === state.me.id) return "You";
+  if (m.group_id) return personName(m.sender_id, m.sender_name);
+  const chat = chatById(m.sender_id);
+  return chat ? chatName(chat) : "";
+}
+
+function snippetOf(m) {
+  if (m.kind === "snap" || m.pic) return "Pic";
+  const text = m.group_id ? m.body : m.text;
+  return text ? Array.from(text).slice(0, 80).join("") : "Message";
+}
+
+/** Who reacted with what: [{ user, emoji }], whether the chat is encrypted or not. */
+const reactionsOf = (m) => (m.group_id ? (m.reactions || []).map((r) => ({ user: r.user_id, emoji: r.emoji })) : m.reactionList || []);
+const myReaction = (m) => reactionsOf(m).find((r) => r.user === state.me.id)?.emoji ?? null;
+
+/**
+ * A message's list items: the bubble (with the message it replies to, if
+ * any), its reactions, and, when tapped, a row to react or reply.
+ */
+function bubble(m, mine, content) {
+  const key = msgKey(m);
+  const parts = [];
+  const target = replyTarget(m);
+  if (target != null) parts.push(quoteFor(m, target));
+  parts.push(...content);
+  const open = state.actionFor === key;
+  const items = [el("li", {
+    class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""}`,
+    "data-key": key,
+    onclick: (e) => {
+      if (e.target.closest("button, a")) return;
+      state.actionFor = open ? null : key;
+      renderMessages();
+    },
+  }, ...parts)];
+
+  const reactions = reactionsOf(m);
+  if (reactions.length) {
+    const counts = new Map();
+    for (const r of reactions) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+    const me = myReaction(m);
+    items.push(el("li", { class: `reactions ${mine ? "mine" : ""}` },
+      ...[...counts].map(([emoji, n]) => el("button", {
+        type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`,
+        "aria-label": `${emoji} ${n}${me === emoji ? ", including you. Tap to take yours back" : ". Tap to react"}`,
+        onclick: () => react(m, emoji),
+      }, emoji, n > 1 ? String(n) : ""))));
+  }
+
+  if (open) {
+    const me = myReaction(m);
+    items.push(el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
+      ...e2e.REACTIONS.map((emoji) => el("button", {
+        type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
+        onclick: () => react(m, emoji),
+      }, emoji)),
+      el("button", { type: "button", class: "reply-button", onclick: () => startReply(m) }, "Reply")));
+  }
+  return items;
+}
+
+function quoteFor(m, targetId) {
+  const msgs = m.group_id ? state.groupMessages.get(m.group_id) : state.messages.get(friendOf(m));
+  const target = msgs?.find((x) => x.id === targetId);
+  const text = target ? `${whoSent(target)}: ${snippetOf(target)}` : "Replying to an earlier message";
+  return el("button", {
+    type: "button", class: "quote",
+    onclick: () => {
+      const key = m.group_id ? `g:${targetId}` : `d:${targetId}`;
+      $(`#messages [data-key="${key}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    },
+  }, text);
+}
+
+/** Same emoji again takes it back; another one replaces it. */
+async function react(m, emoji) {
+  const next = myReaction(m) === emoji ? null : emoji;
+  state.actionFor = null;
+  try {
+    if (m.group_id) {
+      const updated = await getJSON(`/groups/${m.group_id}/messages/${m.id}/reaction`, { method: "PUT", json: { emoji: next } });
+      upsertGroupMessage(updated);
+    } else {
+      const fid = friendOf(m);
+      const ciphertext = next ? await e2e.encryptReaction(await keyFor(fid), next, state.me.id, fid, m.id) : null;
+      const updated = await getJSON(`/chats/${fid}/messages/${m.id}/reaction`, { method: "PUT", json: { ciphertext, format: 2 } });
+      await upsertMessage(updated);
+    }
+  } catch (err) {
+    report("warn", "reacting failed", errorFields(err));
+    alert(err.message);
+  }
+  renderMessages();
+}
+
+function startReply(m) {
+  state.actionFor = null;
+  setReply({ group: Boolean(m.group_id), id: m.id, who: whoSent(m), snippet: snippetOf(m) });
+  renderMessages();
+  $("#composer-input").focus();
+}
+
+function setReply(reply) {
+  state.replyTo = reply;
+  $("#reply-bar").hidden = !reply;
+  $("#reply-text").textContent = reply ? `Replying to ${reply.who === "You" ? "yourself" : reply.who}: ${reply.snippet}` : "";
+}
+$("#reply-cancel").addEventListener("click", () => setReply(null));
+
+// ---------- typing and active now ----------
+
+const TYPING_MS = 4000;
+let lastTypingSent = 0;
+
+const isTyping = (key) => (state.typing.get(key) ?? 0) > Date.now();
+
+// Tell the friend (or group) at most every couple of seconds while typing.
+$("#composer-input").addEventListener("input", (e) => {
+  if (!e.target.value.trim() || Date.now() - lastTypingSent < 2000) return;
+  lastTypingSent = Date.now();
+  if (state.activeId) sendFrame({ type: "typing", to: state.activeId });
+  else if (state.activeGroupId) sendFrame({ type: "typing", group: state.activeGroupId });
+});
+
+function renderTyping() {
+  let names = [];
+  if (state.activeId && isTyping(`d:${state.activeId}`)) {
+    names = [chatName(chatById(state.activeId))];
+  } else if (state.activeGroupId) {
+    const prefix = `g:${state.activeGroupId}:`;
+    for (const [key, until] of state.typing) {
+      if (key.startsWith(prefix) && until > Date.now()) {
+        const id = Number(key.slice(prefix.length));
+        names.push(personName(id, groupMemberName(state.activeGroupId, id)));
+      }
+    }
+  }
+  const line = $("#typing-line");
+  line.hidden = names.length === 0;
+  line.textContent = names.length === 1 ? `${names[0]} is typing…`
+    : names.length === 2 ? `${names[0]} and ${names[1]} are typing…`
+    : names.length ? "Several people are typing…" : "";
+  renderChatList();
+}
+
+/** A group member's username from the loaded messages, for people who aren't my friends. */
+function groupMemberName(groupId, userId) {
+  const m = (state.groupMessages.get(groupId) || []).find((x) => x.sender_id === userId);
+  return m?.sender_name ?? "Someone";
+}
+
+/** "Active now", "Active 5m ago", or nothing (hidden, or not seen in a day). */
+function activeText(chat) {
+  if (chat.active_now) return "Active now";
+  if (!chat.last_seen_at) return "";
+  const ago = Date.now() / 1000 - chat.last_seen_at;
+  if (ago > 86_400) return "";
+  if (ago < 60) return "Active just now";
+  if (ago < 3600) return `Active ${Math.floor(ago / 60)}m ago`;
+  return `Active ${Math.floor(ago / 3600)}h ago`;
+}
+
+$("#share-activity").addEventListener("change", async (e) => {
+  try {
+    await api("/me/settings", { method: "PUT", json: { share_activity: e.target.checked } });
+    await refreshMe();
+    await refreshChats();
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    showSecurityNote(err.message);
+  }
+});
+
+// ---------- notifications ----------
+// Push notifications go through the service worker (sw.js). On iPhone they
+// work once napsack is added to the Home Screen and opened from there.
+
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const isIPhone = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const PUSH_NUDGE_KEY = "napsack.pushNudgeDismissed";
+
+function vapidKey() {
+  const b64 = state.config.vapid_public_key.replace(/-/g, "+").replace(/_/g, "/");
+  return e2e.fromB64(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+}
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function turnOnPush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error(permission === "denied"
+      ? "Notifications are blocked for napsack. Allow them in your browser's site settings."
+      : "Notifications weren't turned on.");
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription())
+    || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKey() });
+  await api("/push/subscriptions", { method: "POST", json: sub.toJSON() });
+  report("info", "notifications turned on");
+}
+
+async function turnOffPush() {
+  const sub = await currentSubscription();
+  if (!sub) return;
+  await api("/push/subscriptions/remove", { method: "POST", json: { endpoint: sub.endpoint } });
+  await sub.unsubscribe();
+  report("info", "notifications turned off");
+}
+
+/** After signing in, tie this browser's existing subscription to the new session. */
+async function syncPush() {
+  try {
+    // Not `Notification?.permission`: where Notification doesn't exist at all
+    // (iPhone Safari outside the Home Screen), naming it throws.
+    const sub = pushSupported() && Notification.permission === "granted" ? await currentSubscription() : null;
+    if (sub) await api("/push/subscriptions", { method: "POST", json: sub.toJSON() });
+  } catch (err) {
+    report("warn", "re-registering notifications failed", errorFields(err));
+  }
+  renderPushNudge();
+}
+
+function renderPushNudge() {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(PUSH_NUDGE_KEY) === "1"; } catch {}
+  // One nudge at a time: the recovery key matters more.
+  const show = !dismissed && state.me?.has_recovery_key
+    && (pushSupported() ? Notification.permission === "default" : isIPhone() && !standalone());
+  $("#push-nudge").hidden = !show;
+  $("#push-nudge-text").textContent = pushSupported()
+    ? "Get notified when friends message you."
+    : "For notifications on iPhone: tap Share, then Add to Home Screen, and open napsack from there.";
+  $("#push-nudge-button").hidden = !pushSupported();
+}
+
+$("#push-nudge-button").addEventListener("click", async () => {
+  try {
+    await turnOnPush();
+  } catch (err) {
+    alert(err.message);
+  }
+  renderPushNudge();
+});
+$("#push-nudge-dismiss").addEventListener("click", () => {
+  try { localStorage.setItem(PUSH_NUDGE_KEY, "1"); } catch {}
+  renderPushNudge();
+});
+
+async function renderPushStatus() {
+  const btn = $("#push-toggle");
+  if (!pushSupported()) {
+    $("#push-status").textContent = isIPhone() && !standalone()
+      ? "On iPhone, add napsack to your Home Screen (Share, then Add to Home Screen) and open it from there to turn on notifications."
+      : "This browser can't show notifications.";
+    btn.hidden = true;
+    return;
+  }
+  const on = Notification.permission === "granted" && Boolean(await currentSubscription());
+  $("#push-status").textContent = on
+    ? "On for this device. They say who sent something, never what."
+    : Notification.permission === "denied"
+      ? "Blocked in this browser's site settings."
+      : "Off for this device.";
+  btn.hidden = Notification.permission === "denied";
+  btn.textContent = on ? "Turn off notifications" : "Turn on notifications";
+  btn.dataset.on = on ? "1" : "";
+}
+
+$("#push-toggle").addEventListener("click", async () => {
+  try {
+    if ($("#push-toggle").dataset.on) await turnOffPush();
+    else await turnOnPush();
+  } catch (err) {
+    showSecurityNote(err.message);
+  }
+  renderPushStatus();
+  renderPushNudge();
+});
+
+/** `#chat=7`, `#group=3`, `#friends`: where a notification tap leads. */
+async function openFromLink(hash) {
+  const m = /^#(chat|group)=(\d+)$/.exec(hash) || /^#(friends)$/.exec(hash);
+  if (!m) return;
+  if (m[1] === "chat") {
+    if (!chatById(Number(m[2]))) await refreshChats();
+    openChat(Number(m[2]));
+  } else if (m[1] === "group") {
+    if (!groupById(Number(m[2]))) await refreshGroups();
+    openGroup(Number(m[2]));
+  } else {
+    openFriends();
+  }
+  history.replaceState(null, "", location.pathname);
+}
+
+// A link to #chat=... on an open page only changes the hash.
+window.addEventListener("hashchange", () => { if (state.me) openFromLink(location.hash); });
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((err) => report("warn", "service worker failed", errorFields(err)));
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "open" && state.me) openFromLink(new URL(e.data.url).hash);
+  });
+}
 
 // ---------- realtime ----------
 
@@ -1035,6 +1400,15 @@ function connectSocket() {
   };
 }
 
+/** Sends a frame if the socket is open; these are hints, so dropping one is fine. */
+function sendFrame(frame) {
+  if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(frame));
+}
+
+// The server holds back push notifications while napsack is on screen.
+const sendVisibility = () => sendFrame({ type: "visibility", visible: document.visibilityState === "visible" });
+document.addEventListener("visibilitychange", sendVisibility);
+
 // Coming back to a backgrounded tab: catch up instead of trusting a stale socket.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !state.token) return;
@@ -1048,6 +1422,7 @@ async function handleEvent(ev) {
   switch (ev.type) {
     case "ready":
       state.wsRetry = 0;
+      sendVisibility();
       checkForUpdate();
       // Anything could have happened while disconnected.
       refreshChats();
@@ -1101,6 +1476,24 @@ async function handleEvent(ev) {
         if (m.sender_id !== state.me.id && document.visibilityState === "visible") markGroupRead(m.group_id);
       }
       refreshGroupsSoon();
+      break;
+    }
+    case "typing": {
+      const key = ev.group_id ? `g:${ev.group_id}:${ev.from}` : `d:${ev.from}`;
+      state.typing.set(key, Date.now() + TYPING_MS);
+      renderTyping();
+      setTimeout(renderTyping, TYPING_MS + 50);
+      break;
+    }
+    case "presence": {
+      const chat = chatById(ev.user_id);
+      if (chat) {
+        chat.active_now = ev.active;
+        chat.last_seen_at = ev.last_seen_at;
+        if (ev.active === false) state.typing.delete(`d:${ev.user_id}`);
+        renderChatList();
+        if (state.activeId === chat.id) renderChatHeader();
+      }
       break;
     }
     case "groups_changed":
@@ -1192,6 +1585,10 @@ function renderGroupHeader() {
 
 async function openGroup(groupId) {
   if (!groupById(groupId)) return;
+  if (state.activeGroupId !== groupId) {
+    setReply(null);
+    state.actionFor = null;
+  }
   state.activeId = null;
   state.activeGroupId = groupId;
   setConversationMode("group");
@@ -1295,8 +1692,10 @@ function renderGroupMessages() {
       items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : personName(m.sender_id, m.sender_name)}  ${clockTime(m.created_at)}` }));
       prevSender = m.sender_id;
     }
-    if (m.pic) items.push(el("li", { class: `msg ${mine ? "mine" : ""}` }, groupPicChip(m, mine)));
-    if (m.body) items.push(el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.body }));
+    const content = [];
+    if (m.pic) content.push(groupPicChip(m, mine));
+    if (m.body) content.push(el("span", { class: "msg-body", text: m.body }));
+    items.push(...bubble(m, mine, content));
   }
   if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
   list.replaceChildren(...items);
@@ -1382,7 +1781,9 @@ $("#group-picture-input").addEventListener("change", async (e) => {
 async function sendGroupText(groupId, input, text) {
   input.value = "";
   try {
-    const m = await getJSON(`/groups/${groupId}/messages`, { method: "POST", json: { text } });
+    const replyTo = state.replyTo?.group ? state.replyTo.id : undefined;
+    const m = await getJSON(`/groups/${groupId}/messages`, { method: "POST", json: { text, reply_to: replyTo } });
+    setReply(null);
     upsertGroupMessage(m);
     if (state.activeGroupId === groupId) renderMessages();
   } catch (err) {

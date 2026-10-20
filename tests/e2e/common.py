@@ -18,9 +18,13 @@ SHOTS = os.environ.get("NAPSACK_SHOTS") or None
 _CHANNEL = os.environ.get("E2E_CHROME", "chrome")
 
 
-async def launch(pw, **kw):
+async def launch(pw, full=False, **kw):
+    """`full`: Playwright's own headless browser is a stripped-down shell
+    without notifications or service-worker push; full Chromium has them."""
     if _CHANNEL != "bundled":
         kw["channel"] = _CHANNEL
+    elif full:
+        kw["channel"] = "chromium"
     return await pw.chromium.launch(**kw)
 
 

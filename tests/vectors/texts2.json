@@ -1,0 +1,28 @@
+{
+  "about": "napsack format 2 texts (JSON envelope, replies) and reactions. Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "texts": [
+    {
+      "from": 7,
+      "to": 3,
+      "text": "see you at 8 🌿",
+      "reply_to": null,
+      "plaintext": "{\"t\":\"see you at 8 🌿\"}",
+      "ciphertext": "tnG/XTIbu17AHWOWC2jl5UuUabqaHw04phpNJDofisaqAHVNg9Q6v5ELGK+gzIBJh+9NmTo="
+    },
+    {
+      "from": 7,
+      "to": 3,
+      "text": "yes! \"quotes\", back\\slash, and a\nnew line",
+      "reply_to": 41,
+      "plaintext": "{\"t\":\"yes! \\\"quotes\\\", back\\\\slash, and a\\nnew line\",\"re\":41}",
+      "ciphertext": "AXNZvtF/g3tu57mB8hh6SbTHoPXwXKJwC2L0gTSWqa+FzUTjwEnDCy3Yr0kcXT4l1iQ9zOXkLN0AniQ0lLwRzVAqNOejs2VA+Dby3XZFWyUB1NbrXKZiW1g="
+    }
+  ],
+  "reaction": {
+    "from": 7,
+    "to": 3,
+    "message_id": 41,
+    "emoji": "❤️",
+    "ciphertext": "ixkwXuy73o1gsw7TMTgIUqAPib2B3KBwlaCYJrdyEkrfsQ=="
+  }
+}

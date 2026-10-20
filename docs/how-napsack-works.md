@@ -11,6 +11,9 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [Forgot your password?](#forgot-your-password)
 - [Sending a message](#sending-a-message)
 - [Pics](#pics)
+- [Replies and reactions](#replies-and-reactions)
+- [Notifications](#notifications)
+- [Typing and "active now"](#typing-and-active-now)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
 - [Limits](#limits)
 - [The admin panel](#the-admin-panel)
@@ -24,7 +27,8 @@ Every direct text and every pic is encrypted in the sender's browser and decrypt
 |---|---|
 | Usernames and who is friends with whom | What any text says |
 | When each message was sent, and whether it was a text or a pic | What any pic shows, or its caption |
-| Display names, nicknames, and profile pictures (see [Profiles](#profiles)) | |
+| Display names, nicknames, and profile pictures (see [Profiles](#profiles)) | Which emoji someone reacted with, or which message a text replies to |
+| That a reaction happened, on which message; who's online and who's typing (to friends who share it) | |
 | Roughly how long each message is | Your password |
 | When texts were read and whether pics were opened | Your private key, unwrapped |
 | Each account's public key | The key you share with each friend |
@@ -165,6 +169,24 @@ You can set a display name and a profile picture. Your friends see them; nobody 
 These are **not** end-to-end encrypted: the server stores names and pictures, the way it stores usernames. Profile pictures are rebuilt by the server like every image it handles (decoded, size-checked, re-encoded), and every name and picture you've ever set is kept.
 
 Usernames stay the identity. A display name could be anything, including someone else's name, so the app shows `@username` wherever a name differs from it, and safety codes and key warnings always use the username.
+
+## Replies and reactions
+
+Texts are written in **format 2** now: instead of the bare text, the browser encrypts a small JSON object, `{"t": "the text", "re": 41}`, where `re` (only when replying) is the message being replied to. So the server can't see which message a reply quotes. Readers ignore keys they don't know, so later additions (mentions, edits) won't need another format. The associated string says `v2` (`napsack/v2/text/7/3`). Format 1 texts stay readable.
+
+A reaction is one of six emoji, encrypted with the chat key and the associated string `napsack/v2/reaction/<sender>/<recipient>/<message id>`. Binding the message id in means the server can't move a reaction onto a different message. The server stores that a reaction happened and on which message; the newest one per person wins, and taking it back stores an empty one. Pinned vectors: `tests/vectors/texts2.json`.
+
+In group chats, replies and reactions are plain like everything else in a group.
+
+## Notifications
+
+napsack can be installed as an app (on iPhone: Share, then Add to Home Screen) and send notifications with the standard Web Push protocol. The browser hands napsack an address at its push service (Apple, Google, Mozilla or Microsoft) and a public key. For each notification, the server encrypts a small message to that key (RFC 8291) and signs the request (VAPID, RFC 8292), so the push service only relays ciphertext.
+
+A notification says **who, never what**: "Ana: New message", "Sent you a pic", "Ben wants to be friends". The server couldn't say more about a direct message if it wanted to; group notifications follow the same rule. There's no notification while napsack is on your screen, and signing out stops that device's notifications.
+
+## Typing and "active now"
+
+While you type, your friend sees "Ana is typing…"; it travels over the live connection and is never stored. A green dot means a friend has napsack open, and "Active 5m ago" says when they last did. It's mutual and friends-only: turn off "Show friends when I'm active or typing" in your profile and nobody sees yours, and you stop seeing theirs.
 
 ## Safety codes and changed keys
 

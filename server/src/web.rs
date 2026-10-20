@@ -15,6 +15,12 @@ const KEYSTORE_JS: &str = include_str!("../static/keystore.js");
 const FAVICON_SVG: &str = include_str!("../static/favicon.svg");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const ADMIN_JS: &str = include_str!("../static/admin.js");
+// Installing napsack as an app, and notifications (push.rs).
+const SW_JS: &str = include_str!("../static/sw.js");
+const MANIFEST: &str = include_str!("../static/manifest.webmanifest");
+const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
+const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../static/apple-touch-icon.png");
 
 const CSP: &str = "default-src 'self'; \
     script-src 'self'; \
@@ -27,6 +33,8 @@ const CSP: &str = "default-src 'self'; \
 pub fn routes() -> Router<SharedState> {
     Router::new()
         .route("/", get(index))
+        // Invite links open the app, which reads the token from the address.
+        .route("/i/{token}", get(index))
         .route("/app.js", get(app_js))
         .route("/crypto.js", get(crypto_js))
         .route("/keystore.js", get(keystore_js))
@@ -39,6 +47,36 @@ pub fn routes() -> Router<SharedState> {
             get(|| async { axum::response::Redirect::permanent("/favicon.svg") }),
         )
         .route("/admin.js", get(|| async { script(ADMIN_JS) }))
+        // A private messenger: nothing here for search engines.
+        .route(
+            "/robots.txt",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    "User-agent: *\nDisallow: /\n",
+                )
+            }),
+        )
+        // At the root, so it can show notifications for the whole site.
+        .route("/sw.js", get(|| async { script(SW_JS) }))
+        .route(
+            "/manifest.webmanifest",
+            get(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "application/manifest+json"),
+                        (header::CACHE_CONTROL, "no-cache"),
+                    ],
+                    MANIFEST,
+                )
+            }),
+        )
+        .route("/icon-192.png", get(|| async { png(ICON_192) }))
+        .route("/icon-512.png", get(|| async { png(ICON_512) }))
+        .route(
+            "/apple-touch-icon.png",
+            get(|| async { png(APPLE_TOUCH_ICON) }),
+        )
 }
 
 /// The page is public; the data behind it (`/api/admin/stats`) is admin-only.
@@ -61,6 +99,16 @@ async fn favicon() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         FAVICON_SVG,
+    )
+}
+
+fn png(body: &'static [u8]) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        body,
     )
 }
 
@@ -147,5 +195,7 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
         "build": version::BUILD,
         "message_formats": version::MESSAGE_FORMATS,
         "min_client_versions": min_versions,
+        // The browser's applicationServerKey for push subscriptions (push.rs).
+        "vapid_public_key": state.vapid.public,
     }))
 }

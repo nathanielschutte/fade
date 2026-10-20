@@ -119,6 +119,8 @@ pub async fn create_session(state: &SharedState, user_id: i64) -> AppResult<Stri
     .bind(created + state.config.session_days * 86_400)
     .execute(&state.db)
     .await?;
+    // A handful of devices per person; a new sign-in ends the oldest (guard.rs).
+    crate::guard::trim_sessions(state, user_id, state.config.limits.max_sessions).await?;
     Ok(token)
 }
 
@@ -130,6 +132,9 @@ pub struct Register {
     username: String,
     auth_key: String,
     invite_code: Option<String>,
+    /// From an invite link (`/i/<token>`): stands in for the invite code, and
+    /// makes the new account friends with whoever made the link (invites.rs).
+    invite_token: Option<String>,
     /// SPKI, base64. Friends encrypt to this.
     public_key: String,
     /// PKCS#8 private key, AES-GCM encrypted by the client, base64.
@@ -164,14 +169,16 @@ pub struct Me {
     has_recovery_key: bool,
     /// When an admin reset gave this account a new key; messages from before can't be read.
     key_reset_at: Option<i64>,
+    /// Friends see when you're active and typing (presence.rs).
+    share_activity: bool,
 }
 
 impl Me {
     pub async fn load(state: &SharedState, user: UserPublic) -> AppResult<Self> {
         let is_admin = state.config.is_admin(&user.username);
         let (display_name, avatar_id) = crate::people::own_profile(&state.db, user.id).await?;
-        let (has_recovery_key, key_reset_at): (bool, Option<i64>) = sqlx::query_as(
-            "SELECT recovery_hash IS NOT NULL, key_reset_at FROM users WHERE id = ?",
+        let (has_recovery_key, key_reset_at, share_activity): (bool, Option<i64>, bool) = sqlx::query_as(
+            "SELECT recovery_hash IS NOT NULL, key_reset_at, share_activity FROM users WHERE id = ?",
         )
         .bind(user.id)
         .fetch_one(&state.db)
@@ -184,6 +191,7 @@ impl Me {
             avatar_id,
             has_recovery_key,
             key_reset_at,
+            share_activity,
         })
     }
 }
@@ -237,7 +245,14 @@ pub async fn register(
     Json(req): Json<Register>,
 ) -> AppResult<Json<SessionResponse>> {
     check_ip(&state, &who, "sign-up")?;
-    if let Some(expected) = &state.config.invite_code {
+    let invite = match req.invite_token.as_deref() {
+        Some(token) => Some(crate::invites::find_valid(&state.db, token).await?.ok_or_else(|| {
+            tracing::info!(ip = %who.ip, username = ?req.username.trim(), "sign-up rejected: invite link not valid");
+            AppError::bad("That invite link has expired, been used up, or been turned off.")
+        })?),
+        None => None,
+    };
+    if let (Some(expected), None) = (&state.config.invite_code, &invite) {
         let given = req.invite_code.as_deref().unwrap_or("").trim();
         if !same_secret(given, expected) {
             tracing::info!(ip = %who.ip, username = ?req.username.trim(), "sign-up rejected: wrong invite code");
@@ -247,6 +262,12 @@ pub async fn register(
 
     let username = req.username.trim().to_string();
     validate_username(&username)?;
+    if crate::guard::accounts_full(&state.db, state.config.limits.max_accounts).await? {
+        tracing::warn!(ip = %who.ip, max = state.config.limits.max_accounts, "sign-up refused: account cap reached");
+        return Err(AppError::Unavailable(
+            "napsack isn't taking new accounts right now.".into(),
+        ));
+    }
     validate_auth_key(&req.auth_key)?;
     // P-256 SPKI is 91 bytes; a wrapped PKCS#8 key is ~180. Generous caps.
     if !is_base64(&req.public_key, 512) || !is_base64(&req.wrapped_private_key, 2048) {
@@ -280,7 +301,11 @@ pub async fn register(
     };
 
     let token = create_session(&state, user.id).await?;
-    tracing::info!(ip = %who.ip, user_id = user.id, username = %user.username, "account created");
+    tracing::info!(ip = %who.ip, user_id = user.id, username = %user.username, invited = invite.is_some(), "account created");
+    if let Some((invite_id, inviter)) = &invite {
+        crate::invites::record_use(&state.db, *invite_id, user.id, "signed_up").await?;
+        crate::invites::befriend_inviter(&state, &user, inviter).await?;
+    }
     Ok(Json(SessionResponse {
         token,
         user: Me::load(&state, user).await?,
@@ -349,6 +374,7 @@ pub async fn logout(
         .execute(&state.db)
         .await?
         .rows_affected();
+        crate::push::end_for_session(&state.db, &hash_token(token)).await?;
         tracing::debug!(ended, "signed out");
     }
     Ok(Json(serde_json::json!({ "ok": true })))

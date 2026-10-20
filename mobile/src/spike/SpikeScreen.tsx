@@ -11,6 +11,7 @@ import { runVectorChecks, type CheckResult } from "../../../shared/crypto/vector
 import format1 from "../../../tests/vectors/format1.json";
 import format2 from "../../../tests/vectors/format2.json";
 import recovery from "../../../tests/vectors/recovery.json";
+import texts2 from "../../../tests/vectors/texts2.json";
 import { colors } from "../theme";
 
 export default function SpikeScreen() {
@@ -23,7 +24,7 @@ export default function SpikeScreen() {
     setCrash(null);
     setResults([]);
     try {
-      await runVectorChecks(e2e, { format1, format2, recovery }, (r) => {
+      await runVectorChecks(e2e, { format1, format2, recovery, texts2 }, (r) => {
         console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name} (${r.ms} ms)${r.error ? `: ${r.error}` : ""}`);
         setResults((prev) => [...prev, r]);
       });

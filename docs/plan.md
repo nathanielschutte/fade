@@ -11,10 +11,17 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 1 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
-| 2 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 3 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 4 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 1 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
+| 2 | [Invite links and QR codes](#f14-invite-links-and-qr-codes) | Features | Planned | Replaces the shared invite code and typing usernames |
+| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 5 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
+| 6 | [Group chats: "seen by", then end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first |
+| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 8 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
+| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 11 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -38,10 +45,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Captions on pictures](#f6-captions-on-pictures): message format 2 for direct pics; plain captions in groups | 0.13.0 |
 | [Password reset and recovery](#f2-password-reset-and-recovery): recovery keys, change password, admin reset codes, accepting a friend's new key | 0.14.0 |
 | [Account safety basics](#f8-account-safety-basics): sign out other devices (sign-in limits shipped in 0.9) | 0.14.0 |
+| [Install as an app, with notifications](#f10-install-as-an-app-with-notifications) | 0.15.0 |
+| [Reactions and replies](#f11-reactions-and-replies): text format 2, encrypted reactions | 0.15.0 |
+| [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 |
+| Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([SECURITY.md](SECURITY.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.14.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.16.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -135,6 +146,66 @@ Production runs **0.14.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - List signed-in devices with "sign out everywhere".
 - Done: sign-in limits (0.9); "sign out other devices" with a count of other sessions (0.14.0), which also closes their live connections. A per-device list (names, last used) would need sessions to record a device label; not yet.
 
+#### F10. Install as an app, with notifications
+- Make the web app installable (a Progressive Web App) and send push notifications for new messages, pics, and friend requests.
+- **Why now:** today nobody hears about a message unless napsack is open in a tab. iPhones support web push for apps added to the home screen (iOS 16.4+), so friends get a real-feeling app with notifications before the native app ships, and the server side (subscriptions, sending, preferences) is reused by the iOS app's push later.
+- **Pieces:**
+  - `manifest.webmanifest` (name, icons, theme, `display: standalone`) and a small service worker, served from the binary like everything else. The service worker only handles push and notification clicks; it doesn't cache the app, so updates stay instant and the "napsack was updated" banner keeps working.
+  - "Turn on notifications" in the account bar/profile; an "Add to Home Screen" hint on iPhone, where push only works once installed.
+  - Server: VAPID keys (in SSM, like the invite code), a `push_subscriptions` table (marked ended on sign-out or when the push service says it's gone; never deleted), and sending with the Web Push protocol (payloads encrypted to each browser, RFC 8291).
+  - What a notification says: **who, never what**. "Ana sent you a pic", "New message from Ben", "Cal wants to be friends". The server can't read direct messages anyway; for group chats (readable by the server today) it still shows only "New message in Road trip", so turning on encryption later changes nothing.
+  - No notification when you're looking at that chat; per-chat mute comes with X3.
+- **Tests:** a fake push endpoint in the smoke test (receives and checks the encrypted payload's shape); browser test with a real service worker in Chromium.
+- **Decisions:** none blocking. Rule 1: subscriptions are marked ended, not deleted.
+- Done (0.15.0): manifest, icons, a push-only service worker; VAPID key made once and kept in the database; RFC 8291 encryption checked against the RFC's worked example and decrypted independently in the tests; endpoints limited to known push services; no push while on screen; notifications for texts, pics, reactions, group messages, friend requests. Not yet: per-chat mute (X3).
+
+#### F11. Reactions and replies
+- Tap-and-hold a message to react (a small fixed set: ❤️ 😂 😮 😢 👍 👎, like iMessage), or swipe/tap to reply to it with a quote.
+- **Design:** both are end-to-end encrypted in direct chats. This introduces **text format 2**: the encrypted plaintext becomes a small JSON envelope (`{"t": "hi", "re": <message id>}`) instead of bare text, so future fields (replies, mentions, edits) don't each need a new format. Reactions are their own message kind (`reaction`), encrypted, pointing at the message they react to (the server sees which message got a reaction and when, not which emoji).
+- Readers before writers ([RELEASING.md](RELEASING.md#compatibility-rules)): the web app ships both at once; the iOS app should read text format 2 from its first release. New pinned vectors (`tests/vectors/format2_text.json` or similar).
+- Group chats get the same (plaintext for now, like the rest of group messages).
+- A reaction can be changed or removed: a new row that supersedes the old (Rule 1), never an update that loses history.
+- Done (0.15.0) as designed. Tap a message for the reaction row and Reply; quotes link back to the original.
+
+#### F12. Typing and "active now"
+- "Ana is typing…" in an open chat; a green dot and "Active now" / "Active 5m ago" on friends.
+- Typing travels over the WebSocket only (throttled, a few seconds' lifetime), never stored. "Active" comes from `last_seen_at`, which already exists, plus who has a socket open.
+- Privacy setting: "Show when I'm active" (default on), and if you hide yours you don't see others'. Friends only, like everything else.
+- Groups: typing shows names ("Ana and Ben are typing…").
+- Done (0.15.0), including groups.
+
+#### F13. Draw on pics
+- After taking a pic, draw on it with a finger or mouse (a few colors and sizes, undo), and drop emoji stickers you can move and resize. Captions (F6) already exist.
+- Entirely in the browser: the drawing is flattened into the JPEG before it's compressed and encrypted, so there's no server change and no new format. Works for group pics too.
+- Pointer events, so touch, pen, and mouse all work; the canvas respects the mirrored front camera.
+
+#### F14. Invite links and QR codes
+- Today everyone signs up with one shared invite code from Terraform, then types usernames to add friends.
+- **Invite links:** each person can make a link (`/i/<token>`) that signs a new person up and makes them friends with the inviter in one step. Limited uses and an expiry; the inviter sees who joined through it. Admins can still turn sign-ups off entirely. The shared code keeps working until it's retired.
+- **QR codes:** your profile shows a QR code of a friend link; scanning it with a phone camera opens napsack with "Add Ana?" ready. Generated in the browser (a small QR encoder, written here rather than a third-party script, per the no-CDN rule).
+- Tokens are random, stored hashed, marked used/revoked (never deleted), and rate-limited like sign-in.
+
+#### F15. Streaks
+- A 🔥 and a count next to a friend when you've both sent each other a pic every day for 3+ days, and an ⌛ when today's streak is about to run out. Snapchat's stickiest feature.
+- Computed on the server from message metadata it already has (who sent a pic to whom, and when), in each person's own time zone (the client sends its offset). No content involved.
+- Also: your longest streak on your profile, and on a friend's profile, your streak together.
+
+#### F16. Voice notes
+- Hold the mic button to record (up to 2 minutes), release to send. Plays in the chat with a waveform; can be replayed (not view-once).
+- End-to-end encrypted in direct chats like pics: recorded with `MediaRecorder` (Opus/AAC), encrypted in the browser, stored as a file on the data volume (they're kept, like texts; Rule 1), a new message kind `voice` with its own format number and vectors. Group voice notes are plain for now, like group pics.
+- Disk: about 15 KB per 10 seconds; a cap per user and a total cap, shown in the admin panel.
+
+#### F17. Group chats: "seen by", then end-to-end
+- **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member).
+- **End-to-end encryption for groups:** the one part of napsack the server can read. Design doc first: likely a group key per membership change, sent to each member encrypted with their pair key (sender keys), so adding or removing someone rotates the key. A new group message format; old plaintext messages stay as they are. Big, careful work; the iOS app needs the same design.
+
+#### F18. Disappearing texts
+- Per-chat setting: texts disappear 24 hours after they're read (like Snapchat's default).
+- **Needs a decision:** this conflicts with Rule 1 ("data in our DB can never be deleted"). Options:
+  1. **Hidden, not deleted:** the server keeps the ciphertext forever but stops serving it after the timer. Honest about it in the UI ("hidden from the chat; napsack keeps an encrypted copy"). The server still can't read it.
+  2. **Real deletion for these only:** an explicit, narrow exception to Rule 1 for ciphertext the sender asked to disappear, like pic files today. Needs the user's sign-off on the rule change.
+  3. **Skip it.**
+
 ### Debug
 
 #### D1. Log viewer
@@ -157,6 +228,11 @@ Production runs **0.14.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### X2. Account buttons on the main screen
 - Requested: move profile and the other account buttons (admin, sign out) out of the Friends sheet to a better spot on the main screen.
 - Proposal: an account bar at the bottom of the chat list, with your avatar and name (opens your profile), an Admin link for admins, and Sign out. It's visible on phones too, since the chat list is the home screen there. The Friends sheet goes back to just friends and requests.
+
+#### X3. Chat list tools: pin, mute, search
+- **Pin** up to 3 chats to the top; **mute** a chat (no notifications, no unread dot, for 8 hours / a week / always); **archive** quiet chats out of the list (they come back on a new message).
+- **Search:** find a chat by name, and search message text. Direct messages are end-to-end encrypted, so search runs in the browser over decrypted history (loading older pages as needed); group messages can be searched on the server.
+- Pin/mute/archive are stored per person on the server (append-only state, Rule 1) so they follow you to new devices.
 
 ### Infrastructure
 

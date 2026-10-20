@@ -16,8 +16,9 @@ use crate::{
 };
 
 /// The client caps texts at 2000 characters. Worst case that's 8000 UTF-8 bytes,
+/// more once the format 2 JSON envelope escapes quotes and control characters,
 /// plus a 12-byte IV and 16-byte tag, base64-encoded.
-const MAX_CIPHERTEXT_CHARS: usize = 11_000;
+const MAX_CIPHERTEXT_CHARS: usize = 20_000;
 
 #[derive(Deserialize)]
 pub struct Page {
@@ -52,6 +53,7 @@ pub async fn list(
     .fetch_all(&state.db)
     .await?;
     messages.reverse();
+    crate::reactions::attach(&state.db, &mut messages).await?;
     Ok(Json(messages))
 }
 
@@ -104,6 +106,16 @@ pub async fn send_text(
         friend_id,
         &Event::Message {
             message: message.clone(),
+        },
+    );
+    crate::push::notify(
+        &state,
+        friend_id,
+        crate::push::Note {
+            title: crate::people::name_for(&state.db, friend_id, me.id).await?,
+            body: "New message".into(),
+            tag: format!("dm-{}", me.id),
+            url: format!("/#chat={}", me.id),
         },
     );
     Ok(Json(message))

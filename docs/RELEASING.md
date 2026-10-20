@@ -34,7 +34,7 @@ A change that can't follow these rules is a new API version: new routes under `/
 
 The server refuses formats not in `MESSAGE_FORMATS`, so a client can't jump ahead of step 3 by accident.
 
-While the web app is the only client, steps 1 to 4 collapse into one release: it's served by the same binary, so the reader and the writer ship together. Tabs still open on the old version see the update banner, and an old tab shown a newer-format pic says "reload to open it" without using it up. That's how format 2 (pics with captions, 0.13.0) shipped. Once the iOS app exists, follow the steps.
+While the web app is the only client, steps 1 to 4 collapse into one release: it's served by the same binary, so the reader and the writer ship together. Tabs still open on the old version see the update banner, and an old tab shown a newer-format pic says "reload to open it" without using it up. That's how format 2 shipped: pics with captions (0.13.0), then texts as a JSON envelope and encrypted reactions (0.15.0). Once the iOS app exists, follow the steps.
 
 **4. Retiring old app versions.** Native apps send `X-Napsack-Client: ios/1.2.0+37`. The server answers any request from an app older than its platform's minimum with `426 Upgrade Required` and a message, and the app shows an update screen. `/api/config` is exempt, so an old app can always find out why. Set minimums in Terraform as `FADE_MIN_CLIENT_VERSIONS=ios=1.2.0` and apply. Raise them only when you need to (a security fix, retiring old API routes, a new message format), and give people time to update first. Requests without the header (the web client, scripts) are never blocked.
 

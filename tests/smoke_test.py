@@ -45,7 +45,8 @@ def check_nothing_sensitive_served():
     """Nothing secret in any JSON response, and protective headers on every one."""
     for method, path, r in SEEN:
         for header, want in (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "DENY"),
-                             ("Referrer-Policy", "no-referrer"), ("Cache-Control", "no-store")):
+                             ("Referrer-Policy", "no-referrer"), ("Cache-Control", "no-store"),
+                             ("X-Robots-Tag", "noindex, nofollow, noarchive")):
             assert r.headers.get(header) == want, (method, path, header, r.headers.get(header))
         if "json" not in r.headers.get("Content-Type", ""):
             continue
@@ -347,6 +348,197 @@ def check_account(tag):
     print("  account: password change, recovery key, reset codes, sign out elsewhere; history kept")
 
 
+async def socket(tok):
+    ws = await websockets.connect(BASE.replace("http", "ws") + "/api/ws")
+    await ws.send(json.dumps({"type": "auth", "token": tok}))
+    assert json.loads(await ws.recv())["type"] == "ready"
+    return ws
+
+
+async def next_event(ws, kind, timeout=3.0):
+    end = time.time() + timeout
+    while True:
+        left = end - time.time()
+        if left <= 0:
+            raise AssertionError(f"no {kind} event")
+        ev = json.loads(await asyncio.wait_for(ws.recv(), left))
+        if ev["type"] == kind:
+            return ev
+
+
+async def no_event(ws, kind, wait=0.8):
+    try:
+        await next_event(ws, kind, wait)
+    except (AssertionError, asyncio.TimeoutError):
+        return
+    raise AssertionError(f"unexpected {kind} event")
+
+
+async def check_live(tag):
+    """Typing and "active now" (presence.rs), push notifications (push.rs),
+    reactions and replies (reactions.rs, groups.rs)."""
+    from push_receiver import Receiver, check_vapid
+    ra, rb, rc = (ok(register(f"{n}_{tag}")).json() for n in ("liva", "livb", "livc"))
+    (a, a_tok), (b, b_tok), (c, c_tok) = ((r["user"], r["token"]) for r in (ra, rb, rc))
+    befriend(a_tok, b, b_tok, a["id"])
+    friend_of = lambda tok, who: [x for x in ok(call("GET", "/friends", tok)).json() if x["id"] == who["id"]][0]
+
+    # Presence: ben comes online, ana hears it and sees "active now"; strangers hear nothing.
+    assert ok(call("GET", "/me", a_tok)).json()["share_activity"] is True
+    wa, wc = await socket(a_tok), await socket(c_tok)
+    wb = await socket(b_tok)
+    ev = await next_event(wa, "presence")
+    assert ev["user_id"] == b["id"] and ev["active"] is True
+    await no_event(wc, "presence")
+    assert friend_of(a_tok, b)["active_now"] is True
+
+    # Typing reaches the friend only; a stranger's "typing" goes nowhere.
+    await wb.send(json.dumps({"type": "typing", "to": a["id"]}))
+    ev = await next_event(wa, "typing")
+    assert ev == {"type": "typing", "from": b["id"], "group_id": None}, ev
+    await wc.send(json.dumps({"type": "typing", "to": a["id"]}))
+    await no_event(wa, "typing")
+    await wb.send("not json at all")                                         # ignored, socket stays up
+
+    # Hiding activity is mutual: ben hides, so nobody sees his, and he sees nobody's.
+    ok(call("PUT", "/me/settings", b_tok, json={"share_activity": False}))
+    assert friend_of(a_tok, b)["active_now"] is None and friend_of(a_tok, b)["last_seen_at"] is None
+    assert friend_of(b_tok, a)["active_now"] is None
+    await asyncio.sleep(2)                                                    # past the typing throttle
+    await wb.send(json.dumps({"type": "typing", "to": a["id"]}))
+    await no_event(wa, "typing")
+    ok(call("PUT", "/me/settings", b_tok, json={"share_activity": True}))
+
+    # Push: only known push services (a local test receiver here), well-formed keys.
+    rx = Receiver()
+    phone = rx.browser(f"ben-phone-{tag}")
+    sub = phone.subscription()
+    for bad in ("https://evil.example/push", "http://169.254.169.254/latest", "https://fcm.googleapis.com.evil.io/x"):
+        ok(call("POST", "/push/subscriptions", b_tok, json={**sub, "endpoint": bad}), 400)
+    ok(call("POST", "/push/subscriptions", b_tok, json={**sub, "keys": {"p256dh": "AAAA", "auth": sub["keys"]["auth"]}}), 400)
+    ok(call("POST", "/push/subscriptions", json=sub), 401)
+    ok(call("POST", "/push/subscriptions", b_tok, json=sub))
+    vapid = ok(call("GET", "/config")).json()["vapid_public_key"]
+
+    # While napsack is on ben's screen, no push: the app shows it.
+    await wb.send(json.dumps({"type": "visibility", "visible": True}))
+    await asyncio.sleep(0.2)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    await asyncio.sleep(1.0)
+    assert rx.count(phone.endpoint.rsplit("/", 1)[-1]) == 0, "pushed while on screen"
+
+    # In the background, a push arrives: encrypted to ben's browser, signed, and saying who, not what.
+    await wb.send(json.dumps({"type": "visibility", "visible": False}))
+    await asyncio.sleep(0.2)
+    ok(call("PUT", "/me/name", a_tok, json={"name": "Ana Live"}))
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    name, headers, body = rx.wait_for(phone.endpoint.rsplit("/", 1)[-1])[0]
+    assert headers["content-encoding"] == "aes128gcm" and headers["ttl"] == "86400" and headers["topic"] == f"dm-{a['id']}"
+    assert headers["urgency"] == "high"
+    assert check_vapid(headers["authorization"], rx.origin) == vapid
+    note = phone.decrypt(body)
+    assert note == {"title": "Ana Live", "body": "New message", "tag": f"dm-{a['id']}", "url": f"/#chat={a['id']}"}, note
+    assert b"New message" not in body, "the payload is encrypted"
+
+    # Pics, friend requests, and acceptances notify too.
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=2", a_tok, data=os.urandom(500)))
+    assert phone.decrypt(rx.wait_for(name, 2)[1][2])["body"] == "Sent you a pic"
+    ok(call("POST", "/friends/requests", c_tok, json={"username": b["username"]}))
+    req_note = phone.decrypt(rx.wait_for(name, 3)[2][2])
+    assert req_note == {"title": "napsack", "body": f"{c['username']} wants to be friends", "tag": "requests", "url": "/#friends"}, req_note
+
+    # Signing out ends that browser's notifications.
+    ok(call("POST", "/auth/logout", b_tok))
+    b_tok = ok(call("POST", "/auth/login", json={"username": b["username"], "auth_key": AUTH_KEY})).json()["token"]
+    before = rx.count(name)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    await asyncio.sleep(1.0)
+    assert rx.count(name) == before, "no push after signing out"
+
+    # A push service saying "gone" ends the subscription.
+    laptop = rx.browser(f"ben-laptop-{tag}")
+    ok(call("POST", "/push/subscriptions", b_tok, json=laptop.subscription()))
+    rx.status[laptop.endpoint.rsplit("/", 1)[-1]] = 410
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    rx.wait_for(laptop.endpoint.rsplit("/", 1)[-1])
+    await asyncio.sleep(0.5)
+    if DB:
+        reasons = dict(sqlite3.connect(DB).execute(
+            "SELECT endpoint, end_reason FROM push_subscriptions WHERE user_id = ?", (b["id"],)).fetchall())
+        assert reasons == {phone.endpoint: "signed_out", laptop.endpoint: "gone"}, reasons
+
+    # Reactions: encrypted, one per person, the newest wins, and taking one back keeps the rows.
+    m = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2})).json()
+    url = f"/chats/{a['id']}/messages/{m['id']}/reaction"
+    ok(call("PUT", url, b_tok, json={"ciphertext": "not base64!"}), 400)
+    ok(call("PUT", url, b_tok, json={"ciphertext": b64(os.urandom(40)), "format": 3}), 400)
+    ok(call("PUT", f"/chats/{c['id']}/messages/{m['id']}/reaction", b_tok, json={"ciphertext": b64(os.urandom(40))}), 404)  # not friends
+    first, second = b64(os.urandom(40)), b64(os.urandom(40))
+    ok(call("PUT", url, b_tok, json={"ciphertext": first}))
+    got = ok(call("PUT", url, b_tok, json={"ciphertext": second})).json()
+    assert [r["ciphertext"] for r in got["reactions"]] == [second] and got["reactions"][0]["sender_id"] == b["id"]
+    listed = [x for x in ok(call("GET", f"/chats/{b['id']}/messages", a_tok)).json() if x["id"] == m["id"]][0]
+    assert listed["reactions"] == got["reactions"]
+    assert ok(call("PUT", url, b_tok, json={"ciphertext": None})).json()["reactions"] == []
+    ok(call("PUT", f"/chats/{a['id']}/messages/999999/reaction", b_tok, json={"ciphertext": first}), 404)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 3}), 400)
+
+    # Groups: plain reactions from the fixed set, replies within the group.
+    g = ok(call("POST", "/groups", a_tok, json={"name": f"live {tag}", "member_ids": [b["id"]]})).json()
+    other = ok(call("POST", "/groups", a_tok, json={"name": f"other {tag}", "member_ids": []})).json()
+    gm = ok(call("POST", f"/groups/{g['id']}/messages", a_tok, json={"text": "first"})).json()
+    om = ok(call("POST", f"/groups/{other['id']}/messages", a_tok, json={"text": "elsewhere"})).json()
+    ok(call("POST", f"/groups/{g['id']}/messages", b_tok, json={"text": "re", "reply_to": om["id"]}), 400)
+    reply = ok(call("POST", f"/groups/{g['id']}/messages", b_tok, json={"text": "reply", "reply_to": gm["id"]})).json()
+    assert reply["reply_to"] == gm["id"]
+    gurl = f"/groups/{g['id']}/messages/{gm['id']}/reaction"
+    ok(call("PUT", gurl, b_tok, json={"emoji": "💩"}), 400)
+    ok(call("PUT", gurl, c_tok, json={"emoji": "👍"}), 404)                   # not a member
+    events = ok(call("GET", f"/groups/{g['id']}/messages", b_tok)).json()
+    ok(call("PUT", f"/groups/{g['id']}/messages/{events[0]['id']}/reaction", b_tok, json={"emoji": "👍"}), 400)  # an event
+    reacted = ok(call("PUT", gurl, b_tok, json={"emoji": "😂"})).json()
+    assert [(r["user_id"], r["emoji"]) for r in reacted["reactions"]] == [(b["id"], "😂")]
+    assert ok(call("PUT", gurl, b_tok, json={"emoji": None})).json()["reactions"] == []
+
+    for ws in (wa, wb, wc):
+        await ws.close()
+    rx.server.shutdown()
+    print("  live: presence, typing, push (encrypted, signed, who-not-what), reactions, replies")
+
+
+def check_guard(tag):
+    """Abuse protection (guard.rs). A forwarded address stands in for real
+    traffic through Caddy; local requests skip the per-address rules."""
+    r = requests.get(BASE + "/robots.txt")
+    assert r.status_code == 200 and r.text == "User-agent: *\nDisallow: /\n"
+    assert r.headers["X-Robots-Tag"] == "noindex, nofollow, noarchive"
+
+    # Scanning tools are refused outright, wherever they come from.
+    assert requests.get(BASE + "/api/config", headers={"User-Agent": "sqlmap/1.8.4#stable"}).status_code == 403
+    assert requests.get(BASE + "/", headers={"User-Agent": "Mozilla/5.0 Nuclei - Open-source project"}).status_code == 403
+
+    # Probing for files napsack never has: three strikes, banned for an hour, that address only.
+    prober = {"X-Forwarded-For": f"203.0.113.{int(tag, 16) % 200 + 1}"}
+    bystander = {"X-Forwarded-For": f"198.51.100.{int(tag, 16) % 200 + 1}"}
+    assert requests.get(BASE + "/api/config", headers=prober).status_code == 200
+    for path in ("/.env", "/wp-login.php", "/.git/config"):
+        assert requests.get(BASE + path, headers=prober).status_code == 404, path
+    assert requests.get(BASE + "/api/config", headers=prober).status_code == 403, "banned"
+    assert requests.get(BASE + "/", headers=prober).status_code == 403
+    assert requests.get(BASE + "/api/config", headers=bystander).status_code == 200, "others unaffected"
+
+    # Sessions per person: a fifth sign-in quietly ends the oldest.
+    rs = ok(register(f"sess_{tag}")).json()
+    name, tokens = rs["user"]["username"], [rs["token"]]
+    for _ in range(4):
+        tokens.append(ok(call("POST", "/auth/login", json={"username": name, "auth_key": AUTH_KEY})).json()["token"])
+    ok(call("GET", "/me", tokens[0]), 401)
+    for t in tokens[1:]:
+        ok(call("GET", "/me", t))
+    assert ok(call("GET", "/me/security", tokens[-1])).json()["active_sessions"] == 4
+    print("  guard: robots, scanners refused, probers banned, 4 sessions per person")
+
+
 def check_rate_limits(tag):
     """Failed sign-ins lock a username for a while; one address can't hammer sign-up."""
     name = f"lock_{tag}"
@@ -467,8 +659,8 @@ async def main():
     # Texts: ciphertext only, stored and returned untouched.
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"text": "plaintext"}), 422)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": "hello there"}), 400)
-    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(9000))}), 400)
-    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct, "format": 2}), 400)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(16000))}), 400)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct, "format": 3}), 400)
     m = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct})).json()
     assert m["ciphertext"] == ct and "body" not in m and m["format"] == 1
     chats = ok(call("GET", "/friends", b_tok)).json()
@@ -551,6 +743,8 @@ async def main():
     ok(call("GET", "/me", a_tok), 401)
 
     check_account(tag)
+    await check_live(tag)
+    check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()
     check_nothing_sensitive_served()

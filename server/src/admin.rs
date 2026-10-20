@@ -166,6 +166,12 @@ pub async fn stats(
             "group_pic_bytes": crate::group_pics::pending(db).await?.1,
             "group_pic_disk_bytes": state.config.group_pic_disk_bytes,
             "resources": crate::sysinfo::snapshot(&state.config.pic_dir),
+            "protection": {
+                "accounts_max": state.config.limits.max_accounts,
+                "sessions_per_user_max": state.config.limits.max_sessions,
+                "banned_addresses": state.bans.banned_count(),
+                "refused_since_start": state.bans.refused.load(std::sync::atomic::Ordering::Relaxed),
+            },
         },
     })))
 }

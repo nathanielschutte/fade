@@ -7,11 +7,16 @@ mod error;
 mod friends;
 mod group_pics;
 mod groups;
+mod guard;
 mod images;
+mod invites;
 mod logs;
 mod people;
+mod presence;
 mod profiles;
+mod push;
 mod ratelimit;
+mod reactions;
 mod snaps;
 mod sysinfo;
 mod text;
@@ -52,6 +57,13 @@ pub struct Config {
     pub group_pic_ttl: Duration,
     /// Cap on group pic bytes held on disk.
     pub group_pic_disk_bytes: usize,
+    /// The site's address, e.g. https://napsack.getattr.com: the contact in
+    /// push requests (VAPID `sub`). Set by Terraform; never hardcoded.
+    pub public_url: String,
+    /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
+    pub push_allow_local: bool,
+    /// Hard caps and budgets against abuse (guard.rs).
+    pub limits: guard::Limits,
     /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/BACKUPS.md).
     pub backup_status_path: String,
     /// Oldest native client version still allowed, per platform. See version.rs.
@@ -98,6 +110,21 @@ impl Config {
                 env_or::<u64>("FADE_GROUP_PIC_TTL_HOURS", 24 * 30)? * 3600,
             ),
             group_pic_disk_bytes: env_or::<usize>("FADE_GROUP_PIC_DISK_MB", 200)? * 1024 * 1024,
+            public_url: env_or("FADE_PUBLIC_URL", "https://localhost".to_string())?,
+            push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
+            limits: {
+                let d = guard::Limits::default();
+                guard::Limits {
+                    max_accounts: env_or("FADE_MAX_ACCOUNTS", d.max_accounts)?,
+                    max_sessions: env_or("FADE_MAX_SESSIONS", d.max_sessions)?,
+                    requests_per_address: env_or(
+                        "FADE_REQUESTS_PER_ADDRESS",
+                        d.requests_per_address,
+                    )?,
+                    max_sockets: env_or("FADE_MAX_SOCKETS", d.max_sockets)?,
+                    max_in_flight: env_or("FADE_MAX_IN_FLIGHT", d.max_in_flight)?,
+                }
+            },
             backup_status_path: env_or(
                 "FADE_BACKUP_STATUS",
                 "/var/lib/fade/backups/last.json".to_string(),
@@ -132,6 +159,24 @@ pub struct AppState {
     pub image_upload_limit: ratelimit::RateLimit,
     /// Any write to the API, per address.
     pub write_limit: ratelimit::RateLimit,
+    /// Signs Web Push requests (push.rs).
+    pub vapid: push::Vapid,
+    /// Strikes and bans per address (guard.rs).
+    pub bans: guard::Bans,
+    /// Requests being handled right now (guard.rs).
+    pub in_flight: tokio::sync::Semaphore,
+    /// Every request, per address.
+    pub request_limit: ratelimit::RateLimit,
+    /// Writes per signed-in session.
+    pub session_write_limit: ratelimit::RateLimit,
+    /// Friend requests per person per day.
+    pub friend_request_limit: ratelimit::RateLimit,
+    /// New groups per person per day.
+    pub group_create_limit: ratelimit::RateLimit,
+    /// New invite links per person per day.
+    pub invite_create_limit: ratelimit::RateLimit,
+    /// Talks to browsers' push services.
+    pub http: reqwest::Client,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -142,8 +187,8 @@ async fn main() -> anyhow::Result<()> {
     // RUST_LOG, info by default; the admin viewer's buffer at FADE_LOG_BUFFER,
     // debug by default, so the viewer is verbose without flooding the journal.
     let log_buffer = Arc::new(logs::LogBuffer::new(logs::DEFAULT_CAPACITY));
-    let journal_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| "fade_server=info".into());
+    let journal_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "fade_server=info,napsack_client=warn".into());
     let buffer_filter =
         EnvFilter::try_from_env("FADE_LOG_BUFFER").unwrap_or_else(|_| "fade_server=debug".into());
     tracing_subscriber::registry()
@@ -167,6 +212,9 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(lost, strays, "reconciled unopened pics with their files");
     }
 
+    let vapid = push::load_vapid(&db).await?;
+    let limits = config.limits.clone();
+
     if config.admins.is_empty() {
         tracing::info!("no FADE_ADMINS set; the admin panel is off");
     }
@@ -182,6 +230,21 @@ async fn main() -> anyhow::Result<()> {
         login_fail_limit: ratelimit::RateLimit::new(10, Duration::from_secs(15 * 60)),
         image_upload_limit: ratelimit::RateLimit::new(60, Duration::from_secs(10 * 60)),
         write_limit: ratelimit::RateLimit::new(600, Duration::from_secs(10 * 60)),
+        vapid,
+        bans: guard::Bans::default(),
+        in_flight: guard::in_flight_gate(&limits),
+        request_limit: ratelimit::RateLimit::new(
+            limits.requests_per_address,
+            Duration::from_secs(10 * 60),
+        ),
+        session_write_limit: ratelimit::RateLimit::new(600, Duration::from_secs(10 * 60)),
+        friend_request_limit: ratelimit::RateLimit::new(50, Duration::from_secs(24 * 3600)),
+        group_create_limit: ratelimit::RateLimit::new(20, Duration::from_secs(24 * 3600)),
+        invite_create_limit: ratelimit::RateLimit::new(20, Duration::from_secs(24 * 3600)),
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?,
     });
 
     snaps::spawn_sweeper(state.clone());
@@ -234,6 +297,21 @@ fn router(state: SharedState) -> Router {
             get(people::get_avatar),
         )
         .route("/me/name", axum::routing::put(people::set_display_name))
+        .route("/me/settings", axum::routing::put(presence::set_settings))
+        .route("/invites", get(invites::list).post(invites::create))
+        .route("/invites/{invite_id}/revoke", post(invites::revoke))
+        .route("/invites/lookup/{token}", get(invites::lookup))
+        .route("/invites/accept", post(invites::accept))
+        .route("/push/subscriptions", post(push::subscribe))
+        .route("/push/subscriptions/remove", post(push::unsubscribe))
+        .route(
+            "/chats/{friend_id}/messages/{message_id}/reaction",
+            axum::routing::put(reactions::react),
+        )
+        .route(
+            "/groups/{group_id}/messages/{message_id}/reaction",
+            axum::routing::put(reactions::react_group),
+        )
         .route(
             "/me/avatar",
             post(people::set_avatar)
@@ -337,6 +415,8 @@ fn router(state: SharedState) -> Router {
                 "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
             ),
         ))
+        .layer(middleware::from_fn(guard::noindex))
+        .layer(middleware::from_fn_with_state(state.clone(), guard::guard))
         .layer(middleware::from_fn(log_request))
         .with_state(state)
 }
@@ -351,14 +431,27 @@ async fn limit_writes(
     use axum::response::IntoResponse;
     let path = req.uri().path();
     let exempt = path.contains("/auth/") || path.ends_with("/logs");
+    if let Err(e) = guard::check_write_room(&state, req.method()) {
+        return e.into_response();
+    }
     if req.method() != axum::http::Method::GET && !exempt {
+        let slow_down = || {
+            error::AppError::TooManyRequests(
+                "Slow down a little and try again in a few minutes.".into(),
+            )
+            .into_response()
+        };
         if let Some(who) = req.extensions().get::<ratelimit::ClientInfo>() {
             if !who.local && !state.write_limit.allow(&who.ip) {
                 tracing::warn!(ip = %who.ip, "write rate limited");
-                return error::AppError::TooManyRequests(
-                    "Slow down a little and try again in a few minutes.".into(),
-                )
-                .into_response();
+                return slow_down();
+            }
+        }
+        // Per session too, so many addresses can't multiply one account's budget.
+        if let Some(token) = auth::bearer_token(req.headers()) {
+            if !state.session_write_limit.allow(&auth::hash_token(token)) {
+                tracing::warn!("write rate limited for a session");
+                return slow_down();
             }
         }
     }

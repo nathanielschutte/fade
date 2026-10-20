@@ -6,6 +6,10 @@
   <meta name="theme-color" content="#1b2822">
   <title>napsack</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="napsack">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -77,6 +81,13 @@
         <span class="badge" id="request-badge" hidden></span>
       </button>
     </header>
+    <div class="recovery-nudge" id="push-nudge" hidden>
+      <p id="push-nudge-text">Get notified when friends message you.</p>
+      <button type="button" class="button" id="push-nudge-button">Turn on</button>
+      <button type="button" class="icon-button" id="push-nudge-dismiss" aria-label="Not now">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
     <div class="recovery-nudge" id="recovery-nudge" hidden>
       <p>Save a recovery key, so a forgotten password can't cost you your messages.</p>
       <button type="button" class="button" id="recovery-nudge-button">Set up</button>
@@ -125,6 +136,13 @@
         </div>
       </div>
       <ol class="messages" id="messages" aria-live="polite"></ol>
+      <p class="typing-line" id="typing-line" aria-live="polite" hidden></p>
+      <div class="reply-bar" id="reply-bar" hidden>
+        <span class="reply-text" id="reply-text"></span>
+        <button type="button" class="icon-button" id="reply-cancel" aria-label="Cancel reply">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
       <form class="composer" id="composer">
         <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a pic">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
@@ -263,6 +281,13 @@
       <button type="button" class="button" id="security-sessions">Sign out other devices</button>
     </div>
     <p class="form-note" id="security-note" role="status"></p>
+    <h3>Notifications</h3>
+    <p class="field-hint" id="push-status"></p>
+    <div class="picture-row">
+      <button type="button" class="button" id="push-toggle" hidden>Turn on notifications</button>
+    </div>
+    <label class="check activity-check"><input type="checkbox" id="share-activity"> Show friends when I'm active or typing</label>
+    <p class="field-hint">Off means you won't see theirs either.</p>
   </section>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>

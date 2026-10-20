@@ -16,9 +16,10 @@ pub const API_VERSION: u32 = 1;
 /// Encryption formats the server will store. The server can't read messages,
 /// so this just stops a client from writing a format no released client reads.
 /// Both are described in docs/how-napsack-works.md: format 1 is the original
-/// scheme; format 2 is a pic with a caption sealed inside (pics only).
+/// scheme; format 2 is the second generation: texts are a JSON envelope (replies),
+/// pics carry a caption sealed inside.
 pub const MESSAGE_FORMATS: &[i64] = &[1, 2];
-const TEXT_FORMATS: &[i64] = &[1];
+const TEXT_FORMATS: &[i64] = &[1, 2];
 const SNAP_FORMATS: &[i64] = &[1, 2];
 
 pub fn default_format() -> i64 {

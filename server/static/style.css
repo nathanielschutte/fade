@@ -727,3 +727,67 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- reactions, replies, typing, active now ---------- */
+.msg { cursor: default; }
+.msg-body { white-space: pre-wrap; }
+.msg.has-actions { outline: 1px solid var(--rule); outline-offset: 2px; }
+.quote {
+  display: block; max-width: 100%; margin: 0 0 0.3rem; padding: 0.15rem 0.5rem;
+  border: 0; border-left: 2px solid var(--sage); border-radius: 2px;
+  background: var(--deep); color: var(--fixer); font: inherit; font-size: var(--step--1);
+  text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Messages are left-aligned; their reactions and actions sit right under them. */
+.reactions, .msg-actions { list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem; margin: -0.15rem 0 0.35rem; padding-left: 0.75rem; }
+.reaction {
+  display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.05rem 0.45rem;
+  border: 1px solid var(--rule); border-radius: 999px; background: var(--deep);
+  color: var(--paper); font: inherit; font-size: var(--step--1); cursor: pointer;
+}
+.reaction.is-mine { border-color: var(--sage); }
+.msg-actions button {
+  min-width: 2.25rem; min-height: 2.25rem; padding: 0 0.4rem;
+  border: 1px solid var(--rule); border-radius: 999px; background: var(--wash);
+  color: var(--paper); font: inherit; font-size: 1.05rem; cursor: pointer;
+}
+.msg-actions button.is-mine { border-color: var(--sage); }
+.msg-actions .reply-button { font-size: var(--step--1); padding: 0 0.75rem; }
+.reply-bar {
+  flex: none; display: flex; align-items: center; gap: 0.5rem;
+  margin: 0 var(--pad); padding: 0.35rem 0.25rem 0.35rem 0.75rem;
+  border-left: 2px solid var(--sage); background: var(--deep); border-radius: var(--radius-s);
+  font-size: var(--step--1); color: var(--fixer);
+}
+.reply-bar[hidden] { display: none; }
+.reply-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.typing-line { flex: none; margin: 0 var(--pad) 0.25rem; font-size: var(--step--1); color: var(--fixer); font-style: italic; }
+.typing-line[hidden] { display: none; }
+.avatar-wrap { position: relative; display: inline-grid; flex: none; }
+.avatar-wrap.online::after {
+  content: ""; position: absolute; right: -1px; bottom: -1px;
+  width: 0.7rem; height: 0.7rem; border-radius: 50%;
+  background: var(--sage); border: 2px solid var(--deep);
+}
+.activity-check { margin-top: 0.6rem; }
+.profile-security h3 + .field-hint { margin-bottom: 0.25rem; }
+
+/* ---------- installed on the Home Screen ----------
+   Opened from the iPhone Home Screen, napsack draws under the status bar
+   (black-translucent, so the bar takes napsack's color). Keep everything
+   clear of it, the Dynamic Island, and rounded corners. In a browser tab the
+   insets are 0 and none of this changes anything. */
+.app {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.auth { padding-top: max(12vh, 3rem, calc(env(safe-area-inset-top, 0px) + 1.5rem)); }
+/* Centered sheets stay below the status bar, close buttons included. */
+.sheet {
+  max-height: min(40rem, calc(100dvh - 2 * max(env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) - 1rem));
+}
+.admin-bar {
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
+}

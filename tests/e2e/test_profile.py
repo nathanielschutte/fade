@@ -109,7 +109,7 @@ async def main():
 
         # Ben gives her a nickname only he sees; the username stays visible as the identity.
         await ana_row.click()
-        await expect(ben.locator("#chat-sub")).to_have_text(f"@{ANA}")
+        await expect(ben.locator("#chat-sub")).to_contain_text(f"@{ANA}")  # after "Active now"
         await ben.click("#chat-title")
         await expect(ben.locator("#profile-name-label")).to_have_text("Nickname")
         await ben.fill("#profile-name-input", "Sis")

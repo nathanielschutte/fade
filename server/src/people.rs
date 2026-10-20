@@ -56,6 +56,19 @@ pub async fn own_profile(
     .await
 }
 
+/// What `viewer` calls `user`: their nickname for them, else `user`'s display
+/// name, else the username. Used where the server itself names someone
+/// (notifications), so it matches what the app shows.
+pub async fn name_for(db: &SqlitePool, viewer: i64, user: i64) -> sqlx::Result<String> {
+    sqlx::query_scalar(&format!(
+        "SELECT COALESCE({NICKNAME}, {DISPLAY_NAME}, u.username) FROM users u WHERE u.id = ?2"
+    ))
+    .bind(viewer)
+    .bind(user)
+    .fetch_one(db)
+    .await
+}
+
 /// The nickname `viewer` gave `user`.
 pub async fn nickname(db: &SqlitePool, viewer: i64, user: i64) -> sqlx::Result<Option<String>> {
     sqlx::query_scalar(&format!("SELECT {NICKNAME} FROM users u WHERE u.id = ?2"))
@@ -162,6 +175,7 @@ pub async fn set_avatar(
     if body.len() < 64 || body.len() > AVATAR_MAX_BYTES {
         return Err(AppError::bad("Profile pictures must be under 128 KB."));
     }
+    crate::guard::check_upload_room(&state)?;
     sniff_image(&body)
         .ok_or_else(|| AppError::bad("Profile pictures must be JPEG, PNG, or WebP images."))?;
     if !state.image_upload_limit.allow(&me.id.to_string()) {
@@ -281,6 +295,9 @@ mod tests {
         assert_eq!(nickname(&db, 1, 2).await.unwrap().as_deref(), Some("Big B"));
         assert_eq!(nickname(&db, 3, 2).await.unwrap(), None); // ana's nickname is hers alone
 
+        assert_eq!(name_for(&db, 1, 2).await.unwrap(), "Big B");
+        assert_eq!(name_for(&db, 3, 2).await.unwrap(), "Benny");
+        assert_eq!(name_for(&db, 2, 3).await.unwrap(), "cal");
         record_name(&db, 2, 2, None).await.unwrap();
         assert_eq!(own_profile(&db, 2).await.unwrap().0, None);
 

@@ -99,6 +99,7 @@ pub async fn upload(
     if body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
     }
+    crate::guard::check_upload_room(&state)?;
     let (_, held) = usage(&state.db).await?;
     if held as usize + body.len() > state.config.snap_disk_bytes {
         tracing::warn!(
@@ -152,6 +153,16 @@ pub async fn upload(
         friend_id,
         &Event::Message {
             message: message.clone(),
+        },
+    );
+    crate::push::notify(
+        &state,
+        friend_id,
+        crate::push::Note {
+            title: crate::people::name_for(&state.db, friend_id, me.id).await?,
+            body: "Sent you a pic".into(),
+            tag: format!("dm-{}", me.id),
+            url: format!("/#chat={}", me.id),
         },
     );
     Ok(Json(message))

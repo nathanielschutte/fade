@@ -53,6 +53,12 @@ function backupText(b) {
   return `${overdue ? "Overdue, last " : ""}${ago(b.at)} · ${bytes(b.bytes)}`;
 }
 
+/** Caps and what the guard turned away since the server started (guard.rs). */
+function protectionText(p, users) {
+  if (!p) return "—";
+  return `${n(users)} of ${n(p.accounts_max)} accounts · ${p.sessions_per_user_max} devices each · ${n(p.banned_addresses)} addresses banned · ${n(p.refused_since_start)} requests refused`;
+}
+
 function resourceText(r, kind) {
   if (!r) return "—";
   if (kind === "mem" && r.mem_total_bytes) {
@@ -169,6 +175,7 @@ function render(s) {
     ["Memory", resourceText(server.resources, "mem")],
     ["Data disk", resourceText(server.resources, "disk")],
     ["Load (1 min)", server.resources?.load_1m ?? "—"],
+    ["Protection", protectionText(server.protection, u.total)],
   ]);
 
   $("#users").replaceChildren(...u.list.map((x) => el("tr", {},

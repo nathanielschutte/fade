@@ -69,6 +69,9 @@ pub struct Message {
     pub snap_state: Option<String>,
     pub created_at: i64,
     pub read_at: Option<i64>,
+    /// Current reactions, encrypted (reactions.rs). Filled in where it matters.
+    #[sqlx(skip)]
+    pub reactions: Vec<crate::reactions::Reaction>,
 }
 
 pub const MESSAGE_COLS: &str =
