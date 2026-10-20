@@ -288,7 +288,8 @@ pub async fn view(
     }
 }
 
-/// Every minute: drop expired snaps, tell both people, and clear old sessions.
+/// Every minute: drop expired pics and tell both people. (Expired sessions
+/// stay in the table; they just stop working.)
 pub fn spawn_sweeper(state: SharedState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
@@ -308,13 +309,6 @@ pub fn spawn_sweeper(state: SharedState) {
                     Ok(None) => {}
                     Err(e) => tracing::warn!(?e, id, "failed to mark pic expired"),
                 }
-            }
-            if let Err(e) = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
-                .bind(now())
-                .execute(&state.db)
-                .await
-            {
-                tracing::warn!(?e, "session cleanup failed");
             }
         }
     });

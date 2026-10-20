@@ -143,6 +143,7 @@ function render(s) {
   facts("#social-facts", [
     ["Friendships", n(social.friendships)],
     ["Pending requests", n(social.pending_requests)],
+    ["Groups", `${n(social.groups)} · ${n(social.group_messages)} messages`],
     ["Active sessions", n(social.active_sessions)],
     ["Avg friends per user", u.total ? (social.friendships * 2 / u.total).toFixed(1) : "—"],
   ]);

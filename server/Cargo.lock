@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "fade-server"
-version = "0.7.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "argon2",

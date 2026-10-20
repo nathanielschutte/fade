@@ -89,12 +89,13 @@ pub fn pair(a: i64, b: i64) -> (i64, i64) {
 
 pub async fn are_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<bool> {
     let (lo, hi) = pair(a, b);
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM friendships WHERE user_lo = ? AND user_hi = ?")
-            .bind(lo)
-            .bind(hi)
-            .fetch_optional(db)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM friendships WHERE user_lo = ? AND user_hi = ? AND ended_at IS NULL",
+    )
+    .bind(lo)
+    .bind(hi)
+    .fetch_optional(db)
+    .await?;
     Ok(row.is_some())
 }
 
@@ -204,6 +205,26 @@ pub mod tests {
             embedded, on_disk,
             "stale embedded migrations: touch src/db.rs and rebuild"
         );
+    }
+
+    /// Rule 1 for application code: rows are marked (ended_at, resolved_at,
+    /// revoked_at), never deleted. Fails if any server code deletes rows.
+    #[test]
+    fn code_never_deletes_rows() {
+        let needle = ["DELETE", "FROM"].join(" ");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap().to_uppercase();
+            for (n, line) in src.lines().enumerate() {
+                assert!(
+                    !line.contains(&needle),
+                    "{}:{} deletes rows; mark them instead (CLAUDE.md, Rule 1)",
+                    path.display(),
+                    n + 1
+                );
+            }
+        }
     }
 
     #[test]

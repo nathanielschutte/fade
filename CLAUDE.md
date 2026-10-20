@@ -22,9 +22,11 @@ Every account, friendship, message, and the data volume that holds them must sur
 
 **In code and migrations**
 - Migrations only add: new tables, nullable or defaulted columns, indexes. Never `DROP TABLE`/`COLUMN`, `DELETE FROM`, `RENAME`, `TRUNCATE`, or overwrite existing values. `db::tests::migrations_never_destroy_data` enforces this in CI; don't weaken it to get a change through.
+- Application code never deletes rows either. When something ends, mark it: `friendships.ended_at`, `friend_requests.resolved_at`, `sessions.revoked_at`, and append to `friend_events` (history that's never updated). Every query that means "current" filters on those columns. `db::tests::code_never_deletes_rows` fails CI on any `DELETE FROM` in `server/src`. Encrypted pic bytes are the one designed exception: view-once means they're discarded when opened or expired, and they aren't database rows.
 - Removing a feature hides it; it doesn't delete its data.
 - Texts live forever. Anything that pages, trims, or caches must never remove rows.
 - Migrations are never edited after release. Add a new one.
+- Before releasing a new migration: `bash scripts/check-migrations.sh` (runs it against a copy of the newest production backup and checks no rows were lost), then take a fresh backup right before deploying: `scripts/ssh.sh "sudo systemctl start fade-backup"`.
 
 **In infrastructure**
 - Never run `terraform destroy`. Never remove `prevent_destroy` from `aws_ebs_volume.data`.
@@ -75,6 +77,15 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 - Encryption: anything in `crypto.js` that changes bytes on the wire is a new message format, never an edit to format 1. The pinned vectors in `tests/vectors/format1.json` are never regenerated. If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.
 - Never log, print, or commit secrets: tokens, auth keys, invite codes, `terraform.tfvars`, saved plans, or anything decrypted. The server never has plaintext, and logs and the admin panel show counts and events only.
 
+## Security
+
+- **Nothing sensitive is servable.** The server only serves files compiled into the binary (`web.rs`), never the file system, so the database, config, and source can't be reached by URL. Never add a file-serving route. API responses never include `auth_hash`/`token_hash`/passwords; session tokens and `wrapped_private_key` appear only in sign-up/sign-in responses. `tests/smoke_test.py` probes ~25 sensitive paths and sweeps every JSON response for these fields; add a probe or field when you add something sensitive.
+- **Headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, COOP/CORP `same-origin`, and a restrictive `Permissions-Policy` (pages that need the camera set their own). Every API response is `Cache-Control: no-store`. Pages have a strict CSP.
+- **Rate limits** (`ratelimit.rs`, in memory): sign-in and sign-up, 30 per address per 10 minutes; failed sign-ins, 10 per username per 15 minutes (checked before the slow password check, and applied to nonexistent usernames too so it reveals nothing); client logs, 300 per user per minute. Anything new that's expensive or guessable gets a limit.
+- **Who's calling:** the real client address comes from Caddy's `X-Forwarded-For`, trusted only from a loopback peer (`ClientInfo`). Every request is logged with `ip`, `ua`, and `host`; search the log viewer for `ip=...` to see what an address did. Local un-proxied requests are exempt from per-address limits (tests and development).
+- Errors returned to clients are plain user-facing text; internal details stay in the logs.
+- **Group chats are not end-to-end encrypted (v1).** The server stores their text. Never log group message bodies, and keep the "not end-to-end encrypted" notice in every client. Group encryption, when it comes, is a new `format`, following the readers-before-writers rule.
+
 ## Logging and debugging
 
 - When something's wrong, start at `/admin#logs` (search, level filter, live tail). It holds the last 20,000 entries since the server started. Older history: `scripts/ssh.sh "sudo journalctl -u fade --since '1 hour ago'"`.
@@ -86,9 +97,8 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 
 ## Environment notes
 
-- **Windows Smart App Control is on** and blocks freshly compiled executables, so `cargo build`, `cargo test`, and the local server only work in WSL. Leave it on; it can't be re-enabled without reinstalling Windows.
-- **WSL test setup** (once): `python3 -m venv ~/.venvs/napsack-tests && ~/.venvs/napsack-tests/bin/pip install -r tests/requirements.txt && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ~/.venvs/napsack-tests/bin/python -m playwright install chromium`, plus `sudo apt-get install -y libnspr4 libnss3 libasound2t64` (needs the user's password). `scripts/test.sh` finds the venv and Chromium on its own.
-- **Until those libraries are installed,** run the server in WSL and the browser tests from Windows: start it in WSL with the same `FADE_*` settings `scripts/test.sh` uses, bound to `127.0.0.1:<port>` (WSL forwards it to Windows' `localhost`), then from `tests/e2e/` run each `test_*.py` with Windows Python, `NAPSACK_URL=http://localhost:<port>`, and the other `NAPSACK_*` variables from `common.py`.
+- **Build and test in WSL.** Windows Smart App Control is on and blocks freshly compiled executables, so `cargo`, the local server, and `bash scripts/test.sh` run in WSL (`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/nates/Documents/code/fade && bash scripts/test.sh'`). Leave Smart App Control on; it can't be re-enabled without reinstalling Windows.
+- **WSL test setup** (done; for a new machine): `python3 -m venv ~/.venvs/napsack-tests && ~/.venvs/napsack-tests/bin/pip install -r tests/requirements.txt && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ~/.venvs/napsack-tests/bin/python -m playwright install chromium`, plus `sudo apt-get install -y libnspr4 libnss3 libasound2t64`. `scripts/test.sh` finds the venv and Chromium on its own. Linux Chromium has different fonts than Windows Chrome, which is why layout checks run here.
 - Development is on Windows with WSL. Terraform state is the local file in `infra/`, shared by both. Terraform, `scripts/ssh.sh`, and `scripts/rollback.sh` work from Git Bash or WSL. `scripts/deploy.sh` needs WSL, because zig lives there. `scripts/test.sh` runs in either.
 - Both machines' SSH keys are listed in `ssh_public_keys` (tfvars), and the boot script authorizes all of them. Add a key there for any new machine. Don't rely on `ssh_public_key_path`, which installs only whichever key is on the machine running terraform.
 - From Git Bash, call WSL as `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -lc '...'`. Without the env var, Git Bash rewrites `/mnt/...` paths, and without `-l`, cargo isn't on PATH. For anything with nested quotes, write a script file and run that.

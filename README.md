@@ -1,6 +1,6 @@
 # napsack
 
-A minimal private messenger for a few friends. You get a list of chats with your friends, text messages, and photo pics that disappear once they're viewed. Every text and pic is end-to-end encrypted in the browser, so the server only ever stores and relays ciphertext. Pics are held only in server RAM, never written to the database, disk, or S3.
+A minimal private messenger for a few friends. You get a list of chats with your friends, text messages, and pics (photos) that disappear once they're viewed. Every direct text and pic is end-to-end encrypted in the browser, so the server only ever stores and relays ciphertext. Group chats are the exception for now: they are **not** end-to-end encrypted yet, and the app says so in every group. Pics are held only in server RAM, never written to the database, disk, or S3.
 
 `fade` is still the internal name: the binary, systemd unit, env vars, and AWS resources keep it.
 
@@ -150,12 +150,19 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /chats/{friend}/read` | Marks their texts as read |
 | `POST /chats/{friend}/snaps?format=1` | Encrypted image bytes (IV ‖ AES-GCM output) |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
+| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, encrypted: false}]` |
+| `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
+| `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |
+| `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |
+| `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
+| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text}` (plain text, `format` 0) |
+| `POST /groups/{id}/read` | Marks the group read |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |
 | `POST /logs` | Client diagnostics: `{entries: [{level, message, fields}]}`, up to 50 per request, rate-limited. Never send content; content-like fields are redacted |
 | `GET  /ws` | WebSocket. First frame: `{"type":"auth","token":"..."}` |
 
-WebSocket events: `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
+WebSocket events: `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`, `group_message {group_id, message}`, `groups_changed {group_id}`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
 
 Messages include `format` (the encryption scheme, 1 today) so clients know how to decrypt them.
 

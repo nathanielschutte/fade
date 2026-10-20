@@ -11,18 +11,16 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 1 | [Backups you can restore](#i2-backups-you-can-restore) | Infrastructure | In progress | Code ready and tested; the infrastructure apply is the last step |
-| 2 | [Pics last 30 days](#f9-pics-last-30-days) | Features | Planned | Requested; unopened pics are lost on every restart today |
-| 3 | [Account buttons on the main screen](#x2-account-buttons-on-the-main-screen) | Experience | Planned | Requested; profile, admin, and sign out are buried in the Friends sheet |
-| 4 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
-| 5 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
-| 6 | [Profile pic and nicknames](#f5-profile-pic-and-nicknames) | Features | Planned | |
-| 7 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
-| 8 | [Captions on pictures](#f6-captions-on-pictures) | Features | Planned | Needs message format 2 |
-| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 11 | [Group chats](#f7-group-chats) | Features | Planned | Biggest encryption change; last |
-| 12 | [Testing in WSL](#p3-testing-in-wsl) | Process | Needs decision | Smart App Control blocks Windows builds; WSL needs three libraries |
+| 1 | [Pics last 30 days](#f9-pics-last-30-days) | Features | Planned | Requested; unopened pics are lost on every restart today |
+| 2 | [Account buttons on the main screen](#x2-account-buttons-on-the-main-screen) | Experience | Planned | Requested; profile, admin, and sign out are buried in the Friends sheet |
+| 3 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
+| 4 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
+| 5 | [Profile pic and nicknames](#f5-profile-pic-and-nicknames) | Features | Planned | |
+| 6 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
+| 7 | [Captions on pictures](#f6-captions-on-pictures) | Features | Planned | Needs message format 2 |
+| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -33,11 +31,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Profile page](#f4-profile-page) | 0.4.0 |
 | [Chat pagination](#f3-chat-pagination) | 0.5.0 |
 | [Client debug logs](#d2-client-debug-logs) | 0.6.0 |
+| [Backups you can restore](#i2-backups-you-can-restore): hourly to S3, kept forever, drill passed | infra |
 | Backup status in the admin panel (part of [backups](#i2-backups-you-can-restore)) | 0.7.0 |
+| [Mark inactive instead of deleting](#p4-mark-inactive-instead-of-deleting) | 0.8.0 |
+| [Request auditing and security hardening](#s1-request-auditing-and-security-hardening) | 0.9.0, 0.9.1 |
+| [Group chats](#f7-group-chats) (texts; not end-to-end encrypted yet) | 0.10.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.7.0**. Every release since 0.2.0 shipped with `scripts/deploy.sh` from uncommitted code (build `aa50af4-dirty`), so the next commit should cover all of it.
+Production runs **0.9.1**. Every release since 0.2.0 shipped with `scripts/deploy.sh` from uncommitted code (build `aa50af4-dirty`), so the next commit should cover all of it.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -48,10 +50,23 @@ Production runs **0.7.0**. Every release since 0.2.0 shipped with `scripts/deplo
 #### P1. Development standard
 - [CLAUDE.md](../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
 
-#### P3. Testing in WSL
+#### P3. Testing in WSL (and moving the repo there)
+- **Recommendation: move the repo into WSL** (`~/code/fade`), after moving Terraform state into an encrypted, versioned S3 bucket.
+  - Why: builds and tests on `/mnt/c` go through a slow bridge to the Windows disk; inside WSL they're several times faster. Smart App Control stops mattering, file modes and line endings are native Linux, and there's one environment for build, test, deploy, and Terraform.
+  - What changes for you: open the project with VS Code's WSL extension (`code .` from WSL). Windows still sees the files at `\\wsl$\Ubuntu\home\nate\code\fade`.
+  - The careful part: `infra/terraform.tfstate` and `terraform.tfvars` aren't in git and exist only on this laptop. Moving state into S3 first takes the laptop out of the picture (encryption, versioning, locking), and the folder's location stops mattering. Then clone fresh in WSL, copy `terraform.tfvars`, confirm `terraform plan` says "No changes", and keep the old Windows folder as an archive rather than deleting it.
 - Windows Smart App Control (on, enforcing) blocks every freshly compiled program, so `cargo build`/`cargo test` and the local server only run in WSL. Unit and API tests already run there (`bash scripts/test.sh --no-browser`).
 - The browser tests need three system libraries in WSL: `sudo apt-get install -y libnspr4 libnss3 libasound2t64`. Until then they run from Windows against a WSL-built server (CLAUDE.md, Environment notes).
-- **Decision needed:** install those libraries (recommended), or turn off Smart App Control, which Windows can't turn back on without a reinstall.
+- Done: libraries installed; `bash scripts/test.sh` runs the whole suite in WSL, browser tests included. It caught a phone layout bug (admin header) that the Windows runs missed.
+
+#### P4. Mark inactive instead of deleting
+- Done (0.8.0). Decided: the database never loses a row. Unfriending, declining or cancelling a friend request, and signing out mark the row (`ended_at`, `resolved_at`, `revoked_at`) instead of deleting it, and every friendship change is also written to an append-only history.
+
+#### S1. Request auditing and security hardening
+- Requested: log the source IP and other useful request details, to see who's probing the endpoints.
+- Requested: a hardening pass so nothing sensitive can ever be served.
+- Built (0.9.0): every request logged with client address (from Caddy's `X-Forwarded-For`, trusted only from loopback), user agent, and host; sign-in/sign-up rate limits (per address and per username, before the slow password check); `no-store` on all API responses; X-Frame-Options, COOP/CORP, and a default Permissions-Policy on everything; smoke-test probes for ~25 sensitive paths and a sweep of every API response for secret fields.
+- Possible follow-ups: an admin view of the noisiest addresses (rejected requests per IP), and moving Terraform state off the laptop into an encrypted, versioned S3 bucket (it holds the invite code in plain text).
 
 #### P2. Turn on CI/CD
 - [x] Commit the admin panel, versioning, tests, and docs (`6f0519f`).
@@ -102,6 +117,9 @@ Production runs **0.7.0**. Every release since 0.2.0 shipped with `scripts/deplo
 #### F7. Group chats
 - Group chats (encryption design implication)
 - Every pair of friends shares a key today. Groups need either per-member encryption (simple, fine for small groups) or a group key handed out to members (scales better, harder when someone leaves). Design doc first.
+- Done (0.10.0): create groups with your friends; any member adds their own friends and renames; the owner removes people; anyone leaves (two taps); the owner role passes to the longest-standing member. Members see history from when they joined, by message id. Joins, leaves, removals, and renames appear in the chat. Unread counts, paging, live updates. Nothing is deleted (memberships are marked ended). Up to 32 people.
+- Next for groups: end-to-end encryption (group key per membership change), pics in groups (after encryption, so the server never sees photos), and "seen by".
+- **Decided (2026-10-20):** ship groups now without end-to-end encryption, and add it later. Group messages are stored readable by the server (TLS in transit, encrypted disk), and the app says so clearly in every group. Direct chats keep end-to-end encryption. Group encryption later becomes a new message format, following the readers-before-writers rule.
 
 #### F8. Account safety basics
 - Rate-limit sign-in attempts per username and per IP.
@@ -142,7 +160,7 @@ Production runs **0.7.0**. Every release since 0.2.0 shipped with `scripts/deplo
 - DB backup system. We're moving this ahead of the ASG work: data must never be lost, and today's only backups are daily disk snapshots kept for 7 days.
 - Add a daily consistent SQLite backup (`.backup` or `VACUUM INTO`) to a versioned S3 bucket that never deletes, longer snapshot retention, and a restore drill we actually run and write down.
 - Built (see [BACKUPS.md](BACKUPS.md)): hourly backups via a systemd timer, integrity-checked and gzipped, to a new versioned bucket with `prevent_destroy` and no expiry (cheaper storage after 30 days); the server can only add objects. Disk snapshots go from 7 to 30 days. The admin panel shows the last backup (live in 0.7.0; it says "None yet" until the timer runs). `scripts/restore-drill.sh` checks the newest backup against production, read-only. The backup script passed a dry run against a test database: the uploaded copy restored with identical row counts, and a failure was recorded in the status file.
-- **Left to do:** apply the infrastructure (new bucket, IAM, DLM retention, and the boot script change, which replaces the instance, with the snapshot procedure), start the first backup, run the restore drill, and log it in BACKUPS.md.
+- Done: infrastructure applied (2026-10-20), first backup taken, restore drill passed and logged in BACKUPS.md, and the server's role proven unable to delete or list backups.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now

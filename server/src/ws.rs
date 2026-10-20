@@ -36,6 +36,13 @@ pub enum Event {
     Read { by: i64, at: i64 },
     /// Requests or friendships changed; refetch lists.
     FriendsChanged,
+    /// A new message (or membership event) in a group you're in.
+    GroupMessage {
+        group_id: i64,
+        message: crate::groups::GroupMessage,
+    },
+    /// A group's name, members, or your read position changed; refetch it.
+    GroupsChanged { group_id: i64 },
 }
 
 type Conn = (u64, mpsc::UnboundedSender<String>);
@@ -86,6 +93,16 @@ impl Hub {
         (conns.len(), conns.values().map(Vec::len).sum())
     }
 
+    /// Sends to each user once, however many times they appear.
+    pub fn send_many(&self, users: &[i64], event: &Event) {
+        let mut seen = std::collections::HashSet::new();
+        for &u in users {
+            if seen.insert(u) {
+                self.send(u, event);
+            }
+        }
+    }
+
     pub fn send_both(&self, a: i64, b: i64, event: &Event) {
         self.send(a, event);
         if a != b {
@@ -104,9 +121,13 @@ struct AuthFrame {
 /// Browsers can't set headers on a WebSocket, so the client sends
 /// `{"type":"auth","token":"..."}` as its first frame instead.
 /// This keeps tokens out of URLs (and therefore out of proxy logs).
-pub async fn handler(State(state): State<SharedState>, ws: WebSocketUpgrade) -> Response {
+pub async fn handler(
+    State(state): State<SharedState>,
+    axum::extract::Extension(who): axum::extract::Extension<crate::ratelimit::ClientInfo>,
+    ws: WebSocketUpgrade,
+) -> Response {
     ws.max_message_size(16 * 1024)
-        .on_upgrade(move |socket| run(socket, state))
+        .on_upgrade(move |socket| run(socket, state, who.ip))
 }
 
 async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<UserPublic> {
@@ -126,7 +147,7 @@ async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<Use
     None
 }
 
-async fn run(mut socket: WebSocket, state: SharedState) {
+async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
     let user = match tokio::time::timeout(
         Duration::from_secs(10),
         authenticate(&mut socket, &state),
@@ -140,7 +161,7 @@ async fn run(mut socket: WebSocket, state: SharedState) {
             } else {
                 "bad or missing token"
             };
-            tracing::info!(reason, "socket auth failed");
+            tracing::info!(%ip, reason, "socket auth failed");
             let _ = socket
                 .send(WsMessage::Text(r#"{"type":"auth_failed"}"#.into()))
                 .await;
@@ -158,6 +179,7 @@ async fn run(mut socket: WebSocket, state: SharedState) {
     let connected = std::time::Instant::now();
     tracing::debug!(
         user_id = user.id,
+        %ip,
         conn_id,
         online = state.hub.online().0,
         "socket connected"

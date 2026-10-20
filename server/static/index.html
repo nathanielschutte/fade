@@ -43,6 +43,9 @@
   <aside class="list-pane" aria-label="Chats">
     <header class="bar">
       <span class="wordmark small" aria-hidden="true">napsack</span>
+      <button type="button" class="icon-button" id="new-group-button" aria-label="New group">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6M13 15c.9-.4 1.9-.6 3-.6 2.7 0 4.9 1.6 5.5 4.6"/></svg>
+      </button>
       <button type="button" class="icon-button" id="friends-button" aria-label="Friends">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M17 5.5a3 3 0 0 1 0 5.6M18.5 14.3c1.6.8 2.6 2.6 3 5.2"/></svg>
         <span class="badge" id="request-badge" hidden></span>
@@ -62,12 +65,18 @@
         <button type="button" class="icon-button back" id="back-button" aria-label="Back to chats">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
         </button>
-        <h2 class="chat-title"><button type="button" class="title-button" id="chat-title" aria-label="View profile"></button></h2>
+        <div class="chat-heading">
+          <h2 class="chat-title"><button type="button" class="title-button" id="chat-title" aria-label="View profile"></button></h2>
+          <span class="chat-sub" id="chat-sub" hidden></span>
+        </div>
         <button type="button" class="lock-button" id="safety-button" aria-label="Encryption and safety code">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
           <span>Encrypted</span>
         </button>
       </header>
+      <p class="group-notice" id="group-notice" hidden>
+        Group chats aren't end-to-end encrypted yet: the napsack server can read them. Direct chats are encrypted.
+      </p>
       <p class="key-warning" id="key-warning" role="alert" hidden>
         <strong><span id="key-warning-name"></span>'s safety code changed.</strong>
         napsack keys never change, so someone may be trying to read this chat. Messages are blocked.
@@ -115,6 +124,65 @@
       <a class="link" id="admin-link" href="/admin" hidden>Admin</a>
       <button type="button" class="link" id="sign-out">Sign out</button>
     </span>
+  </footer>
+</dialog>
+
+<!-- New group -->
+<dialog id="new-group-dialog" class="sheet" aria-labelledby="new-group-title">
+  <header class="sheet-head">
+    <h2 id="new-group-title">New group</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <form id="new-group-form" class="group-form">
+    <label class="field">
+      <span>Group name</span>
+      <input name="name" id="new-group-name" maxlength="40" required autocomplete="off">
+    </label>
+    <fieldset class="pick-friends">
+      <legend>Add friends</legend>
+      <ul class="people" id="new-group-friends"></ul>
+    </fieldset>
+    <p class="form-note" id="new-group-note" role="status"></p>
+    <p class="sheet-text small">Group chats aren't end-to-end encrypted yet.</p>
+    <button type="submit" class="button primary" id="new-group-submit">Create group</button>
+  </form>
+</dialog>
+
+<!-- Group info: name, members, add, leave -->
+<dialog id="group-dialog" class="sheet" aria-labelledby="group-title">
+  <header class="sheet-head">
+    <div class="profile-id">
+      <span class="avatar group-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6M13 15c.9-.4 1.9-.6 3-.6 2.7 0 4.9 1.6 5.5 4.6"/></svg></span>
+      <div>
+        <h2 id="group-title"></h2>
+        <p class="profile-sub" id="group-sub"></p>
+      </div>
+    </div>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="group-notice inline">Not end-to-end encrypted: the napsack server can read group messages. Direct chats stay encrypted.</p>
+  <form id="rename-form" class="rename-form">
+    <label class="field">
+      <span>Group name</span>
+      <input name="name" id="rename-input" maxlength="40" required autocomplete="off">
+    </label>
+    <button type="submit" class="button">Rename</button>
+  </form>
+  <section>
+    <h3 id="group-members-title">Members</h3>
+    <ul class="people" id="group-members"></ul>
+  </section>
+  <section id="group-add-section" hidden>
+    <h3>Add friends</h3>
+    <ul class="people" id="group-add"></ul>
+  </section>
+  <p class="form-note" id="group-note" role="status"></p>
+  <footer class="profile-actions">
+    <button type="button" class="button danger" id="leave-group">Leave group</button>
   </footer>
 </dialog>
 

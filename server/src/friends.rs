@@ -51,7 +51,7 @@ pub async fn list_chats(
                   OR (m.kind = 'snap' AND m.snap_state = 'pending'))) AS unread
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_lo = ? THEN f.user_hi ELSE f.user_lo END
-         WHERE f.user_lo = ? OR f.user_hi = ?",
+         WHERE (f.user_lo = ? OR f.user_hi = ?) AND f.ended_at IS NULL",
     )
     .bind(me.id)
     .bind(me.id)
@@ -104,14 +104,16 @@ pub async fn list_requests(
 ) -> AppResult<Json<Requests>> {
     let incoming = sqlx::query_as::<_, RequestEntry>(
         "SELECT u.id, u.username, r.created_at FROM friend_requests r
-         JOIN users u ON u.id = r.from_id WHERE r.to_id = ? ORDER BY r.created_at DESC",
+         JOIN users u ON u.id = r.from_id
+         WHERE r.to_id = ? AND r.resolved_at IS NULL ORDER BY r.created_at DESC",
     )
     .bind(me.id)
     .fetch_all(&state.db)
     .await?;
     let outgoing = sqlx::query_as::<_, RequestEntry>(
         "SELECT u.id, u.username, r.created_at FROM friend_requests r
-         JOIN users u ON u.id = r.to_id WHERE r.from_id = ? ORDER BY r.created_at DESC",
+         JOIN users u ON u.id = r.to_id
+         WHERE r.from_id = ? AND r.resolved_at IS NULL ORDER BY r.created_at DESC",
     )
     .bind(me.id)
     .fetch_all(&state.db)
@@ -124,27 +126,55 @@ pub struct AddFriend {
     username: String,
 }
 
-/// Removes any requests between the two users and records the friendship.
-async fn make_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<()> {
-    let (lo, hi) = pair(a, b);
+/// Appends to the friendship history. Never updated or deleted.
+pub async fn record_event<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    actor: i64,
+    other: i64,
+    kind: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO friend_events (actor_id, other_id, kind, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(actor)
+    .bind(other)
+    .bind(kind)
+    .bind(now())
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// `accepter` says yes: pending requests between the two are resolved as
+/// accepted, and the friendship starts (or restarts, if they were friends before).
+async fn make_friends(db: &SqlitePool, accepter: i64, other: i64) -> sqlx::Result<()> {
+    let (lo, hi) = pair(accepter, other);
+    let at = now();
     let mut tx = db.begin().await?;
     sqlx::query(
-        "DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)",
+        "UPDATE friend_requests SET resolved_at = ?, resolution = 'accepted'
+         WHERE ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)) AND resolved_at IS NULL",
     )
-    .bind(a)
-    .bind(b)
-    .bind(b)
-    .bind(a)
+    .bind(at)
+    .bind(accepter)
+    .bind(other)
+    .bind(other)
+    .bind(accepter)
     .execute(&mut *tx)
     .await?;
+    // A past friendship reuses its row; friend_events keeps when it started before.
     sqlx::query(
-        "INSERT OR IGNORE INTO friendships (user_lo, user_hi, created_at) VALUES (?, ?, ?)",
+        "INSERT INTO friendships (user_lo, user_hi, created_at) VALUES (?, ?, ?)
+         ON CONFLICT (user_lo, user_hi) DO UPDATE
+           SET created_at = excluded.created_at, ended_at = NULL, ended_by = NULL
+           WHERE friendships.ended_at IS NOT NULL",
     )
     .bind(lo)
     .bind(hi)
-    .bind(now())
+    .bind(at)
     .execute(&mut *tx)
     .await?;
+    record_event(&mut *tx, accepter, other, "accepted").await?;
     tx.commit().await
 }
 
@@ -171,25 +201,35 @@ pub async fn send_request(
     }
 
     // If they already asked us, sending a request back just accepts theirs.
-    let reverse: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?")
-            .bind(target.id)
-            .bind(me.id)
-            .fetch_optional(&state.db)
-            .await?;
+    let reverse: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ? AND resolved_at IS NULL",
+    )
+    .bind(target.id)
+    .bind(me.id)
+    .fetch_optional(&state.db)
+    .await?;
 
     let status = if reverse.is_some() {
         make_friends(&state.db, me.id, target.id).await?;
         "friends"
     } else {
-        sqlx::query(
-            "INSERT OR IGNORE INTO friend_requests (from_id, to_id, created_at) VALUES (?, ?, ?)",
+        // Asking again after a decline or cancel reopens the same row; the
+        // earlier outcome stays in friend_events.
+        let opened = sqlx::query(
+            "INSERT INTO friend_requests (from_id, to_id, created_at) VALUES (?, ?, ?)
+             ON CONFLICT (from_id, to_id) DO UPDATE
+               SET created_at = excluded.created_at, resolved_at = NULL, resolution = NULL
+               WHERE friend_requests.resolved_at IS NOT NULL",
         )
         .bind(me.id)
         .bind(target.id)
         .bind(now())
         .execute(&state.db)
-        .await?;
+        .await?
+        .rows_affected();
+        if opened > 0 {
+            record_event(&state.db, me.id, target.id, "requested").await?;
+        }
         "requested"
     };
 
@@ -205,12 +245,13 @@ pub async fn accept(
     AuthUser(me): AuthUser,
     Path(user_id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let exists: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?")
-            .bind(user_id)
-            .bind(me.id)
-            .fetch_optional(&state.db)
-            .await?;
+    let exists: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ? AND resolved_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(me.id)
+    .fetch_optional(&state.db)
+    .await?;
     if exists.is_none() {
         return Err(AppError::not_found("That friend request no longer exists."));
     }
@@ -224,21 +265,36 @@ pub async fn accept(
     Ok(Json(json!({ "status": "friends" })))
 }
 
-/// Declines an incoming request or cancels an outgoing one.
+/// Declines an incoming request or cancels an outgoing one. The request is
+/// marked resolved, not removed.
 pub async fn delete_request(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(user_id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    sqlx::query(
-        "DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)",
-    )
-    .bind(me.id)
-    .bind(user_id)
-    .bind(user_id)
-    .bind(me.id)
-    .execute(&state.db)
-    .await?;
+    let at = now();
+    for (from, to, resolution) in [(me.id, user_id, "canceled"), (user_id, me.id, "declined")] {
+        let changed = sqlx::query(
+            "UPDATE friend_requests SET resolved_at = ?, resolution = ?
+             WHERE from_id = ? AND to_id = ? AND resolved_at IS NULL",
+        )
+        .bind(at)
+        .bind(resolution)
+        .bind(from)
+        .bind(to)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+        if changed > 0 {
+            record_event(&state.db, me.id, user_id, resolution).await?;
+            tracing::info!(
+                user_id = me.id,
+                other_id = user_id,
+                resolution,
+                "friend request resolved"
+            );
+        }
+    }
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "ok": true })))
 }
@@ -248,12 +304,24 @@ pub async fn remove(
     AuthUser(me): AuthUser,
     Path(user_id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    // Ends the friendship but keeps the row (and every message). Chats and
+    // profiles only see current friendships.
     let (lo, hi) = pair(me.id, user_id);
-    sqlx::query("DELETE FROM friendships WHERE user_lo = ? AND user_hi = ?")
-        .bind(lo)
-        .bind(hi)
-        .execute(&state.db)
-        .await?;
+    let ended = sqlx::query(
+        "UPDATE friendships SET ended_at = ?, ended_by = ?
+         WHERE user_lo = ? AND user_hi = ? AND ended_at IS NULL",
+    )
+    .bind(now())
+    .bind(me.id)
+    .bind(lo)
+    .bind(hi)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if ended > 0 {
+        record_event(&state.db, me.id, user_id, "unfriended").await?;
+        tracing::info!(user_id = me.id, friend_id = user_id, "unfriended");
+    }
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "ok": true })))
 }

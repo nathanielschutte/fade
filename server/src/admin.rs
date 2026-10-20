@@ -103,7 +103,8 @@ pub async fn stats(
 
     let users = sqlx::query_as::<_, UserRow>(
         "SELECT u.id, u.username, u.created_at, u.last_seen_at,
-            (SELECT COUNT(*) FROM friendships f WHERE f.user_lo = u.id OR f.user_hi = u.id) AS friends,
+            (SELECT COUNT(*) FROM friendships f
+              WHERE (f.user_lo = u.id OR f.user_hi = u.id) AND f.ended_at IS NULL) AS friends,
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'text') AS texts_sent,
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'snap') AS snaps_sent
          FROM users u ORDER BY u.created_at DESC LIMIT 500",
@@ -143,9 +144,12 @@ pub async fn stats(
             "daily": daily(db, at).await?,
         },
         "social": {
-            "friendships": count(db, "SELECT COUNT(*) FROM friendships", &[]).await?,
-            "pending_requests": count(db, "SELECT COUNT(*) FROM friend_requests", &[]).await?,
-            "active_sessions": count(db, "SELECT COUNT(*) FROM sessions WHERE expires_at > ?", &[at]).await?,
+            "friendships": count(db, "SELECT COUNT(*) FROM friendships WHERE ended_at IS NULL", &[]).await?,
+            "ended_friendships": count(db, "SELECT COUNT(*) FROM friendships WHERE ended_at IS NOT NULL", &[]).await?,
+            "pending_requests": count(db, "SELECT COUNT(*) FROM friend_requests WHERE resolved_at IS NULL", &[]).await?,
+            "groups": count(db, "SELECT COUNT(*) FROM groups", &[]).await?,
+            "group_messages": count(db, "SELECT COUNT(*) FROM group_messages WHERE kind = 'text'", &[]).await?,
+            "active_sessions": count(db, "SELECT COUNT(*) FROM sessions WHERE expires_at > ? AND revoked_at IS NULL", &[at]).await?,
         },
         "server": {
             "version": version::SERVER_VERSION,

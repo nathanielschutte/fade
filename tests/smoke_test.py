@@ -16,10 +16,134 @@ b64 = lambda raw: base64.b64encode(raw).decode()
 AUTH_KEY = b64(os.urandom(32))
 SNAP = os.urandom(150 * 1024)  # an encrypted snap is just bytes to the server
 
+SEEN = []  # every API response, for the secret-field sweep at the end
+
 def call(method, path, token=None, **kw):
     h = kw.pop("headers", {})
     if token: h["Authorization"] = f"Bearer {token}"
-    return requests.request(method, BASE + "/api" + path, headers=h, **kw)
+    r = requests.request(method, BASE + "/api" + path, headers=h, **kw)
+    SEEN.append((method, path, r))
+    return r
+
+# Secrets the server holds that must never appear in any response.
+NEVER_SERVED = ("auth_hash", "token_hash", "password_hash", "password")
+# Allowed only in the response to signing up or in.
+ONLY_FROM_AUTH = ("token", "wrapped_private_key")
+
+def keys_in(value):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from keys_in(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from keys_in(v)
+
+def check_nothing_sensitive_served():
+    """Nothing secret in any JSON response, and protective headers on every one."""
+    for method, path, r in SEEN:
+        for header, want in (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "DENY"),
+                             ("Referrer-Policy", "no-referrer"), ("Cache-Control", "no-store")):
+            assert r.headers.get(header) == want, (method, path, header, r.headers.get(header))
+        if "json" not in r.headers.get("Content-Type", ""):
+            continue
+        keys = set(keys_in(r.json()))
+        assert not keys & set(NEVER_SERVED), (method, path, keys & set(NEVER_SERVED))
+        if not path.startswith("/auth/"):
+            assert not keys & set(ONLY_FROM_AUTH), (method, path, keys & set(ONLY_FROM_AUTH))
+    print(f"  {len(SEEN)} API responses: no secret fields, protective headers on all")
+
+def check_sensitive_paths():
+    """Only the embedded client is served: no files, source, config, or database."""
+    probes = ["/.env", "/.git/config", "/.git/HEAD", "/fade.db", "/server/fade.db", "/Cargo.toml",
+              "/server/Cargo.toml", "/src/main.rs", "/static/app.js", "/../Cargo.toml", "/..%2fCargo.toml",
+              "/%2e%2e/%2e%2e/etc/passwd", "/etc/passwd", "/var/lib/fade/db/fade.db", "/run/fade/env",
+              "/admin/../Cargo.toml", "/api/../../Cargo.toml", "/terraform.tfstate", "/infra/terraform.tfvars",
+              "/backup", "/debug", "/metrics", "/server-status", "/wp-login.php", "/api/admin"]
+    markers = ("[package]", "SQLite format", "FADE_", "invite_code", "root:", "BEGIN", "terraform", "fn main")
+    for path in probes:
+        r = requests.get(BASE + path, allow_redirects=False)
+        assert r.status_code in (400, 404), (path, r.status_code)
+        assert not any(m in r.text for m in markers), (path, r.text[:200])
+        assert r.headers.get("X-Frame-Options") == "DENY", path
+    page = requests.get(BASE + "/")
+    assert "default-src 'self'" in page.headers["Content-Security-Policy"]
+    assert page.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+    print(f"  {len(probes)} sensitive-path probes: all 404, nothing leaked")
+
+def befriend(asker_tok, asked, asked_tok, asker_id):
+    ok(call("POST", "/friends/requests", asker_tok, json={"username": asked["username"]}))
+    ok(call("POST", f"/friends/requests/{asker_id}/accept", asked_tok))
+
+def check_groups(tag, a, a_tok, b, b_tok):
+    """Groups: membership rules, history from joining, owner handover. Not E2E in v1."""
+    rc = ok(register(f"cal_{tag}")).json(); c, c_tok = rc["user"], rc["token"]
+    rd = ok(register(f"dee_{tag}")).json(); d, d_tok = rd["user"], rd["token"]
+    befriend(c_tok, a, a_tok, c["id"])                       # ana-cal friends; ben-cal are not
+
+    ok(call("POST", "/groups", a_tok, json={"name": "x", "member_ids": [b["id"], d["id"]]}), 400)  # dee isn't ana's friend
+    ok(call("POST", "/groups", a_tok, json={"name": "   ", "member_ids": []}), 400)
+    g = ok(call("POST", "/groups", a_tok, json={"name": "  road   trip ", "member_ids": [b["id"], c["id"]]})).json()
+    gid = g["id"]
+    assert g["name"] == "road trip" and g["role"] == "owner" and g["encrypted"] is False
+    assert sorted(m["id"] for m in g["members"]) == sorted([a["id"], b["id"], c["id"]])
+    assert [m["role"] for m in g["members"]][0] == "owner"
+
+    ok(call("GET", f"/groups/{gid}", d_tok), 404)              # outsiders see nothing
+    ok(call("GET", f"/groups/{gid}/messages", d_tok), 404)
+    ok(call("POST", f"/groups/{gid}/messages", d_tok, json={"text": "hi"}), 404)
+    ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": "  "}), 400)
+    ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": "x" * 2001}), 400)
+    m = ok(call("POST", f"/groups/{gid}/messages", b_tok, json={"text": " who's driving? "})).json()
+    assert m["body"] == "who's driving?" and m["sender_name"] == b["username"] and m["format"] == 0
+
+    msgs = ok(call("GET", f"/groups/{gid}/messages", c_tok)).json()
+    assert [x["kind"] for x in msgs] == ["event", "text"] and json.loads(msgs[0]["body"])["type"] == "created"
+    mine = [x for x in ok(call("GET", "/groups", c_tok)).json() if x["id"] == gid][0]
+    assert mine["unread"] == 1 and mine["member_count"] == 3 and mine["last_message"]["id"] == m["id"]
+    ok(call("POST", f"/groups/{gid}/read", c_tok))
+    assert [x for x in ok(call("GET", "/groups", c_tok)).json() if x["id"] == gid][0]["unread"] == 0
+
+    # Only the owner removes others; removed members lose access; nothing is deleted.
+    ok(call("DELETE", f"/groups/{gid}/members/{c['id']}", b_tok), 400)
+    ok(call("DELETE", f"/groups/{gid}/members/{c['id']}", a_tok))
+    ok(call("GET", f"/groups/{gid}/messages", c_tok), 404)
+    assert all(x["id"] != gid for x in ok(call("GET", "/groups", c_tok)).json())
+    ok(call("POST", f"/groups/{gid}/members", b_tok, json={"user_id": c["id"]}), 400)  # ben isn't cal's friend
+    ok(call("POST", f"/groups/{gid}/members", a_tok, json={"user_id": b["id"]}), 409)  # already in
+    ok(call("POST", f"/groups/{gid}/members", a_tok, json={"user_id": c["id"]}))
+    back = ok(call("GET", f"/groups/{gid}/messages", c_tok)).json()
+    assert all(x["id"] > m["id"] for x in back), "a rejoined member sees history from rejoining"
+    assert json.loads(back[0]["body"]) ["type"] == "added"
+
+    renamed = ok(call("PATCH", f"/groups/{gid}", b_tok, json={"name": "Road trip 2026"})).json()
+    assert renamed["name"] == "Road trip 2026"
+
+    # The owner leaves; the longest-standing member takes over.
+    ok(call("DELETE", f"/groups/{gid}/members/{a['id']}", a_tok))
+    after = ok(call("GET", f"/groups/{gid}", b_tok)).json()
+    assert {x["id"]: x["role"] for x in after["members"]} == {b["id"]: "owner", c["id"]: "member"}, after["members"]
+    events = [json.loads(x["body"])["type"] for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["kind"] == "event"]
+    assert events[-3:] == ["renamed", "left", "owner"], events
+    ok(call("GET", f"/groups/{gid}", a_tok), 404)
+    print("  groups: membership rules, history from joining, owner handover")
+
+def check_rate_limits(tag):
+    """Failed sign-ins lock a username for a while; one address can't hammer sign-up."""
+    name = f"lock_{tag}"
+    ok(register(name))
+    for _ in range(10):
+        ok(call("POST", "/auth/login", json={"username": name, "auth_key": b64(os.urandom(32))}), 400)
+    r = call("POST", "/auth/login", json={"username": name, "auth_key": AUTH_KEY})
+    assert r.status_code == 429, ("even the right password waits out the lock", r.status_code)
+    # Behind Caddy the address comes from X-Forwarded-For; a local test can
+    # stand in for a remote one by sending it (production ignores spoofed ones).
+    remote = {"X-Forwarded-For": f"203.0.113.{int(tag[:2], 16) % 250 + 1}"}
+    # A different username each time, so only the per-address limit applies.
+    codes = [call("POST", "/auth/login", headers=remote, json={"username": f"nobody{i}_{tag}", "auth_key": AUTH_KEY}).status_code
+             for i in range(31)]
+    assert codes[:30] == [400] * 30 and codes[30] == 429, codes
+    print("  rate limits: 10 failed sign-ins lock the account; 30 attempts per address")
 
 def ok(r, code=200):
     assert r.status_code == code, f"{r.request.method} {r.url} -> {r.status_code} {r.text}"
@@ -177,9 +301,29 @@ async def main():
     ok(call("DELETE", f"/friends/{a['id']}", b_tok))
     ok(call("GET", f"/chats/{b['id']}/messages", a_tok), 404)
     ok(call("GET", f"/users/{b['id']}/profile", a_tok), 404)
+    assert ok(call("GET", "/friends", a_tok)).json() == []
 
+    # Nothing was deleted: re-friending brings the whole history back.
+    assert ok(call("POST", "/friends/requests", b_tok, json={"username": a["username"]})).json()["status"] == "requested"
+    ok(call("DELETE", f"/friends/requests/{b['id']}", a_tok))                 # alex declines
+    assert ok(call("GET", "/friends/requests", b_tok)).json()["outgoing"] == []
+    assert ok(call("POST", "/friends/requests", b_tok, json={"username": a["username"]})).json()["status"] == "requested"  # asking again works
+    ok(call("POST", f"/friends/requests/{b['id']}/accept", a_tok))
+    history = ok(call("GET", f"/chats/{b['id']}/messages?limit=200", a_tok)).json()
+    assert len(history) == 122, len(history)
+    assert [c["id"] for c in ok(call("GET", "/friends", a_tok)).json()] == [b["id"]]
+
+    check_groups(tag, a, a_tok, b, b_tok)
+
+    # Signing out revokes the session; it doesn't come back.
     ok(call("POST", "/auth/logout", a_tok))
     ok(call("GET", "/me", a_tok), 401)
+    ok(call("POST", "/auth/logout", a_tok))                                    # twice is harmless
+    ok(call("GET", "/me", a_tok), 401)
+
+    check_rate_limits(tag)
+    check_sensitive_paths()
+    check_nothing_sensitive_served()
     for t in tasks: t.cancel()
     print("all checks passed")
     print("  events to sam: ", kinds_b)

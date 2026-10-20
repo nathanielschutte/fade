@@ -594,3 +594,44 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 
 /* Entries sent by apps, as opposed to the server. */
 .log-target.log-client { color: var(--sage); }
+
+/* Narrow screens: the tabs get their own row so the header never overflows. */
+@media (max-width: 520px) {
+  .admin-bar { flex-wrap: wrap; height: auto; min-height: var(--bar-h); padding-block: 0.5rem; row-gap: 0.4rem; }
+  .admin-bar .admin-tabs { order: 3; width: 100%; margin-left: 0; }
+}
+
+/* ---------- groups ---------- */
+
+.chat-heading { display: flex; flex-direction: column; min-width: 0; }
+.chat-sub { padding-left: 0.5rem; font-size: 0.75rem; color: var(--fixer); line-height: 1.1; }
+.chat-item.is-group .chat-name::before {
+  content: ""; display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.4rem;
+  border: 1.5px solid var(--fixer); border-radius: 2px; vertical-align: 0.05rem;
+}
+.group-notice {
+  flex: none;
+  margin: 0.6rem var(--pad) 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--rule); border-radius: var(--radius-s);
+  color: var(--fixer); font-size: 0.75rem;
+}
+.group-notice.inline { margin: 0 0 0.75rem; }
+.group-event { align-self: center; text-align: center; padding: 0.35rem 0; }
+.group-avatar svg { width: 1.6rem; height: 1.6rem; }
+.group-form { display: grid; gap: 0.75rem; }
+.pick-friends { border: 0; padding: 0; margin: 0; }
+.pick-friends legend { font-size: var(--step--1); color: var(--fixer); padding: 0; margin-bottom: 0.25rem; }
+.person.pick { cursor: pointer; }
+.person.pick input { width: 1.1rem; height: 1.1rem; accent-color: var(--sage); }
+.rename-form { display: flex; gap: 0.5rem; align-items: end; }
+.rename-form .field { flex: 1; }
+.role-badge {
+  padding: 0.1rem 0.45rem; border: 1px solid var(--rule); border-radius: 999px;
+  font-size: 0.7rem; color: var(--sage);
+}
+.link-name { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; font-weight: 600; }
+.link-name:hover { text-decoration: underline; }
+.sheet-text.small { font-size: 0.75rem; }
+.button.danger { border-color: var(--danger); color: var(--danger); }
+.button.danger:hover { background: rgba(232, 165, 152, 0.12); }

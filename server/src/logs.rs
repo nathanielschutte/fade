@@ -6,7 +6,7 @@
 //! message content, keys, tokens, or invite codes.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     fmt::Write as _,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -225,8 +225,6 @@ const CLIENT_MAX_ENTRIES: usize = 50;
 const CLIENT_MAX_FIELDS: usize = 20;
 const CLIENT_MAX_MESSAGE: usize = 500;
 const CLIENT_MAX_VALUE: usize = 300;
-/// Per user (or per anonymous client) per minute.
-const CLIENT_RATE_PER_MIN: u32 = 300;
 /// Field names containing any of these are redacted.
 const REDACT: &[&str] = &[
     "text",
@@ -304,32 +302,11 @@ fn sanitize(entry: ClientEntry) -> (&'static str, String, Vec<(String, String)>)
     )
 }
 
-/// Fixed one-minute windows per key. Small and good enough for a handful of users.
-#[derive(Default)]
-pub struct ClientRateLimit(Mutex<HashMap<String, (std::time::Instant, u32)>>);
-
-impl ClientRateLimit {
-    /// How many of `wanted` entries this key may log right now.
-    fn allow(&self, key: &str, wanted: u32) -> u32 {
-        let now = std::time::Instant::now();
-        let mut map = self.0.lock().unwrap();
-        if map.len() > 10_000 {
-            map.retain(|_, (start, _)| now.duration_since(*start).as_secs() < 60);
-        }
-        let slot = map.entry(key.to_string()).or_insert((now, 0));
-        if now.duration_since(slot.0).as_secs() >= 60 {
-            *slot = (now, 0);
-        }
-        let granted = wanted.min(CLIENT_RATE_PER_MIN.saturating_sub(slot.1));
-        slot.1 += granted;
-        granted
-    }
-}
-
 /// `POST /api/logs`: diagnostics from apps. Signed-in or not (sign-in itself
 /// can fail); signed-in entries carry the user id.
 pub async fn ingest(
     State(state): State<SharedState>,
+    axum::extract::Extension(who): axum::extract::Extension<crate::ratelimit::ClientInfo>,
     headers: HeaderMap,
     Json(batch): Json<ClientBatch>,
 ) -> AppResult<StatusCode> {
@@ -357,10 +334,10 @@ pub async fn ingest(
         .collect();
     let key = user
         .as_ref()
-        .map_or_else(|| "anon".to_string(), |u| u.id.to_string());
+        .map_or_else(|| format!("ip:{}", who.ip), |u| u.id.to_string());
     let granted = state
         .client_log_limit
-        .allow(&key, batch.entries.len() as u32) as usize;
+        .take(&key, batch.entries.len() as u32) as usize;
     let dropped = batch.entries.len() - granted;
     for entry in batch.entries.into_iter().take(granted) {
         let (level, message, mut fields) = sanitize(entry);
@@ -368,6 +345,7 @@ pub async fn ingest(
             fields.insert(0, ("user_id".into(), u.id.to_string()));
         }
         fields.push(("client".into(), client.clone()));
+        fields.push(("ip".into(), who.ip.clone()));
         state.logs.push(
             level,
             &format!("{CLIENT_TARGET}{platform}"),
@@ -512,15 +490,6 @@ mod tests {
             sanitize(entry("shout", "m", serde_json::json!({}))).0,
             "DEBUG"
         );
-    }
-
-    #[test]
-    fn client_rate_limit_caps_each_key_per_minute() {
-        let limit = ClientRateLimit::default();
-        assert_eq!(limit.allow("7", 200), 200);
-        assert_eq!(limit.allow("7", 200), CLIENT_RATE_PER_MIN - 200);
-        assert_eq!(limit.allow("7", 1), 0);
-        assert_eq!(limit.allow("8", 5), 5);
     }
 
     #[test]

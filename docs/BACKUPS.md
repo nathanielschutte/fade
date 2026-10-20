@@ -45,3 +45,4 @@ If the disk itself is lost, create a volume from the newest `fade-daily` snapsho
 
 | Date | Backup | Result |
 |---|---|---|
+| 2026-10-20 | `db/2026/10/20/fade-20261020T004239Z.db.gz` (first backup, 5 KB) | Passed: integrity ok; 3 users, 2 friendships, 26 messages, matching production. Also confirmed the server's role gets AccessDenied for delete and list on the bucket. |

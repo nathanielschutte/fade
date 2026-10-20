@@ -3,7 +3,7 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::{FromRequestParts, State},
+    extract::{Extension, FromRequestParts, State},
     http::{header::AUTHORIZATION, request::Parts, HeaderMap},
     Json,
 };
@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use crate::{
     db::{is_base64, now, UserPublic},
     error::{AppError, AppResult},
+    ratelimit::ClientInfo,
     SharedState,
 };
 
@@ -57,7 +58,7 @@ pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option
     let at = now();
     let user = sqlx::query_as::<_, UserPublic>(
         "SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token_hash = ? AND s.expires_at > ?",
+         WHERE s.token_hash = ? AND s.expires_at > ? AND s.revoked_at IS NULL",
     )
     .bind(hash_token(token))
     .bind(at)
@@ -173,14 +174,29 @@ fn same_secret(a: &str, b: &str) -> bool {
     Sha256::digest(a.as_bytes()) == Sha256::digest(b.as_bytes())
 }
 
+const TOO_MANY: &str = "Too many attempts. Wait a few minutes and try again.";
+
+/// Sign-in and sign-up attempts per address. Local, un-proxied requests
+/// (development and tests) aren't limited by address.
+fn check_ip(state: &SharedState, who: &ClientInfo, action: &str) -> AppResult<()> {
+    if who.local || state.auth_ip_limit.allow(&who.ip) {
+        Ok(())
+    } else {
+        tracing::warn!(ip = %who.ip, action, "rate limited");
+        Err(AppError::TooManyRequests(TOO_MANY.into()))
+    }
+}
+
 pub async fn register(
     State(state): State<SharedState>,
+    Extension(who): Extension<ClientInfo>,
     Json(req): Json<Register>,
 ) -> AppResult<Json<SessionResponse>> {
+    check_ip(&state, &who, "sign-up")?;
     if let Some(expected) = &state.config.invite_code {
         let given = req.invite_code.as_deref().unwrap_or("").trim();
         if !same_secret(given, expected) {
-            tracing::info!(username = %req.username.trim(), "sign-up rejected: wrong invite code");
+            tracing::info!(ip = %who.ip, username = %req.username.trim(), "sign-up rejected: wrong invite code");
             return Err(AppError::bad("That invite code isn't valid."));
         }
     }
@@ -230,7 +246,7 @@ pub async fn register(
     };
 
     let token = create_session(&state, user.id).await?;
-    tracing::info!(user_id = user.id, username = %user.username, "account created");
+    tracing::info!(ip = %who.ip, user_id = user.id, username = %user.username, "account created");
     Ok(Json(SessionResponse {
         token,
         user: Me::new(&state, user),
@@ -241,10 +257,23 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<SharedState>,
+    Extension(who): Extension<ClientInfo>,
     Json(req): Json<Login>,
 ) -> AppResult<Json<SessionResponse>> {
-    let bad_login = || AppError::bad("Wrong username or password.");
-    validate_auth_key(&req.auth_key).map_err(|_| bad_login())?;
+    check_ip(&state, &who, "sign-in")?;
+    // Failed sign-ins per username, whatever address they come from. Checked
+    // before the (slow) password check, so guessing can't burn the CPU either.
+    let account = req.username.trim().to_lowercase();
+    if state.login_fail_limit.exhausted(&account) {
+        tracing::warn!(ip = %who.ip, username = %account, "sign-in rate limited");
+        return Err(AppError::TooManyRequests(TOO_MANY.into()));
+    }
+    let failed = |reason: &str| {
+        state.login_fail_limit.allow(&account);
+        tracing::info!(ip = %who.ip, username = %account, reason, "sign-in failed");
+        AppError::bad("Wrong username or password.")
+    };
+    validate_auth_key(&req.auth_key).map_err(|_| failed("malformed key"))?;
 
     let row: Option<(i64, String, String, String, String)> = sqlx::query_as(
         "SELECT id, username, auth_hash, public_key, wrapped_private_key
@@ -254,8 +283,7 @@ pub async fn login(
     .fetch_optional(&state.db)
     .await?;
     let Some((id, username, stored, public_key, wrapped_private_key)) = row else {
-        tracing::info!(username = %req.username.trim(), "sign-in failed: no such user");
-        return Err(bad_login());
+        return Err(failed("no such user"));
     };
 
     let auth_key = req.auth_key;
@@ -271,13 +299,12 @@ pub async fn login(
     .await?;
 
     if !valid {
-        tracing::info!(user_id = id, %username, "sign-in failed: wrong password");
-        return Err(bad_login());
+        return Err(failed("wrong password"));
     }
 
     // The wrapped key is only useful with the password, which the server never sees.
     let token = create_session(&state, id).await?;
-    tracing::info!(user_id = id, %username, "signed in");
+    tracing::info!(ip = %who.ip, user_id = id, %username, "signed in");
     Ok(Json(SessionResponse {
         token,
         user: Me::new(&state, UserPublic { id, username }),
@@ -291,11 +318,15 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> AppResult<Json<serde_json::Value>> {
     if let Some(token) = bearer_token(&headers) {
-        let ended = sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
-            .bind(hash_token(token))
-            .execute(&state.db)
-            .await?
-            .rows_affected();
+        // Revoked, not removed: the session row stays as a record.
+        let ended = sqlx::query(
+            "UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(now())
+        .bind(hash_token(token))
+        .execute(&state.db)
+        .await?
+        .rows_affected();
         tracing::debug!(ended, "signed out");
     }
     Ok(Json(serde_json::json!({ "ok": true })))

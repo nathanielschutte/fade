@@ -17,7 +17,7 @@ The exact strings and numbers here come from [`server/static/crypto.js`](../serv
 
 ## At a glance
 
-Every text and every pic is encrypted in the sender's browser and decrypted in the recipient's. The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
+Every direct text and every pic is encrypted in the sender's browser and decrypted in the recipient's. **Group chats are the exception for now:** see [Group chats](#group-chats). The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
 
 | The server knows | The server never sees |
 |---|---|
@@ -114,6 +114,12 @@ Pics are called *snaps* in the code and API, so you'll see `snap` in the strings
 Unopened pics expire after 24 hours, and a server restart drops them all. The server marks them expired so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
 
 View-once is a server promise, not a cryptographic one. The recipient's screen shows the decrypted photo for ten seconds, and nothing stops a screenshot or a second camera.
+
+## Group chats
+
+Group chats are **not end-to-end encrypted yet.** Group messages travel over HTTPS and sit on an encrypted disk, but the napsack server can read them, unlike direct chats. Every group shows a notice saying so, and group messages carry `format` 0 ("not encrypted"), so a future encrypted version can be told apart.
+
+Doing it properly means giving each group a shared key, handing it to members through their own keys, and replacing it whenever someone leaves. That's planned; until then, keep anything private to direct chats.
 
 ## Safety codes and changed keys
 

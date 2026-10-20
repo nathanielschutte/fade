@@ -65,7 +65,7 @@ pub enum Profile {
 
 /// The other side of each of `user`'s friendships, as a subquery with one `?`.
 const FRIENDS_OF: &str = "SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-     FROM friendships f WHERE f.user_lo = ?1 OR f.user_hi = ?1";
+     FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL";
 
 async fn joined(db: &SqlitePool, id: i64) -> sqlx::Result<Option<(String, i64)>> {
     sqlx::query_as("SELECT username, created_at FROM users WHERE id = ?")
@@ -79,7 +79,7 @@ pub async fn friends_of(db: &SqlitePool, user: i64) -> sqlx::Result<Vec<FriendEn
         "SELECT u.id, u.username, f.created_at AS since
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-         WHERE f.user_lo = ?1 OR f.user_hi = ?1
+         WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL
          ORDER BY lower(u.username)",
     )
     .bind(user)
@@ -132,7 +132,7 @@ pub async fn mutual_friends(db: &SqlitePool, a: i64, b: i64) -> sqlx::Result<Vec
         "SELECT u.id, u.username, f.created_at AS since
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-         WHERE (f.user_lo = ?1 OR f.user_hi = ?1)
+         WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL
            AND u.id IN ({})
          ORDER BY lower(u.username)",
         FRIENDS_OF.replace("?1", "?2")
@@ -170,12 +170,13 @@ pub async fn get(
         .await?
         .ok_or_else(|| AppError::not_found("No profile to show."))?;
     let (lo, hi) = pair(me.id, id);
-    let friends_since: i64 =
-        sqlx::query_scalar("SELECT created_at FROM friendships WHERE user_lo = ? AND user_hi = ?")
-            .bind(lo)
-            .bind(hi)
-            .fetch_one(db)
-            .await?;
+    let friends_since: i64 = sqlx::query_scalar(
+        "SELECT created_at FROM friendships WHERE user_lo = ? AND user_hi = ? AND ended_at IS NULL",
+    )
+    .bind(lo)
+    .bind(hi)
+    .fetch_one(db)
+    .await?;
     let friend_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({FRIENDS_OF})"))
         .bind(id)
         .fetch_one(db)
@@ -284,5 +285,20 @@ mod tests {
             .iter()
             .any(|f| f.username == "Ben"));
         assert_eq!(my_stats(&db, 99).await.unwrap(), MyStats::default());
+
+        // An ended friendship disappears from friends and mutuals, but the row stays.
+        sqlx::query(
+            "UPDATE friendships SET ended_at = 200, ended_by = 1 WHERE user_lo = 1 AND user_hi = 3",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert_eq!(names(friends_of(&db, 1).await.unwrap()), vec!["Ben"]);
+        assert!(mutual_friends(&db, 1, 2).await.unwrap().is_empty());
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM friendships")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows, 4);
     }
 }

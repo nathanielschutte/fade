@@ -4,8 +4,10 @@ mod chats;
 mod db;
 mod error;
 mod friends;
+mod groups;
 mod logs;
 mod profiles;
+mod ratelimit;
 mod snaps;
 mod version;
 mod web;
@@ -98,7 +100,12 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// Recent log entries for the admin log viewer.
     pub logs: Arc<logs::LogBuffer>,
-    pub client_log_limit: logs::ClientRateLimit,
+    /// Client log entries per user (or per address when signed out) per minute.
+    pub client_log_limit: ratelimit::RateLimit,
+    /// Sign-in and sign-up attempts per address.
+    pub auth_ip_limit: ratelimit::RateLimit,
+    /// Failed sign-ins per username.
+    pub login_fail_limit: ratelimit::RateLimit,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -114,7 +121,12 @@ async fn main() -> anyhow::Result<()> {
     let buffer_filter =
         EnvFilter::try_from_env("FADE_LOG_BUFFER").unwrap_or_else(|_| "fade_server=debug".into());
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(journal_filter))
+        .with(
+            tracing_subscriber::fmt::layer()
+                // Plain text in the journal, so `journalctl | grep ip=...` works.
+                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
+                .with_filter(journal_filter),
+        )
         .with(logs::BufferLayer(log_buffer.clone()).with_filter(buffer_filter))
         .init();
 
@@ -139,7 +151,9 @@ async fn main() -> anyhow::Result<()> {
         config,
         started_at: std::time::Instant::now(),
         logs: log_buffer,
-        client_log_limit: logs::ClientRateLimit::default(),
+        client_log_limit: ratelimit::RateLimit::new(300, Duration::from_secs(60)),
+        auth_ip_limit: ratelimit::RateLimit::new(30, Duration::from_secs(10 * 60)),
+        login_fail_limit: ratelimit::RateLimit::new(10, Duration::from_secs(15 * 60)),
     });
 
     snaps::spawn_sweeper(state.clone());
@@ -151,9 +165,13 @@ async fn main() -> anyhow::Result<()> {
         build = version::BUILD,
         "fade server listening"
     );
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // Connection info gives the peer address; see ratelimit::ClientInfo.
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
 }
 
@@ -170,6 +188,18 @@ fn router(state: SharedState) -> Router {
         .route("/friends", get(friends::list_chats))
         .route("/friends/{user_id}", delete(friends::remove))
         .route("/users/{user_id}/profile", get(profiles::get))
+        .route("/groups", get(groups::list).post(groups::create))
+        .route("/groups/{group_id}", get(groups::get).patch(groups::rename))
+        .route("/groups/{group_id}/members", post(groups::add_member))
+        .route(
+            "/groups/{group_id}/members/{user_id}",
+            delete(groups::remove_member),
+        )
+        .route(
+            "/groups/{group_id}/messages",
+            get(groups::messages).post(groups::send),
+        )
+        .route("/groups/{group_id}/read", post(groups::mark_read))
         .route(
             "/friends/requests",
             get(friends::list_requests).post(friends::send_request),
@@ -200,7 +230,12 @@ fn router(state: SharedState) -> Router {
             state.clone(),
             version::require_supported_client,
         ))
-        .route("/config", get(web::config));
+        .route("/config", get(web::config))
+        // Nothing from the API belongs in a cache: it's private, or it changes.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ));
 
     Router::new()
         .nest("/api", api)
@@ -213,17 +248,51 @@ fn router(state: SharedState) -> Router {
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
         ))
+        // Defense in depth for every response, on top of each page's CSP.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("cross-origin-opener-policy"),
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("cross-origin-resource-policy"),
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static(
+                "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+            ),
+        ))
         .layer(middleware::from_fn(log_request))
         .with_state(state)
 }
 
-/// One line per request. Logs the route template (`/api/chats/{friend_id}/messages`)
-/// and the real path, never the query string, headers, or body.
+/// One line per request: who (address, user agent), what (method, route
+/// template, real path), and the outcome. Never the query string, other
+/// headers, or the body. Also hands the caller's address to handlers.
 async fn log_request(
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
     let started = std::time::Instant::now();
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|c| c.0);
+    let who = ratelimit::ClientInfo::from_request(peer, req.headers());
+    req.extensions_mut().insert(who.clone());
+    let host: String = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(100)
+        .collect();
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
     let route = req
@@ -246,7 +315,11 @@ async fn log_request(
     let ms = started.elapsed().as_millis() as u64;
     macro_rules! log {
         ($lvl:ident) => {
-            tracing::$lvl!(target: "fade_server::http", %method, %route, %path, status, ms, %client, "request")
+            tracing::$lvl!(
+                target: "fade_server::http",
+                ip = %who.ip, %method, %route, %path, status, ms, %client,
+                ua = %who.user_agent, %host, "request"
+            )
         };
     }
     match status {

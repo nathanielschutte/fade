@@ -15,6 +15,8 @@ pub enum AppError {
     /// The thing existed but is gone for good (an opened or expired snap).
     Gone(String),
     PayloadTooLarge(String),
+    /// Rate limited (sign-in attempts and the like).
+    TooManyRequests(String),
     /// The client is older than the minimum this server accepts. Apps show an update screen.
     UpgradeRequired(String),
     Unavailable(String),
@@ -42,6 +44,7 @@ impl IntoResponse for AppError {
             Self::Gone(m) => (StatusCode::GONE, m),
             Self::PayloadTooLarge(m) => (StatusCode::PAYLOAD_TOO_LARGE, m),
             Self::UpgradeRequired(m) => (StatusCode::UPGRADE_REQUIRED, m),
+            Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(detail) => {
                 tracing::error!(%detail, "internal error");

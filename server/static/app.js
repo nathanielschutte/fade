@@ -24,6 +24,11 @@ const state = {
   chats: [],
   requests: { incoming: [], outgoing: [] },
   activeId: null,              // friend id of the open chat
+  groups: [],                  // GroupSummary[] (not end-to-end encrypted in v1)
+  activeGroupId: null,         // group id of the open group chat (activeId is null then)
+  groupMessages: new Map(),    // group id -> GroupMessage[], oldest first
+  groupHistory: new Map(),     // group id -> { hasMore, loading }
+  groupDetail: null,           // the group shown in the info sheet
   messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
   history: new Map(),          // friend id -> { hasMore, loading } for paging back
   ws: null,
@@ -288,6 +293,10 @@ function signOutLocally() {
   state.activeId = null;
   state.messages.clear();
   state.history.clear();
+  state.groups = [];
+  state.activeGroupId = null;
+  state.groupMessages.clear();
+  state.groupHistory.clear();
   localStorage.removeItem(TOKEN_KEY);
   e2e.deleteLocal(IDENTITY_KEY).catch(() => {});
   const ws = state.ws;
@@ -310,6 +319,7 @@ function enterApp() {
   $("#signed-in-as").textContent = `Signed in as ${state.me.username}`;
   $("#admin-link").hidden = !state.me.is_admin;
   refreshChats();
+  refreshGroups();
   refreshRequests();
   connectSocket();
 }
@@ -352,31 +362,43 @@ function chatStatus(chat) {
   return { text: mine ? `You: ${body}` : body };
 }
 
+function chatRow({ name, status, time, current, onclick, group }) {
+  const cls = ["chat-item"];
+  if (status.marker === "snap") cls.push("has-unread", "has-snap");
+  else if (status.marker === "text") cls.push("has-unread");
+  if (group) cls.push("is-group");
+  return el("li", {},
+    el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick },
+      el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
+      el("span", {},
+        el("span", { class: "chat-name", text: name }),
+        el("span", { class: "chat-status", text: status.text })),
+      el("span", { class: "chat-time", text: time ? relTime(time) : "" }),
+    ));
+}
+
 function renderChatList() {
-  const list = $("#chat-list");
-  list.replaceChildren(
-    ...state.chats.map((chat) => {
-      const status = chatStatus(chat);
-      const cls = ["chat-item"];
-      if (status.marker === "snap") cls.push("has-unread", "has-snap");
-      else if (status.marker === "text") cls.push("has-unread");
-      return el("li", {},
-        el("button", {
-          type: "button",
-          class: cls.join(" "),
-          "aria-current": chat.id === state.activeId ? "true" : null,
-          onclick: () => openChat(chat.id),
-        },
-          el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
-          el("span", {},
-            el("span", { class: "chat-name", text: chat.username }),
-            el("span", { class: "chat-status", text: status.text })),
-          el("span", { class: "chat-time", text: chat.last_message ? relTime(chat.last_message.created_at) : "" }),
-        ));
-    }),
-  );
-  $("#chat-empty").hidden = state.chats.length > 0;
-  const unread = state.chats.reduce((n, c) => n + c.unread, 0);
+  const rows = [
+    ...state.chats.map((chat) => ({
+      at: chat.last_message?.created_at ?? 0,
+      name: chat.username,
+      row: chatRow({
+        name: chat.username, status: chatStatus(chat), time: chat.last_message?.created_at,
+        current: chat.id === state.activeId, onclick: () => openChat(chat.id),
+      }),
+    })),
+    ...state.groups.map((g) => ({
+      at: g.last_message?.created_at ?? 0,
+      name: g.name,
+      row: chatRow({
+        name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
+        current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
+      }),
+    })),
+  ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+  $("#chat-list").replaceChildren(...rows.map((r) => r.row));
+  $("#chat-empty").hidden = rows.length > 0;
+  const unread = state.chats.reduce((n, c) => n + c.unread, 0) + state.groups.reduce((n, g) => n + g.unread, 0);
   document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
 }
 
@@ -386,6 +408,8 @@ async function openChat(friendId) {
   const chat = chatById(friendId);
   if (!chat) return;
   state.activeId = friendId;
+  state.activeGroupId = null;
+  setConversationMode("direct");
   $("#app").classList.add("in-chat");
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
@@ -424,6 +448,7 @@ async function openChat(friendId) {
 
 function closeChat() {
   state.activeId = null;
+  state.activeGroupId = null;
   $("#app").classList.remove("in-chat");
   $("#chat").hidden = true;
   $("#chat-placeholder").hidden = false;
@@ -486,7 +511,9 @@ function fillViewport(friendId) {
 }
 
 $("#messages").addEventListener("scroll", () => {
-  if ($("#messages").scrollTop < 200 && state.activeId) loadOlder(state.activeId);
+  if ($("#messages").scrollTop >= 200) return;
+  if (state.activeId) loadOlder(state.activeId);
+  else if (state.activeGroupId) loadOlderGroup(state.activeGroupId);
 });
 
 async function markRead(friendId) {
@@ -509,6 +536,7 @@ function snapLabel(m, mine) {
 }
 
 function renderMessages() {
+  if (state.activeGroupId) return renderGroupMessages();
   const list = $("#messages");
   const msgs = state.messages.get(state.activeId) || [];
   const chat = chatById(state.activeId);
@@ -577,6 +605,7 @@ $("#composer").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("#composer-input");
   const text = input.value.trim();
+  if (text && state.activeGroupId) return sendGroupText(state.activeGroupId, input, text);
   const friendId = state.activeId;
   if (!text || !friendId) return;
   input.value = "";
@@ -634,8 +663,10 @@ async function handleEvent(ev) {
       checkForUpdate();
       // Anything could have happened while disconnected.
       refreshChats();
+      refreshGroups();
       refreshRequests();
       if (state.activeId) openChat(state.activeId);
+      else if (state.activeGroupId) openGroup(state.activeGroupId);
       break;
     case "auth_failed":
       signOutLocally();
@@ -671,8 +702,359 @@ async function handleEvent(ev) {
       refreshChats();
       refreshRequests();
       break;
+    case "group_message": {
+      const m = ev.message;
+      upsertGroupMessage(m);
+      if (m.group_id === state.activeGroupId) {
+        renderMessages();
+        if (m.sender_id !== state.me.id && document.visibilityState === "visible") markGroupRead(m.group_id);
+      }
+      refreshGroupsSoon();
+      break;
+    }
+    case "groups_changed":
+      await refreshGroups();
+      if (ev.group_id === state.activeGroupId) renderGroupHeader();
+      if ($("#group-dialog").open && state.groupDetail?.id === ev.group_id) openGroupInfo(ev.group_id);
+      break;
   }
 }
+
+// ---------- groups ----------
+// Version 1 isn't end-to-end encrypted: messages go to the server as plain
+// text, and every group says so. Direct chats are unaffected.
+
+const groupById = (id) => state.groups.find((g) => g.id === id);
+
+async function refreshGroups() {
+  try {
+    state.groups = await getJSON("/groups");
+  } catch (err) {
+    report("warn", "loading groups failed", errorFields(err));
+    return;
+  }
+  renderChatList();
+  if (state.activeGroupId && !groupById(state.activeGroupId)) closeChat(); // removed or left
+}
+
+let groupRefreshTimer = null;
+function refreshGroupsSoon() {
+  clearTimeout(groupRefreshTimer);
+  groupRefreshTimer = setTimeout(refreshGroups, 150);
+}
+
+/** "You added ben", "cal left", ... for membership and name changes. */
+function groupEventText(m) {
+  let e = {};
+  try { e = JSON.parse(m.body); } catch {}
+  const actor = m.sender_id === state.me.id ? "You" : m.sender_name;
+  const target = e.target === state.me.id ? "you" : e.target_name;
+  switch (e.type) {
+    case "created": return `${actor} created the group “${e.name}”`;
+    case "added": return `${actor} added ${target}`;
+    case "removed": return `${actor} removed ${target}`;
+    case "left": return `${actor} left`;
+    case "renamed": return `${actor} renamed the group to “${e.name}”`;
+    case "owner": return e.target === state.me.id ? "You're now the owner" : `${e.target_name} is now the owner`;
+    default: return "The group changed";
+  }
+}
+
+function groupStatus(g) {
+  const m = g.last_message;
+  if (!m) return { text: `${g.member_count} people` };
+  const text = m.kind === "event"
+    ? groupEventText(m)
+    : `${m.sender_id === state.me.id ? "You" : m.sender_name}: ${m.body}`;
+  return { text, marker: g.unread ? "text" : null };
+}
+
+/** Direct chats show the safety code and camera; groups show the notice instead. */
+function setConversationMode(kind) {
+  const group = kind === "group";
+  $("#safety-button").hidden = group;
+  $("#camera-button").hidden = group;
+  $("#group-notice").hidden = !group;
+  $("#chat-sub").hidden = !group;
+  if (group) {
+    $("#key-warning").hidden = true;
+    $("#composer-input").disabled = false;
+    $("#composer .send").disabled = false;
+  }
+}
+
+function renderGroupHeader() {
+  const g = groupById(state.activeGroupId);
+  if (!g) return;
+  $("#chat-title").textContent = g.name;
+  $("#chat-title").setAttribute("aria-label", `${g.name}: group info`);
+  $("#chat-sub").textContent = `${g.member_count} ${g.member_count === 1 ? "person" : "people"}`;
+}
+
+async function openGroup(groupId) {
+  if (!groupById(groupId)) return;
+  state.activeId = null;
+  state.activeGroupId = groupId;
+  setConversationMode("group");
+  $("#app").classList.add("in-chat");
+  $("#chat-placeholder").hidden = true;
+  $("#chat").hidden = false;
+  renderGroupHeader();
+  const key = `g${groupId}`;
+  if ($("#messages").dataset.friend !== key) {
+    $("#messages").dataset.friend = key;
+    delete $("#messages").dataset.scrolled;
+  }
+  renderChatList();
+  renderMessages();
+  try {
+    const page = await getJSON(`/groups/${groupId}/messages?limit=${PAGE}`);
+    if (state.activeGroupId !== groupId) return;
+    const loaded = state.groupMessages.get(groupId);
+    if (loaded?.length && page.length && page[0].id <= loaded[loaded.length - 1].id) {
+      for (const m of page) upsertGroupMessage(m);
+    } else {
+      state.groupMessages.set(groupId, page);
+      state.groupHistory.set(groupId, { hasMore: page.length === PAGE, loading: false });
+    }
+    renderMessages();
+    fillGroupViewport(groupId);
+    markGroupRead(groupId);
+  } catch (err) {
+    report("warn", "opening group failed", { group_id: groupId, ...errorFields(err) });
+  }
+  if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
+}
+
+function upsertGroupMessage(m) {
+  const msgs = state.groupMessages.get(m.group_id);
+  if (!msgs) return; // not loaded yet; it'll fetch on open
+  const i = msgs.findIndex((x) => x.id === m.id);
+  if (i >= 0) msgs[i] = m;
+  else msgs.push(m);
+  msgs.sort((a, b) => a.id - b.id);
+}
+
+async function loadOlderGroup(groupId) {
+  const msgs = state.groupMessages.get(groupId);
+  const h = state.groupHistory.get(groupId);
+  if (!msgs?.length || !h?.hasMore || h.loading) return;
+  h.loading = true;
+  renderMessages();
+  try {
+    const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${PAGE}`);
+    const have = new Set(msgs.map((m) => m.id));
+    msgs.unshift(...page.filter((m) => !have.has(m.id)));
+    h.hasMore = page.length === PAGE;
+  } catch (err) {
+    report("warn", "loading older group messages failed", { group_id: groupId, ...errorFields(err) });
+  } finally {
+    h.loading = false;
+  }
+  if (state.activeGroupId !== groupId) return;
+  const list = $("#messages");
+  const fromBottom = list.scrollHeight - list.scrollTop;
+  renderMessages();
+  list.scrollTop = list.scrollHeight - fromBottom;
+  fillGroupViewport(groupId);
+}
+
+function fillGroupViewport(groupId) {
+  const list = $("#messages");
+  if (state.activeGroupId === groupId && list.scrollHeight <= list.clientHeight + 40) loadOlderGroup(groupId);
+}
+
+async function markGroupRead(groupId) {
+  if (!groupById(groupId)?.unread) return;
+  try {
+    await api(`/groups/${groupId}/read`, { method: "POST" });
+  } catch (err) {
+    report("warn", "marking group read failed", { group_id: groupId, ...errorFields(err) });
+  }
+}
+
+function renderGroupMessages() {
+  const list = $("#messages");
+  const msgs = state.groupMessages.get(state.activeGroupId) || [];
+  const g = groupById(state.activeGroupId);
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const items = [];
+  const h = state.groupHistory.get(state.activeGroupId);
+  if (msgs.length && h) {
+    if (h.loading) items.push(el("li", { class: "msg-meta history-edge", text: "Loading earlier messages…" }));
+    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of ${g?.name ?? "the group"}, from when you joined.` }));
+  }
+  let prevSender = null;
+  for (const m of msgs) {
+    if (m.kind === "event") {
+      items.push(el("li", { class: "msg-meta group-event", text: groupEventText(m) }));
+      prevSender = null;
+      continue;
+    }
+    const mine = m.sender_id === state.me.id;
+    if (m.sender_id !== prevSender) {
+      items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : m.sender_name}  ${clockTime(m.created_at)}` }));
+      prevSender = m.sender_id;
+    }
+    items.push(el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.body }));
+  }
+  if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
+  list.replaceChildren(...items);
+  if (nearBottom || !list.dataset.scrolled) {
+    list.scrollTop = list.scrollHeight;
+    list.dataset.scrolled = "1";
+  }
+}
+
+async function sendGroupText(groupId, input, text) {
+  input.value = "";
+  try {
+    const m = await getJSON(`/groups/${groupId}/messages`, { method: "POST", json: { text } });
+    upsertGroupMessage(m);
+    if (state.activeGroupId === groupId) renderMessages();
+  } catch (err) {
+    input.value = text;
+    report("warn", "sending group text failed", { group_id: groupId, ...errorFields(err) });
+    alert(err.message);
+  }
+}
+
+// New group: a name and some friends.
+
+function friendPicker(friends, checked = new Set()) {
+  return friends.map((f) => {
+    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
+    paintAvatar(avatar, f);
+    return el("li", {},
+      el("label", { class: "person pick" },
+        el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
+        avatar,
+        el("span", { class: "person-name", text: f.username })));
+  });
+}
+
+$("#new-group-button").addEventListener("click", () => {
+  $("#new-group-form").reset();
+  $("#new-group-note").textContent = "";
+  const friends = [...state.chats].sort((a, b) => a.username.localeCompare(b.username));
+  $("#new-group-friends").replaceChildren(...friendPicker(friends));
+  if (!friends.length) $("#new-group-friends").append(el("li", { class: "muted", text: "Add some friends first." }));
+  $("#new-group-dialog").showModal();
+  $("#new-group-name").focus();
+});
+
+$("#new-group-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const memberIds = [...form.querySelectorAll("input[name=member]:checked")].map((c) => Number(c.value));
+  const btn = $("#new-group-submit");
+  btn.disabled = true;
+  try {
+    const g = await getJSON("/groups", { method: "POST", json: { name: $("#new-group-name").value, member_ids: memberIds } });
+    report("info", "group created", { group_id: g.id, members: g.members.length });
+    $("#new-group-dialog").close();
+    await refreshGroups();
+    openGroup(g.id);
+  } catch (err) {
+    $("#new-group-note").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Group info: rename, members, add, remove (owner), leave.
+
+async function openGroupInfo(groupId) {
+  let g;
+  try {
+    g = await getJSON(`/groups/${groupId}`);
+  } catch (err) {
+    if ($("#group-dialog").open) $("#group-dialog").close();
+    return;
+  }
+  state.groupDetail = g;
+  $("#group-title").textContent = g.name;
+  $("#group-sub").textContent = `${g.members.length} ${g.members.length === 1 ? "person" : "people"} · you're ${g.role === "owner" ? "the owner" : "a member"}`;
+  if (document.activeElement !== $("#rename-input")) $("#rename-input").value = g.name;
+  $("#group-members-title").textContent = `Members (${g.members.length})`;
+  $("#group-members").replaceChildren(...g.members.map((m) => {
+    const me = m.id === state.me.id;
+    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
+    paintAvatar(avatar, m);
+    const friend = !me && chatById(m.id);
+    return el("li", { class: "person" },
+      avatar,
+      friend
+        ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, m.username)
+        : el("span", { class: "person-name", text: me ? `${m.username} (you)` : m.username }),
+      m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
+      g.role === "owner" && !me
+        ? el("button", { type: "button", class: "button", onclick: () => removeFromGroup(g, m) }, "Remove")
+        : null);
+  }));
+  const inGroup = new Set(g.members.map((m) => m.id));
+  const addable = state.chats.filter((f) => !inGroup.has(f.id)).sort((a, b) => a.username.localeCompare(b.username));
+  $("#group-add-section").hidden = addable.length === 0;
+  $("#group-add").replaceChildren(...addable.map((f) => {
+    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
+    paintAvatar(avatar, f);
+    return el("li", { class: "person" }, avatar,
+      el("span", { class: "person-name", text: f.username }),
+      el("button", { type: "button", class: "button primary", onclick: () => addToGroup(g, f) }, "Add"));
+  }));
+  const leave = $("#leave-group");
+  leave.textContent = "Leave group";
+  delete leave.dataset.confirm;
+  if (!$("#group-dialog").open) {
+    $("#group-note").textContent = "";
+    $("#group-dialog").showModal();
+  }
+}
+
+async function groupAction(fn, done) {
+  $("#group-note").textContent = "";
+  try {
+    await fn();
+    if (done) $("#group-note").textContent = done;
+  } catch (err) {
+    $("#group-note").textContent = err.message;
+  }
+  if ($("#group-dialog").open && state.groupDetail) openGroupInfo(state.groupDetail.id);
+}
+
+const addToGroup = (g, f) => groupAction(
+  () => api(`/groups/${g.id}/members`, { method: "POST", json: { user_id: f.id } }), `Added ${f.username}.`);
+const removeFromGroup = (g, m) => groupAction(
+  () => api(`/groups/${g.id}/members/${m.id}`, { method: "DELETE" }), `Removed ${m.username}.`);
+
+$("#rename-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const g = state.groupDetail;
+  if (!g) return;
+  groupAction(() => api(`/groups/${g.id}`, { method: "PATCH", json: { name: $("#rename-input").value } }), "Renamed.");
+  $("#rename-input").blur();
+});
+
+// Leaving takes two taps, so it can't happen by accident.
+$("#leave-group").addEventListener("click", async () => {
+  const btn = $("#leave-group");
+  const g = state.groupDetail;
+  if (!g) return;
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again to leave";
+    return;
+  }
+  try {
+    await api(`/groups/${g.id}/members/${state.me.id}`, { method: "DELETE" });
+    report("info", "left group", { group_id: g.id });
+    $("#group-dialog").close();
+    if (state.activeGroupId === g.id) closeChat();
+    await refreshGroups();
+  } catch (err) {
+    $("#group-note").textContent = err.message;
+  }
+});
 
 // A deploy restarts the server, which drops every socket, so a reconnect is
 // the moment to notice this tab is running an older build than the server.
@@ -772,7 +1154,10 @@ $("#my-profile").addEventListener("click", () => {
   $("#friends-dialog").close();
   openProfile(state.me.id);
 });
-$("#chat-title").addEventListener("click", () => { if (state.activeId) openProfile(state.activeId); });
+$("#chat-title").addEventListener("click", () => {
+  if (state.activeId) openProfile(state.activeId);
+  else if (state.activeGroupId) openGroupInfo(state.activeGroupId);
+});
 
 // ---------- friends ----------
 
