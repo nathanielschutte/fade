@@ -110,6 +110,7 @@ pub async fn require_supported_client(
             .find(|(p, _)| *p == platform);
         if let Some((_, min)) = min {
             if version < *min {
+                tracing::info!(%platform, %version, %min, "client too old");
                 return AppError::UpgradeRequired(format!(
                     "This version of napsack is too old. Update to {min} or newer to keep using it."
                 ))

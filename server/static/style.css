@@ -477,7 +477,7 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 .admin tbody tr:last-child td { border-bottom: 0; }
 .chart-table table { margin-top: 0.5rem; }
 .foot-links { display: flex; align-items: center; gap: 1rem; }
-.admin-bar .button { color: var(--paper); }
+.admin-bar .button { color: var(--paper); white-space: nowrap; }
 .admin-bar .wordmark { white-space: nowrap; }
 @media (max-width: 520px) {
   .admin-updated { display: none; }
@@ -498,3 +498,99 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
   font-size: var(--step--1); white-space: nowrap;
 }
 .update-banner .button { min-height: 2.1rem; }
+
+/* ---------- admin: tabs and log viewer ---------- */
+
+.admin-tabs { display: flex; gap: 0.25rem; margin-left: 1rem; }
+.admin-tabs a {
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  color: var(--fixer); text-decoration: none; font-size: var(--step--1);
+}
+.admin-tabs a:hover, .admin-tabs a[aria-current="page"] { color: var(--paper); background: var(--wash); }
+.admin-view { display: grid; gap: 1rem; }
+
+.log-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+.log-controls input[type="search"], .log-controls select {
+  min-height: 2.4rem; padding: 0 0.75rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--ink); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.log-controls input[type="search"] { flex: 1 1 16rem; min-width: 0; }
+.log-controls input:focus, .log-controls select:focus { outline: none; border-color: var(--sage); }
+.log-live { display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--step--1); color: var(--fixer); }
+
+.admin table.log-table td { white-space: normal; vertical-align: top; }
+.log-table .log-time { white-space: nowrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--fixer); }
+.log-msg { overflow-wrap: anywhere; }
+.log-target { color: var(--fixer); font-size: 0.75rem; }
+.log-fields { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-top: 0.2rem; }
+.log-field { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--fixer); overflow-wrap: anywhere; }
+.log-field b { font-weight: 500; color: var(--paper); }
+
+/* The level reads from its label; color only reinforces it. */
+.log-level {
+  display: inline-block; min-width: 3.4rem; padding: 0.05rem 0.4rem;
+  border: 1px solid var(--rule); border-radius: 4px;
+  font: 600 0.7rem ui-monospace, Menlo, Consolas, monospace; text-align: center; color: var(--fixer);
+}
+.log-level-info { color: var(--sage); border-color: rgba(147, 197, 163, 0.4); }
+.log-level-warn { color: #e2c48f; border-color: rgba(226, 196, 143, 0.45); }
+.log-level-error { color: var(--danger); border-color: var(--danger); }
+tr.log-error td { background: rgba(232, 165, 152, 0.06); }
+.log-foot { display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; }
+
+@media (max-width: 520px) {
+  .admin-tabs { margin-left: 0.25rem; }
+  .log-table thead { display: none; }
+}
+
+/* ---------- profiles ---------- */
+
+.title-button {
+  border: 0; background: none; padding: 0.15rem 0.35rem; margin-left: -0.35rem;
+  border-radius: var(--radius-s); font: inherit; color: inherit; cursor: pointer;
+}
+.title-button:hover { background: var(--wash); }
+
+.profile-id { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.profile-id h2 { overflow-wrap: anywhere; }
+.profile-sub { color: var(--fixer); font-size: var(--step--1); }
+
+/* Initial on a muted tint until profile pictures exist. */
+.avatar {
+  flex: none; display: inline-grid; place-items: center;
+  width: 3.25rem; height: 3.25rem; border-radius: 50%;
+  background: #2f4a3c; color: var(--paper);
+  font-weight: 600; font-size: 1.35rem;
+}
+.avatar.small { width: 2rem; height: 2rem; font-size: 0.9rem; }
+.avatar[data-tint="1"] { background: #34505a; }
+.avatar[data-tint="2"] { background: #4a4a36; }
+.avatar[data-tint="3"] { background: #3e3a52; }
+.avatar[data-tint="4"] { background: #503a3a; }
+.avatar[data-tint="5"] { background: #2e4a4a; }
+
+.profile-stats {
+  margin: 0.5rem 0 0; padding: 0.85rem 1rem;
+  display: grid; grid-template-columns: 1fr auto; gap: 0.5rem 1rem;
+  background: var(--deep); border-radius: var(--radius-s);
+  font-size: var(--step--1);
+}
+.profile-stats:empty { display: none; }
+.profile-stats dt { color: var(--fixer); }
+.profile-stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+.person-link {
+  width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; border-radius: var(--radius-s); padding-left: 0.25rem; padding-right: 0.25rem;
+}
+.person-link:hover { background: var(--wash); }
+.person-meta { color: var(--fixer); font-size: var(--step--1); white-space: nowrap; }
+.profile-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.profile-actions:empty { display: none; }
+
+/* Top of a chat's loaded history: loading more, or the very beginning. */
+.history-edge { align-self: center; padding: 0.75rem 0; text-align: center; }
+
+/* Entries sent by apps, as opposed to the server. */
+.log-target.log-client { color: var(--sage); }

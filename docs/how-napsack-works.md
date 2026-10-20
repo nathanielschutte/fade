@@ -9,7 +9,7 @@ The exact strings and numbers here come from [`server/static/crypto.js`](../serv
 - [What happens to your password](#what-happens-to-your-password)
 - [Your keys, and where they live](#your-keys-and-where-they-live)
 - [Sending a message](#sending-a-message)
-- [Snaps](#snaps)
+- [Pics](#pics)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
 - [Limits](#limits)
 - [The admin panel](#the-admin-panel)
@@ -17,14 +17,14 @@ The exact strings and numbers here come from [`server/static/crypto.js`](../serv
 
 ## At a glance
 
-Every text and every snap is encrypted in the sender's browser and decrypted in the recipient's. The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
+Every text and every pic is encrypted in the sender's browser and decrypted in the recipient's. The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
 
 | The server knows | The server never sees |
 |---|---|
 | Usernames and who is friends with whom | What any text says |
-| When each message was sent, and whether it was a text or a snap | What any snap shows |
+| When each message was sent, and whether it was a text or a pic | What any pic shows |
 | Roughly how long each message is | Your password |
-| When texts were read and whether snaps were opened | Your private key, unwrapped |
+| When texts were read and whether pics were opened | Your private key, unwrapped |
 | Each account's public key | The key you share with each friend |
 
 ## The parts
@@ -33,7 +33,7 @@ Every text and every snap is encrypted in the sender's browser and decrypted in 
 
 **The web app** is plain JavaScript with no framework and no build step. All of the encryption lives in one file, `crypto.js`, and uses only WebCrypto, the cryptography built into every modern browser. There are no third-party crypto libraries to trust.
 
-**The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. The machine has no swap and core dumps are off, so snap bytes held in memory can't be paged or dumped to disk.
+**The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. The machine has no swap and core dumps are off, so pic bytes held in memory can't be paged or dumped to disk.
 
 ## What happens to your password
 
@@ -99,17 +99,19 @@ Here is the shape of what the server stores for the text "see you at 8":
 
 That's 40 bytes: the first 12 are the random IV, then the 12 encrypted bytes of the text, then a 16-byte authentication tag. Change a single bit and decryption fails instead of producing garbage. Send the same text again and the stored value is completely different.
 
-> **Why the "associated" string matters.** It isn't secret and isn't stored, but it is mixed into the tag. If the server tried to replay a message you sent as if your friend had sent it, or relabel a snap as a text, the recipient's browser would compute a different associated string and decryption would fail. The server can drop or delay messages. It can't forge them, read them, or move them around undetected.
+> **Why the "associated" string matters.** It isn't secret and isn't stored, but it is mixed into the tag. If the server tried to replay a message you sent as if your friend had sent it, or relabel a pic as a text, the recipient's browser would compute a different associated string and decryption would fail. The server can drop or delay messages. It can't forge them, read them, or move them around undetected.
 
-## Snaps
+## Pics
+
+Pics are called *snaps* in the code and API, so you'll see `snap` in the strings below.
 
 1. **Capture.** The front camera is mirrored, like a mirror, and the photo matches the preview.
 2. **Compress.** Redrawn as a JPEG, which drops all metadata, including GPS. Starts at 1280 px and quality 0.8, then lowers quality and shrinks until it's 200 KB or less.
 3. **Encrypt.** Same chat key, fresh IV, associated string ending in `snap/<sender>/<recipient>`.
-4. **Hold in memory.** The server keeps the ciphertext in RAM only, never on disk, up to 512 KB per snap.
+4. **Hold in memory.** The server keeps the ciphertext in RAM only, never on disk, up to 512 KB per pic.
 5. **Open once.** The first fetch by the recipient removes it from memory. A second fetch gets "gone".
 
-Unopened snaps expire after 24 hours, and a server restart drops them all. The server marks them expired so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
+Unopened pics expire after 24 hours, and a server restart drops them all. The server marks them expired so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
 
 View-once is a server promise, not a cryptographic one. The recipient's screen shows the decrypted photo for ten seconds, and nothing stops a screenshot or a second camera.
 
@@ -132,7 +134,7 @@ There's one attack the scheme above can't stop by itself: a dishonest server cou
 
 ## The admin panel
 
-Usernames on the server's admin list (`FADE_ADMINS`, set from Terraform's `admin_usernames`) can open `/admin`. It shows totals and activity (users, sign-ups, who's online, messages per day, snap open rates, server health), all computed from counts and timestamps. It can't show message content, because the server doesn't have any. Everyone else gets a "not found".
+Usernames on the server's admin list (`FADE_ADMINS`, set from Terraform's `admin_usernames`) can open `/admin`. It shows totals and activity (users, sign-ups, who's online, messages per day, pic open rates, server health), all computed from counts and timestamps. It can't show message content, because the server doesn't have any. Everyone else gets a "not found".
 
 ## Glossary
 

@@ -197,6 +197,14 @@ resource "aws_iam_role_policy" "instance" {
         Action   = ["ssm:GetParameter"]
         Resource = aws_ssm_parameter.env.arn
       },
+      {
+        # Add backups only: no delete, no read, no listing. Keys are unique per
+        # run, and versioning keeps any object that does get overwritten.
+        Sid      = "WriteBackups"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.backups.arn}/db/*"
+      },
     ]
   })
 }
@@ -277,6 +285,7 @@ resource "aws_instance" "app" {
     acme_email    = var.acme_email
     volume_serial = replace(aws_ebs_volume.data.id, "-", "")
     caddy_version = var.caddy_version
+    backup_bucket = aws_s3_bucket.backups.id
   })
   user_data_replace_on_change = true
 

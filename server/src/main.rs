@@ -4,6 +4,8 @@ mod chats;
 mod db;
 mod error;
 mod friends;
+mod logs;
+mod profiles;
 mod snaps;
 mod version;
 mod web;
@@ -19,8 +21,8 @@ use axum::{
     Router,
 };
 use sqlx::SqlitePool;
-use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
-use tracing_subscriber::EnvFilter;
+use tower_http::set_header::SetResponseHeaderLayer;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 /// Runtime configuration, all from environment variables so systemd/Terraform can own it.
 pub struct Config {
@@ -36,6 +38,8 @@ pub struct Config {
     pub session_days: i64,
     /// Lowercased usernames allowed into the admin panel.
     pub admins: Vec<String>,
+    /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/BACKUPS.md).
+    pub backup_status_path: String,
     /// Oldest native client version still allowed, per platform. See version.rs.
     pub min_client_versions: Vec<(String, version::Semver)>,
 }
@@ -69,6 +73,10 @@ impl Config {
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            backup_status_path: env_or(
+                "FADE_BACKUP_STATUS",
+                "/var/lib/fade/backups/last.json".to_string(),
+            )?,
             min_client_versions: version::parse_min_versions(
                 &std::env::var("FADE_MIN_CLIENT_VERSIONS").unwrap_or_default(),
             )
@@ -88,17 +96,26 @@ pub struct AppState {
     pub snaps: snaps::SnapStore,
     pub config: Config,
     pub started_at: std::time::Instant,
+    /// Recent log entries for the admin log viewer.
+    pub logs: Arc<logs::LogBuffer>,
+    pub client_log_limit: logs::ClientRateLimit,
 }
 
 pub type SharedState = Arc<AppState>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fade_server=info,tower_http=info".into()),
-        )
+    // Two destinations with separate filters: stdout (the system journal) at
+    // RUST_LOG, info by default; the admin viewer's buffer at FADE_LOG_BUFFER,
+    // debug by default, so the viewer is verbose without flooding the journal.
+    let log_buffer = Arc::new(logs::LogBuffer::new(logs::DEFAULT_CAPACITY));
+    let journal_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| "fade_server=info".into());
+    let buffer_filter =
+        EnvFilter::try_from_env("FADE_LOG_BUFFER").unwrap_or_else(|_| "fade_server=debug".into());
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(journal_filter))
+        .with(logs::BufferLayer(log_buffer.clone()).with_filter(buffer_filter))
         .init();
 
     let config = Config::from_env()?;
@@ -108,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     // pending from a previous run is gone. Make the DB agree.
     let orphaned = db::expire_orphaned_snaps(&db).await?;
     if orphaned > 0 {
-        tracing::info!(orphaned, "marked snaps from previous run as expired");
+        tracing::info!(orphaned, "marked pics from previous run as expired");
     }
 
     if config.admins.is_empty() {
@@ -121,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
         snaps: snaps::SnapStore::new(config.snap_pool_bytes, config.snap_ttl),
         config,
         started_at: std::time::Instant::now(),
+        logs: log_buffer,
+        client_log_limit: logs::ClientRateLimit::default(),
     });
 
     snaps::spawn_sweeper(state.clone());
@@ -150,6 +169,7 @@ fn router(state: SharedState) -> Router {
         .route("/me", get(auth::me))
         .route("/friends", get(friends::list_chats))
         .route("/friends/{user_id}", delete(friends::remove))
+        .route("/users/{user_id}/profile", get(profiles::get))
         .route(
             "/friends/requests",
             get(friends::list_requests).post(friends::send_request),
@@ -170,6 +190,11 @@ fn router(state: SharedState) -> Router {
         )
         .route("/snaps/{id}", get(snaps::view))
         .route("/admin/stats", get(admin::stats))
+        .route("/admin/logs", get(logs::list))
+        .route(
+            "/logs",
+            post(logs::ingest).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/ws", get(ws::handler))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -188,8 +213,48 @@ fn router(state: SharedState) -> Router {
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
         ))
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(log_request))
         .with_state(state)
+}
+
+/// One line per request. Logs the route template (`/api/chats/{friend_id}/messages`)
+/// and the real path, never the query string, headers, or body.
+async fn log_request(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let started = std::time::Instant::now();
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_else(|| "(unmatched)".to_owned());
+    let client = req
+        .headers()
+        .get(version::CLIENT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("web")
+        .to_owned();
+    let response = next.run(req).await;
+    let status = response.status().as_u16();
+    // The log viewer polls every few seconds; logging its own polls would bury everything else.
+    if route == "/api/admin/logs" && status < 500 {
+        return response;
+    }
+    let ms = started.elapsed().as_millis() as u64;
+    macro_rules! log {
+        ($lvl:ident) => {
+            tracing::$lvl!(target: "fade_server::http", %method, %route, %path, status, ms, %client, "request")
+        };
+    }
+    match status {
+        500.. => log!(error),
+        400..=499 => log!(info),
+        _ => log!(debug),
+    }
+    response
 }
 
 async fn shutdown_signal() {

@@ -24,7 +24,7 @@ async def launch(pw, **kw):
     return await pw.chromium.launch(**kw)
 
 
-async def shot(page, name):
+async def shot(page, name, full_page=True):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
-        await page.screenshot(path=os.path.join(SHOTS, f"{name}.png"), full_page=True)
+        await page.screenshot(path=os.path.join(SHOTS, f"{name}.png"), full_page=full_page)

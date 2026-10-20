@@ -38,7 +38,7 @@ impl FromRequestParts<SharedState> for AuthUser {
     }
 }
 
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(AUTHORIZATION)?
         .to_str()
@@ -180,6 +180,7 @@ pub async fn register(
     if let Some(expected) = &state.config.invite_code {
         let given = req.invite_code.as_deref().unwrap_or("").trim();
         if !same_secret(given, expected) {
+            tracing::info!(username = %req.username.trim(), "sign-up rejected: wrong invite code");
             return Err(AppError::bad("That invite code isn't valid."));
         }
     }
@@ -222,12 +223,14 @@ pub async fn register(
     let user = match inserted {
         Ok(u) => u,
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
-            return Err(AppError::Conflict("That username is taken.".into()))
+            tracing::debug!(%username, "sign-up rejected: username taken");
+            return Err(AppError::Conflict("That username is taken.".into()));
         }
         Err(e) => return Err(e.into()),
     };
 
     let token = create_session(&state, user.id).await?;
+    tracing::info!(user_id = user.id, username = %user.username, "account created");
     Ok(Json(SessionResponse {
         token,
         user: Me::new(&state, user),
@@ -250,7 +253,10 @@ pub async fn login(
     .bind(req.username.trim())
     .fetch_optional(&state.db)
     .await?;
-    let (id, username, stored, public_key, wrapped_private_key) = row.ok_or_else(bad_login)?;
+    let Some((id, username, stored, public_key, wrapped_private_key)) = row else {
+        tracing::info!(username = %req.username.trim(), "sign-in failed: no such user");
+        return Err(bad_login());
+    };
 
     let auth_key = req.auth_key;
     let valid = tokio::task::spawn_blocking(move || {
@@ -265,11 +271,13 @@ pub async fn login(
     .await?;
 
     if !valid {
+        tracing::info!(user_id = id, %username, "sign-in failed: wrong password");
         return Err(bad_login());
     }
 
     // The wrapped key is only useful with the password, which the server never sees.
     let token = create_session(&state, id).await?;
+    tracing::info!(user_id = id, %username, "signed in");
     Ok(Json(SessionResponse {
         token,
         user: Me::new(&state, UserPublic { id, username }),
@@ -283,10 +291,12 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> AppResult<Json<serde_json::Value>> {
     if let Some(token) = bearer_token(&headers) {
-        sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
+        let ended = sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
             .bind(hash_token(token))
             .execute(&state.db)
-            .await?;
+            .await?
+            .rows_affected();
+        tracing::debug!(ended, "signed out");
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -92,6 +92,13 @@ pub async fn send_text(
     .fetch_one(&state.db)
     .await?;
 
+    tracing::debug!(
+        message_id = message.id,
+        from = me.id,
+        to = friend_id,
+        bytes = req.ciphertext.len(),
+        "text sent"
+    );
     state.hub.send_both(
         me.id,
         friend_id,

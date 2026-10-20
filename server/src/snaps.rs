@@ -150,7 +150,7 @@ pub async fn upload(
     version::check_format(params.format)?;
 
     if body.len() < MIN_SNAP_BYTES {
-        return Err(AppError::bad("That snap wasn't encrypted correctly."));
+        return Err(AppError::bad("That pic wasn't encrypted correctly."));
     }
     if body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
@@ -161,6 +161,9 @@ pub async fn upload(
         ));
     }
 
+    // The row and the bytes go in together: if the memory pool fills up between
+    // the check above and here, the transaction rolls back and nothing is kept.
+    let mut tx = state.db.begin().await?;
     let message = sqlx::query_as::<_, Message>(&format!(
         "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, created_at)
          VALUES (?, ?, 'snap', ?, 'pending', ?) RETURNING {MESSAGE_COLS}"
@@ -169,8 +172,9 @@ pub async fn upload(
     .bind(friend_id)
     .bind(params.format)
     .bind(now())
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
+    let bytes = body.len();
 
     let stored = state.snaps.put(
         message.id,
@@ -182,14 +186,29 @@ pub async fn upload(
         },
     );
     if !stored {
-        sqlx::query("DELETE FROM messages WHERE id = ?")
-            .bind(message.id)
-            .execute(&state.db)
-            .await?;
+        tx.rollback().await?;
+        tracing::warn!(
+            from = me.id,
+            to = friend_id,
+            bytes,
+            "pic rejected: memory pool full"
+        );
         return Err(AppError::Unavailable(
-            "The server is holding too many unopened snaps. Try again later.".into(),
+            "The server is holding too many unopened pics. Try again later.".into(),
         ));
     }
+    if let Err(e) = tx.commit().await {
+        // Don't hold bytes for a message that doesn't exist.
+        state.snaps.take(message.id, friend_id);
+        return Err(e.into());
+    }
+    tracing::info!(
+        message_id = message.id,
+        from = me.id,
+        to = friend_id,
+        bytes,
+        "pic sent"
+    );
 
     state.hub.send_both(
         me.id,
@@ -226,6 +245,7 @@ pub async fn view(
 ) -> AppResult<Response> {
     match state.snaps.take(id, me.id) {
         Take::Found { data, sender_id } => {
+            tracing::info!(message_id = id, from = sender_id, to = me.id, "pic opened");
             if let Some(message) = set_snap_state(&state, id, "opened").await? {
                 state
                     .hub
@@ -244,6 +264,7 @@ pub async fn view(
             Ok((headers, data).into_response())
         }
         Take::Missing => {
+            tracing::debug!(message_id = id, user_id = me.id, "pic not available");
             // Only reveal anything to the actual recipient.
             let msg = db::get_message(&state.db, id).await?;
             match msg {
@@ -258,10 +279,10 @@ pub async fn view(
                         }
                     }
                     Err(AppError::Gone(
-                        "This snap was already opened or has expired.".into(),
+                        "This pic was already opened or has expired.".into(),
                     ))
                 }
-                _ => Err(AppError::not_found("Snap not found.")),
+                _ => Err(AppError::not_found("Pic not found.")),
             }
         }
     }
@@ -273,7 +294,11 @@ pub fn spawn_sweeper(state: SharedState) {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         loop {
             tick.tick().await;
-            for (id, sender, recipient) in state.snaps.sweep() {
+            let expired = state.snaps.sweep();
+            if !expired.is_empty() {
+                tracing::info!(count = expired.len(), "pics expired unopened");
+            }
+            for (id, sender, recipient) in expired {
                 match set_snap_state(&state, id, "expired").await {
                     Ok(Some(message)) => {
                         state
@@ -281,7 +306,7 @@ pub fn spawn_sweeper(state: SharedState) {
                             .send_both(sender, recipient, &Event::MessageUpdated { message })
                     }
                     Ok(None) => {}
-                    Err(e) => tracing::warn!(?e, id, "failed to mark snap expired"),
+                    Err(e) => tracing::warn!(?e, id, "failed to mark pic expired"),
                 }
             }
             if let Err(e) = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")

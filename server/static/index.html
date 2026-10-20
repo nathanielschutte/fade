@@ -62,7 +62,7 @@
         <button type="button" class="icon-button back" id="back-button" aria-label="Back to chats">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
         </button>
-        <h2 class="chat-title" id="chat-title"></h2>
+        <h2 class="chat-title"><button type="button" class="title-button" id="chat-title" aria-label="View profile"></button></h2>
         <button type="button" class="lock-button" id="safety-button" aria-label="Encryption and safety code">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
           <span>Encrypted</span>
@@ -74,7 +74,7 @@
       </p>
       <ol class="messages" id="messages" aria-live="polite"></ol>
       <form class="composer" id="composer">
-        <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a snap">
+        <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a pic">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
         </button>
         <input id="composer-input" placeholder="Message" maxlength="2000" autocomplete="off" aria-label="Message">
@@ -111,10 +111,34 @@
   <footer class="sheet-foot">
     <span id="signed-in-as"></span>
     <span class="foot-links">
+      <button type="button" class="link" id="my-profile">Your profile</button>
       <a class="link" id="admin-link" href="/admin" hidden>Admin</a>
       <button type="button" class="link" id="sign-out">Sign out</button>
     </span>
   </footer>
+</dialog>
+
+<!-- Profile: yours, or a friend's -->
+<dialog id="profile-dialog" class="sheet profile" aria-labelledby="profile-name">
+  <header class="sheet-head">
+    <div class="profile-id">
+      <span class="avatar" id="profile-avatar" aria-hidden="true"></span>
+      <div>
+        <h2 id="profile-name"></h2>
+        <p class="profile-sub" id="profile-sub"></p>
+      </div>
+    </div>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="form-note" id="profile-message" role="status" hidden></p>
+  <dl class="profile-stats" id="profile-stats"></dl>
+  <section id="profile-people-section" hidden>
+    <h3 id="profile-people-title"></h3>
+    <ul class="people" id="profile-people"></ul>
+  </section>
+  <footer class="profile-actions" id="profile-actions"></footer>
 </dialog>
 
 <!-- Safety code -->
@@ -125,16 +149,16 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
   </header>
-  <p class="sheet-text">Messages and snaps with <span id="safety-name"></span> are encrypted on your device. Only the two of you can read them, not even the napsack server.</p>
+  <p class="sheet-text">Messages and pics with <span id="safety-name"></span> are encrypted on your device. Only the two of you can read them, not even the napsack server.</p>
   <p class="sheet-text">To be sure no one is in the middle, check that <span id="safety-name-2"></span> sees the same code:</p>
   <p class="safety-code" id="safety-code"></p>
 </dialog>
 
 <!-- Camera -->
-<dialog id="camera-dialog" class="camera" aria-label="Take a snap">
+<dialog id="camera-dialog" class="camera" aria-label="Take a pic">
   <div class="camera-stage">
     <video id="camera-video" playsinline muted autoplay></video>
-    <img id="camera-preview" alt="Your snap" hidden>
+    <img id="camera-preview" alt="Your pic" hidden>
     <p class="camera-message" id="camera-message" hidden></p>
   </div>
   <div class="camera-controls" id="capture-controls">
@@ -158,9 +182,9 @@
   </div>
 </dialog>
 
-<!-- Snap viewer -->
-<div id="viewer" class="viewer" hidden role="dialog" aria-label="Snap">
-  <img id="viewer-image" alt="Snap" draggable="false">
+<!-- Pic viewer -->
+<div id="viewer" class="viewer" hidden role="dialog" aria-label="Pic">
+  <img id="viewer-image" alt="Pic" draggable="false">
   <div class="viewer-tint" aria-hidden="true"></div>
   <div class="viewer-timer" aria-hidden="true"><span id="viewer-bar"></span></div>
   <p class="viewer-from" id="viewer-from"></p>

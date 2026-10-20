@@ -12,23 +12,28 @@
 
 <header class="bar admin-bar">
   <span class="wordmark small">napsack <span class="admin-tag">admin</span></span>
+  <nav class="admin-tabs" aria-label="Admin sections">
+    <a href="#overview" id="tab-overview" aria-current="page">Overview</a>
+    <a href="#logs" id="tab-logs">Logs</a>
+  </nav>
   <span class="admin-updated" id="updated"></span>
-  <a class="button" href="/">Back to chats</a>
+  <a class="button" href="/">Chats</a>
 </header>
 
 <main class="admin" id="admin" hidden>
+<div class="admin-view" id="view-overview">
   <section class="tiles" aria-label="Summary">
     <div class="tile"><span class="tile-label">Users</span><span class="tile-value" id="t-users"></span><span class="tile-sub" id="t-users-sub"></span></div>
     <div class="tile"><span class="tile-label">Active today</span><span class="tile-value" id="t-active"></span><span class="tile-sub" id="t-active-sub"></span></div>
     <div class="tile"><span class="tile-label">Online now</span><span class="tile-value" id="t-online"></span><span class="tile-sub" id="t-online-sub"></span></div>
     <div class="tile"><span class="tile-label">Texts</span><span class="tile-value" id="t-texts"></span><span class="tile-sub" id="t-texts-sub"></span></div>
-    <div class="tile"><span class="tile-label">Snaps</span><span class="tile-value" id="t-snaps"></span><span class="tile-sub" id="t-snaps-sub"></span></div>
+    <div class="tile"><span class="tile-label">Pics</span><span class="tile-value" id="t-snaps"></span><span class="tile-sub" id="t-snaps-sub"></span></div>
   </section>
 
   <section class="panel" aria-labelledby="chart-title">
     <header class="panel-head">
       <h2 id="chart-title">Messages per day</h2>
-      <span class="panel-note">Last 14 days, UTC. Texts and snaps combined.</span>
+      <span class="panel-note">Last 14 days, UTC. Texts and pics combined.</span>
     </header>
     <div class="chart" id="chart" role="img" aria-describedby="chart-table-wrap"></div>
     <details class="chart-table" id="chart-table-wrap">
@@ -39,7 +44,7 @@
 
   <div class="panel-row">
     <section class="panel" aria-labelledby="snaps-title">
-      <header class="panel-head"><h2 id="snaps-title">Snaps</h2></header>
+      <header class="panel-head"><h2 id="snaps-title">Pics</h2></header>
       <dl class="facts" id="snap-facts"></dl>
     </section>
     <section class="panel" aria-labelledby="social-title">
@@ -59,11 +64,46 @@
     </header>
     <div class="table-scroll">
       <table class="users-table">
-        <thead><tr><th>Username</th><th>Joined</th><th>Last seen</th><th class="num">Friends</th><th class="num">Texts sent</th><th class="num">Snaps sent</th></tr></thead>
+        <thead><tr><th>Username</th><th>Joined</th><th>Last seen</th><th class="num">Friends</th><th class="num">Texts sent</th><th class="num">Pics sent</th></tr></thead>
         <tbody id="users"></tbody>
       </table>
     </div>
   </section>
+</div>
+
+<div class="admin-view" id="view-logs" hidden>
+  <section class="panel logs-panel" aria-labelledby="logs-title">
+    <header class="panel-head">
+      <h2 id="logs-title">Logs</h2>
+      <span class="panel-note" id="logs-note"></span>
+    </header>
+    <form class="log-controls" id="log-controls" role="search">
+      <input type="search" id="log-q" placeholder="Search messages and fields, e.g. user_id=7" aria-label="Search logs" autocomplete="off">
+      <select id="log-source" aria-label="Source">
+        <option value="">Server and apps</option>
+        <option value="server">Server only</option>
+        <option value="client">Apps only</option>
+      </select>
+      <select id="log-level" aria-label="Minimum level">
+        <option value="">All levels</option>
+        <option value="info" selected>Info and up</option>
+        <option value="warn">Warnings and errors</option>
+        <option value="error">Errors only</option>
+      </select>
+      <label class="log-live"><input type="checkbox" id="log-live" checked> Live</label>
+    </form>
+    <div class="table-scroll">
+      <table class="log-table">
+        <thead><tr><th>Time</th><th>Level</th><th>Event</th></tr></thead>
+        <tbody id="log-rows"></tbody>
+      </table>
+    </div>
+    <div class="log-foot">
+      <button type="button" class="button" id="log-older" hidden>Load older</button>
+      <span class="panel-note" id="log-count"></span>
+    </div>
+  </section>
+</div>
 </main>
 
 <p class="admin-message" id="message">Loading…</p>

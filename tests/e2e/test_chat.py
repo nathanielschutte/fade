@@ -158,6 +158,15 @@ async def main():
         await a.click("#send-snap")
         await expect(a.locator("#camera-dialog")).not_to_be_visible(timeout=10000)
         print("snap upload sizes (encrypted bytes):", snap_uploads)
+
+        # The UI says "pic", never "snap" (the internal name).
+        await expect(b.locator("button.snap-chip").first).to_contain_text("Tap to view pic", timeout=10000)
+        await expect(a.locator(".chat-item .chat-status")).to_contain_text("Sent a pic")
+        for p in (a, b):
+            visible = await p.evaluate("""() => [document.body.innerText,
+                ...[...document.querySelectorAll('[aria-label],[alt],[title],[placeholder]')].flatMap(e =>
+                    ['aria-label', 'alt', 'title', 'placeholder'].map(k => e.getAttribute(k) || ''))].join(' ')""")
+            assert "snap" not in visible.lower(), [w for w in visible.split() if "snap" in w.lower()]
         assert len(snap_uploads) == 2 and all(n <= 200 * 1024 + 28 for n in snap_uploads), snap_uploads
 
         # Sam opens both: decrypts and shows the image, then it's gone.

@@ -54,3 +54,7 @@ output "shell" {
   description = "Open a shell on the box (needs the Session Manager plugin)."
   value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.app.id}"
 }
+
+output "backups_bucket" {
+  value = aws_s3_bucket.backups.id
+}

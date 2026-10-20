@@ -181,6 +181,31 @@ pub mod tests {
         m.run(&db).await.unwrap();
     }
 
+    /// `sqlx::migrate!` copies migrations into the binary at compile time, and
+    /// cargo doesn't notice a new or deleted file. This fails if the copy is
+    /// stale; `touch src/db.rs` and rebuild. (deploy.sh does that before
+    /// every release build.)
+    #[test]
+    fn embedded_migrations_match_the_files() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut on_disk: Vec<i64> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().to_string_lossy().to_string();
+                name.strip_suffix(".sql")?.split('_').next()?.parse().ok()
+            })
+            .collect();
+        on_disk.sort();
+        let embedded: Vec<i64> = sqlx::migrate!("./migrations")
+            .iter()
+            .map(|m| m.version)
+            .collect();
+        assert_eq!(
+            embedded, on_disk,
+            "stale embedded migrations: touch src/db.rs and rebuild"
+        );
+    }
+
     #[test]
     fn pairs_are_ordered() {
         assert_eq!(pair(5, 2), (2, 5));

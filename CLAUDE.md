@@ -6,6 +6,8 @@ How we work on napsack. This file is iterative: when we settle a new rule or pat
 
 napsack is a small private messenger: texts and view-once pictures between friends, end-to-end encrypted. `fade` is the internal name (binary, systemd unit, `FADE_*` env vars, AWS resources); `napsack` is what people see. Never rename the internals just to match.
 
+Same for pictures: people see **pic** ("Tap to view pic", "Pics sent"); the code, API, database, and encryption strings say `snap` (`snap_state`, `/api/snaps`, `napsack/v1/snap/...`). Never show "snap" in the UI (`tests/e2e/test_chat.py` checks), and never rename the internal `snap` identifiers.
+
 - `server/`: Rust (axum + SQLite). Serves the API and the web client, which is compiled into the binary.
 - `server/static/`: web client. Plain HTML/CSS/ES modules, no build step, no framework. `crypto.js` is the whole encryption scheme.
 - `infra/`: Terraform for AWS (one EC2 instance, Caddy, a separate EBS data volume).
@@ -46,7 +48,7 @@ Every account, friendship, message, and the data volume that holds them must sur
 ## How every change is tested
 
 1. **Unit tests for new logic.** Rust: a `#[cfg(test)] mod tests` in the same file. Anything touching the database uses `db::tests::temp_db()`, a fresh migrated SQLite file. Web crypto: `tests/e2e/test_crypto_vectors.py`. Bug fixes get a test that fails without the fix.
-2. **Run everything locally:** `scripts/test.sh`. It builds the server, starts it on a throwaway database, and runs unit tests, the independent crypto vector check, the API smoke test, and the browser tests (Playwright driving real Chrome). `--no-browser` skips the last part.
+2. **Run everything locally:** `bash scripts/test.sh` **in WSL**. It builds the server, starts it on a throwaway database, and runs unit tests, the independent crypto vector check, the API smoke test, and the browser tests (Playwright driving Chromium). `--no-browser` skips the last part. It can't run natively on Windows here; see Environment notes.
 3. **Look at it.** For anything a person sees, drive the change in a browser against the local server (`tests/e2e/` shows how) and look at screenshots at desktop and phone width (390px). Tests prove behavior; screenshots catch layout.
 4. **CI must pass** before anything ships: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `scripts/test.sh`, `terraform fmt -check`, `terraform validate`. Run fmt and clippy locally first.
 5. **Keep tests with the code.** New browser tests go in `tests/e2e/test_*.py` using `common.py`. New API behavior gets a check in `tests/smoke_test.py`.
@@ -73,8 +75,20 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 - Encryption: anything in `crypto.js` that changes bytes on the wire is a new message format, never an edit to format 1. The pinned vectors in `tests/vectors/format1.json` are never regenerated. If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.
 - Never log, print, or commit secrets: tokens, auth keys, invite codes, `terraform.tfvars`, saved plans, or anything decrypted. The server never has plaintext, and logs and the admin panel show counts and events only.
 
+## Logging and debugging
+
+- When something's wrong, start at `/admin#logs` (search, level filter, live tail). It holds the last 20,000 entries since the server started. Older history: `scripts/ssh.sh "sudo journalctl -u fade --since '1 hour ago'"`.
+- Log with `tracing` and structured fields: `tracing::info!(user_id = me.id, friend_id, "friend request accepted")`. Short lowercase messages, and ids as fields so they're searchable (`user_id=7`).
+- Levels: `error` for something broken that needs fixing, `warn` for something degraded (pool full), `info` for meaningful events (sign-ups, sign-ins, friendships, pics, rejected requests), `debug` for routine detail (each request, texts, sockets). The journal gets info and up; the viewer gets debug and up.
+- Never log message content, ciphertext, keys, tokens, invite codes, passwords, or request bodies and query strings. `tests/e2e/test_admin.py` checks the logs for these.
+- New features log their important events, and a user-visible failure always leaves a log line explaining it.
+- Clients report too. In the web app, call `report(level, message, fields)` (it batches to `POST /api/logs`); the iOS app will do the same. These show in the viewer as "web app" / "ios app" (Source filter). The same never-log list applies, and the server redacts fields named like content or secrets as a backstop. Don't rely on that.
+
 ## Environment notes
 
+- **Windows Smart App Control is on** and blocks freshly compiled executables, so `cargo build`, `cargo test`, and the local server only work in WSL. Leave it on; it can't be re-enabled without reinstalling Windows.
+- **WSL test setup** (once): `python3 -m venv ~/.venvs/napsack-tests && ~/.venvs/napsack-tests/bin/pip install -r tests/requirements.txt && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ~/.venvs/napsack-tests/bin/python -m playwright install chromium`, plus `sudo apt-get install -y libnspr4 libnss3 libasound2t64` (needs the user's password). `scripts/test.sh` finds the venv and Chromium on its own.
+- **Until those libraries are installed,** run the server in WSL and the browser tests from Windows: start it in WSL with the same `FADE_*` settings `scripts/test.sh` uses, bound to `127.0.0.1:<port>` (WSL forwards it to Windows' `localhost`), then from `tests/e2e/` run each `test_*.py` with Windows Python, `NAPSACK_URL=http://localhost:<port>`, and the other `NAPSACK_*` variables from `common.py`.
 - Development is on Windows with WSL. Terraform state is the local file in `infra/`, shared by both. Terraform, `scripts/ssh.sh`, and `scripts/rollback.sh` work from Git Bash or WSL. `scripts/deploy.sh` needs WSL, because zig lives there. `scripts/test.sh` runs in either.
 - Both machines' SSH keys are listed in `ssh_public_keys` (tfvars), and the boot script authorizes all of them. Add a key there for any new machine. Don't rely on `ssh_public_key_path`, which installs only whichever key is on the machine running terraform.
 - From Git Bash, call WSL as `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -lc '...'`. Without the env var, Git Bash rewrites `/mnt/...` paths, and without `-l`, cargo isn't on PATH. For anything with nested quotes, write a script file and run that.

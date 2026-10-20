@@ -80,6 +80,15 @@ async fn daily(db: &SqlitePool, at: i64) -> sqlx::Result<Vec<Day>> {
         .collect())
 }
 
+/// The backup job's last result, or null if it hasn't run (or this isn't production).
+fn backup_status(path: &str) -> Value {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(Value::is_object)
+        .unwrap_or(Value::Null)
+}
+
 pub async fn stats(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
@@ -148,6 +157,7 @@ pub async fn stats(
             "snap_pool_bytes": snap_pool,
             "snap_ttl_hours": state.config.snap_ttl.as_secs() / 3600,
             "invite_required": state.config.invite_code.is_some(),
+            "backup": backup_status(&state.config.backup_status_path),
         },
     })))
 }
@@ -156,6 +166,18 @@ pub async fn stats(
 mod tests {
     use super::*;
     use crate::db::tests::temp_db;
+
+    #[test]
+    fn backup_status_reads_the_job_file() {
+        let path = std::env::temp_dir().join(format!("fade-backup-{}.json", rand::random::<u64>()));
+        let p = path.to_str().unwrap();
+        assert!(backup_status(p).is_null()); // never ran
+        std::fs::write(&path, r#"{"ok": true, "at": 5, "bytes": 10}"#).unwrap();
+        assert_eq!(backup_status(p)["bytes"], 10);
+        std::fs::write(&path, "half a write").unwrap();
+        assert!(backup_status(p).is_null());
+        std::fs::remove_file(&path).unwrap();
+    }
 
     #[tokio::test]
     async fn daily_counts_are_zero_filled_and_bucketed_by_utc_day() {

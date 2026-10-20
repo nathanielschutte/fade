@@ -203,9 +203,103 @@ MemorySwapMax=0
 WantedBy=multi-user.target
 UNIT
 
+# ---------- database backups ----------
+# Hourly consistent copy of the database to S3, kept forever (docs/BACKUPS.md).
+# The status file is on the data volume; the admin panel shows it.
+install -d -o "$APP" -g "$APP" -m 0750 "$DATA/backups"
+cat > /usr/local/bin/$APP-backup <<'SCRIPT'
+#!/usr/bin/env python3
+"""Copies the napsack database to S3 without stopping the app. Never deletes anything."""
+import datetime, gzip, json, os, shutil, sqlite3, subprocess, sys, tempfile, time
+
+DB = "/var/lib/${app_name}/db/fade.db"
+STATUS = "/var/lib/${app_name}/backups/last.json"
+BUCKET = "${backup_bucket}"
+REGION = "${region}"
+TABLES = ("users", "friendships", "friend_requests", "messages")
+
+
+def write_status(status):
+    tmp = STATUS + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(status, f)
+    os.replace(tmp, STATUS)
+
+
+def main():
+    started = time.time()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    key = now.strftime("db/%Y/%m/%d/fade-%Y%m%dT%H%M%SZ.db.gz")
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = os.path.join(tmp, "fade.db")
+        src = sqlite3.connect("file:" + DB + "?mode=ro", uri=True)
+        dst = sqlite3.connect(copy)
+        src.backup(dst)  # consistent snapshot while the app keeps running
+        src.close()
+        check = dst.execute("PRAGMA integrity_check").fetchone()[0]
+        counts = {t: dst.execute("SELECT COUNT(*) FROM " + t).fetchone()[0] for t in TABLES}
+        dst.close()
+        if check != "ok":
+            raise RuntimeError("integrity check failed: " + check)
+        packed = copy + ".gz"
+        with open(copy, "rb") as f, gzip.open(packed, "wb") as g:
+            shutil.copyfileobj(f, g)
+        size = os.path.getsize(packed)
+        subprocess.run(
+            ["aws", "s3", "cp", packed, "s3://" + BUCKET + "/" + key,
+             "--region", REGION, "--only-show-errors"],
+            check=True,
+        )
+    write_status({"ok": True, "at": int(now.timestamp()), "key": key, "bytes": size,
+                  "counts": counts, "secs": round(time.time() - started, 2)})
+    print("backed up " + key + " (" + str(size) + " bytes) " + json.dumps(counts))
+
+
+try:
+    main()
+except Exception as e:
+    write_status({"ok": False, "at": int(time.time()), "error": str(e)[:300]})
+    print("backup failed: " + str(e), file=sys.stderr)
+    sys.exit(1)
+SCRIPT
+chmod 0755 /usr/local/bin/$APP-backup
+
+cat > /etc/systemd/system/$APP-backup.service <<UNIT
+[Unit]
+Description=$APP database backup to S3
+RequiresMountsFor=$DATA
+
+[Service]
+Type=oneshot
+User=$APP
+Group=$APP
+Environment=HOME=$DATA/backups
+ExecStart=/usr/local/bin/$APP-backup
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Read-only connection, but SQLite needs to touch the WAL index files.
+ReadWritePaths=$DATA/db $DATA/backups
+UNIT
+
+cat > /etc/systemd/system/$APP-backup.timer <<UNIT
+[Unit]
+Description=Hourly $APP database backup
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
 systemctl enable --now caddy
 systemctl enable $APP
+systemctl enable --now $APP-backup.timer
 
 # If a build was already uploaded (e.g. instance replaced), start it now.
 # Otherwise the first scripts/deploy.sh will.

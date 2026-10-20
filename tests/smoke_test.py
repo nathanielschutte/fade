@@ -75,6 +75,15 @@ async def main():
     rb = ok(register(f"sam_{tag}")).json()
     a, b, b_tok = ra["user"], rb["user"], rb["token"]
     check_versions(b_tok)
+    ok(call("GET", "/admin/logs", b_tok), 404)   # not an admin
+    ok(call("GET", "/admin/logs"), 401)
+    # Client diagnostics: accepted signed in or not, size-capped, rate-limited per user.
+    entry = {"level": "info", "message": "smoke", "fields": {"status": 1}}
+    assert call("POST", "/logs", json={"entries": [entry]}).status_code == 204
+    assert call("POST", "/logs", b_tok, json={"entries": [entry]}).status_code == 204
+    ok(call("POST", "/logs", b_tok, json={"entries": [entry] * 51}), 400)
+    for _ in range(7):
+        assert call("POST", "/logs", b_tok, json={"entries": [entry] * 50}).status_code == 204  # over the cap: dropped quietly
     ok(register(f"ALEX_{tag}"), 409)
 
     # Sign-in uses the derived auth key and hands back the wrapped private key unchanged.
@@ -91,7 +100,9 @@ async def main():
     await asyncio.wait_for(asyncio.gather(b_ready.wait(), a_ready.wait()), 5)
 
     ct = b64(os.urandom(12 + 16 + 20))
-    # Not friends yet: messaging is refused.
+    # Not friends yet: messaging and profiles are refused.
+    ok(call("GET", f"/users/{b['id']}/profile", a_tok), 404)
+    ok(call("GET", "/users/999999/profile", a_tok), 404)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct}), 404)
 
     assert ok(call("POST", "/friends/requests", a_tok, json={"username": b["username"]})).json()["status"] == "requested"
@@ -123,6 +134,15 @@ async def main():
     r = ok(call("GET", f"/snaps/{snap['id']}", b_tok))
     assert r.content == SNAP and "no-store" in r.headers["Cache-Control"]
     ok(call("GET", f"/snaps/{snap['id']}", b_tok), 410)          # second view: gone
+
+    # Profiles: your own has your counts and friends; a friend's has what you share.
+    mine = ok(call("GET", f"/users/{a['id']}/profile", a_tok)).json()
+    assert mine["kind"] == "me" and [f["id"] for f in mine["friends"]] == [b["id"]], mine
+    assert mine["stats"] == {"texts_sent": 1, "texts_received": 0, "pics_sent": 1, "pics_received": 0, "pics_opened": 1}, mine["stats"]
+    theirs = ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()
+    assert theirs["kind"] == "friend" and theirs["username"] == a["username"], theirs
+    assert theirs["together"]["texts"] == 1 and theirs["together"]["pics"] == 1 and theirs["friend_count"] == 1
+    assert "public_key" not in json.dumps(theirs) and "stats" not in theirs
     msgs = ok(call("GET", f"/chats/{a['id']}/messages", b_tok)).json()
     assert msgs[-1]["snap_state"] == "opened"
 
@@ -135,9 +155,28 @@ async def main():
     assert "friends_changed" in kinds_b and kinds_b.count("message") == 2, kinds_b
     assert "message_updated" in kinds_a and "read" in kinds_a, kinds_a
 
+    # Paging back through a long history: every message exactly once, oldest first per page.
+    sent = [ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(40))})).json()["id"]
+            for _ in range(120)]
+    seen, before = [], None
+    while True:
+        q = f"?limit=50" + (f"&before={before}" if before else "")
+        page = ok(call("GET", f"/chats/{a['id']}/messages{q}", b_tok)).json()
+        ids = [m["id"] for m in page]
+        assert ids == sorted(ids), "each page is oldest first"
+        seen = ids + seen
+        if len(page) < 50:
+            break
+        before = ids[0]
+    assert seen == sorted(seen) and len(seen) == len(set(seen)), "no gaps or repeats"
+    assert seen[-120:] == sent and len(seen) == 122, len(seen)   # +1 text, +1 snap from earlier
+    # Over the cap of 200 is clamped, not an error; 122 fits under it.
+    assert len(ok(call("GET", f"/chats/{a['id']}/messages?limit=500", b_tok)).json()) == 122
+
     # Unfriend: chat is closed off again.
     ok(call("DELETE", f"/friends/{a['id']}", b_tok))
     ok(call("GET", f"/chats/{b['id']}/messages", a_tok), 404)
+    ok(call("GET", f"/users/{b['id']}/profile", a_tok), 404)
 
     ok(call("POST", "/auth/logout", a_tok))
     ok(call("GET", "/me", a_tok), 401)

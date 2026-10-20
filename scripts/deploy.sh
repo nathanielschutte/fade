@@ -23,6 +23,9 @@ if [ -n "$(git status --porcelain -- server)" ]; then
   echo "warning: deploying uncommitted server changes (build $BUILD)"
 fi
 
+# sqlx embeds migrations at compile time and cargo can miss a new file;
+# touching the file that embeds them forces a fresh copy.
+touch server/src/db.rs
 echo "==> building $VERSION ($BUILD) for $TARGET"
 (cd server && FADE_BUILD="$BUILD" cargo zigbuild --release --target "$TARGET")
 BIN="server/target/$TARGET/release/fade-server"

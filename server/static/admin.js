@@ -45,6 +45,14 @@ function uptime(s) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 }
 
+/** Backups run hourly; more than two hours without one needs a look. */
+function backupText(b) {
+  if (!b) return "None yet";
+  if (!b.ok) return `Failed ${ago(b.at)}: ${b.error}`;
+  const overdue = Date.now() / 1000 - b.at > 2 * 3600;
+  return `${overdue ? "Overdue, last " : ""}${ago(b.at)} · ${bytes(b.bytes)}`;
+}
+
 function facts(target, rows) {
   $(target).replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
 }
@@ -59,7 +67,7 @@ function showTip(target, d) {
   tip.replaceChildren(
     el("strong", { text: dateLabel(d.day, { weekday: "short", month: "short", day: "numeric" }) }),
     el("span", { text: `${n(d.texts + d.snaps)} messages` }),
-    el("span", { class: "tip-sub", text: `${n(d.texts)} texts · ${n(d.snaps)} snaps` }),
+    el("span", { class: "tip-sub", text: `${n(d.texts)} texts · ${n(d.snaps)} pics` }),
     el("span", { class: "tip-sub", text: `${n(d.signups)} sign-up${d.signups === 1 ? "" : "s"}` }),
   );
   tip.hidden = false;
@@ -97,7 +105,7 @@ function renderChart(days) {
   $("#chart").setAttribute("aria-label", `Messages per day over the last ${days.length} days, peak ${max}.`);
 
   $("#chart-table").replaceChildren(
-    el("thead", {}, el("tr", {}, ["Day", "Texts", "Snaps", "Sign-ups"].map((h, i) => el("th", { class: i ? "num" : null, text: h })))),
+    el("thead", {}, el("tr", {}, ["Day", "Texts", "Pics", "Sign-ups"].map((h, i) => el("th", { class: i ? "num" : null, text: h })))),
     el("tbody", {}, days.map((d) => el("tr", {},
       el("td", { text: dateLabel(d.day, { weekday: "short", month: "short", day: "numeric" }) }),
       el("td", { class: "num", text: n(d.texts) }),
@@ -142,8 +150,9 @@ function render(s) {
     ["Version", `${server.version} (${server.build})`],
     ["Uptime", uptime(server.uptime_secs)],
     ["Database", bytes(server.db_bytes)],
-    ["Snap lifetime", `${server.snap_ttl_hours} h`],
+    ["Pic lifetime", `${server.snap_ttl_hours} h`],
     ["Sign-up", server.invite_required ? "Invite code required" : "Open"],
+    ["Last backup", backupText(server.backup)],
   ]);
 
   $("#users").replaceChildren(...u.list.map((x) => el("tr", {},
@@ -183,8 +192,135 @@ async function load() {
   $("#admin").hidden = false;
 }
 
-load();
-setInterval(() => { if (document.visibilityState === "visible" && !$("#admin").hidden) load(); }, REFRESH_MS);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && !$("#admin").hidden) load();
+// ---------- logs ----------
+// Newest first. "Live" polls for entries newer than the top row; "Load older"
+// pages back. The server keeps a fixed number of entries since its last start.
+
+const LOG_PAGE = 200;
+const LOG_DOM_CAP = 2000;
+const TAIL_MS = 3000;
+const logs = { entries: [], loaded: false, busy: false };
+
+function logClock(ms) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour12: false });
+  const today = d.toDateString() === new Date().toDateString();
+  const day = today ? "" : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} `;
+  return `${day}${time}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+
+/** "fade_server::auth" -> "auth"; "client::web" -> "web app". */
+function logSource(target) {
+  if (target.startsWith("client::")) return `${target.slice(8)} app`;
+  return target.replace(/^fade_server::?/, "") || "server";
+}
+
+function logRow(e) {
+  const level = e.level.toLowerCase();
+  return el("tr", { class: `log-${level}` },
+    el("td", { class: "log-time", text: logClock(e.ts) }),
+    el("td", {}, el("span", { class: `log-level log-level-${level}`, text: e.level })),
+    el("td", {},
+      el("div", { class: "log-msg" }, e.message || "(no message)", " ",
+        el("span", { class: `log-target${e.target.startsWith("client::") ? " log-client" : ""}`, text: logSource(e.target) })),
+      e.fields.length
+        ? el("div", { class: "log-fields" }, e.fields.map(([k, v]) =>
+            el("span", { class: "log-field" }, el("b", { text: k }), `=${v}`)))
+        : null,
+    ),
+  );
+}
+
+function renderLogs(meta) {
+  if (logs.entries.length > LOG_DOM_CAP) logs.entries.length = LOG_DOM_CAP;
+  $("#log-rows").replaceChildren(...logs.entries.map(logRow));
+  if (!logs.entries.length) {
+    $("#log-rows").append(el("tr", {}, el("td", { colspan: "3", class: "muted", text: "No matching entries." })));
+  }
+  if (meta) {
+    const since = new Date(meta.since_ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    $("#logs-note").textContent =
+      `Last ${n(meta.capacity)} entries since the server started (${since}). Older: journalctl -u fade.`;
+    const oldestShown = logs.entries.at(-1)?.seq ?? 0;
+    $("#log-older").hidden = !(oldestShown > meta.oldest_seq);
+  }
+  $("#log-count").textContent = `${n(logs.entries.length)} shown`;
+}
+
+async function fetchLogs(params) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) { fail("Sign in first."); return null; }
+  const qs = new URLSearchParams({ limit: String(LOG_PAGE) });
+  const q = $("#log-q").value.trim();
+  const level = $("#log-level").value;
+  const source = $("#log-source").value;
+  if (q) qs.set("q", q);
+  if (source) qs.set("source", source);
+  if (level) qs.set("level", level);
+  for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+  let res;
+  try {
+    res = await fetch(`/api/admin/logs?${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  } catch {
+    $("#log-count").textContent = "Offline. Retrying…";
+    return null;
+  }
+  if (res.status === 401) { fail("Your session ended. Sign in again."); return null; }
+  if (!res.ok) { fail("This page isn't available."); return null; }
+  return res.json();
+}
+
+async function loadLogs(mode = "reset") {
+  if (logs.busy) return;
+  logs.busy = true;
+  try {
+    const params = {};
+    if (mode === "tail" && logs.entries.length) params.after = logs.entries[0].seq;
+    if (mode === "older" && logs.entries.length) params.before = logs.entries.at(-1).seq;
+    const data = await fetchLogs(params);
+    if (!data) return;
+    if (mode === "reset") logs.entries = data.entries;
+    else if (mode === "older") logs.entries.push(...data.entries);
+    else logs.entries.unshift(...data.entries);
+    logs.loaded = true;
+    renderLogs(data);
+    $("#message").hidden = true;
+    $("#admin").hidden = false;
+  } finally {
+    logs.busy = false;
+  }
+}
+
+let searchTimer = null;
+$("#log-q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadLogs("reset"), 300);
 });
+$("#log-controls").addEventListener("submit", (e) => { e.preventDefault(); loadLogs("reset"); });
+$("#log-level").addEventListener("change", () => loadLogs("reset"));
+$("#log-source").addEventListener("change", () => loadLogs("reset"));
+$("#log-older").addEventListener("click", () => loadLogs("older"));
+$("#log-live").addEventListener("change", () => { if ($("#log-live").checked) loadLogs("tail"); });
+
+// ---------- tabs ----------
+
+const currentTab = () => (location.hash === "#logs" ? "logs" : "overview");
+
+function showTab() {
+  const tab = currentTab();
+  $("#view-overview").hidden = tab !== "overview";
+  $("#view-logs").hidden = tab !== "logs";
+  $("#updated").hidden = tab !== "overview";
+  for (const name of ["overview", "logs"]) {
+    $(`#tab-${name}`).setAttribute("aria-current", name === tab ? "page" : "false");
+  }
+  if (tab === "logs") loadLogs(logs.loaded ? "tail" : "reset");
+  else load();
+}
+window.addEventListener("hashchange", showTab);
+showTab();
+
+const visible = () => document.visibilityState === "visible" && !$("#admin").hidden;
+setInterval(() => { if (visible() && currentTab() === "overview") load(); }, REFRESH_MS);
+setInterval(() => { if (visible() && currentTab() === "logs" && $("#log-live").checked) loadLogs("tail"); }, TAIL_MS);
+document.addEventListener("visibilitychange", () => { if (visible()) showTab(); });

@@ -134,7 +134,13 @@ async fn run(mut socket: WebSocket, state: SharedState) {
     .await
     {
         Ok(Some(user)) => user,
-        _ => {
+        outcome => {
+            let reason = if outcome.is_err() {
+                "timed out"
+            } else {
+                "bad or missing token"
+            };
+            tracing::info!(reason, "socket auth failed");
             let _ = socket
                 .send(WsMessage::Text(r#"{"type":"auth_failed"}"#.into()))
                 .await;
@@ -149,6 +155,13 @@ async fn run(mut socket: WebSocket, state: SharedState) {
     }
 
     let (conn_id, mut rx) = state.hub.register(user.id);
+    let connected = std::time::Instant::now();
+    tracing::debug!(
+        user_id = user.id,
+        conn_id,
+        online = state.hub.online().0,
+        "socket connected"
+    );
     // Keeps idle connections alive through NATs and mobile networks.
     let mut ping = tokio::time::interval(Duration::from_secs(25));
     ping.tick().await;
@@ -176,4 +189,10 @@ async fn run(mut socket: WebSocket, state: SharedState) {
     }
 
     state.hub.unregister(user.id, conn_id);
+    tracing::debug!(
+        user_id = user.id,
+        conn_id,
+        secs = connected.elapsed().as_secs(),
+        "socket closed"
+    );
 }

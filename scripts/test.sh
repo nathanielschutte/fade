@@ -8,14 +8,28 @@
 #
 # Needs: cargo, python3 with tests/requirements.txt installed, and Chrome
 # (or E2E_CHROME=bundled after `python3 -m playwright install chromium`).
-# Works in WSL, Linux, macOS, CI, and Git Bash on Windows.
+# Works in WSL, Linux, macOS, and CI. On this Windows machine, Smart App Control
+# blocks freshly built binaries, so run it in WSL (setup: CLAUDE.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BROWSER=1
 [ "${1:-}" = "--no-browser" ] && BROWSER=0
 PORT="${PORT:-8099}"
-PY="${PYTHON:-$(command -v python3 || command -v python)}"
+# Python: $PYTHON, else the WSL test venv if it exists, else whatever python3 is on PATH.
+VENV_PY="$HOME/.venvs/napsack-tests/bin/python"
+if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
+elif [ -x "$VENV_PY" ]; then PY="$VENV_PY"
+else PY="$(command -v python3 || command -v python)"; fi
+
+# Linux without Google Chrome (WSL): use Playwright's own Chromium. Its build for
+# Ubuntu 24.04 runs on newer Ubuntu releases Playwright doesn't recognize yet.
+if [ "$(uname -s)" = Linux ] && ! command -v google-chrome >/dev/null; then
+  export E2E_CHROME="${E2E_CHROME:-bundled}"
+  if grep -qE '^VERSION_ID="(2[6-9]|[3-9][0-9])' /etc/os-release 2>/dev/null; then
+    export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
+  fi
+fi
 
 echo "==> unit tests"
 (cd server && cargo test --quiet)
@@ -26,7 +40,8 @@ echo "==> crypto vectors (independent implementation)"
 echo "==> building server"
 (cd server && cargo build --quiet)
 BIN=server/target/debug/fade-server
-[ -f "$BIN.exe" ] && BIN="$BIN.exe"
+# server/target is shared by Windows and WSL builds, so choose by OS, not by what exists.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) BIN="$BIN.exe" ;; esac
 
 TMP="$(mktemp -d)"
 # A Windows binary and Windows Python need a Windows-style path.

@@ -193,6 +193,7 @@ pub async fn send_request(
         "requested"
     };
 
+    tracing::info!(from = me.id, to = target.id, status, "friend request");
     state
         .hub
         .send_both(me.id, target.id, &Event::FriendsChanged);
@@ -214,6 +215,11 @@ pub async fn accept(
         return Err(AppError::not_found("That friend request no longer exists."));
     }
     make_friends(&state.db, me.id, user_id).await?;
+    tracing::info!(
+        user_id = me.id,
+        friend_id = user_id,
+        "friend request accepted"
+    );
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "status": "friends" })))
 }

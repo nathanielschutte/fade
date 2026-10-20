@@ -96,6 +96,53 @@ async def main():
         await expect(admin.locator("#tip")).to_contain_text("messages")
         await shot(admin, "admin-desktop")
 
+        # Logs tab: events are there and searchable, and nothing secret is logged.
+        await admin.click("#tab-logs")
+        await expect(admin.locator("#view-logs")).to_be_visible()
+        await expect(admin.locator("#log-rows tr").first).to_be_visible()
+        logs = await admin.evaluate("""async () => (await fetch('/api/admin/logs?limit=500&level=debug',
+            { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } })).json()""")
+        raw = json.dumps(logs)
+        messages = [e["message"] for e in logs["entries"]]
+        for expected in ("account created", "friend request accepted", "text sent", "request"):
+            assert expected in messages, (expected, sorted(set(messages)))
+        for banned in (INVITE, "admin panel test", "hi nate", "auth_key", "wrapped_private_key", "ciphertext\"", "Bearer"):
+            assert banned not in raw, f"logs contain {banned!r}"
+        routes = {v for e in logs["entries"] for k, v in e["fields"] if k == "route"}
+        assert "/api/chats/{friend_id}/messages" in routes, routes
+        assert "/api/admin/logs" not in routes, "the viewer's own polling should not be logged"
+
+        # The web app's own reports arrive, labeled; content-looking fields are redacted.
+        await other.evaluate("""async (text) => fetch('/api/logs', { method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('fade.token') },
+            body: JSON.stringify({ entries: [{ level: 'warn', message: 'e2e client probe', fields: { text, friend_id: 1 } }] }) })""",
+            "secret words")
+        await admin.select_option("#log-source", "client")
+        await admin.fill("#log-q", "e2e client probe")
+        await expect(admin.locator("#log-rows")).to_contain_text("[redacted]", timeout=10000)
+        await expect(admin.locator("#log-rows")).not_to_contain_text("secret words")
+        await expect(admin.locator("#log-rows .log-client").first).to_have_text("web app")
+        client_logs = await admin.evaluate("""async () => (await fetch('/api/admin/logs?source=client&level=debug&limit=500',
+            { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } })).json()""")
+        assert all(e["target"].startswith("client::") for e in client_logs["entries"])
+        assert "signed up" in [e["message"] for e in client_logs["entries"]], "the app reports its own sign-up"
+        await admin.fill("#log-q", "")
+        await admin.select_option("#log-source", "")
+        print("client logs: arrive labeled, redacted, filterable")
+
+        await admin.fill("#log-q", OTHER)
+        await expect(admin.locator("#log-rows")).to_contain_text("account created")
+        await expect(admin.locator("#log-rows tr", has_text="account created")).to_have_count(1)
+        await admin.fill("#log-q", f"user_id=999999")
+        await expect(admin.locator("#log-rows")).to_contain_text("No matching entries")
+        await admin.fill("#log-q", "")
+        await admin.select_option("#log-level", "error")
+        await expect(admin.locator("#log-rows")).to_contain_text("No matching entries")
+        await admin.select_option("#log-level", "")
+        await expect(admin.locator(".log-level-debug").first).to_be_visible()
+        await shot(admin, "admin-logs", full_page=False)
+        print("logs: events present, searchable, filterable, no secrets or content")
+
         phone = await page_for(browser, "phone", 390, 844)
         await phone.evaluate("(t) => localStorage.setItem('fade.token', t)",
                              await admin.evaluate("localStorage.getItem('fade.token')"))
@@ -104,6 +151,11 @@ async def main():
         overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"page scrolls sideways by {overflow}px"
         await shot(phone, "admin-phone")
+        await phone.goto(BASE + "/admin#logs")
+        await expect(phone.locator("#log-rows tr").first).to_be_visible()
+        overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"logs page scrolls sideways by {overflow}px"
+        await shot(phone, "admin-logs-phone", full_page=False)
         await browser.close()
 
     assert not errors, errors

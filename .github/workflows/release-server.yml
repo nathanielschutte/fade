@@ -55,6 +55,7 @@ jobs:
         run: |
           pip install ziglang==0.13.0.post1
           cargo install cargo-zigbuild --locked
+          touch server/src/db.rs   # fresh copy of the migrations; see deploy.sh
           cd server && FADE_BUILD="$BUILD" cargo zigbuild --release --target "$TARGET"
 
       - uses: aws-actions/configure-aws-credentials@v4

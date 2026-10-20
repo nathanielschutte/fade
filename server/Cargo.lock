@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "fade-server"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1714,11 +1714,9 @@ dependencies = [
  "bitflags",
  "bytes",
  "http",
- "http-body",
  "pin-project-lite",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]

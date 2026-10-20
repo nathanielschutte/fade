@@ -24,7 +24,8 @@ const state = {
   chats: [],
   requests: { incoming: [], outgoing: [] },
   activeId: null,              // friend id of the open chat
-  messages: new Map(),         // friend id -> Message[]
+  messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
+  history: new Map(),          // friend id -> { hasMore, loading } for paging back
   ws: null,
   wsRetry: 0,
 };
@@ -87,6 +88,44 @@ function clockTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+const PAGE = 50;               // messages per request when opening a chat or scrolling back
+
+// ---------- diagnostics ----------
+// Events and errors go to the server's admin log viewer (/admin#logs) as well
+// as the console. Never pass message text, pictures, keys, or anything typed:
+// only ids, counts, statuses, and error descriptions. The server also redacts
+// fields that look like content.
+
+const diag = { queue: [], timer: null };
+
+function report(level, message, fields = {}) {
+  (level === "error" || level === "warn" ? console.warn : console.debug)(`[napsack] ${message}`, fields);
+  diag.queue.push({ level, message, fields });
+  if (diag.queue.length > 200) diag.queue.splice(0, diag.queue.length - 200);
+  clearTimeout(diag.timer);
+  diag.timer = setTimeout(flushReports, level === "error" ? 500 : 5000);
+}
+
+const errorFields = (err) => ({ error: String(err?.message ?? err).slice(0, 300), status: err?.status });
+
+async function flushReports(keepalive = false) {
+  if (!diag.queue.length) return;
+  const entries = diag.queue.splice(0, 50);
+  const headers = { "Content-Type": "application/json" };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  try {
+    await fetch("/api/logs", { method: "POST", headers, keepalive, body: JSON.stringify({ entries }) });
+  } catch {
+    // Offline: drop them rather than pile up.
+  }
+  if (diag.queue.length) diag.timer = setTimeout(flushReports, 1000);
+}
+
+window.addEventListener("pagehide", () => flushReports(true));
+window.addEventListener("error", (e) =>
+  report("error", "uncaught error", { error: String(e.message), at: `${e.filename?.split("/").pop()}:${e.lineno}` }));
+window.addEventListener("unhandledrejection", (e) => report("error", "unhandled rejection", errorFields(e.reason)));
+
 const friendOf = (m) => (m.sender_id === state.me.id ? m.recipient_id : m.sender_id);
 const chatById = (id) => state.chats.find((c) => c.id === id);
 
@@ -108,6 +147,7 @@ async function checkPins(chats) {
       changed = true;
     }
     chat.keyChanged = Boolean(pinned) && pinned !== chat.public_key;
+    if (chat.keyChanged) report("warn", "friend key changed; chat blocked", { friend_id: chat.id });
   }
   if (changed) await e2e.saveLocal(pinsKey(), state.pins);
 }
@@ -138,7 +178,7 @@ async function decrypt(m) {
     try {
       text = await e2e.decryptText(await keyFor(friendOf(m)), m.ciphertext, m.sender_id, m.recipient_id);
     } catch (err) {
-      console.warn("decrypt failed", m.id, err);
+      report("warn", "decrypt failed", { message_id: m.id, friend_id: friendOf(m), ...errorFields(err) });
     }
     state.plaintext.set(m.id, text);
   }
@@ -227,8 +267,10 @@ $("#auth-form").addEventListener("submit", async (e) => {
     state.pins = (await e2e.loadLocal(pinsKey()).catch(() => null)) || {};
     localStorage.setItem(TOKEN_KEY, res.token);
     form.reset();
+    report("info", register ? "signed up" : "signed in");
     enterApp();
   } catch (err) {
+    report("info", register ? "sign-up failed" : "sign-in failed", errorFields(err));
     $("#auth-error").textContent = err.message;
   } finally {
     submit.disabled = false;
@@ -245,6 +287,7 @@ function signOutLocally() {
   state.plaintext.clear();
   state.activeId = null;
   state.messages.clear();
+  state.history.clear();
   localStorage.removeItem(TOKEN_KEY);
   e2e.deleteLocal(IDENTITY_KEY).catch(() => {});
   const ws = state.ws;
@@ -278,7 +321,7 @@ async function refreshChats() {
     state.chats = chats;
     await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
   } catch (err) {
-    console.warn(err);
+    report("warn", "loading chats failed", errorFields(err));
     return;
   }
   renderChatList();
@@ -298,11 +341,11 @@ function chatStatus(chat) {
   if (!m) return { text: "Say hi" };
   const mine = m.sender_id === state.me.id;
   if (m.kind === "snap") {
-    if (!mine && m.snap_state === "pending") return { text: "New snap", marker: "snap" };
+    if (!mine && m.snap_state === "pending") return { text: "New pic", marker: "snap" };
     const label = mine
-      ? { pending: "Sent a snap", opened: "Snap opened", expired: "Snap expired unopened" }
-      : { opened: "Snap viewed", expired: "Snap expired" };
-    return { text: label[m.snap_state] || "Snap" };
+      ? { pending: "Sent a pic", opened: "Pic opened", expired: "Pic expired unopened" }
+      : { opened: "Pic viewed", expired: "Pic expired" };
+    return { text: label[m.snap_state] || "Pic" };
   }
   const body = m.text ?? "Encrypted message";
   if (!mine && !m.read_at) return { text: body, marker: "text" };
@@ -347,18 +390,34 @@ async function openChat(friendId) {
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
   $("#chat-title").textContent = chat.username;
+  $("#chat-title").setAttribute("aria-label", `${chat.username}: view profile`);
+  const switching = $("#messages").dataset.friend !== String(friendId);
+  if (switching) {
+    $("#messages").dataset.friend = String(friendId);
+    delete $("#messages").dataset.scrolled; // a newly opened chat starts at the bottom
+  }
   renderChatHeader();
   renderChatList();
   renderMessages();
   try {
-    const msgs = await getJSON(`/chats/${friendId}/messages?limit=100`);
-    await Promise.all(msgs.map(decrypt));
+    const page = await getJSON(`/chats/${friendId}/messages?limit=${PAGE}`);
+    await Promise.all(page.map(decrypt));
     if (state.activeId !== friendId) return;
-    state.messages.set(friendId, msgs);
+    const loaded = state.messages.get(friendId);
+    // Reopening or reconnecting: merge the newest page into what's loaded, so
+    // scrolled-back history stays. If the page doesn't reach what we have (a
+    // gap), start over from the newest page.
+    if (loaded?.length && page.length && page[0].id <= loaded[loaded.length - 1].id) {
+      for (const m of page) await upsertMessage(m);
+    } else {
+      state.messages.set(friendId, page);
+      state.history.set(friendId, { hasMore: page.length === PAGE, loading: false });
+    }
     renderMessages();
+    fillViewport(friendId);
     markRead(friendId);
   } catch (err) {
-    console.warn(err);
+    report("warn", "opening chat failed", { friend_id: friendId, ...errorFields(err) });
   }
   if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
 }
@@ -394,6 +453,42 @@ $("#safety-button").addEventListener("click", async () => {
   $("#safety-code").textContent = code.replace(/^((?:\d+ ){2}\d+) /, "$1\n"); // two rows of three
 });
 
+/** Loads the page before the oldest loaded message, keeping the view in place. */
+async function loadOlder(friendId) {
+  const msgs = state.messages.get(friendId);
+  const h = state.history.get(friendId);
+  if (!msgs?.length || !h?.hasMore || h.loading) return;
+  h.loading = true;
+  renderMessages();
+  try {
+    const page = await getJSON(`/chats/${friendId}/messages?before=${msgs[0].id}&limit=${PAGE}`);
+    await Promise.all(page.map(decrypt));
+    const have = new Set(msgs.map((m) => m.id));
+    msgs.unshift(...page.filter((m) => !have.has(m.id)));
+    h.hasMore = page.length === PAGE;
+  } catch (err) {
+    report("warn", "loading older messages failed", { friend_id: friendId, ...errorFields(err) });
+  } finally {
+    h.loading = false;
+  }
+  if (state.activeId !== friendId) return;
+  const list = $("#messages");
+  const fromBottom = list.scrollHeight - list.scrollTop;
+  renderMessages();
+  list.scrollTop = list.scrollHeight - fromBottom;
+  fillViewport(friendId);
+}
+
+/** A short history that doesn't fill the screen can't be scrolled, so keep loading. */
+function fillViewport(friendId) {
+  const list = $("#messages");
+  if (state.activeId === friendId && list.scrollHeight <= list.clientHeight + 40) loadOlder(friendId);
+}
+
+$("#messages").addEventListener("scroll", () => {
+  if ($("#messages").scrollTop < 200 && state.activeId) loadOlder(state.activeId);
+});
+
 async function markRead(friendId) {
   const chat = chatById(friendId);
   const hasUnreadText = (state.messages.get(friendId) || [])
@@ -402,13 +497,13 @@ async function markRead(friendId) {
   try {
     await api(`/chats/${friendId}/read`, { method: "POST" });
   } catch (err) {
-    console.warn(err);
+    report("warn", "marking read failed", { friend_id: friendId, ...errorFields(err) });
   }
 }
 
 function snapLabel(m, mine) {
   if (mine) {
-    return { pending: "Snap sent", opened: "Opened", expired: "Expired unopened" }[m.snap_state];
+    return { pending: "Pic sent", opened: "Opened", expired: "Expired unopened" }[m.snap_state];
   }
   return { opened: "Viewed", expired: "Expired" }[m.snap_state];
 }
@@ -424,6 +519,11 @@ function renderMessages() {
   for (const m of msgs) if (m.sender_id === state.me.id && m.kind === "text") lastMineTextId = m.id;
 
   const items = [];
+  const h = state.history.get(state.activeId);
+  if (msgs.length && h) {
+    if (h.loading) items.push(el("li", { class: "msg-meta history-edge", text: "Loading earlier messages…" }));
+    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of your chat with ${chat?.username ?? "them"}.` }));
+  }
   let prevSender = null;
   for (const m of msgs) {
     const mine = m.sender_id === state.me.id;
@@ -448,7 +548,7 @@ function renderMessages() {
       const canOpen = !mine && m.snap_state === "pending";
       const chip = canOpen
         ? el("button", { type: "button", class: "snap-chip", onclick: () => viewSnap(m) },
-            el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view snap")
+            el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic")
         : el("span", { class: "snap-chip done" },
             el("span", { class: "marker", "aria-hidden": "true" }), snapLabel(m, mine));
       items.push(el("li", { class: `msg ${mine ? "mine" : ""}` }, chip));
@@ -499,15 +599,19 @@ function connectSocket() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
   state.ws = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: state.token }));
+  ws.onopen = () => {
+    report("debug", "socket connected", { retry: state.wsRetry });
+    ws.send(JSON.stringify({ type: "auth", token: state.token }));
+  };
   ws.onmessage = (e) => {
     try {
-      handleEvent(JSON.parse(e.data)).catch((err) => console.warn(err));
+      handleEvent(JSON.parse(e.data)).catch((err) => report("error", "handling socket event failed", errorFields(err)));
     } catch (err) {
-      console.warn(err);
+      report("error", "bad socket frame", errorFields(err));
     }
   };
-  ws.onclose = () => {
+  ws.onclose = (e) => {
+    report("debug", "socket closed", { code: e.code });
     if (state.ws !== ws || !state.token) return;
     const delay = Math.min(30_000, 1000 * 2 ** state.wsRetry++);
     setTimeout(connectSocket, delay);
@@ -583,13 +687,100 @@ async function checkForUpdate() {
 }
 $("#update-reload").addEventListener("click", () => location.reload());
 
+// ---------- profiles ----------
+// Yours: your friends and your own counts. A friend's: what you share.
+// Counts and dates only; the server has no message content to show.
+
+const longDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+/** A stand-in until profile pictures exist: initial on a tint picked from the id. */
+function paintAvatar(node, user) {
+  node.textContent = (user.username[0] || "?").toUpperCase();
+  node.dataset.tint = String(user.id % 6);
+}
+
+function stat(label, value) {
+  return [el("dt", { text: label }), el("dd", { text: String(value) })];
+}
+
+async function openProfile(userId) {
+  const dialog = $("#profile-dialog");
+  const msg = $("#profile-message");
+  for (const id of ["#profile-stats", "#profile-people", "#profile-actions"]) $(id).replaceChildren();
+  $("#profile-people-section").hidden = true;
+  msg.hidden = true;
+  if (!dialog.open) dialog.showModal();
+
+  let p;
+  try {
+    p = await getJSON(`/users/${userId}/profile`);
+  } catch (err) {
+    $("#profile-name").textContent = "";
+    $("#profile-sub").textContent = "";
+    msg.textContent = err.status === 404 ? "There's no profile to show." : err.message;
+    msg.hidden = false;
+    return;
+  }
+  paintAvatar($("#profile-avatar"), p);
+  $("#profile-name").textContent = p.username;
+
+  let people = [];
+  if (p.kind === "me") {
+    const s = p.stats;
+    $("#profile-sub").textContent = `Joined ${longDate(p.joined_at)}`;
+    $("#profile-stats").append(
+      ...stat("Texts sent", s.texts_sent),
+      ...stat("Texts received", s.texts_received),
+      ...stat("Pics sent", s.pics_sent),
+      ...stat("Pics received", s.pics_received),
+      ...stat("Your pics opened", s.pics_sent ? `${s.pics_opened} of ${s.pics_sent}` : "—"),
+      ...stat("Friends", p.friends.length),
+    );
+    $("#profile-people-title").textContent = p.friends.length ? "Your friends" : "No friends yet";
+    people = p.friends;
+  } else {
+    const t = p.together;
+    $("#profile-sub").textContent = `Friends since ${longDate(p.friends_since)}`;
+    $("#profile-stats").append(
+      ...stat("Texts between you", t.texts),
+      ...stat("Pics between you", t.pics),
+      ...stat("First message", t.first_message_at ? longDate(t.first_message_at) : "—"),
+      ...stat("Joined napsack", longDate(p.joined_at)),
+      ...stat("Their friends", p.friend_count),
+    );
+    $("#profile-people-title").textContent = "Friends you share";
+    people = p.mutual_friends;
+    $("#profile-actions").append(el("button", {
+      type: "button", class: "button primary",
+      onclick: () => { dialog.close(); openChat(p.id); },
+    }, `Message ${p.username}`));
+  }
+
+  $("#profile-people-section").hidden = people.length === 0 && p.kind !== "me";
+  $("#profile-people").replaceChildren(...people.map((f) => {
+    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
+    paintAvatar(avatar, f);
+    return el("li", {},
+      el("button", { type: "button", class: "person person-link", onclick: () => openProfile(f.id) },
+        avatar,
+        el("span", { class: "person-name", text: f.username }),
+        el("span", { class: "person-meta", text: `since ${longDate(f.since)}` })));
+  }));
+}
+
+$("#my-profile").addEventListener("click", () => {
+  $("#friends-dialog").close();
+  openProfile(state.me.id);
+});
+$("#chat-title").addEventListener("click", () => { if (state.activeId) openProfile(state.activeId); });
+
 // ---------- friends ----------
 
 async function refreshRequests() {
   try {
     state.requests = await getJSON("/friends/requests");
   } catch (err) {
-    console.warn(err);
+    report("warn", "loading friend requests failed", errorFields(err));
     return;
   }
   renderRequests();
@@ -765,10 +956,14 @@ async function compressPhoto(source, width, height, mirror = false) {
     const canvas = drawScaled(source, width, height, edge, mirror);
     for (const quality of [0.8, 0.68, 0.56]) {
       const blob = await encodeJpeg(canvas, quality);
-      if (blob.size <= SNAP_TARGET_BYTES) return blob;
+      if (blob.size <= SNAP_TARGET_BYTES) {
+        report("debug", "pic compressed", { from: `${width}x${height}`, to: `${canvas.width}x${canvas.height}`, quality, bytes: blob.size });
+        return blob;
+      }
     }
     edge = Math.round(edge * 0.75);
   }
+  report("warn", "pic too large to compress", { from: `${width}x${height}` });
   throw new Error("Couldn't make that photo small enough to send.");
 }
 
@@ -860,7 +1055,7 @@ const viewer = { url: null, timer: null };
 
 async function viewSnap(m) {
   if ((m.format ?? 1) !== e2e.FORMAT) {
-    alert("This snap was sent from a newer version of napsack. Reload the page to open it.");
+    alert("This pic was sent from a newer version of napsack. Reload the page to open it.");
     return;
   }
   let sealed;
@@ -875,7 +1070,7 @@ async function viewSnap(m) {
   try {
     photo = await e2e.decryptSnap(await keyFor(m.sender_id), sealed, m.sender_id, m.recipient_id);
   } catch {
-    alert("This snap couldn't be decrypted.");
+    alert("This pic couldn't be decrypted.");
     return;
   }
   viewer.url = URL.createObjectURL(new Blob([photo], { type: "image/jpeg" }));
