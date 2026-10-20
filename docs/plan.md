@@ -12,16 +12,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 2 | [Invite links and QR codes](#f14-invite-links-and-qr-codes) | Features | Planned | Replaces the shared invite code and typing usernames |
-| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 5 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
-| 6 | [Group chats: "seen by", then end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first |
-| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 8 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
-| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 11 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 3 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 4 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
+| 5 | [Group chats: "seen by", then end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first |
+| 6 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 7 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
+| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -49,10 +48,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Reactions and replies](#f11-reactions-and-replies): text format 2, encrypted reactions | 0.15.0 |
 | [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 |
 | Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([SECURITY.md](SECURITY.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
+| [Invite links and QR codes](#f14-invite-links-and-qr-codes) | 0.17.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.16.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.17.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -184,6 +184,7 @@ Production runs **0.16.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - **Invite links:** each person can make a link (`/i/<token>`) that signs a new person up and makes them friends with the inviter in one step. Limited uses and an expiry; the inviter sees who joined through it. Admins can still turn sign-ups off entirely. The shared code keeps working until it's retired.
 - **QR codes:** your profile shows a QR code of a friend link; scanning it with a phone camera opens napsack with "Add Ana?" ready. Generated in the browser (a small QR encoder, written here rather than a third-party script, per the no-CDN rule).
 - Tokens are random, stored hashed, marked used/revoked (never deleted), and rate-limited like sign-in.
+- Done (0.17.0): one link does both (sign up with no code, or add if signed in); 10 uses, 7 days, turn off any time; the Friends sheet shows a QR code and who joined. The QR encoder is our own (`server/static/qr.js`), checked module for module against Python's `qrcode` and pixel by pixel on screen.
 
 #### F15. Streaks
 - A 🔥 and a count next to a friend when you've both sent each other a pic every day for 3+ days, and an ⌛ when today's streak is about to run out. Snapchat's stickiest feature.

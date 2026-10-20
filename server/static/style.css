@@ -791,3 +791,30 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   padding-top: env(safe-area-inset-top, 0px);
   height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
 }
+
+/* ---------- invite links ---------- */
+.invite-banner {
+  padding: 0.7rem 0.9rem; border: 1px solid var(--sage); border-radius: var(--radius-s);
+  color: var(--paper); font-size: var(--step--1);
+}
+.invite-banner[hidden] { display: none; }
+.invite-banner.problem { border-color: var(--danger); color: var(--danger); }
+.invite-section { margin-bottom: 0.5rem; }
+.invite-made { display: grid; justify-items: center; gap: 0.6rem; margin-top: 0.75rem; }
+.invite-made[hidden] { display: none; }
+.invite-qr { width: min(15rem, 70vw); }
+.invite-qr svg { display: block; width: 100%; height: auto; border-radius: var(--radius-s); }
+/* Not an icon: undo the icon styles above, or the code can't be scanned.
+   Dark modules on white, square edges, nothing else. */
+.invite-qr svg { width: 100%; height: auto; stroke: none; stroke-width: 0; }
+.invite-qr svg rect { fill: #ffffff; }
+.invite-qr svg path { fill: #12201a; stroke: none; }
+.invite-link {
+  max-width: 100%; padding: 0.4rem 0.6rem; border-radius: var(--radius-s); background: var(--deep);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: var(--step--1);
+  overflow-wrap: anywhere; user-select: all;
+}
+.invite-list { margin-top: 0.5rem; }
+.invite-list .person { font-size: var(--step--1); }
+.invite-list .person-name { font-weight: 400; color: var(--fixer); }
+#invite-dialog .picture-row { gap: 0.5rem; }

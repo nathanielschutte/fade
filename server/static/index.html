@@ -19,6 +19,7 @@
   <h1 class="wordmark">napsack</h1>
   <p class="tagline">Private chats and photos for close friends. End-to-end encrypted.</p>
 
+  <p class="invite-banner" id="invite-banner" role="status" hidden></p>
   <form id="auth-form" class="auth-form" novalidate>
     <label class="field">
       <span>Username</span>
@@ -170,6 +171,21 @@
     <button type="submit" class="button primary">Send request</button>
     <p class="form-note" id="add-friend-note" role="status"></p>
   </form>
+  <section class="invite-section">
+    <h3>Invite someone</h3>
+    <p class="sheet-text small">A link that signs a friend up and makes you friends, no invite code needed. Each link works for 10 people for 7 days.</p>
+    <button type="button" class="button" id="invite-make">Make an invite link</button>
+    <div class="invite-made" id="invite-made" hidden>
+      <div class="invite-qr" id="invite-qr"></div>
+      <p class="invite-link" id="invite-link"></p>
+      <div class="picture-row">
+        <button type="button" class="button" id="invite-copy">Copy link</button>
+        <button type="button" class="button" id="invite-share" hidden>Share</button>
+      </div>
+    </div>
+    <ul class="people invite-list" id="invite-list"></ul>
+    <p class="form-note" id="invite-note" role="status"></p>
+  </section>
   <section id="incoming-section" hidden>
     <h3>Wants to be friends</h3>
     <ul class="people" id="incoming-list"></ul>
@@ -339,6 +355,22 @@
     <p class="form-error" id="password-error" role="alert"></p>
     <button type="submit" class="button primary" id="password-submit"></button>
   </form>
+</dialog>
+
+<!-- Opened someone's invite link while signed in -->
+<dialog id="invite-dialog" class="sheet" aria-labelledby="invite-title">
+  <header class="sheet-head">
+    <h2 id="invite-title">Add a friend</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="sheet-text" id="invite-text"></p>
+  <p class="form-error" id="invite-error" role="alert"></p>
+  <div class="picture-row">
+    <button type="button" class="button primary" id="invite-accept">Add</button>
+    <button type="button" class="button" data-close>Not now</button>
+  </div>
 </dialog>
 
 <!-- Recovery key: shown once -->

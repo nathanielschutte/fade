@@ -168,6 +168,9 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/recover/start` · `/finish` | Forgot password, with the recovery key: get the recovery copy of your key, then set a new password. Rate-limited like sign-in |
 | `POST /auth/reset` | `{username, code, new_auth_key, public_key, wrapped_private_key}`: an admin's one-time code; a new key pair, no history |
 | `POST /admin/users/{id}/reset-code` | Admins: issue a reset code (shown once, 24 hours, any older one stops working) |
+| `POST /invites` · `GET /invites` | Make an invite link (`{path: "/i/<token>"}`, shown once; 10 uses, 7 days) · mine, with who joined |
+| `POST /invites/{id}/revoke` | Turn a link off |
+| `GET  /invites/lookup/{token}` · `POST /invites/accept` | Who made a link (no sign-in needed) · signed in: become friends with them. `POST /auth/register` also takes `invite_token` in place of `invite_code` |
 | `PUT  /me/settings` | `{share_activity}`: friends see when you're active or typing (mutual) |
 | `POST /push/subscriptions` · `/remove` | This browser's `PushSubscription.toJSON()`, tied to the session · stop. Only known push services are accepted |
 | `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, encrypted emoji; null takes it back. Comes back as `message_updated` |

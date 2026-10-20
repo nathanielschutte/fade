@@ -4,6 +4,7 @@
 
 import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
+import { qrSvg } from "/qr.js";
 
 const APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
@@ -25,6 +26,7 @@ const state = {
   actionFor: null,             // "d:<id>" or "g:<id>": the message whose reaction/reply row is open
   replyTo: null,               // { group, id, who, snippet } while composing a reply
   typing: new Map(),           // "d:<friend>" or "g:<group>:<user>" -> when the "typing" hint ends
+  invite: null,                // { token, inviter, problem } from an /i/<token> link
   pairKeys: new Map(),         // friend id -> AES key shared with them
   plaintext: new Map(),        // message id -> decrypted text, or null if it couldn't be
   config: null,
@@ -319,7 +321,7 @@ function setAuthMode(mode) {
   $("#auth-toggle").textContent = register
     ? "Have an account? Sign in"
     : "New here? Create an account";
-  $("#invite-field").hidden = !(register && state.config?.invite_required);
+  $("#invite-field").hidden = !(register && state.config?.invite_required && !state.invite?.inviter);
   $("#password-hint").hidden = !register;
   $("#auth-form").password.autocomplete = register ? "new-password" : "current-password";
   $("#auth-error").textContent = "";
@@ -355,7 +357,8 @@ $("#auth-form").addEventListener("submit", async (e) => {
         json: {
           username,
           auth_key: authKey,
-          invite_code: state.config?.invite_required ? form.invite_code.value.trim() : undefined,
+          invite_code: state.config?.invite_required && !state.invite?.inviter ? form.invite_code.value.trim() : undefined,
+          invite_token: state.invite?.inviter ? state.invite.token : undefined,
           public_key: identity.publicKey,
           wrapped_private_key: identity.wrappedPrivateKey,
         },
@@ -373,8 +376,14 @@ $("#auth-form").addEventListener("submit", async (e) => {
     report("info", register ? "signed up" : "signed in");
     // New accounts get a recovery key right away, while the password is at hand.
     const recoveryKey = register ? await setUpRecovery(authKey, wrapKey, res.wrapped_private_key).catch(() => null) : null;
+    const invitedBy = register ? state.invite?.inviter : null;
+    if (invitedBy) state.invite = null; // used: we're friends now
     enterApp();
     if (recoveryKey) await showRecoveryKey(recoveryKey);
+    if (invitedBy) {
+      await refreshChats();
+      openChat(invitedBy.id);
+    }
   } catch (err) {
     report("info", register ? "sign-up failed" : "sign-in failed", errorFields(err));
     $("#auth-error").textContent = err.message;
@@ -2190,9 +2199,136 @@ async function requestAction(userId, action) {
 
 function openFriends() {
   $("#add-friend-note").textContent = "";
+  $("#invite-made").hidden = true;
+  $("#invite-note").textContent = "";
   $("#friends-dialog").showModal();
   refreshRequests();
+  renderInvites();
 }
+
+// ---------- invite links ----------
+// A link (/i/<token>) signs a new person up and makes them friends with
+// whoever made it, or adds someone who already has an account (invites.rs).
+
+/** An invite link in the address bar: remember it, and tidy the address. */
+async function readInviteLink() {
+  const m = /^\/i\/([A-Za-z0-9_-]{22})$/.exec(location.pathname);
+  if (!m) return;
+  history.replaceState(null, "", "/");
+  state.invite = { token: m[1], inviter: null, problem: null };
+  try {
+    state.invite.inviter = (await getJSON(`/invites/lookup/${m[1]}`)).inviter;
+  } catch (err) {
+    state.invite.problem = err.message;
+  }
+}
+
+/** Signed out: the sign-up form, saying who invited you. */
+function showInviteBanner() {
+  const banner = $("#invite-banner");
+  const inv = state.invite;
+  banner.hidden = !inv;
+  if (!inv) return;
+  banner.classList.toggle("problem", !inv.inviter);
+  banner.textContent = inv.inviter
+    ? `${inv.inviter.username} invited you to napsack. Pick a username and password, and you'll be friends.`
+    : inv.problem;
+  if (inv.inviter) setAuthMode("register");
+}
+
+/** Signed in: "Add Ana?" */
+function offerInvite() {
+  const inv = state.invite;
+  if (!inv) return;
+  state.invite = null;
+  if (!inv.inviter) {
+    alert(inv.problem);
+    return;
+  }
+  if (inv.inviter.id === state.me.id) {
+    alert("That's your own invite link. Send it to a friend.");
+    return;
+  }
+  if (chatById(inv.inviter.id)) {
+    openChat(inv.inviter.id);
+    return;
+  }
+  $("#invite-text").textContent = `${inv.inviter.username} invited you. Add them as a friend?`;
+  $("#invite-error").textContent = "";
+  $("#invite-dialog").dataset.token = inv.token;
+  $("#invite-dialog").showModal();
+}
+
+$("#invite-accept").addEventListener("click", async () => {
+  try {
+    const res = await getJSON("/invites/accept", { method: "POST", json: { token: $("#invite-dialog").dataset.token } });
+    $("#invite-dialog").close();
+    report("info", "friends through an invite");
+    await refreshChats();
+    openChat(res.friend.id);
+  } catch (err) {
+    $("#invite-error").textContent = err.message;
+  }
+});
+
+async function renderInvites() {
+  let invites = [];
+  try {
+    invites = await getJSON("/invites");
+  } catch (err) {
+    report("warn", "loading invites failed", errorFields(err));
+    return;
+  }
+  $("#invite-list").replaceChildren(...invites.slice(0, 5).map((inv) => {
+    const used = `${inv.joined.length} of ${inv.max_uses} used`;
+    const state_ = inv.live ? `until ${longDate(inv.expires_at)}` : inv.revoked_at ? "turned off" : "finished";
+    const who = inv.joined.length ? ` · ${inv.joined.map((j) => personName(j.id, j.username)).join(", ")}` : "";
+    return el("li", { class: "person" },
+      el("span", { class: "person-name", text: `Link from ${longDate(inv.created_at)} · ${used}, ${state_}${who}` }),
+      inv.live ? el("button", { type: "button", class: "button", onclick: () => revokeInvite(inv.id) }, "Turn off") : null);
+  }));
+}
+
+async function revokeInvite(id) {
+  try {
+    await api(`/invites/${id}/revoke`, { method: "POST" });
+    $("#invite-note").textContent = "That link no longer works.";
+  } catch (err) {
+    $("#invite-note").textContent = err.message;
+  }
+  $("#invite-made").hidden = true;
+  renderInvites();
+}
+
+$("#invite-make").addEventListener("click", async () => {
+  try {
+    const res = await getJSON("/invites", { method: "POST" });
+    const url = `${location.origin}${res.path}`;
+    $("#invite-link").textContent = url;
+    $("#invite-qr").replaceChildren(qrSvg(url, "QR code for your invite link"));
+    $("#invite-share").hidden = !navigator.share;
+    $("#invite-copy").textContent = "Copy link";
+    $("#invite-made").hidden = false;
+    $("#invite-note").textContent = "";
+    report("info", "invite link made");
+  } catch (err) {
+    $("#invite-note").textContent = err.message;
+  }
+  renderInvites();
+});
+
+$("#invite-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("#invite-link").textContent);
+    $("#invite-copy").textContent = "Copied";
+  } catch {
+    $("#invite-copy").textContent = "Select it and copy";
+  }
+});
+
+$("#invite-share").addEventListener("click", () => {
+  navigator.share({ title: "napsack", text: "Join me on napsack", url: $("#invite-link").textContent }).catch(() => {});
+});
 $("#friends-button").addEventListener("click", openFriends);
 $("#empty-add").addEventListener("click", openFriends);
 
@@ -2506,6 +2642,7 @@ setInterval(() => { if (state.me) renderChatList(); }, 60_000);
   } catch {
     state.config = { invite_required: false };
   }
+  await readInviteLink();
   if (state.token) {
     try {
       state.me = await getJSON("/me");
@@ -2513,13 +2650,16 @@ setInterval(() => { if (state.me) renderChatList(); }, 60_000);
       // read anything, so start over with the password.
       if (await loadIdentity()) {
         enterApp();
+        offerInvite();
         return;
       }
     } catch {
       // fall through to sign in
     }
     signOutLocally();
+    showInviteBanner();
     return;
   }
   showAuth();
+  showInviteBanner();
 })();

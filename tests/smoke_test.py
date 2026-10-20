@@ -539,6 +539,52 @@ def check_guard(tag):
     print("  guard: robots, scanners refused, probers banned, 4 sessions per person")
 
 
+def check_invites(tag):
+    """Invite links (invites.rs): stand in for the invite code, make friends,
+    work 10 times, can be turned off; only a hash is stored."""
+    ra, rb = ok(register(f"inva_{tag}")).json(), ok(register(f"invb_{tag}")).json()
+    (a, a_tok), (b, b_tok) = (ra["user"], ra["token"]), (rb["user"], rb["token"])
+    made = ok(call("POST", "/invites", a_tok)).json()
+    token = made["path"].rsplit("/", 1)[-1]
+    assert made["path"] == f"/i/{token}" and len(token) == 22 and made["max_uses"] == 10
+    assert requests.get(BASE + made["path"]).status_code == 200, "the link opens the app"
+    assert ok(call("GET", f"/invites/lookup/{token}")).json() == {"inviter": {"id": a["id"], "username": a["username"]}}
+    ok(call("GET", "/invites/lookup/not-a-real-token-at-all"), 404)
+    ok(call("POST", "/invites", None), 401)
+
+    # A stranger signs up with the link instead of the invite code, and they're friends.
+    body = lambda name, **extra: {"username": name, "auth_key": AUTH_KEY, "public_key": b64(os.urandom(91)),
+                                  "wrapped_private_key": b64(os.urandom(166)), **extra}
+    ok(call("POST", "/auth/register", json=body(f"invc_{tag}", invite_token="x" * 22)), 400)
+    rc = ok(call("POST", "/auth/register", json=body(f"invc_{tag}", invite_token=token))).json()
+    assert [f["id"] for f in ok(call("GET", "/friends", rc["token"])).json()] == [a["id"]]
+
+    # Someone signed in adds the inviter; their own link and a second accept do nothing more.
+    ok(call("POST", "/invites/accept", a_tok, json={"token": token}), 400)
+    assert ok(call("POST", "/invites/accept", b_tok, json={"token": token})).json()["already"] is False
+    assert ok(call("POST", "/invites/accept", b_tok, json={"token": token})).json()["already"] is True
+    mine = ok(call("GET", "/invites", a_tok)).json()[0]
+    assert [(j["username"], j["kind"]) for j in mine["joined"]] == [(f"invc_{tag}", "signed_up"), (b["username"], "added")]
+    assert mine["live"] is True and "token" not in json.dumps(mine)
+
+    # Ten uses, then it's done.
+    used_up = ok(call("POST", "/invites", a_tok)).json()["path"].rsplit("/", 1)[-1]
+    for i in range(10):
+        ok(call("POST", "/auth/register", json=body(f"inv{i}_{tag}", invite_token=used_up)))
+    ok(call("POST", "/auth/register", json=body(f"invx_{tag}", invite_token=used_up)), 400)
+    ok(call("GET", f"/invites/lookup/{used_up}"), 404)
+
+    # Turned off: it stops working, for sign-up and for adding.
+    ok(call("POST", f"/invites/{made['id']}/revoke", b_tok), 404)                 # not theirs
+    ok(call("POST", f"/invites/{made['id']}/revoke", a_tok))
+    ok(call("GET", f"/invites/lookup/{token}"), 404)
+    ok(call("POST", "/auth/register", json=body(f"invy_{tag}", invite_token=token)), 400)
+    if DB:
+        stored = [h for (h,) in sqlite3.connect(DB).execute("SELECT token_hash FROM invites WHERE created_by = ?", (a["id"],))]
+        assert stored and all(token not in h and used_up not in h for h in stored), "only hashes are stored"
+    print("  invites: sign up without the code, friends at once, 10 uses, turned off, hashed")
+
+
 def check_rate_limits(tag):
     """Failed sign-ins lock a username for a while; one address can't hammer sign-up."""
     name = f"lock_{tag}"
@@ -744,6 +790,7 @@ async def main():
 
     check_account(tag)
     await check_live(tag)
+    check_invites(tag)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()
