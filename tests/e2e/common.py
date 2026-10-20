@@ -24,6 +24,18 @@ async def launch(pw, **kw):
     return await pw.chromium.launch(**kw)
 
 
+async def save_recovery_key(page):
+    """A new account is shown its recovery key once, in a dialog that stays
+    until it's saved. Tests save it and go on. Returns the key."""
+    from playwright.async_api import expect
+    await expect(page.locator("#recovery-dialog")).to_be_visible(timeout=20000)
+    key = await page.locator("#recovery-key").text_content()
+    await page.check("#recovery-saved")
+    await page.click("#recovery-done")
+    await expect(page.locator("#recovery-dialog")).to_be_hidden()
+    return key
+
+
 async def shot(page, name, full_page=True):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)

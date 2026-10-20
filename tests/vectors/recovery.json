@@ -1,0 +1,7 @@
+{
+  "about": "napsack recovery key test vectors. Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "key_bytes_hex": "03203d5a7794b1ceeb0825425f7c99b6d3f00d2a",
+  "recovery_key": "0CG3-TPKQ-JJRW-XTR8-4N15-YZ4S-PV9Z-039A",
+  "recovery_auth_key": "Pu5mnwIvosPSIoEkJI49l5ILq/v8JuF6uGJ31udDe8g=",
+  "recovery_wrapped_key": "izYdTlGc/WU+p5k6aNz4+DNSBYZ/j6zoxWKcJXCyCj75AKvvR03zc2e51IlRbJOKpD6ujcPwr4q+ovZN2/TCQERoP7FQwwOVjdV8XipBzIEMeuPM3mp6vmO9lgArrPl4/fxfcwBvpKIOH+iLy3+67U/3PE7UgP8y0HIxJt7mhKf+0ZeQdpuuxYCrGGxQkLgdzQbTfcueKcBOZkTWqo+xWenlLYpojQ=="
+}

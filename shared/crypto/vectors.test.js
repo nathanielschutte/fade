@@ -16,7 +16,11 @@ import { runVectorChecks } from "./vector-checks.js";
 const load = (name) => JSON.parse(readFileSync(new URL(`../../tests/vectors/${name}`, import.meta.url), "utf8"));
 
 test("every vector check passes", async () => {
-  const results = await runVectorChecks(e2e, load("format1.json"), load("format2.json"));
+  const results = await runVectorChecks(e2e, {
+    format1: load("format1.json"),
+    format2: load("format2.json"),
+    recovery: load("recovery.json"),
+  });
   for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name} (${r.ms} ms)${r.error ? `: ${r.error}` : ""}`);
   assert.ok(results.length >= 20, `only ${results.length} checks ran`);
   assert.deepEqual(results.filter((r) => !r.ok).map((r) => r.name), []);

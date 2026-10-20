@@ -6,10 +6,12 @@ Encryption happens in the client (shared/crypto/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """
-import asyncio, base64, json, os, struct, sys, urllib.parse, uuid, zlib
+import asyncio, base64, json, os, sqlite3, struct, sys, time, urllib.parse, uuid, zlib
 import requests, websockets
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
+# The test server's database, when local: some checks look at what was stored.
+DB = os.environ.get("NAPSACK_DB") or None
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
 
 b64 = lambda raw: base64.b64encode(raw).decode()
@@ -253,6 +255,98 @@ def check_people(tag, a, a_tok, b, b_tok):
     print("  people: names, private nicknames, pictures; friends only")
 
 
+# Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in.
+SMOKE_ADMIN, SMOKE_ADMIN_KEY = "smoke_admin", base64.b64encode(b"smoke admin key, not a secret..").decode()
+
+
+def admin_token():
+    r = register(SMOKE_ADMIN, auth_key=SMOKE_ADMIN_KEY)
+    if r.status_code == 409:
+        r = call("POST", "/auth/login", json={"username": SMOKE_ADMIN, "auth_key": SMOKE_ADMIN_KEY})
+    return ok(r).json()["token"]
+
+
+def check_account(tag):
+    """Change password, recovery keys, admin reset codes, signing out elsewhere (account.rs).
+    The server only ever sees derived keys, so random ones stand in here."""
+    k1, k2, k3, k4, k5 = (b64(os.urandom(32)) for _ in range(5))
+    r = ok(register(f"acct_{tag}", auth_key=k1)).json()
+    u, tok = r["user"], r["token"]
+    name = u["username"]
+    login = lambda key: call("POST", "/auth/login", json={"username": name, "auth_key": key})
+    assert u["has_recovery_key"] is False and u["key_reset_at"] is None
+    tok2 = ok(login(k1)).json()["token"]                                      # a second device
+
+    # Unlock (for re-wrapping) needs a session and the password.
+    ok(call("POST", "/auth/unlock", json={"auth_key": k1}), 401)
+    ok(call("POST", "/auth/unlock", tok, json={"auth_key": k2}), 400)
+    assert ok(call("POST", "/auth/unlock", tok, json={"auth_key": k1})).json() == {"wrapped_private_key": r["wrapped_private_key"]}
+
+    # A recovery key needs the password too, so a stolen session can't plant one.
+    rk, rw = b64(os.urandom(32)), b64(os.urandom(180))
+    ok(call("PUT", "/me/recovery", tok, json={"auth_key": k2, "recovery_auth_key": rk, "recovery_wrapped_key": rw}), 400)
+    ok(call("PUT", "/me/recovery", tok, json={"auth_key": k1, "recovery_auth_key": rk, "recovery_wrapped_key": "not base64!"}), 400)
+    ok(call("PUT", "/me/recovery", tok, json={"auth_key": k1, "recovery_auth_key": rk, "recovery_wrapped_key": rw}))
+    assert ok(call("GET", "/me", tok)).json()["has_recovery_key"] is True
+    sec = ok(call("GET", "/me/security", tok)).json()
+    assert sec["recovery_set_at"] and sec["active_sessions"] == 2 and sec["key_reset_at"] is None, sec
+
+    # Changing the password ends the other sessions, keeps this one.
+    w3 = b64(os.urandom(180))
+    ok(call("POST", "/me/password", tok, json={"auth_key": k2, "new_auth_key": k3, "new_wrapped_private_key": w3}), 400)
+    assert ok(call("POST", "/me/password", tok, json={"auth_key": k1, "new_auth_key": k3, "new_wrapped_private_key": w3})).json()["sessions_ended"] == 1
+    ok(call("GET", "/me", tok2), 401)
+    ok(call("GET", "/me", tok))
+    ok(login(k1), 400)
+    assert ok(login(k3)).json()["wrapped_private_key"] == w3
+
+    # Recovery: the wrong key gets nothing; the right one, the recovery copy; then a new password.
+    ok(call("POST", "/auth/recover/start", json={"username": name, "recovery_auth_key": b64(os.urandom(32))}), 400)
+    ok(call("POST", "/auth/recover/start", json={"username": f"nobody_{tag}", "recovery_auth_key": rk}), 400)
+    assert ok(call("POST", "/auth/recover/start", json={"username": name.upper(), "recovery_auth_key": rk})).json() == {"recovery_wrapped_key": rw}
+    w4 = b64(os.urandom(180))
+    rec = ok(call("POST", "/auth/recover/finish", json={"username": name, "recovery_auth_key": rk, "new_auth_key": k4, "new_wrapped_private_key": w4})).json()
+    assert rec["public_key"] == r["public_key"] and rec["wrapped_private_key"] == w4, "same key, new password"
+    assert rec["user"]["has_recovery_key"] is True
+    ok(call("GET", "/me", tok), 401)                                          # every old session ended
+    tok = rec["token"]
+    ok(login(k3), 400)
+
+    # Sign out everywhere else.
+    other = ok(login(k4)).json()["token"]
+    assert ok(call("POST", "/me/sessions/end-others", tok)).json()["sessions_ended"] == 1
+    ok(call("GET", "/me", other), 401)
+    ok(call("GET", "/me", tok))
+
+    # Admin reset code: admins only, the newest code only, once; a new key pair that friends see.
+    rf = ok(register(f"acctfriend_{tag}")).json()
+    befriend(tok, rf["user"], rf["token"], u["id"])
+    adm = admin_token()
+    ok(call("POST", f"/admin/users/{u['id']}/reset-code", tok), 404)       # not an admin
+    ok(call("POST", "/admin/users/999999/reset-code", adm), 404)
+    first = ok(call("POST", f"/admin/users/{u['id']}/reset-code", adm)).json()
+    issued = ok(call("POST", f"/admin/users/{u['id']}/reset-code", adm)).json()   # replaces the first
+    assert issued["username"] == name and len(issued["code"]) == 19 and issued["expires_at"] > time.time() + 23 * 3600
+    new_pub, w5 = b64(os.urandom(91)), b64(os.urandom(180))
+    body = {"username": name, "new_auth_key": k5, "public_key": new_pub, "wrapped_private_key": w5}
+    ok(call("POST", "/auth/reset", json={**body, "code": first["code"]}), 400)
+    res = ok(call("POST", "/auth/reset", json={**body, "code": issued["code"].lower().replace("-", " ")})).json()
+    assert res["public_key"] == new_pub and res["user"]["key_reset_at"] and res["user"]["has_recovery_key"] is False
+    ok(call("POST", "/auth/reset", json={**body, "code": issued["code"]}), 400)   # used
+    ok(call("GET", "/me", tok), 401)
+    ok(login(k5))
+    seen = [c for c in ok(call("GET", "/friends", rf["token"])).json() if c["id"] == u["id"]][0]
+    assert seen["public_key"] == new_pub and seen["key_reset_at"] == res["user"]["key_reset_at"]
+    ok(call("POST", "/auth/recover/start", json={"username": name, "recovery_auth_key": rk}), 400)  # went with the old key
+    if DB:
+        reasons = [x for (x,) in sqlite3.connect(DB).execute(
+            "SELECT reason FROM credential_history WHERE user_id = ? ORDER BY id", (u["id"],))]
+        assert reasons == ["recovery_key_set", "password_changed", "recovered", "admin_reset"], reasons
+        codes = sqlite3.connect(DB).execute("SELECT code_hash FROM reset_codes WHERE user_id = ?", (u["id"],)).fetchall()
+        assert len(codes) == 2 and all(issued["code"] not in h for (h,) in codes), "codes are stored hashed"
+    print("  account: password change, recovery key, reset codes, sign out elsewhere; history kept")
+
+
 def check_rate_limits(tag):
     """Failed sign-ins lock a username for a while; one address can't hammer sign-up."""
     name = f"lock_{tag}"
@@ -456,6 +550,7 @@ async def main():
     ok(call("POST", "/auth/logout", a_tok))                                    # twice is harmless
     ok(call("GET", "/me", a_tok), 401)
 
+    check_account(tag)
     check_rate_limits(tag)
     check_sensitive_paths()
     check_nothing_sensitive_served()

@@ -8,6 +8,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [The parts](#the-parts)
 - [What happens to your password](#what-happens-to-your-password)
 - [Your keys, and where they live](#your-keys-and-where-they-live)
+- [Forgot your password?](#forgot-your-password)
 - [Sending a message](#sending-a-message)
 - [Pics](#pics)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
@@ -72,6 +73,24 @@ Signing in on a new device:
 4. **Keep it in the browser.** Stored in IndexedDB as a non-extractable key: page code can use it but can't read it out.
 
 That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it.
+
+**Changing your password** keeps the same key pair. Your browser unlocks the private key with the old password and locks it again with the new one, then sends the new auth key and the newly locked copy. History stays readable, and every other signed-in device is signed out.
+
+## Forgot your password?
+
+The password unlocks your private key, and nobody else has a copy. So "reset my password" can't work the usual way. There are two ways back in, and only one keeps your history.
+
+**Your recovery key (keeps everything).** When you sign up, napsack shows a recovery key once, like `0CG3-TPKQ-JJRW-XTR8-4N15-YZ4S-PV9Z-039A`: 20 random bytes in Crockford base32 (no I, L, O or U, so it's easy to copy by hand). Your browser uses it like a password:
+
+| Step | What happens |
+|---|---|
+| Two keys | HKDF-SHA-256 turns the recovery key into a recovery auth key (`napsack/v1/recovery/auth`) and a recovery wrap key (`napsack/v1/recovery/wrap`). It's random, so no slow stretching is needed. |
+| A second locked copy | The recovery wrap key locks a second copy of your private key (associated string `napsack/v1/recovery`). The server stores that copy and an Argon2 hash of the recovery auth key. |
+| Getting back in | You enter your username, the recovery key and a new password. The server checks the recovery auth key and returns the second copy; your browser unlocks it and locks it again under the new password. |
+
+The server never sees the recovery key or the private key. Making a recovery key later, or a new one, needs your password. Otherwise someone with a stolen session could plant their own. The pinned test vectors are in `tests/vectors/recovery.json`.
+
+**A reset code from an admin (no history).** If you've lost both, an admin can give you a one-time reset code (16 characters, good for 24 hours, stored only as a hash). With it you choose a new password, and your browser makes a brand-new key pair. You keep your account, friends and groups, but messages from before can't be read by you or anyone else. Your friends see a changed safety code (below). The old keys aren't thrown away: if you ever remember the old password, the history it protects could still be unlocked.
 
 ## Sending a message
 
@@ -151,18 +170,23 @@ Usernames stay the identity. A display name could be anything, including someone
 
 There's one attack the scheme above can't stop by itself: a dishonest server could hand you its own public key and claim it's your friend's. You'd then be encrypting to the server. napsack defends against this in two ways.
 
-**Pinning.** The first time your browser sees a friend's public key, it remembers it. napsack keys never change, so if the server later serves a different key, the chat shows a warning and refuses to send anything until it's explained.
+**Pinning.** The first time your browser sees a friend's public key, it remembers it. If the server later serves a different key, the chat shows a warning and refuses to send anything until you decide.
+
+Keys only change when an admin resets an account. When that happened, the warning says so, but that's the server's claim, so you get two choices:
+- **Compare safety codes** with your friend in person or on a call, then tap *The codes match*. This is the safe way.
+- **Accept without checking** (two taps), if you'd rather trust it.
+
+Either way, your browser keeps the old key locally, so you can still read everything from before. Old keys only ever come from your own device, never from the server: a server that could hand you an "old key" could also forge old messages under it.
 
 **Safety codes.** Tap *Encrypted* in any chat to see a code like `48663 30443 09844 / 47350 63988 34781`. Both of you see the same code, computed from both public keys (SHA-256 of the two keys, sorted, cut into six five-digit groups). Compare it in person or over a call. If it matches, nobody is in the middle, and pinning keeps it that way.
 
 ## Limits
 
-- **A forgotten password means unreadable history.** The key can only be unlocked with the password. Nobody, including whoever runs the server, can recover it.
+- **A forgotten password and a lost recovery key mean unreadable history.** The key can only be unlocked with one of them. An admin can give the account back, but nobody, including whoever runs the server, can recover the old messages.
 - **A weak password is the weakest link.** Someone who stole the database could try passwords offline against the wrapped key. The 600,000-round stretch makes each guess slow, but a short or common password will still fall. Use a long one.
 - **The server delivers the app.** The web app's JavaScript comes from the same server. A compromised server could ship code that leaks keys as you type. Every browser-based encrypted app shares this problem. A native app, whose code is signed and reviewed before install, closes it.
 - **No forward secrecy.** Each pair of friends uses one long-lived key. If a password and old ciphertext both leaked, past messages could be read. Signal-style ratcheting fixes this at real complexity.
 - **Metadata is visible.** Who talks to whom, when, and how much is what the server needs to deliver messages. It's also what the admin panel shows, as counts.
-- **Passwords can't be changed yet.** Changing one means re-wrapping the private key and replacing the auth key in one step. It's planned.
 
 ## The admin panel
 

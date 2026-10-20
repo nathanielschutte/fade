@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {any} v  tests/vectors/format1.json
- * @param {any} v2 tests/vectors/format2.json
+ * @param {{ format1: any, format2: any, recovery: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
-export async function runVectorChecks(e2e, v, v2, onResult = () => {}) {
+export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
+  const { format1: v, format2: v2, recovery: vr } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -109,6 +109,50 @@ export async function runVectorChecks(e2e, v, v2, onResult = () => {}) {
     const k1 = await e2e.pairKey(back, v.bob.spki, 1, v.bob.id);
     const k2 = await e2e.pairKey(await priv(v.bob), id.publicKey, v.bob.id, 1);
     return (await e2e.decryptText(k2, await e2e.encryptText(k1, "new", 1, v.bob.id), 1, v.bob.id)) === "new";
+  });
+
+  // Recovery keys and changing the password
+  await check("recovery key displays like the vector", () => {
+    const bytes = Uint8Array.from(vr.key_bytes_hex.match(/../g), (h) => parseInt(h, 16));
+    return e2e.formatRecoveryKey(bytes) === vr.recovery_key;
+  });
+  await check("recovery key reads back despite typos", () => {
+    const sloppy = vr.recovery_key.toLowerCase().replace(/-/g, " ").replace(/0/g, "o").replace(/1/g, "l");
+    return e2e.toB64(e2e.parseRecoveryKey(sloppy)) === e2e.toB64(e2e.parseRecoveryKey(vr.recovery_key));
+  });
+  await check("recovery key derives the vector's auth key", async () => {
+    ctx.rec = await e2e.deriveFromRecoveryKey(vr.recovery_key);
+    return ctx.rec.authKey === vr.recovery_auth_key;
+  });
+  await check("recovery key unlocks the vector's private key", async () => {
+    const next = await e2e.deriveFromPassword(v.password.username, "a brand new password");
+    const got = await e2e.recoverIdentity(ctx.rec.wrapKey, vr.recovery_wrapped_key, next.wrapKey);
+    const k = await e2e.pairKey(got.privateKey, v.bob.spki, v.alice.id, v.bob.id);
+    const again = await e2e.unwrapIdentity(next.wrapKey, got.wrappedPrivateKey);
+    const k2 = await e2e.pairKey(again, v.bob.spki, v.alice.id, v.bob.id);
+    return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext
+      && (await e2e.decryptText(k2, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext;
+  });
+  await check("a recovery copy round-trips", async () => {
+    const copy = await e2e.wrapForRecovery(ctx.d.wrapKey, v.password.wrapped_private_key, ctx.rec.wrapKey);
+    const got = await e2e.recoverIdentity(ctx.rec.wrapKey, copy, ctx.d.wrapKey);
+    const k = await e2e.pairKey(got.privateKey, v.bob.spki, v.alice.id, v.bob.id);
+    return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext;
+  });
+  await check("the password-wrapped key can't pass as a recovery copy", () =>
+    fails(() => e2e.recoverIdentity(ctx.rec.wrapKey, v.password.wrapped_private_key, ctx.d.wrapKey)));
+  await check("a wrong recovery key can't unlock", async () => {
+    const wrong = await e2e.deriveFromRecoveryKey(e2e.newRecoveryKey());
+    return fails(() => e2e.recoverIdentity(wrong.wrapKey, vr.recovery_wrapped_key, ctx.d.wrapKey));
+  });
+  await check("malformed recovery keys are refused", () =>
+    ["", "ABCD-EFGH", "U".repeat(32), vr.recovery_key + "0"].every((t) => { try { e2e.parseRecoveryKey(t); return false; } catch { return true; } }));
+  await check("changing the password keeps the same key", async () => {
+    const next = await e2e.deriveFromPassword(v.password.username, "another new password");
+    const rewrapped = await e2e.rewrapIdentity(ctx.d.wrapKey, v.password.wrapped_private_key, next.wrapKey);
+    const k = await e2e.pairKey(await e2e.unwrapIdentity(next.wrapKey, rewrapped), v.bob.spki, v.alice.id, v.bob.id);
+    return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext
+      && (await fails(() => e2e.unwrapIdentity(ctx.d.wrapKey, rewrapped)));
   });
 
   // Safety code and formats

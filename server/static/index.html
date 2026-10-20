@@ -33,6 +33,31 @@
     <button type="submit" class="button primary" id="auth-submit">Sign in</button>
   </form>
   <button type="button" class="link" id="auth-toggle">New here? Create an account</button>
+  <button type="button" class="link" id="auth-forgot">Forgot your password?</button>
+
+  <form id="recover-form" class="auth-form" novalidate hidden>
+    <p class="sheet-text">Use the recovery key you saved when you signed up, or a reset code from an admin.</p>
+    <label class="field">
+      <span>Username</span>
+      <input name="recover_username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="20">
+    </label>
+    <label class="field">
+      <span>Recovery key or reset code</span>
+      <input name="secret" id="recover-secret" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+      <small class="field-hint" id="recover-kind"></small>
+    </label>
+    <label class="field">
+      <span>New password</span>
+      <input name="new_password" type="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <label class="field">
+      <span>New password again</span>
+      <input name="new_confirm" type="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <p class="form-error" id="recover-error" role="alert"></p>
+    <button type="submit" class="button primary" id="recover-submit">Get back in</button>
+  </form>
+  <button type="button" class="link" id="recover-back" hidden>Back to sign in</button>
 </main>
 
 <!-- Main app -->
@@ -52,6 +77,10 @@
         <span class="badge" id="request-badge" hidden></span>
       </button>
     </header>
+    <div class="recovery-nudge" id="recovery-nudge" hidden>
+      <p>Save a recovery key, so a forgotten password can't cost you your messages.</p>
+      <button type="button" class="button" id="recovery-nudge-button">Set up</button>
+    </div>
     <ul class="chat-list" id="chat-list"></ul>
     <div class="empty" id="chat-empty" hidden>
       <p>No friends yet. Add someone by their username to start a chat.</p>
@@ -87,10 +116,14 @@
       <p class="group-notice" id="group-notice" hidden>
         Group chats aren't end-to-end encrypted yet: the napsack server can read them. Direct chats are encrypted.
       </p>
-      <p class="key-warning" id="key-warning" role="alert" hidden>
-        <strong><span id="key-warning-name"></span>'s safety code changed.</strong>
-        napsack keys never change, so someone may be trying to read this chat. Messages are blocked.
-      </p>
+      <div class="key-warning" id="key-warning" role="alert" hidden>
+        <p><strong><span id="key-warning-name"></span>'s safety code changed.</strong>
+          <span id="key-warning-why"></span> Sending is blocked until you decide.</p>
+        <div class="key-actions">
+          <button type="button" class="button" id="key-compare">Compare safety codes</button>
+          <button type="button" class="button" id="key-accept">Accept without checking</button>
+        </div>
+      </div>
       <ol class="messages" id="messages" aria-live="polite"></ol>
       <form class="composer" id="composer">
         <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a pic">
@@ -221,6 +254,16 @@
     <button type="button" class="button" id="profile-picture-clear">Remove picture</button>
   </div>
   <p class="form-note" id="profile-edit-note" role="status"></p>
+  <section class="profile-security" id="profile-security" hidden>
+    <h3>Account security</h3>
+    <p class="field-hint" id="security-status"></p>
+    <div class="picture-row">
+      <button type="button" class="button" id="security-recovery">Recovery key</button>
+      <button type="button" class="button" id="security-password">Change password</button>
+      <button type="button" class="button" id="security-sessions">Sign out other devices</button>
+    </div>
+    <p class="form-note" id="security-note" role="status"></p>
+  </section>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>
     <h3 id="profile-people-title"></h3>
@@ -240,6 +283,51 @@
   <p class="sheet-text">Messages and pics with <span id="safety-name"></span> are encrypted on your device. Only the two of you can read them, not even the napsack server.</p>
   <p class="sheet-text">To be sure no one is in the middle, check that <span id="safety-name-2"></span> sees the same code:</p>
   <p class="safety-code" id="safety-code"></p>
+  <div id="safety-trust-row" hidden>
+    <p class="sheet-text small">This is the code for their new key. If it matches what <span id="safety-name-3"></span> sees, the new key is really theirs.</p>
+    <button type="button" class="button primary" id="safety-trust">The codes match: trust the new key</button>
+  </div>
+</dialog>
+
+<!-- Password check: change password, or make a recovery key -->
+<dialog id="password-dialog" class="sheet" aria-labelledby="password-title">
+  <header class="sheet-head">
+    <h2 id="password-title"></h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <form id="password-form" class="group-form" novalidate>
+    <p class="sheet-text" id="password-text"></p>
+    <label class="field">
+      <span>Current password</span>
+      <input name="current_password" type="password" autocomplete="current-password" required>
+    </label>
+    <label class="field" id="password-new-field">
+      <span>New password</span>
+      <input name="change_password" type="password" autocomplete="new-password" minlength="8">
+    </label>
+    <label class="field" id="password-confirm-field">
+      <span>New password again</span>
+      <input name="change_confirm" type="password" autocomplete="new-password" minlength="8">
+    </label>
+    <p class="form-error" id="password-error" role="alert"></p>
+    <button type="submit" class="button primary" id="password-submit"></button>
+  </form>
+</dialog>
+
+<!-- Recovery key: shown once -->
+<dialog id="recovery-dialog" class="sheet" aria-labelledby="recovery-title">
+  <header class="sheet-head">
+    <h2 id="recovery-title">Your recovery key</h2>
+  </header>
+  <p class="sheet-text">If you forget your password, this key gets you back in with all your messages. Write it down or keep it in a password manager. napsack can't show it again, and nobody can recover it for you.</p>
+  <p class="recovery-key" id="recovery-key"></p>
+  <div class="recovery-actions">
+    <button type="button" class="button" id="recovery-copy">Copy</button>
+    <label class="check"><input type="checkbox" id="recovery-saved"> I've saved it somewhere safe</label>
+  </div>
+  <button type="button" class="button primary" id="recovery-done" disabled>Done</button>
 </dialog>
 
 <!-- Camera -->

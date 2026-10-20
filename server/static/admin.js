@@ -178,10 +178,45 @@ function render(s) {
     el("td", { class: "num", text: n(x.friends) }),
     el("td", { class: "num", text: n(x.texts_sent) }),
     el("td", { class: "num", text: n(x.snaps_sent) }),
+    el("td", {}, el("button", { type: "button", class: "reset-button", onclick: (e) => resetUser(e.currentTarget, x) }, "Reset password")),
   )));
-  if (!u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "No users yet." })));
+  if (!u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No users yet." })));
 
   $("#updated").textContent = `Updated ${new Date(s.generated_at * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+// For someone who lost their password and their recovery key. Two taps; the
+// code is shown once, here, for the admin to hand over in person.
+async function resetUser(btn, user) {
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again: issue a reset code";
+    return;
+  }
+  btn.disabled = true;
+  const out = $("#reset-result");
+  try {
+    const res = await fetch(`/api/admin/users/${user.id}/reset-code`, {
+      method: "POST", headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` }, cache: "no-store",
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    const until = new Date(body.expires_at * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    out.replaceChildren(
+      el("p", {}, el("strong", { text: `Reset code for ${body.username}` })),
+      el("p", { class: "reset-code", text: body.code }),
+      el("p", { class: "muted", text: `Works once, until ${until}. Give it to them in person or on a call, not in a napsack chat they can't open. They'll get their account and friends back with a new password, but messages from before can't be read, and their friends will see a new safety code. If they still have their recovery key, they should use that instead: it keeps everything.` }),
+    );
+    out.hidden = false;
+    out.scrollIntoView({ block: "nearest" });
+  } catch (err) {
+    out.replaceChildren(el("p", { text: `Couldn't issue a code: ${err.message}` }));
+    out.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Reset password";
+    delete btn.dataset.confirm;
+  }
 }
 
 function fail(text) {

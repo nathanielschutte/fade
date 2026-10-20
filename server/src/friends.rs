@@ -23,6 +23,7 @@ struct ChatRow {
     nickname: Option<String>,
     avatar_id: Option<i64>,
     public_key: String,
+    key_reset_at: Option<i64>,
     last_id: Option<i64>,
     unread: i64,
 }
@@ -39,6 +40,8 @@ pub struct ChatSummary {
     avatar_id: Option<i64>,
     /// The friend's SPKI public key. Clients pin it on first sight.
     public_key: String,
+    /// When an admin reset gave them a new key (so a changed safety code has an explanation).
+    key_reset_at: Option<i64>,
     last_message: Option<Message>,
     /// Unread texts plus unopened snaps from this friend.
     unread: i64,
@@ -50,7 +53,7 @@ pub async fn list_chats(
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
-        "SELECT u.id, u.username, u.public_key,
+        "SELECT u.id, u.username, u.public_key, u.key_reset_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
@@ -81,6 +84,7 @@ pub async fn list_chats(
             nickname: row.nickname,
             avatar_id: row.avatar_id,
             public_key: row.public_key,
+            key_reset_at: row.key_reset_at,
             last_message,
             unread: row.unread,
         });

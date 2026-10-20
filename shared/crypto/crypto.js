@@ -111,6 +111,92 @@ export async function unwrapIdentity(wrapKey, wrappedB64) {
   return subtle.importKey("pkcs8", pkcs8, ECDH, false, ["deriveBits"]);
 }
 
+/** Re-wraps the private key without it ever leaving this function as a usable key. */
+async function rewrap(fromKey, wrappedB64, fromAad, toKey, toAad) {
+  const pkcs8 = await open(fromKey, fromB64(wrappedB64), fromAad);
+  try {
+    return toB64(await seal(toKey, pkcs8, toAad));
+  } finally {
+    pkcs8.fill(0);
+  }
+}
+
+/** Changing the password: the same private key, wrapped by the new password's wrap key. */
+export async function rewrapIdentity(oldWrapKey, wrappedB64, newWrapKey) {
+  return rewrap(oldWrapKey, wrappedB64, WRAP_AAD, newWrapKey, WRAP_AAD);
+}
+
+// ---------- recovery key ----------
+// A random key the person saves at sign-up. It wraps a second copy of the
+// private key, so a forgotten password doesn't cost the message history.
+// Shown as 32 Crockford base32 characters in groups of four. It's random
+// (160 bits), so HKDF is enough; no slow stretching needed.
+
+const RECOVERY_BYTES = 20;
+const RECOVERY_AAD = "napsack/v1/recovery";
+const B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford: no I, L, O, U
+
+function toBase32(bytes) {
+  let out = "", bits = 0, value = 0;
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+
+/** Accepts any case, spaces, and dashes, and the letters people mistype (O for 0, I and L for 1). */
+export function parseRecoveryKey(text) {
+  const clean = String(text).toUpperCase().replace(/[\s-]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
+  if (clean.length !== 32 || [...clean].some((c) => !B32.includes(c))) {
+    throw new Error("That doesn't look like a recovery key. It's 32 letters and numbers.");
+  }
+  const out = new Uint8Array(RECOVERY_BYTES);
+  let bits = 0, value = 0, i = 0;
+  for (const c of clean) {
+    value = (value << 5) | B32.indexOf(c);
+    bits += 5;
+    if (bits >= 8) {
+      out[i++] = (value >>> (bits - 8)) & 0xff;
+      bits -= 8;
+    }
+  }
+  return out;
+}
+
+export function formatRecoveryKey(bytes) {
+  return toBase32(bytes).match(/.{4}/g).join("-");
+}
+
+export function newRecoveryKey() {
+  return formatRecoveryKey(globalThis.crypto.getRandomValues(new Uint8Array(RECOVERY_BYTES)));
+}
+
+/** Like deriveFromPassword: an auth key for the server, and a wrap key that stays here. */
+export async function deriveFromRecoveryKey(text) {
+  const hkdf = await subtle.importKey("raw", parseRecoveryKey(text), "HKDF", false, ["deriveBits", "deriveKey"]);
+  const params = (info) => ({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: enc.encode(info) });
+  const authKey = toB64(await subtle.deriveBits(params("napsack/v1/recovery/auth"), hkdf, 256));
+  const wrapKey = await subtle.deriveKey(params("napsack/v1/recovery/wrap"), hkdf, AES, false, ["encrypt", "decrypt"]);
+  return { authKey, wrapKey };
+}
+
+/** The recovery copy of the private key, made from the password-wrapped one. */
+export async function wrapForRecovery(wrapKey, wrappedB64, recoveryWrapKey) {
+  return rewrap(wrapKey, wrappedB64, WRAP_AAD, recoveryWrapKey, RECOVERY_AAD);
+}
+
+/** Forgot the password: unwraps with the recovery key and wraps under the new password. */
+export async function recoverIdentity(recoveryWrapKey, recoveryWrappedB64, newWrapKey) {
+  const wrappedPrivateKey = await rewrap(recoveryWrapKey, recoveryWrappedB64, RECOVERY_AAD, newWrapKey, WRAP_AAD);
+  return { wrappedPrivateKey, privateKey: await unwrapIdentity(newWrapKey, wrappedPrivateKey) };
+}
+
 // ---------- per-friend key ----------
 
 /** Same key on both sides: ECDH(mine, theirs) is symmetric, and the salt uses sorted ids. */

@@ -19,6 +19,8 @@ const state = {
   me: null,
   identity: null,              // { userId, privateKey (non-extractable), publicKey }
   pins: {},                    // friend id -> public key first seen (trust on first use)
+  pastPins: {},                // friend id -> keys they had before, accepted by me; still read old messages
+  readKeys: new Map(),         // friend id -> chat keys for reading: pinned, then past
   pairKeys: new Map(),         // friend id -> AES key shared with them
   plaintext: new Map(),        // message id -> decrypted text, or null if it couldn't be
   config: null,
@@ -148,11 +150,18 @@ function personName(id, username) {
 // ---------- encryption ----------
 
 const pinsKey = () => `pins:${state.me.id}`;
+const pastPinsKey = () => `pastPins:${state.me.id}`;
+
+async function loadPins() {
+  state.pins = (await keystore.loadLocal(pinsKey()).catch(() => null)) || {};
+  state.pastPins = (await keystore.loadLocal(pastPinsKey()).catch(() => null)) || {};
+}
 
 /**
  * Remember each friend's key the first time we see it. If the server later
- * hands out a different one, that chat is blocked: keys never change in
- * napsack, so a new one means someone is trying to listen in.
+ * hands out a different one, sending is blocked until I accept it: keys only
+ * change when an admin resets an account, and a key the server swapped in
+ * would let it read the chat.
  */
 async function checkPins(chats) {
   let changed = false;
@@ -166,6 +175,53 @@ async function checkPins(chats) {
     if (chat.keyChanged) report("warn", "friend key changed; chat blocked", { friend_id: chat.id });
   }
   if (changed) await keystore.saveLocal(pinsKey(), state.pins);
+}
+
+/**
+ * The new key becomes the pinned one; the old one stays, locally, to read the
+ * messages it protected. Past keys only ever come from my own pins, never from
+ * the server: a server-supplied "old key" could be used to forge old messages.
+ */
+async function acceptNewKey(chat, verified) {
+  const old = state.pins[chat.id];
+  if (old && old !== chat.public_key) {
+    state.pastPins[chat.id] = [...(state.pastPins[chat.id] || []), old];
+  }
+  state.pins[chat.id] = chat.public_key;
+  await keystore.saveLocal(pinsKey(), state.pins);
+  await keystore.saveLocal(pastPinsKey(), state.pastPins);
+  state.pairKeys.delete(chat.id);
+  state.readKeys.delete(chat.id);
+  state.plaintext.clear();
+  report("info", "friend key accepted", { friend_id: chat.id, verified });
+  await refreshChats();
+  if (state.activeId === chat.id) openChat(chat.id);
+}
+
+/** Keys that can read this chat's messages: the pinned key, then any I accepted before it. */
+async function readKeysFor(friendId) {
+  const cached = state.readKeys.get(friendId);
+  if (cached) return cached;
+  if (!chatById(friendId)) await refreshChats();
+  const pinned = state.pins[friendId] || chatById(friendId)?.public_key;
+  if (!pinned) throw new Error("Not a friend.");
+  const publics = [pinned, ...[...(state.pastPins[friendId] || [])].reverse()];
+  const keys = await Promise.all(publics.map((pub) => e2e.pairKey(state.identity.privateKey, pub, state.me.id, friendId)));
+  state.readKeys.set(friendId, keys);
+  return keys;
+}
+
+/** Tries each reading key in turn. */
+async function withReadKey(friendId, fn) {
+  let last;
+  for (const key of await readKeysFor(friendId)) {
+    try {
+      return await fn(key);
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
 }
 
 async function keyFor(friendId) {
@@ -192,21 +248,25 @@ async function decrypt(m) {
   if (!state.plaintext.has(m.id)) {
     let text = null;
     try {
-      text = await e2e.decryptText(await keyFor(friendOf(m)), m.ciphertext, m.sender_id, m.recipient_id);
+      text = await withReadKey(friendOf(m), (k) => e2e.decryptText(k, m.ciphertext, m.sender_id, m.recipient_id));
     } catch (err) {
-      report("warn", "decrypt failed", { message_id: m.id, friend_id: friendOf(m), ...errorFields(err) });
+      if (!beforeMyReset(m)) report("warn", "decrypt failed", { message_id: m.id, friend_id: friendOf(m), ...errorFields(err) });
     }
     state.plaintext.set(m.id, text);
   }
   m.text = state.plaintext.get(m.id);
+  m.beforeReset = m.text == null && beforeMyReset(m);
   return m;
 }
+
+/** An admin reset gave me a new key: what came before can't be read by anyone now. */
+const beforeMyReset = (m) => Boolean(state.me?.key_reset_at) && m.created_at < state.me.key_reset_at;
 
 async function loadIdentity() {
   const id = await keystore.loadLocal(IDENTITY_KEY).catch(() => null);
   if (!id || id.userId !== state.me.id) return false;
   state.identity = id;
-  state.pins = (await keystore.loadLocal(pinsKey()).catch(() => null)) || {};
+  await loadPins();
   return true;
 }
 
@@ -217,6 +277,7 @@ let authMode = "login";
 function showAuth() {
   $("#app").hidden = true;
   $("#auth").hidden = false;
+  showRecover(false);
   setAuthMode("login");
 }
 
@@ -276,15 +337,13 @@ $("#auth-form").addEventListener("submit", async (e) => {
         throw new Error("Couldn't unlock your keys. Check your password.");
       }
     }
-    state.token = res.token;
-    state.me = res.user;
-    state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
-    await keystore.saveLocal(IDENTITY_KEY, state.identity);
-    state.pins = (await keystore.loadLocal(pinsKey()).catch(() => null)) || {};
-    localStorage.setItem(TOKEN_KEY, res.token);
+    await startSession(res, privateKey);
     form.reset();
     report("info", register ? "signed up" : "signed in");
+    // New accounts get a recovery key right away, while the password is at hand.
+    const recoveryKey = register ? await setUpRecovery(authKey, wrapKey, res.wrapped_private_key).catch(() => null) : null;
     enterApp();
+    if (recoveryKey) await showRecoveryKey(recoveryKey);
   } catch (err) {
     report("info", register ? "sign-up failed" : "sign-in failed", errorFields(err));
     $("#auth-error").textContent = err.message;
@@ -294,11 +353,261 @@ $("#auth-form").addEventListener("submit", async (e) => {
   }
 });
 
+async function startSession(res, privateKey) {
+  state.token = res.token;
+  state.me = res.user;
+  state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
+  await keystore.saveLocal(IDENTITY_KEY, state.identity);
+  await loadPins();
+  localStorage.setItem(TOKEN_KEY, res.token);
+}
+
+// ---------- recovery key, password, reset ----------
+
+/** Makes and registers a recovery key. Returns it, for showing once. */
+async function setUpRecovery(authKey, wrapKey, wrappedPrivateKey) {
+  const recoveryKey = e2e.newRecoveryKey();
+  const rec = await e2e.deriveFromRecoveryKey(recoveryKey);
+  const recoveryWrapped = await e2e.wrapForRecovery(wrapKey, wrappedPrivateKey, rec.wrapKey);
+  await api("/me/recovery", {
+    method: "PUT",
+    json: { auth_key: authKey, recovery_auth_key: rec.authKey, recovery_wrapped_key: recoveryWrapped },
+  });
+  state.me.has_recovery_key = true;
+  renderAccountBar();
+  report("info", "recovery key set");
+  return recoveryKey;
+}
+
+/** Shows the key until the person says they saved it. */
+function showRecoveryKey(recoveryKey) {
+  const dialog = $("#recovery-dialog");
+  $("#recovery-key").textContent = recoveryKey;
+  $("#recovery-saved").checked = false;
+  $("#recovery-done").disabled = true;
+  $("#recovery-copy").textContent = "Copy";
+  dialog.showModal();
+  return new Promise((resolve) => dialog.addEventListener("close", () => {
+    $("#recovery-key").textContent = ""; // don't leave it in the page
+    resolve();
+  }, { once: true }));
+}
+
+$("#recovery-saved").addEventListener("change", (e) => { $("#recovery-done").disabled = !e.target.checked; });
+$("#recovery-done").addEventListener("click", () => $("#recovery-dialog").close());
+// Escape doesn't dismiss it before it's saved.
+$("#recovery-dialog").addEventListener("cancel", (e) => { if (!$("#recovery-saved").checked) e.preventDefault(); });
+$("#recovery-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("#recovery-key").textContent);
+    $("#recovery-copy").textContent = "Copied";
+  } catch {
+    $("#recovery-copy").textContent = "Select it and copy";
+  }
+});
+
+/** The password proves itself to the server, which returns the wrapped key to work with. */
+async function unlockWithPassword(password) {
+  const { authKey, wrapKey } = await e2e.deriveFromPassword(state.me.username, password);
+  const { wrapped_private_key: wrapped } = await getJSON("/auth/unlock", { method: "POST", json: { auth_key: authKey } });
+  return { authKey, wrapKey, wrapped };
+}
+
+let passwordMode = "recovery";
+
+function openPasswordDialog(mode) {
+  passwordMode = mode;
+  const change = mode === "change";
+  $("#password-form").reset();
+  $("#password-error").textContent = "";
+  $("#password-title").textContent = change ? "Change password" : "Recovery key";
+  $("#password-text").textContent = change
+    ? "Your messages stay readable: your key is locked again under the new password. Other devices will be signed out."
+    : state.me.has_recovery_key
+      ? "Making a new recovery key replaces your old one, which stops working. Enter your password to continue."
+      : "Enter your password to make a recovery key.";
+  $("#password-new-field").hidden = !change;
+  $("#password-confirm-field").hidden = !change;
+  $("#password-submit").textContent = change ? "Change password" : "Make a recovery key";
+  $("#password-dialog").showModal();
+}
+
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const btn = $("#password-submit");
+  const label = btn.textContent;
+  const change = passwordMode === "change";
+  $("#password-error").textContent = "";
+  if (change && form.change_password.value.length < 8) {
+    $("#password-error").textContent = "Passwords need at least 8 characters.";
+    return;
+  }
+  if (change && form.change_password.value !== form.change_confirm.value) {
+    $("#password-error").textContent = "The new passwords don't match.";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Unlocking…";
+  try {
+    const current = await unlockWithPassword(form.current_password.value);
+    if (change) {
+      const next = await e2e.deriveFromPassword(state.me.username, form.change_password.value);
+      const rewrapped = await e2e.rewrapIdentity(current.wrapKey, current.wrapped, next.wrapKey);
+      const res = await getJSON("/me/password", {
+        method: "POST",
+        json: { auth_key: current.authKey, new_auth_key: next.authKey, new_wrapped_private_key: rewrapped },
+      });
+      $("#password-dialog").close();
+      report("info", "password changed");
+      showSecurityNote(`Password changed.${res.sessions_ended ? ` Signed out ${res.sessions_ended} other ${res.sessions_ended === 1 ? "device" : "devices"}.` : ""}`);
+    } else {
+      const key = await setUpRecovery(current.authKey, current.wrapKey, current.wrapped);
+      $("#password-dialog").close();
+      await showRecoveryKey(key);
+      showSecurityNote("Recovery key saved.");
+    }
+  } catch (err) {
+    $("#password-error").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
+
+$("#recovery-nudge-button").addEventListener("click", () => openPasswordDialog("recovery"));
+$("#security-recovery").addEventListener("click", () => openPasswordDialog("recovery"));
+$("#security-password").addEventListener("click", () => openPasswordDialog("change"));
+$("#security-sessions").addEventListener("click", async () => {
+  try {
+    const res = await getJSON("/me/sessions/end-others", { method: "POST" });
+    showSecurityNote(res.sessions_ended
+      ? `Signed out ${res.sessions_ended} other ${res.sessions_ended === 1 ? "device" : "devices"}.`
+      : "No other devices were signed in.");
+  } catch (err) {
+    showSecurityNote(err.message);
+  }
+});
+
+function showSecurityNote(text) {
+  if ($("#profile-dialog").open) {
+    $("#security-note").textContent = text;
+    renderSecurity();
+  }
+}
+
+async function renderSecurity() {
+  $("#security-status").textContent = state.me.has_recovery_key ? "Recovery key saved." : "No recovery key yet.";
+  try {
+    const s = await getJSON("/me/security");
+    const others = s.active_sessions - 1;
+    $("#security-status").textContent = [
+      s.recovery_set_at ? `Recovery key saved ${longDate(s.recovery_set_at)}.` : "No recovery key yet.",
+      others > 0 ? `Signed in on ${others} other ${others === 1 ? "device" : "devices"}.` : "Not signed in anywhere else.",
+    ].join(" ");
+  } catch (err) {
+    report("warn", "loading security failed", errorFields(err));
+  }
+}
+
+// Signed out: back in with a recovery key (everything) or an admin's reset code (no history).
+const secretKind = (text) => {
+  const n = String(text).replace(/[\s-]/g, "").length;
+  return n === 32 ? "recovery" : n === 16 ? "code" : null;
+};
+
+function showRecover(on) {
+  $("#auth-form").hidden = on;
+  $("#auth-toggle").hidden = on;
+  $("#auth-forgot").hidden = on;
+  $("#recover-form").hidden = !on;
+  $("#recover-back").hidden = !on;
+  $("#recover-error").textContent = "";
+  $("#recover-kind").textContent = "";
+  if (on) $("#recover-form").recover_username.value = $("#auth-form").username.value;
+}
+
+$("#auth-forgot").addEventListener("click", () => showRecover(true));
+$("#recover-back").addEventListener("click", () => showRecover(false));
+$("#recover-secret").addEventListener("input", (e) => {
+  const kind = secretKind(e.target.value);
+  $("#recover-kind").textContent = kind === "recovery"
+    ? "Recovery key: you'll keep all your messages."
+    : kind === "code"
+      ? "Reset code: you'll get your account and friends back, but messages from before can't be read, and your friends will see a new safety code."
+      : "";
+});
+
+$("#recover-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const btn = $("#recover-submit");
+  const username = form.recover_username.value.trim();
+  const secret = form.secret.value;
+  const kind = secretKind(secret);
+  $("#recover-error").textContent = "";
+  if (!kind) {
+    $("#recover-error").textContent = "Recovery keys are 32 letters and numbers; reset codes are 16.";
+    return;
+  }
+  if (form.new_password.value.length < 8) {
+    $("#recover-error").textContent = "Passwords need at least 8 characters.";
+    return;
+  }
+  if (form.new_password.value !== form.new_confirm.value) {
+    $("#recover-error").textContent = "The new passwords don't match.";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Unlocking…";
+  try {
+    const next = await e2e.deriveFromPassword(username, form.new_password.value);
+    let res, privateKey, recoveryKey = null;
+    if (kind === "recovery") {
+      const rec = await e2e.deriveFromRecoveryKey(secret);
+      const start = await getJSON("/auth/recover/start", { method: "POST", json: { username, recovery_auth_key: rec.authKey } });
+      let got;
+      try {
+        got = await e2e.recoverIdentity(rec.wrapKey, start.recovery_wrapped_key, next.wrapKey);
+      } catch {
+        throw new Error("That recovery key couldn't unlock your account.");
+      }
+      res = await getJSON("/auth/recover/finish", {
+        method: "POST",
+        json: { username, recovery_auth_key: rec.authKey, new_auth_key: next.authKey, new_wrapped_private_key: got.wrappedPrivateKey },
+      });
+      privateKey = got.privateKey;
+    } else {
+      // A fresh key pair: the old one is locked behind the forgotten password.
+      const identity = await e2e.createIdentity(next.wrapKey);
+      res = await getJSON("/auth/reset", {
+        method: "POST",
+        json: { username, code: secret, new_auth_key: next.authKey, public_key: identity.publicKey, wrapped_private_key: identity.wrappedPrivateKey },
+      });
+      privateKey = identity.privateKey;
+    }
+    await startSession(res, privateKey);
+    if (kind === "code") recoveryKey = await setUpRecovery(next.authKey, next.wrapKey, res.wrapped_private_key).catch(() => null);
+    form.reset();
+    report("info", kind === "recovery" ? "recovered with recovery key" : "reset with code");
+    showRecover(false);
+    enterApp();
+    if (recoveryKey) await showRecoveryKey(recoveryKey);
+  } catch (err) {
+    $("#recover-error").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Get back in";
+  }
+});
+
 function signOutLocally() {
   state.token = null;
   state.me = null;
   state.identity = null;
   state.pins = {};
+  state.pastPins = {};
+  state.readKeys.clear();
   state.pairKeys.clear();
   state.plaintext.clear();
   state.activeId = null;
@@ -338,6 +647,7 @@ function enterApp() {
 function renderAccountBar() {
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
+  $("#recovery-nudge").hidden = Boolean(state.me.has_recovery_key);
 }
 
 /** My display name or picture may have changed in another tab. */
@@ -505,16 +815,49 @@ function renderChatHeader() {
   paintAvatar($("#chat-avatar"), chat);
   $("#key-warning").hidden = !chat.keyChanged;
   $("#key-warning-name").textContent = chat.username;
+  $("#key-warning-why").textContent = chat.key_reset_at
+    ? `napsack says an admin reset ${chat.username}'s account on ${longDate(chat.key_reset_at)}, which gives them a new key. Compare safety codes to be sure it's really them.`
+    : "Keys only change when an admin resets an account, and napsack doesn't say this one was. Someone may be trying to read this chat.";
+  resetAcceptButton();
   $("#composer-input").disabled = chat.keyChanged;
   $("#composer .send").disabled = chat.keyChanged;
   $("#camera-button").disabled = chat.keyChanged;
 }
+
+function resetAcceptButton() {
+  const btn = $("#key-accept");
+  btn.textContent = "Accept without checking";
+  delete btn.dataset.confirm;
+}
+
+// Accepting unchecked takes two taps, so it can't happen by accident.
+$("#key-accept").addEventListener("click", () => {
+  const btn = $("#key-accept");
+  const chat = chatById(state.activeId);
+  if (!chat?.keyChanged) return;
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again to accept the new key";
+    return;
+  }
+  acceptNewKey(chat, false);
+});
+
+$("#key-compare").addEventListener("click", () => $("#safety-button").click());
+
+$("#safety-trust").addEventListener("click", async () => {
+  const chat = chatById(state.activeId);
+  $("#safety-dialog").close();
+  if (chat?.keyChanged) await acceptNewKey(chat, true);
+});
 
 $("#safety-button").addEventListener("click", async () => {
   const chat = chatById(state.activeId);
   if (!chat) return;
   $("#safety-name").textContent = chat.username;
   $("#safety-name-2").textContent = chat.username;
+  $("#safety-name-3").textContent = chat.username;
+  $("#safety-trust-row").hidden = !chat.keyChanged;
   $("#safety-code").textContent = "…";
   $("#safety-dialog").showModal();
   const code = await e2e.safetyCode(state.identity.publicKey, chat.public_key);
@@ -609,7 +952,9 @@ function renderMessages() {
       items.push(m.text == null
         ? el("li", {
             class: `msg undecryptable ${mine ? "mine" : ""}`,
-            text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it." : "Couldn't decrypt this message.",
+            text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it."
+              : m.beforeReset ? "Sent before your account was reset, so it can't be read."
+              : "Couldn't decrypt this message.",
           })
         : el("li", { class: `msg ${mine ? "mine" : ""}`, text: m.text }));
       if (m.id === lastMineTextId && m.read_at) {
@@ -1341,12 +1686,15 @@ function renderProfileEdit(p) {
     : `Only you see this. Leave it empty to use ${p.display_name ? "their name" : "their username"}.`;
   $("#profile-name-hint").hidden = false;
   $("#profile-picture-row").hidden = !mine;
+  $("#profile-security").hidden = !mine;
+  $("#security-note").textContent = "";
+  if (mine) renderSecurity();
   $("#profile-picture-clear").hidden = !p.avatar_id;
   $("#profile-edit-note").textContent = "";
 }
 
 function hideProfileEdit() {
-  for (const id of ["#profile-name-form", "#profile-name-hint", "#profile-picture-row"]) $(id).hidden = true;
+  for (const id of ["#profile-name-form", "#profile-name-hint", "#profile-picture-row", "#profile-security"]) $(id).hidden = true;
   $("#profile-edit-note").textContent = "";
 }
 
@@ -1704,7 +2052,7 @@ async function viewSnap(m) {
   }
   let pic;
   try {
-    pic = await e2e.decryptPic(await keyFor(m.sender_id), sealed, m.format ?? 1, m.sender_id, m.recipient_id);
+    pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
   } catch {
     alert("This pic couldn't be decrypted.");
     return;

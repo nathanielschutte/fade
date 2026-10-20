@@ -45,7 +45,12 @@ pub enum Event {
     GroupsChanged { group_id: i64 },
 }
 
-type Conn = (u64, mpsc::UnboundedSender<String>);
+struct Conn {
+    id: u64,
+    /// Hash of the session token that opened it, so ending a session closes it.
+    session: String,
+    tx: mpsc::UnboundedSender<String>,
+}
 
 /// Tracks open sockets per user. A user can have several (phone + laptop + tabs).
 #[derive(Default)]
@@ -60,7 +65,7 @@ pub struct Hub {
 pub const MAX_CONNS_PER_USER: usize = 10;
 
 impl Hub {
-    fn register(&self, user_id: i64) -> (u64, mpsc::UnboundedReceiver<String>) {
+    fn register(&self, user_id: i64, session: String) -> (u64, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut conns = self.conns.lock().unwrap();
@@ -68,14 +73,26 @@ impl Hub {
         while list.len() >= MAX_CONNS_PER_USER {
             list.remove(0);
         }
-        list.push((id, tx));
+        list.push(Conn { id, session, tx });
         (id, rx)
+    }
+
+    /// Closes the user's sockets, except those opened by session `keep`
+    /// (a token hash). Their loops end, and the clients find themselves signed out.
+    pub fn end_sessions(&self, user_id: i64, keep: Option<&str>) {
+        let mut conns = self.conns.lock().unwrap();
+        if let Some(list) = conns.get_mut(&user_id) {
+            list.retain(|c| Some(c.session.as_str()) == keep);
+            if list.is_empty() {
+                conns.remove(&user_id);
+            }
+        }
     }
 
     fn unregister(&self, user_id: i64, conn_id: u64) {
         let mut conns = self.conns.lock().unwrap();
         if let Some(list) = conns.get_mut(&user_id) {
-            list.retain(|(id, _)| *id != conn_id);
+            list.retain(|c| c.id != conn_id);
             if list.is_empty() {
                 conns.remove(&user_id);
             }
@@ -88,7 +105,7 @@ impl Hub {
         };
         let mut conns = self.conns.lock().unwrap();
         if let Some(list) = conns.get_mut(&user_id) {
-            list.retain(|(_, tx)| tx.send(text.clone()).is_ok());
+            list.retain(|c| c.tx.send(text.clone()).is_ok());
         }
     }
 
@@ -135,7 +152,7 @@ pub async fn handler(
         .on_upgrade(move |socket| run(socket, state, who.ip))
 }
 
-async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<UserPublic> {
+async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<(UserPublic, String)> {
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             WsMessage::Text(text) => {
@@ -143,7 +160,8 @@ async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<Use
                 if frame.kind != "auth" {
                     return None;
                 }
-                return auth::user_for_token(&state.db, &frame.token).await.ok()?;
+                let user = auth::user_for_token(&state.db, &frame.token).await.ok()??;
+                return Some((user, auth::hash_token(&frame.token)));
             }
             WsMessage::Ping(_) | WsMessage::Pong(_) => continue,
             _ => return None,
@@ -153,13 +171,13 @@ async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<Use
 }
 
 async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
-    let user = match tokio::time::timeout(
+    let (user, session) = match tokio::time::timeout(
         Duration::from_secs(10),
         authenticate(&mut socket, &state),
     )
     .await
     {
-        Ok(Some(user)) => user,
+        Ok(Some(found)) => found,
         outcome => {
             let reason = if outcome.is_err() {
                 "timed out"
@@ -180,7 +198,7 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
         return;
     }
 
-    let (conn_id, mut rx) = state.hub.register(user.id);
+    let (conn_id, mut rx) = state.hub.register(user.id, session);
     let connected = std::time::Instant::now();
     tracing::debug!(
         user_id = user.id,
@@ -232,14 +250,27 @@ mod tests {
     fn connections_per_user_are_capped_oldest_first() {
         let hub = Hub::default();
         let mut receivers: Vec<_> = (0..MAX_CONNS_PER_USER + 2)
-            .map(|_| hub.register(7).1)
+            .map(|_| hub.register(7, "s".into()).1)
             .collect();
         assert_eq!(hub.online(), (1, MAX_CONNS_PER_USER));
         // The two oldest were closed; the newest are live.
         assert!(receivers[0].try_recv().is_err() && receivers[0].is_closed());
         assert!(receivers[1].is_closed());
         assert!(!receivers.last().unwrap().is_closed());
-        hub.register(8);
+        hub.register(8, "s".into());
         assert_eq!(hub.online(), (2, MAX_CONNS_PER_USER + 1));
+    }
+
+    #[test]
+    fn ending_sessions_closes_their_sockets_only() {
+        let hub = Hub::default();
+        let (_, kept) = hub.register(7, "mine".into());
+        let (_, other) = hub.register(7, "stolen".into());
+        let (_, someone) = hub.register(8, "theirs".into());
+        hub.end_sessions(7, Some("mine"));
+        assert!(!kept.is_closed() && other.is_closed() && !someone.is_closed());
+        hub.end_sessions(7, None);
+        assert!(kept.is_closed());
+        assert_eq!(hub.online(), (1, 1));
     }
 }

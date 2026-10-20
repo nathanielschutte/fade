@@ -137,7 +137,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/register` | `{username, auth_key, public_key, wrapped_private_key, invite_code?}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
-| `GET  /me` | `{id, username, is_admin, display_name, avatar_id}` |
+| `GET  /me` | `{id, username, is_admin, display_name, avatar_id, has_recovery_key, key_reset_at}` |
 | `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread}]`, newest first. `nickname` is yours for them |
 | `DELETE /friends/{id}` | Unfriend |
 | `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). 404 for anyone else |
@@ -157,6 +157,14 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
 | `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text}` (plain text, `format` 0) |
 | `POST /groups/{id}/read` | Marks the group read |
+| `POST /auth/unlock` | `{auth_key}` with a session: returns your password-wrapped key, so the client can wrap it again |
+| `POST /me/password` | `{auth_key, new_auth_key, new_wrapped_private_key}`: same key, new password; other sessions end |
+| `PUT  /me/recovery` | `{auth_key, recovery_auth_key, recovery_wrapped_key}`: set or replace your recovery key (needs the password) |
+| `GET  /me/security` | `{recovery_set_at, key_reset_at, active_sessions}` |
+| `POST /me/sessions/end-others` | Sign out every other device; their live connections close |
+| `POST /auth/recover/start` · `/finish` | Forgot password, with the recovery key: get the recovery copy of your key, then set a new password. Rate-limited like sign-in |
+| `POST /auth/reset` | `{username, code, new_auth_key, public_key, wrapped_private_key}`: an admin's one-time code; a new key pair, no history |
+| `POST /admin/users/{id}/reset-code` | Admins: issue a reset code (shown once, 24 hours, any older one stops working) |
 | `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |
 | `POST /me/avatar` · `DELETE /me/avatar` | Set your profile picture (raw small image; re-encoded) · remove it. Every picture is kept |
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |

@@ -3,7 +3,7 @@ Settings come from the environment; see common.py."""
 import asyncio, json, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, shot
+from common import BASE, INVITE, launch, save_recovery_key, shot
 
 
 async def main():
@@ -35,6 +35,7 @@ async def main():
         await page.fill("input[name=invite_code]", INVITE)
         await page.click("#auth-submit")
         await expect(page.locator("#app")).to_be_visible(timeout=20000)
+        await save_recovery_key(page)
         await page.wait_for_timeout(1000)  # the first socket connect also checks
         await expect(page.locator("#update-banner")).to_be_hidden()
 

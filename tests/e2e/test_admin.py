@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, json, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, shot
+from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
 
 ADMIN_PW = "correct horse battery"
 OTHER = f"bob_{uuid.uuid4().hex[:5]}"
@@ -35,6 +35,7 @@ async def sign_up_or_in(p, name, pw):
     await p.fill("input[name=invite_code]", INVITE)
     await p.click("#auth-submit")
     await expect(p.locator("#app")).to_be_visible(timeout=20000)
+    await save_recovery_key(p)
 
 
 async def main():

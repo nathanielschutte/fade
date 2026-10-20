@@ -4,7 +4,7 @@ see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, shot
+from common import BASE, INVITE, launch, save_recovery_key, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL, DEE = (f"{n}_{tag}" for n in ("ana", "ben", "cal", "dee"))
@@ -46,6 +46,7 @@ async def register(browser, name, **ctx):
     await page.fill("input[name=invite_code]", INVITE)
     await page.click("#auth-submit")
     await expect(page.locator("#app")).to_be_visible(timeout=20000)
+    await save_recovery_key(page)
     return page
 
 

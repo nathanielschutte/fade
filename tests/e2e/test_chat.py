@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, base64, os, re, sqlite3, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, DB, INVITE, launch, shot
+from common import BASE, DB, INVITE, launch, save_recovery_key, shot
 PASSWORD = "correct horse battery"
 tag = uuid.uuid4().hex[:5]
 ALEX, SAM = f"alex_{tag}", f"sam_{tag}"
@@ -49,6 +49,7 @@ async def register(page, name):
     await page.fill("input[name=invite_code]", INVITE)
     await page.click("#auth-submit")
     await expect(page.locator("#app")).to_be_visible(timeout=20000)
+    await save_recovery_key(page)
 
 
 async def login(page, name):

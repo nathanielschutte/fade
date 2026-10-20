@@ -49,7 +49,7 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-fn hash_token(token: &str) -> String {
+pub fn hash_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -79,7 +79,33 @@ pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option
     Ok(user)
 }
 
-async fn create_session(state: &SharedState, user_id: i64) -> AppResult<String> {
+/// Argon2 of a high-entropy derived key (an auth key or a recovery auth key),
+/// off the async workers. A leaked database can't be replayed.
+pub async fn hash_secret(secret: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(secret.as_bytes(), &salt)
+            .map(|h| h.to_string())
+    })
+    .await?
+    .map_err(|e| AppError::Internal(format!("hash: {e}")))
+}
+
+pub async fn verify_secret(stored: String, given: String) -> AppResult<bool> {
+    Ok(tokio::task::spawn_blocking(move || {
+        PasswordHash::new(&stored)
+            .map(|parsed| {
+                Argon2::default()
+                    .verify_password(given.as_bytes(), &parsed)
+                    .is_ok()
+            })
+            .unwrap_or(false)
+    })
+    .await?)
+}
+
+pub async fn create_session(state: &SharedState, user_id: i64) -> AppResult<String> {
     let mut raw = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut raw);
     let token = URL_SAFE_NO_PAD.encode(raw);
@@ -118,10 +144,10 @@ pub struct Login {
 
 #[derive(Serialize)]
 pub struct SessionResponse {
-    token: String,
-    user: Me,
-    public_key: String,
-    wrapped_private_key: String,
+    pub token: String,
+    pub user: Me,
+    pub public_key: String,
+    pub wrapped_private_key: String,
 }
 
 /// The signed-in user as they see themselves.
@@ -134,24 +160,36 @@ pub struct Me {
     /// What your friends see you as (people.rs).
     display_name: Option<String>,
     avatar_id: Option<i64>,
+    /// Whether a recovery key is set (account.rs). The app nudges until it is.
+    has_recovery_key: bool,
+    /// When an admin reset gave this account a new key; messages from before can't be read.
+    key_reset_at: Option<i64>,
 }
 
 impl Me {
-    async fn load(state: &SharedState, user: UserPublic) -> AppResult<Self> {
+    pub async fn load(state: &SharedState, user: UserPublic) -> AppResult<Self> {
         let is_admin = state.config.is_admin(&user.username);
         let (display_name, avatar_id) = crate::people::own_profile(&state.db, user.id).await?;
+        let (has_recovery_key, key_reset_at): (bool, Option<i64>) = sqlx::query_as(
+            "SELECT recovery_hash IS NOT NULL, key_reset_at FROM users WHERE id = ?",
+        )
+        .bind(user.id)
+        .fetch_one(&state.db)
+        .await?;
         Ok(Self {
             id: user.id,
             username: user.username,
             is_admin,
             display_name,
             avatar_id,
+            has_recovery_key,
+            key_reset_at,
         })
     }
 }
 
 /// Auth keys are 32 bytes, base64 (44 chars). Allow some slack for future formats.
-fn validate_auth_key(key: &str) -> AppResult<()> {
+pub fn validate_auth_key(key: &str) -> AppResult<()> {
     if is_base64(key, 128) {
         Ok(())
     } else {
@@ -180,11 +218,11 @@ fn same_secret(a: &str, b: &str) -> bool {
     Sha256::digest(a.as_bytes()) == Sha256::digest(b.as_bytes())
 }
 
-const TOO_MANY: &str = "Too many attempts. Wait a few minutes and try again.";
+pub const TOO_MANY: &str = "Too many attempts. Wait a few minutes and try again.";
 
 /// Sign-in and sign-up attempts per address. Local, un-proxied requests
 /// (development and tests) aren't limited by address.
-fn check_ip(state: &SharedState, who: &ClientInfo, action: &str) -> AppResult<()> {
+pub fn check_ip(state: &SharedState, who: &ClientInfo, action: &str) -> AppResult<()> {
     if who.local || state.auth_ip_limit.allow(&who.ip) {
         Ok(())
     } else {
@@ -217,17 +255,7 @@ pub async fn register(
         ));
     }
 
-    // Argon2 is deliberately slow; keep it off the async workers. The auth key
-    // is already high-entropy, but hashing it means a DB leak can't be replayed.
-    let auth_key = req.auth_key;
-    let hash = tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(auth_key.as_bytes(), &salt)
-            .map(|h| h.to_string())
-    })
-    .await?
-    .map_err(|e| AppError::Internal(format!("hash: {e}")))?;
+    let hash = hash_secret(req.auth_key).await?;
 
     let inserted = sqlx::query_as::<_, UserPublic>(
         "INSERT INTO users (username, auth_hash, public_key, wrapped_private_key, created_at)
@@ -292,19 +320,7 @@ pub async fn login(
         return Err(failed("no such user"));
     };
 
-    let auth_key = req.auth_key;
-    let valid = tokio::task::spawn_blocking(move || {
-        PasswordHash::new(&stored)
-            .map(|parsed| {
-                Argon2::default()
-                    .verify_password(auth_key.as_bytes(), &parsed)
-                    .is_ok()
-            })
-            .unwrap_or(false)
-    })
-    .await?;
-
-    if !valid {
+    if !verify_secret(stored, req.auth_key).await? {
         return Err(failed("wrong password"));
     }
 

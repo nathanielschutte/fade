@@ -1,3 +1,4 @@
+mod account;
 mod admin;
 mod auth;
 mod chats;
@@ -212,6 +213,18 @@ fn router(state: SharedState) -> Router {
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/recover/start", post(account::recover_start))
+        .route("/auth/recover/finish", post(account::recover_finish))
+        .route("/auth/reset", post(account::reset_with_code))
+        .route("/auth/unlock", post(account::unlock))
+        .route("/me/password", post(account::change_password))
+        .route("/me/recovery", axum::routing::put(account::set_recovery))
+        .route("/me/security", get(account::security))
+        .route("/me/sessions/end-others", post(account::end_other_sessions))
+        .route(
+            "/admin/users/{user_id}/reset-code",
+            post(account::issue_reset_code),
+        )
         .route("/me", get(auth::me))
         .route("/friends", get(friends::list_chats))
         .route("/friends/{user_id}", delete(friends::remove))

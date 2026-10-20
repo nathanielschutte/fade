@@ -3,7 +3,7 @@ Settings come from the environment; see common.py."""
 import asyncio, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, shot
+from common import BASE, INVITE, launch, save_recovery_key, shot
 tag = uuid.uuid4().hex[:5]
 
 # A frame that's red on the left, blue on the right. The stub reports the facing
@@ -44,6 +44,7 @@ async def register(browser, name, mobile=False):
     await p.fill("input[name=invite_code]", INVITE)
     await p.click("#auth-submit")
     await expect(p.locator("#app")).to_be_visible(timeout=20000)
+    await save_recovery_key(p)
     return p
 
 

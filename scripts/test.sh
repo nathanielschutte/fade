@@ -37,6 +37,7 @@ echo "==> unit tests"
 echo "==> crypto vectors (independent implementation)"
 "$PY" tests/vectors/check_format1.py
 "$PY" tests/vectors/check_format2.py
+"$PY" tests/vectors/check_recovery.py
 
 echo "==> shared crypto against the vectors (Node)"
 # WSL installs Node with nvm, which non-interactive shells don't load.
@@ -64,7 +65,7 @@ start_server() {
   FADE_BIND="127.0.0.1:$PORT" \
   FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
   FADE_INVITE_CODE="$NAPSACK_INVITE" \
-  FADE_ADMINS="$NAPSACK_ADMIN" \
+  FADE_ADMINS="$NAPSACK_ADMIN,smoke_admin" \
   FADE_MIN_CLIENT_VERSIONS="ios=1.2.0" \
   RUST_LOG="${RUST_LOG:-fade_server=warn}" \
     "$BIN" >> "$TMP/server.log" 2>&1 &
