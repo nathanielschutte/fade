@@ -46,6 +46,8 @@ const state = {
 
 // ---------- helpers ----------
 
+// Quick way to create new elements with properties:
+//  - class, text, on<event>=<handler function>, and other attributes.
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -59,34 +61,49 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+
+// Our API errors, thrown as exceptions so they can be caught and reported
 class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
+
+// Make an API call
 async function api(path, { method = "GET", json, body, headers = {} } = {}) {
-  const h = { ...headers };
-  if (state.token) h.Authorization = `Bearer ${state.token}`;
+  const HEADERS = { ...headers };
+
+  // our primary client authorization mechanism
+  if (state.token) HEADERS.Authorization = `Bearer ${state.token}`;
+  
   if (json !== undefined) {
-    h["Content-Type"] = "application/json";
+    HEADERS["Content-Type"] = "application/json";
     body = JSON.stringify(json);
   }
+  
   let res;
   try {
-    res = await fetch(`/api${path}`, { method, headers: h, body, cache: "no-store" });
+    res = await fetch(`/api${path}`, { method, headers: HEADERS, body, cache: "no-store" });
   } catch {
     throw new ApiError("Can't reach the server. Check your connection.", 0);
   }
+
+  // 401 Unauthorized, we have a token but it's not working
   if (res.status === 401 && state.token && !path.startsWith("/auth/")) {
     signOutLocally();
     throw new ApiError("Your session ended. Sign in again.", 401);
   }
+
   if (!res.ok) {
     let msg = `Request failed (${res.status}).`;
     try { msg = (await res.json()).error || msg; } catch {}
     throw new ApiError(msg, res.status);
   }
+
   return res;
 }
+
+
+// gimme dat json right away
 const getJSON = async (path, opts) => (await api(path, opts)).json();
 
 function relTime(ts) {
@@ -104,6 +121,7 @@ function clockTime(ts) {
 
 const PAGE = 50;               // messages per request when opening a chat or scrolling back
 
+
 // ---------- diagnostics ----------
 // Events and errors go to the server's admin log viewer (/admin#logs) as well
 // as the console. Never pass message text, pictures, keys, or anything typed:
@@ -114,24 +132,41 @@ const diag = { queue: [], timer: null };
 
 function report(level, message, fields = {}) {
   (level === "error" || level === "warn" ? console.warn : console.debug)(`[napsack] ${message}`, fields);
+  
   diag.queue.push({ level, message, fields });
-  if (diag.queue.length > 200) diag.queue.splice(0, diag.queue.length - 200);
+  
+  // remove oldest queue entries if queue exceeds 200 length
+  if (diag.queue.length > 200) {
+    diag.queue.splice(0, diag.queue.length - 200);
+  }
+
+  // each new report resets our batch timer
   clearTimeout(diag.timer);
+
+  // half a second if we got an error, 5 seconds otherwise
+  // this lets the queue accumulate
   diag.timer = setTimeout(flushReports, level === "error" ? 500 : 5000);
 }
 
+// { message: <message>, status: <status> } => error=message, status=status
+// <message> => error=message, status=undefined
+// message is always a string no longer than 300 characters
 const errorFields = (err) => ({ error: String(err?.message ?? err).slice(0, 300), status: err?.status });
 
 async function flushReports(keepalive = false) {
   if (!diag.queue.length) return;
+
   const entries = diag.queue.splice(0, 50);
   const headers = { "Content-Type": "application/json" };
+  
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   try {
     await fetch("/api/logs", { method: "POST", headers, keepalive, body: JSON.stringify({ entries }) });
   } catch {
     // Offline: drop them rather than pile up.
   }
+
+  // queue the next subset of the batch in a second
   if (diag.queue.length) diag.timer = setTimeout(flushReports, 1000);
 }
 
@@ -140,18 +175,24 @@ window.addEventListener("error", (e) =>
   report("error", "uncaught error", { error: String(e.message), at: `${e.filename?.split("/").pop()}:${e.lineno}` }));
 window.addEventListener("unhandledrejection", (e) => report("error", "unhandled rejection", errorFields(e.reason)));
 
+
+// ---------- general util ----------
+// get the friend ID from an outbound or inbound message object
 const friendOf = (m) => (m.sender_id === state.me.id ? m.recipient_id : m.sender_id);
+
+// find chat object in our state array by its ID
 const chatById = (id) => state.chats.find((c) => c.id === id);
 
-/** What I call a friend: my nickname for them, else their display name, else their username. */
+// what I call a friend: my nickname for them, else their display name, else their username
 const chatName = (c) => c.nickname || c.display_name || c.username;
 
-/** The same for anyone: friends by what I call them, me by my display name, others by username. */
+// the same for anyone: friends by what I call them, me by my display name, others by username
 function personName(id, username) {
   if (id === state.me?.id) return state.me.display_name || state.me.username;
   const c = chatById(id);
   return c ? chatName(c) : username;
 }
+
 
 // ---------- encryption ----------
 
@@ -188,19 +229,26 @@ async function checkPins(chats) {
  * messages it protected. Past keys only ever come from my own pins, never from
  * the server: a server-supplied "old key" could be used to forge old messages.
  */
+// Note: in local testing, pastPins didn't get set even after I tried an admin reset
 async function acceptNewKey(chat, verified) {
   const old = state.pins[chat.id];
   if (old && old !== chat.public_key) {
     state.pastPins[chat.id] = [...(state.pastPins[chat.id] || []), old];
   }
+
   state.pins[chat.id] = chat.public_key;
+  
   await keystore.saveLocal(pinsKey(), state.pins);
   await keystore.saveLocal(pastPinsKey(), state.pastPins);
+
   state.pairKeys.delete(chat.id);
   state.readKeys.delete(chat.id);
   state.plaintext.clear();
+
   report("info", "friend key accepted", { friend_id: chat.id, verified });
+  
   await refreshChats();
+  
   if (state.activeId === chat.id) openChat(chat.id);
 }
 
@@ -659,8 +707,12 @@ function signOutLocally() {
   state.activeGroupId = null;
   state.groupMessages.clear();
   state.groupHistory.clear();
+
   localStorage.removeItem(TOKEN_KEY);
+
+  // IndexedDB napsack bucket - delete "identity"
   keystore.deleteLocal(IDENTITY_KEY).catch(() => {});
+  
   const ws = state.ws;
   state.ws = null;
   ws?.close();
@@ -1188,6 +1240,10 @@ let lastTypingSent = 0;
 
 const isTyping = (key) => (state.typing.get(key) ?? 0) > Date.now();
 
+function stopTyping(key) {
+  if (state.typing.delete(key)) renderTyping();
+}
+
 // Tell the friend (or group) at most every couple of seconds while typing.
 $("#composer-input").addEventListener("input", (e) => {
   if (!e.target.value.trim() || Date.now() - lastTypingSent < 2000) return;
@@ -1446,6 +1502,8 @@ async function handleEvent(ev) {
     case "message":
     case "message_updated": {
       const m = ev.message;
+      // Their message arrived, so they're done typing (don't wait out the timer).
+      if (ev.type === "message" && m.sender_id !== state.me.id) stopTyping(`d:${m.sender_id}`);
       await upsertMessage(m);
       const fid = friendOf(m);
       if (fid === state.activeId) {
@@ -1479,6 +1537,7 @@ async function handleEvent(ev) {
       break;
     case "group_message": {
       const m = ev.message;
+      stopTyping(`g:${m.group_id}:${m.sender_id}`);
       upsertGroupMessage(m);
       if (m.group_id === state.activeGroupId) {
         renderMessages();

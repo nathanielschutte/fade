@@ -495,8 +495,9 @@ async fn log_request(
         .to_owned();
     let response = next.run(req).await;
     let status = response.status().as_u16();
-    // The log viewer polls every few seconds; logging its own polls would bury everything else.
-    if route == "/api/admin/logs" && status < 500 {
+    // The log viewer polls every few seconds, and in development the page polls
+    // /dev/changes; logging those would bury everything else.
+    if (route == "/api/admin/logs" || path.starts_with("/dev/")) && status < 500 {
         return response;
     }
     let ms = started.elapsed().as_millis() as u64;

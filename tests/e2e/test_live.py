@@ -86,10 +86,12 @@ async def main():
         await ben.locator("#composer-input").press_sequentially("hel")
         await expect(ana.locator("#typing-line")).to_have_text(f"{BEN} is typing…", timeout=5000)
         await expect(ana.locator(".chat-item", has_text=BEN).locator(".chat-status")).to_have_text("typing…")
-        await expect(ana.locator("#typing-line")).to_be_hidden(timeout=8000)
+        # Sending ends it at once, well before the hint's 4-second timer.
         await ben.fill("#composer-input", "first message")
         await ben.press("#composer-input", "Enter")
         await expect(ana.locator(".msg", has_text="first message")).to_be_visible(timeout=10000)
+        await expect(ana.locator("#typing-line")).to_be_hidden(timeout=1000)
+        await expect(ana.locator(".chat-item", has_text=BEN).locator(".chat-status")).not_to_have_text("typing…", timeout=1000)
         print("active now and typing")
 
         # Reply: tap the message, Reply, send. Both see the quote.
@@ -130,6 +132,8 @@ async def main():
         await ana.press("#composer-input", "Enter")
         await expect(ben.locator(".msg", has_text="group reply").locator(".quote")).to_have_text("You: group hello", timeout=10000)
         # Typing in the group says so in the group, not in the direct chat, and it clears.
+        # (Typing hints go out at most every 2 seconds; she just sent one with "group reply".)
+        await ana.wait_for_timeout(2100)
         await ana.locator("#composer-input").press_sequentially("still ty")
         await expect(ben.locator("#typing-line")).to_have_text(f"{ANA} is typing…", timeout=5000)
         dm_status = ben.locator(".chat-item:not(.is-group)", has_text=ANA).locator(".chat-status")

@@ -47,3 +47,6 @@ URL=$(out url)
 LIVE=$(curl -sf "$URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
 echo "==> $URL is running build ${LIVE:-unknown}"
 [ "$LIVE" = "$BUILD" ] || { echo "error: expected build $BUILD"; exit 1; }
+# Development live reload is compiled out of release builds (server/src/web.rs).
+DEV=$(curl -s -o /dev/null -w '%{http_code}' "$URL/dev/changes")
+[ "$DEV" = 404 ] || { echo "error: production answers /dev/changes ($DEV): a debug build is live"; exit 1; }

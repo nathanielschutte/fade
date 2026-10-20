@@ -3,6 +3,7 @@
 // error correction level M, versions 1 to 10 (up to 213 bytes, plenty for a
 // link). tests/e2e/test_invites.py checks it module for module against an
 // independent encoder (Python's qrcode) for every mask.
+// How it works, step by step: docs/qr.md.
 
 // Level M, by version: error correction codewords per block, and blocks.
 const ECC_PER_BLOCK = [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
