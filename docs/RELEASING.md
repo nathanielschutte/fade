@@ -34,6 +34,8 @@ A change that can't follow these rules is a new API version: new routes under `/
 
 The server refuses formats not in `MESSAGE_FORMATS`, so a client can't jump ahead of step 3 by accident.
 
+While the web app is the only client, steps 1 to 4 collapse into one release: it's served by the same binary, so the reader and the writer ship together. Tabs still open on the old version see the update banner, and an old tab shown a newer-format pic says "reload to open it" without using it up. That's how format 2 (pics with captions, 0.13.0) shipped. Once the iOS app exists, follow the steps.
+
 **4. Retiring old app versions.** Native apps send `X-Napsack-Client: ios/1.2.0+37`. The server answers any request from an app older than its platform's minimum with `426 Upgrade Required` and a message, and the app shows an update screen. `/api/config` is exempt, so an old app can always find out why. Set minimums in Terraform as `FADE_MIN_CLIENT_VERSIONS=ios=1.2.0` and apply. Raise them only when you need to (a security fix, retiring old API routes, a new message format), and give people time to update first. Requests without the header (the web client, scripts) are never blocked.
 
 **5. Database migrations are additive.** Migrations run automatically when the server starts. Add tables, add nullable or defaulted columns, add indexes. Don't drop or rename anything the previous release still reads; do that in a later release, once nothing uses it. The server ignores migrations it doesn't know, so you can roll back to an older binary after a newer one has migrated the database. Migrations are numbered `NNNN_description.sql` and never edited once released. (`0002_e2e.sql` wiped everything once, on purpose, before there were real users. Don't do that again.)

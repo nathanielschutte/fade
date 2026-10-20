@@ -11,15 +11,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 1 | [Pics last 30 days](#f9-pics-last-30-days) | Features | Planned | Requested; unopened pics are lost on every restart today |
-| 2 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
-| 3 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
-| 4 | [Profile pic and nicknames](#f5-profile-pic-and-nicknames) | Features | Planned | |
-| 5 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
-| 6 | [Captions on pictures](#f6-captions-on-pictures) | Features | Planned | Needs message format 2 |
-| 7 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 8 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 9 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 1 | [Password reset and recovery](#f2-password-reset-and-recovery) | Features | Planned | Shapes the key design the iOS app must implement |
+| 2 | [Account safety basics](#f8-account-safety-basics) | Features | Planned | Sign-in rate limits and device list before more people join |
+| 3 | [iOS app](#f1-ios-app) | Features | Planned | The big one; starts with the crypto spike |
+| 4 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 5 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 6 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -38,10 +35,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Account bar on the main screen](#x2-account-buttons-on-the-main-screen), favicon | 0.11.0 |
 | Pics and group pictures in group chats (not end-to-end encrypted yet; view-once, 30 days), shorter list previews, server resources in admin | 0.12.0 |
 | Hostile-input hardening: images rebuilt server-side, SQL guard test, text validation, write and socket caps (see CLAUDE.md, Security) | 0.12.0 |
+| [Profile pics and nicknames](#f5-profile-pic-and-nicknames): display names, private nicknames, profile pictures | 0.13.0 |
+| [Pics last 30 days](#f9-pics-last-30-days): unopened pics wait on disk and survive restarts | 0.13.0 |
+| [Captions on pictures](#f6-captions-on-pictures): message format 2 for direct pics; plain captions in groups | 0.13.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.12.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.13.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -105,16 +105,20 @@ Production runs **0.12.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F5. Profile pic and nicknames
 - Profile pic. Nicknames settable by own user.
 - **Decided:** visible to friends only, enforced by the server (not end-to-end encrypted). Same for nicknames.
+- **Decided (2026-10-19):** people set their own display name, and anyone can also give a friend a nickname only they see.
+- Done (0.13.0): display name and picture from your profile; a nickname from a friend's profile. Shown as nickname, else display name, else username, with `@username` alongside wherever they differ. Every name and picture is kept (append-only tables, migration 0008). Pictures rebuilt by `images::clean`. Group members who aren't your friends show by username.
 
 #### F6. Captions on pictures
 - Write text caption on a picture before you send it.
 - The encrypted picture is just JPEG bytes today, so a caption needs a new message format (an envelope holding picture + caption). That follows the readers-before-writers order in [RELEASING.md](RELEASING.md#compatibility-rules). If the iOS app can already read format 2 when it launches, this gets simpler.
+- Done (0.13.0): format 2 seals the caption in with the photo (pinned vectors in `tests/vectors/format2.json`). Every direct pic is format 2 now; format 1 pics still open. Group pics carry a plain caption (they aren't end-to-end encrypted), revealed when opened. Captions show across the photo in the viewer.
 
 #### F9. Pics last 30 days
 - Requested: unopened pics shouldn't expire for a while, around 30 days.
 - **Why it isn't a setting change:** unopened pics live only in server memory, so every restart (each deploy) loses them, and the memory pool is 128 MB.
 - **Proposal:** keep each unopened pic's ciphertext in a file on the data volume until it's opened or 30 days pass. It's end-to-end encrypted, so the server still can't see it. View-once stays: the file is removed when opened or expired, which is the feature, not a data loss. Restarts no longer lose pics, and the server expires them by age from the database. A disk cap of about 256 MB (~1,500 pending pics) fits the 1 GB volume; growing the volume later is a safe, in-place change.
 - **Trade-off to accept:** a pic's ciphertext now sits on disk while it waits, and can linger in the daily disk snapshots for up to 30 days after it's opened. Still unreadable without the recipient's keys, but no longer "only ever in RAM". The docs and the "never written to disk" wording change accordingly.
+- Done (0.13.0), as proposed: files under `<pic dir>/direct/`, 256 MB cap, 30-day lifetime. `tests/restart_test.py` restarts the server between sending and opening. Pics held in memory by 0.12.0 at the moment of the upgrade were lost one last time.
 
 #### F7. Group chats
 - Group chats (encryption design implication)

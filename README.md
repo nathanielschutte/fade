@@ -1,6 +1,6 @@
 # napsack
 
-A minimal private messenger for a few friends. You get a list of chats with your friends, text messages, and pics (photos) that disappear once they're viewed. Every direct text and pic is end-to-end encrypted in the browser, so the server only ever stores and relays ciphertext. Group chats are the exception for now: they are **not** end-to-end encrypted yet, and the app says so in every group. Pics are held only in server RAM, never written to the database, disk, or S3.
+A minimal private messenger for a few friends. You get a list of chats with your friends, text messages, and pics (photos) that disappear once they're viewed. Every direct text and pic is end-to-end encrypted in the browser, so the server only ever stores and relays ciphertext. Group chats are the exception for now: they are **not** end-to-end encrypted yet, and the app says so in every group. Unopened pics wait as ciphertext in files on the encrypted data disk for up to 30 days, and are deleted when opened. Friends see each other's display names and profile pictures; nicknames you give friends are yours alone.
 
 `fade` is still the internal name: the binary, systemd unit, env vars, and AWS resources keep it.
 
@@ -42,9 +42,9 @@ scripts/test.sh --no-browser     # skip the browser tests
 | `FADE_BIND` | `127.0.0.1:8080` | |
 | `FADE_DATABASE_URL` | `sqlite://fade.db` | |
 | `FADE_INVITE_CODE` | unset (open signup) | Required to register when set |
-| `FADE_SNAP_TTL_HOURS` | `24` | Unopened pics are dropped after this |
+| `FADE_SNAP_TTL_HOURS` | `720` | Unopened direct pics expire after this (30 days) |
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted pic. The client compresses every photo to 200 KB or less |
-| `FADE_SNAP_POOL_MB` | `128` | RAM ceiling for all unopened pics |
+| `FADE_SNAP_DISK_MB` | `256` | Disk ceiling for all unopened direct pics |
 | `FADE_SESSION_DAYS` | `90` | |
 | `FADE_ADMINS` | unset (panel off) | Comma-separated usernames allowed into `/admin` |
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
@@ -115,13 +115,11 @@ Limits worth knowing:
 
 Pics are called *snaps* in the code, API, and database (`snap_state`, `/api/snaps`), the same way `fade` is the internal name.
 
-1. The client draws the photo through a canvas. This strips EXIF (including GPS) and compresses it to a JPEG of at most 200 KB: it starts at 1280px and quality 0.8, then lowers the quality and shrinks the picture until it fits. It encrypts the JPEG and POSTs the ciphertext to `/api/chats/{friend}/snaps`.
-2. The server checks only the size (it can't see the image), writes a metadata row (`snap_state = pending`, no image), and keeps the ciphertext in an in-memory map keyed by message id.
-3. The recipient's `GET /api/snaps/{id}` removes the ciphertext from the map and returns it once, with `Cache-Control: no-store`, and the browser decrypts it. A second fetch gets `410 Gone`. The sender can't fetch it.
+1. The client draws the photo through a canvas. This strips EXIF (including GPS) and compresses it to a JPEG of at most 200 KB: it starts at 1280px and quality 0.8, then lowers the quality and shrinks the picture until it fits. It packs an optional caption in with the JPEG, encrypts both (message format 2), and POSTs the ciphertext to `/api/chats/{friend}/snaps?format=2`.
+2. The server checks only the size (it can't see the image), writes a metadata row (`snap_state = pending`, `snap_bytes`, no image), and writes the ciphertext to `<pic dir>/direct/<message id>.bin` on the data volume.
+3. The recipient's `GET /api/snaps/{id}` returns the ciphertext once and deletes the file, with `Cache-Control: no-store`, and the browser decrypts it. A second fetch gets `410 Gone`. The sender can't fetch it.
 4. The row becomes `opened`, and both people get a `message_updated` event so the chat shows "Opened" or "Viewed".
-5. Unopened pics expire after the TTL. A restart drops them all, and they're marked `expired` on boot.
-
-To make "never touches disk" hold at the OS level, the instance runs with no swap and core dumps disabled, and the unit sets `MemorySwapMax=0` and `LimitCORE=0`.
+5. Unopened pics expire after the TTL (30 days); the sweeper deletes the file and marks them `expired`. Restarts don't lose them: on boot, the server marks any pending pic whose file is missing as `expired` and deletes files with no pending pic.
 
 Known limits:
 - Anyone can screenshot. Browsers can't block it, and native apps can only detect it on some platforms.
@@ -137,8 +135,8 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/register` | `{username, auth_key, public_key, wrapped_private_key, invite_code?}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
-| `GET  /me` | `{id, username, is_admin}` |
-| `GET  /friends` | Chat list: `[{id, username, public_key, last_message, unread}]`, newest first |
+| `GET  /me` | `{id, username, is_admin, display_name, avatar_id}` |
+| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread}]`, newest first. `nickname` is yours for them |
 | `DELETE /friends/{id}` | Unfriend |
 | `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). 404 for anyone else |
 | `GET  /friends/requests` | `{incoming: [...], outgoing: [...]}` |
@@ -148,7 +146,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /chats/{friend}/messages?before=&limit=` | Oldest first |
 | `POST /chats/{friend}/messages` | `{ciphertext, format?}`: base64 of IV ‖ AES-GCM output; `format` defaults to 1 |
 | `POST /chats/{friend}/read` | Marks their texts as read |
-| `POST /chats/{friend}/snaps?format=1` | Encrypted image bytes (IV ‖ AES-GCM output) |
+| `POST /chats/{friend}/snaps?format=2` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
 | `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, encrypted: false}]` |
 | `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
@@ -157,7 +155,11 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
 | `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text}` (plain text, `format` 0) |
 | `POST /groups/{id}/read` | Marks the group read |
-| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic (raw JPEG/PNG/WebP body; re-encoded by the server) · open it, once per member, not the sender. Gone once everyone has opened it, or after 30 days |
+| `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |
+| `POST /me/avatar` · `DELETE /me/avatar` | Set your profile picture (raw small image; re-encoded) · remove it. Every picture is kept |
+| `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
+| `PUT  /friends/{id}/nickname` | `{name}`: a nickname for a friend that only you see. Empty clears it |
+| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic (raw JPEG/PNG/WebP body; re-encoded by the server; optional `?caption=`, one line, 200 characters) · open it, once per member, not the sender; the caption comes back in `X-Napsack-Caption`, percent-encoded. Gone once everyone has opened it, or after 30 days |
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |

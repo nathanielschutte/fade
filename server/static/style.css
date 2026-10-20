@@ -673,3 +673,9 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .chat .bar { gap: 0.5rem; }
 .picture-row { display: flex; margin-bottom: 0.25rem; }
 .picture-row .button { display: inline-flex; align-items: center; cursor: pointer; }
+
+/* ---------- profile editing ---------- */
+#profile-name-form { margin-top: 1rem; }
+#profile-name-hint { margin-top: 0.4rem; }
+#profile-picture-row { margin-top: 0.85rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+#profile-picture-row[hidden] { display: none; }

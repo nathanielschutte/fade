@@ -74,16 +74,16 @@ variable "admin_usernames" {
   default     = ["nate", "chris", "nateschutte", "gayboy1"]
 }
 
-variable "snap_pool_mb" {
-  description = "Max RAM for all unopened snaps combined. Keep well under instance memory."
+variable "snap_disk_mb" {
+  description = "Max disk for all unopened direct pics combined (they wait on the data volume until opened or expired)."
   type        = number
-  default     = 128
+  default     = 256
 }
 
 variable "snap_ttl_hours" {
-  description = "Unopened snaps are dropped after this long."
+  description = "Unopened pics expire after this long."
   type        = number
-  default     = 24
+  default     = 720
 }
 
 variable "data_volume_gb" {

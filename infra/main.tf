@@ -32,7 +32,7 @@ locals {
   env_file = join("\n", [
     "FADE_INVITE_CODE=${var.invite_code}",
     "FADE_ADMINS=${join(",", var.admin_usernames)}",
-    "FADE_SNAP_POOL_MB=${var.snap_pool_mb}",
+    "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
     "",
   ])

@@ -22,7 +22,8 @@ Every direct text and every pic is encrypted in the sender's browser and decrypt
 | The server knows | The server never sees |
 |---|---|
 | Usernames and who is friends with whom | What any text says |
-| When each message was sent, and whether it was a text or a pic | What any pic shows |
+| When each message was sent, and whether it was a text or a pic | What any pic shows, or its caption |
+| Display names, nicknames, and profile pictures (see [Profiles](#profiles)) | |
 | Roughly how long each message is | Your password |
 | When texts were read and whether pics were opened | Your private key, unwrapped |
 | Each account's public key | The key you share with each friend |
@@ -33,7 +34,7 @@ Every direct text and every pic is encrypted in the sender's browser and decrypt
 
 **The web app** is plain JavaScript with no framework and no build step. All of the encryption lives in one file, `crypto.js`, and uses only WebCrypto, the cryptography built into every modern browser. There are no third-party crypto libraries to trust.
 
-**The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. The machine has no swap and core dumps are off, so pic bytes held in memory can't be paged or dumped to disk.
+**The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. Unopened pics wait on that disk as ciphertext (see [Pics](#pics)).
 
 ## What happens to your password
 
@@ -107,11 +108,28 @@ Pics are called *snaps* in the code and API, so you'll see `snap` in the strings
 
 1. **Capture.** The front camera is mirrored, like a mirror, and the photo matches the preview.
 2. **Compress.** Redrawn as a JPEG, which drops all metadata, including GPS. Starts at 1280 px and quality 0.8, then lowers quality and shrinks until it's 200 KB or less.
-3. **Encrypt.** Same chat key, fresh IV, associated string ending in `snap/<sender>/<recipient>`.
-4. **Hold in memory.** The server keeps the ciphertext in RAM only, never on disk, up to 512 KB per pic.
-5. **Open once.** The first fetch by the recipient removes it from memory. A second fetch gets "gone".
+3. **Caption.** Optional, up to 200 characters, typed over the preview.
+4. **Encrypt.** The caption and the photo are packed together and encrypted as one: same chat key, fresh IV, associated string `napsack/v2/snap/<sender>/<recipient>`. This is message format 2 (below), so the server can't read the caption any more than the photo.
+5. **Wait on disk.** The server writes the ciphertext to a file on the encrypted data disk, up to 512 KB per pic, and notes its size in the database. A restart or a deploy doesn't lose it.
+6. **Open once.** The first fetch by the recipient deletes the file and marks the pic opened. A second fetch gets "gone".
 
-Unopened pics expire after 24 hours, and a server restart drops them all. The server marks them expired so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
+Unopened pics expire after 30 days; the server deletes the file and marks them expired, so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
+
+**The trade-off of lasting pics.** Until 0.13.0, unopened pics lived only in server memory and vanished on every restart. Now an unopened pic's ciphertext sits on disk until it's opened or expires, and the daily disk snapshots can keep a copy for up to 30 days after that. It is still unreadable without one of the two friends' keys.
+
+### Format 2: a pic with a caption
+
+Format 1 encrypts the JPEG bytes alone. Format 2 encrypts this instead:
+
+| Bytes | Contents |
+|---|---|
+| 2 | Caption length in bytes, big-endian (0 for no caption; at most 1000) |
+| that many | The caption, UTF-8 |
+| the rest | The JPEG |
+
+The associated string says `v2` (`napsack/v2/snap/7/3`), so a format 2 pic can't be passed off as format 1 or the other way round. Every message stores its format, and format 1 pics stay readable forever. Texts are still format 1. The pinned test vectors are in `tests/vectors/format2.json`.
+
+Group pics aren't end-to-end encrypted (see [Group chats](#group-chats)), so their captions are plain text on the server, revealed with the pic when it's opened.
 
 View-once is a server promise, not a cryptographic one. The recipient's screen shows the decrypted photo for ten seconds, and nothing stops a screenshot or a second camera.
 
@@ -120,6 +138,14 @@ View-once is a server promise, not a cryptographic one. The recipient's screen s
 Group chats are **not end-to-end encrypted yet.** Group messages travel over HTTPS and sit on an encrypted disk, but the napsack server can read them, unlike direct chats. Every group shows a notice saying so, and group messages carry `format` 0 ("not encrypted"), so a future encrypted version can be told apart.
 
 Doing it properly means giving each group a shared key, handing it to members through their own keys, and replacing it whenever someone leaves. That's planned; until then, keep anything private to direct chats.
+
+## Profiles
+
+You can set a display name and a profile picture. Your friends see them; nobody else does, and the server enforces that. You can also give any friend a nickname, which only you see. The app shows a friend by your nickname for them, else their display name, else their username.
+
+These are **not** end-to-end encrypted: the server stores names and pictures, the way it stores usernames. Profile pictures are rebuilt by the server like every image it handles (decoded, size-checked, re-encoded), and every name and picture you've ever set is kept.
+
+Usernames stay the identity. A display name could be anything, including someone else's name, so the app shows `@username` wherever a name differs from it, and safety codes and key warnings always use the username.
 
 ## Safety codes and changed keys
 
