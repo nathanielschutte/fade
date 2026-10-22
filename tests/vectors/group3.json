@@ -1,0 +1,34 @@
+{
+  "about": "napsack format 3 group messages (docs/group-encryption.md). Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "group_id": 5,
+  "sender": 7,
+  "text": {
+    "text": "road trip? 🚗",
+    "reply_to": 99,
+    "plaintext": "{\"t\":\"road trip? 🚗\",\"re\":99}",
+    "client_id": "4TVOifCHCB8/0AsPpkQOEA==",
+    "recipients": [
+      3,
+      7
+    ],
+    "content": "l41JUZTrrvuUwq1s87MSQ298gNxGWH4tvarIYxLiUcBo0Shvia5e/OQr/vVK7ZHfQv3pRoluvt01qWI=",
+    "wraps": {
+      "3": "bTxZ4CnOqh9ZQz04XSnNq2Ek189S34eLdSWdZR3gGrH3Jymc50oHEknopsDEBZqcQ5GTxYCQgTp4Lae9",
+      "7": "fBFYOx5Y4dsZSINNzWzGPsHmZPbaObRXfPZKsJao/J1OkXlNBawTM2uDQBmER1Az7vMGU0rQwLuE8rcg"
+    }
+  },
+  "pic": {
+    "caption": "the dock 🌲",
+    "photo": "/9j/4AECAwQFBgcI/9k=",
+    "client_id": "zKn0Z/dtFdFIeSSW9VwmZQ==",
+    "recipients": [
+      3,
+      7
+    ],
+    "content": "bfv7iebDUZKXPnncDgE1Bt5jDxwaAs271OqyEQkE4ys3m+VWYwL5T6jfYUs+RrdzkCqX79g+Pk02",
+    "wraps": {
+      "3": "KhTnFKP5D+4CgjUHZx/1D5Es+0DNIjM0QLbkONPTQiYIJR7iFTPBxquJ1mGDZTntHm5ZEjX6hAQH4kbh",
+      "7": "oUE6ZskJW9Eji1lu5PpI9smbgscAVbXwPsx2BO7BNiK0qojNkW8zNAh5q2kLKXLVz1Xd9AYaVSGnPreW"
+    }
+  }
+}

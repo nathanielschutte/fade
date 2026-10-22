@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any, texts2: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr, texts2: vt } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -139,6 +139,56 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
     const ct = await e2e.encryptReaction(ctx.ka, e2e.REACTIONS[1], v.alice.id, v.bob.id, 42);
     return (await e2e.decryptReaction(ctx.kb, ct, v.alice.id, v.bob.id, 42)) === e2e.REACTIONS[1];
   });
+
+  // Format 3 group messages (docs/group-encryption.md)
+  if (vg) {
+    const opts = (m, myId, wrapKey) => ({
+      groupId: vg.group_id, senderId: vg.sender, myId, clientId: m.client_id, recipients: m.recipients, wrapKey });
+    await check("group wrap keys for bob and alice", async () => {
+      ctx.gb = await e2e.groupWrapKey(await priv(v.bob), v.alice.spki, v.bob.id, v.alice.id);
+      ctx.ga = await e2e.groupWrapKey(await priv(v.alice), v.alice.spki, v.alice.id, v.alice.id);
+      return true;
+    });
+    await check("group text decrypts like the vector", async () => {
+      const t = vg.text;
+      const got = await e2e.decryptGroupText(e2e.fromB64(t.content), t.wraps[v.bob.id], opts(t, v.bob.id, ctx.gb));
+      return got.text === t.text && got.replyTo === t.reply_to && e2e.packText(t.text, t.reply_to) === t.plaintext;
+    });
+    await check("the sender's own devices read it too", async () => {
+      const t = vg.text;
+      return (await e2e.decryptGroupText(e2e.fromB64(t.content), t.wraps[v.alice.id], opts(t, v.alice.id, ctx.ga))).text === t.text;
+    });
+    await check("group pic decrypts like the vector, caption and all", async () => {
+      const p = vg.pic;
+      const got = await e2e.decryptGroupPic(e2e.fromB64(p.content), p.wraps[v.bob.id], opts(p, v.bob.id, ctx.gb));
+      return got.caption === p.caption && e2e.toB64(got.photo) === p.photo;
+    });
+    await check("one member's wrap doesn't open for another", () =>
+      fails(() => e2e.decryptGroupText(e2e.fromB64(vg.text.content), vg.text.wraps[v.alice.id], opts(vg.text, v.bob.id, ctx.gb))));
+    await check("a group message can't move to another group", () =>
+      fails(() => e2e.decryptGroupText(e2e.fromB64(vg.text.content), vg.text.wraps[v.bob.id],
+        { ...opts(vg.text, v.bob.id, ctx.gb), groupId: vg.group_id + 1 })));
+    await check("or claim a different member list", () =>
+      fails(() => e2e.decryptGroupText(e2e.fromB64(vg.text.content), vg.text.wraps[v.bob.id],
+        { ...opts(vg.text, v.bob.id, ctx.gb), recipients: [...vg.text.recipients, 11] })));
+    await check("a group text can't be read as a pic", () =>
+      fails(() => e2e.decryptGroupPic(e2e.fromB64(vg.text.content), vg.text.wraps[v.bob.id], opts(vg.text, v.bob.id, ctx.gb))));
+    await check("changed content fails", () => {
+      const c = e2e.fromB64(vg.text.content);
+      c[c.length - 1] ^= 1;
+      return fails(() => e2e.decryptGroupText(c, vg.text.wraps[v.bob.id], opts(vg.text, v.bob.id, ctx.gb)));
+    });
+    await check("a new group message round-trips", async () => {
+      const wrapKeys = new Map([
+        [v.alice.id, await e2e.groupWrapKey(await priv(v.alice), v.alice.spki, v.alice.id, v.alice.id)],
+        [v.bob.id, await e2e.groupWrapKey(await priv(v.alice), v.bob.spki, v.alice.id, v.bob.id)],
+      ]);
+      const m = await e2e.encryptGroupText("new", null, { groupId: 9, senderId: v.alice.id, wrapKeys });
+      const got = await e2e.decryptGroupText(m.content, m.wraps[v.bob.id], {
+        groupId: 9, senderId: v.alice.id, myId: v.bob.id, clientId: m.clientId, recipients: m.recipients, wrapKey: ctx.gb });
+      return got.text === "new" && e2e.GROUP_FORMAT === 3 && Object.keys(m.wraps).length === 2;
+    });
+  }
 
   // Recovery keys and changing the password
   await check("recovery key displays like the vector", () => {

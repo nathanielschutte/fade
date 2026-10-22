@@ -39,6 +39,7 @@ echo "==> crypto vectors (independent implementation)"
 "$PY" tests/vectors/check_format2.py
 "$PY" tests/vectors/check_recovery.py
 "$PY" tests/vectors/check_texts2.py
+"$PY" tests/vectors/check_group3.py
 
 echo "==> shared crypto against the vectors (Node)"
 # WSL installs Node with nvm, which non-interactive shells don't load.

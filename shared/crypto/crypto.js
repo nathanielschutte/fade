@@ -313,6 +313,96 @@ export async function decryptReaction(key, b64, senderId, recipientId, messageId
   return dec.decode(await open(key, fromB64(b64), reactionAad(senderId, recipientId, messageId)));
 }
 
+// ---------- format 3: group messages (docs/group-encryption.md) ----------
+// Each message is sealed once with a fresh key K, and K is wrapped for every
+// member (the sender too, for their other devices) with the key that sender
+// and member share: the pair key's ECDH secret under its own HKDF label. A
+// wrap only the sender could have made proves who sent it; the wrap's
+// associated data pins the group, sender, member, message id, a digest of the
+// content, and the member list the sender used.
+
+export const GROUP_FORMAT = 3;
+const K_BYTES = 32;
+const MID_BYTES = 16;
+
+/** Same on both sides, like pairKey, but only for wrapping group message keys. */
+export async function groupWrapKey(myPrivateKey, theirPublicB64, myId, theirId) {
+  const theirs = await subtle.importKey("spki", fromB64(theirPublicB64), ECDH, false, []);
+  const shared = await subtle.deriveBits({ name: "ECDH", public: theirs }, myPrivateKey, 256);
+  const hkdf = await subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"]);
+  const [lo, hi] = [myId, theirId].sort((a, b) => a - b);
+  return subtle.deriveKey({
+    name: "HKDF", hash: "SHA-256",
+    salt: enc.encode(`napsack/v1/pair/${lo}/${hi}`),
+    info: enc.encode("napsack/v3/group-keys"),
+  }, hkdf, AES, false, ["encrypt", "decrypt"]);
+}
+
+const groupAad = (groupId, senderId, mid, kind) => `napsack/v3/group/${groupId}/${senderId}/${mid}/${kind}`;
+const groupKeyAad = (groupId, senderId, memberId, mid, digest, roster) =>
+  `napsack/v3/group-key/${groupId}/${senderId}/${memberId}/${mid}/${digest}/${roster}`;
+
+async function sha256B64(bytes) {
+  return toB64(new Uint8Array(await subtle.digest("SHA-256", bytes)));
+}
+
+/** Commits to who a message was for: SHA-256 of the sorted member ids, comma-joined. */
+export async function rosterHash(memberIds) {
+  const ids = [...memberIds].map(Number).sort((a, b) => a - b);
+  return sha256B64(enc.encode(ids.join(",")));
+}
+
+/**
+ * Seals `body` (bytes) for a group. `wrapKeys`: Map(member id -> groupWrapKey
+ * with that member), every current member including the sender. `kind` is
+ * "text" or "pic". Returns { clientId, content (bytes), recipients, wraps }.
+ */
+export async function encryptGroup(body, { groupId, senderId, kind, wrapKeys }) {
+  const recipients = [...wrapKeys.keys()].map(Number).sort((a, b) => a - b);
+  if (!recipients.includes(senderId)) throw new Error("the sender wraps for themselves too");
+  const clientId = toB64(globalThis.crypto.getRandomValues(new Uint8Array(MID_BYTES)));
+  const raw = globalThis.crypto.getRandomValues(new Uint8Array(K_BYTES));
+  const k = await subtle.importKey("raw", raw, AES, false, ["encrypt"]);
+  const content = await seal(k, body, groupAad(groupId, senderId, clientId, kind));
+  const digest = await sha256B64(content);
+  const roster = await rosterHash(recipients);
+  const wraps = {};
+  for (const id of recipients) {
+    wraps[id] = toB64(await seal(wrapKeys.get(id), raw, groupKeyAad(groupId, senderId, id, clientId, digest, roster)));
+  }
+  return { clientId, content, recipients, wraps };
+}
+
+/** Opens a group message with my wrap. Throws if anything doesn't check out. */
+export async function decryptGroup(content, wrapB64, { groupId, senderId, myId, clientId, recipients, kind, wrapKey }) {
+  if (!recipients.map(Number).includes(myId)) throw new Error("not sent to me");
+  const bytes = content instanceof Uint8Array ? content : new Uint8Array(content);
+  const digest = await sha256B64(bytes);
+  const roster = await rosterHash(recipients);
+  const raw = await open(wrapKey, fromB64(wrapB64), groupKeyAad(groupId, senderId, myId, clientId, digest, roster));
+  if (raw.length !== K_BYTES) throw new Error("malformed key");
+  const k = await subtle.importKey("raw", raw, AES, false, ["decrypt"]);
+  return open(k, bytes, groupAad(groupId, senderId, clientId, kind));
+}
+
+/** A group text: the format 2 envelope, so replies travel inside, out of the server's sight. */
+export async function encryptGroupText(text, replyTo, opts) {
+  return encryptGroup(enc.encode(packText(text, replyTo)), { ...opts, kind: "text" });
+}
+
+export async function decryptGroupText(content, wrapB64, opts) {
+  return unpackText(dec.decode(await decryptGroup(content, wrapB64, { ...opts, kind: "text" })));
+}
+
+/** A group pic: the format 2 pic envelope (caption sealed in with the photo). */
+export async function encryptGroupPic(photo, caption, opts) {
+  return encryptGroup(packPic(photo, caption), { ...opts, kind: "pic" });
+}
+
+export async function decryptGroupPic(content, wrapB64, opts) {
+  return unpackPic(await decryptGroup(content, wrapB64, { ...opts, kind: "pic" }));
+}
+
 /**
  * A code both friends see identically. If it matches when compared in person,
  * no one (including the server) is sitting in the middle.
