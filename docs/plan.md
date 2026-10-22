@@ -12,16 +12,17 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [Favorites](stories/favorites.md) | Features | In progress | Nate's first feature, built by hand; starts X3 |
-| 2 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 5 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
-| 6 | [Group chats: "seen by", then end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first |
-| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 8 | [iOS app](#f1-ios-app) | Features | In progress | Crypto spike built; waiting on Apple to put it on a phone |
-| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 11 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
+| 3 | [Chat list header buttons](#x8-chat-list-header-buttons) | Experience | Needs decision | Requested; design shown for approval before it ships |
+| 4 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
+| 5 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 6 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 7 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
+| 8 | [Group chats: end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first ("seen by" shipped) |
+| 9 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 10 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 11 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 12 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -50,10 +51,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 |
 | Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([SECURITY.md](SECURITY.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
 | [Invite links and QR codes](#f14-invite-links-and-qr-codes) | 0.17.0 |
+| Push refusals log the push service's reason; an unchanged subscription no longer adds a row | 0.17.3 |
+| [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.17.2**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.18.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -97,7 +100,8 @@ Production runs **0.17.2**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F1. iOS app
 - iOS app. This is the big one.
 - Plan and milestones: [mobile.md](mobile.md). Push notifications are part of it.
-- Needs: Apple Developer Program (requested 2026-10-19, pending), Expo account (done).
+- Needs: Apple Developer Program (approved 2026-10-21), Expo account (done).
+- Getting it to early users: TestFlight (internal testers first, then an external group by public link, which needs a short Beta App Review).
 - Started (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` is an Expo SDK 58 app whose one screen runs every vector check on the phone. Next: `eas init`, register the iPhone, first development build, read the results. Status in [mobile.md](mobile.md#first-milestones).
 
 #### F2. Password reset and recovery
@@ -198,7 +202,7 @@ Production runs **0.17.2**. Releases ship with `scripts/deploy.sh`; commit what 
 - Disk: about 15 KB per 10 seconds; a cap per user and a total cap, shown in the admin panel.
 
 #### F17. Group chats: "seen by", then end-to-end
-- **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member).
+- **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member). Done (0.18.0): `GET /groups/{id}/reads` and a live `group_read` event; "Seen by everyone" once all of 3+ others have read it.
 - **End-to-end encryption for groups:** the one part of napsack the server can read. Design doc first: likely a group key per membership change, sent to each member encrypted with their pair key (sender keys), so adding or removing someone rotates the key. A new group message format; old plaintext messages stay as they are. Big, careful work; the iOS app needs the same design.
 
 #### F18. Disappearing texts
@@ -236,6 +240,37 @@ Production runs **0.17.2**. Releases ship with `scripts/deploy.sh`; commit what 
 - **Pin** up to 3 chats to the top; **mute** a chat (no notifications, no unread dot, for 8 hours / a week / always); **archive** quiet chats out of the list (they come back on a new message).
 - **Search:** find a chat by name, and search message text. Direct messages are end-to-end encrypted, so search runs in the browser over decrypted history (loading older pages as needed); group messages can be searched on the server.
 - Pin/mute/archive are stored per person on the server (append-only state, Rule 1) so they follow you to new devices.
+
+#### X4. Open pics back to back
+- Requested (2026-10-21): when a chat has several unopened pics, tapping the first one closed goes straight to the next, until none are left.
+- Oldest first, within the chat you're in (direct or group). Each pic is still view-once: it's marked opened as it's shown, the same as today, so closing the app halfway leaves the rest unopened.
+- The viewer says where you are ("1 of 3") so the next one isn't a surprise; tapping the last one closed returns to the chat.
+- Client only: the web app already knows every pending pic in the open chat. The iOS app should behave the same.
+- Done (0.18.0): tap a pic, then each tap (or the timer) opens the next; "1 of 3" in the corner; the hint says "Tap for the next pic" until the last. Escape stops. Direct and group chats.
+
+#### X5. Composer grows to 4 lines
+- Requested (2026-10-21): the message box is one fixed line. While typing, it should grow to show 3–4 lines of the message, wrapped to the screen width (especially on phones), and scroll inside only after that.
+- The `<input>` becomes an auto-growing `<textarea>` (height follows the content, capped at about 4 lines). The pill shape becomes a rounded rectangle once it's taller than one line.
+- Enter: on a computer, Enter sends and Shift+Enter starts a new line. On a phone, Return starts a new line and the Send button sends (like iMessage). Messages already keep their line breaks when shown.
+- Applies to group chats too. Browser test: type a long message, check the box grows to 4 lines and stops, and that sending shrinks it back.
+- Done (0.18.0) as described (`tests/e2e/test_composer.py`).
+
+#### X6. Keyboard stays up after Send
+- Requested (2026-10-21): after Send, the message box keeps focus, so on a phone the keyboard stays up and the next message can be typed right away.
+- Web: tapping Send moves focus to the button, which closes the iPhone keyboard. Keep focus in the box (the Send button doesn't take focus on press) and refocus after sending.
+- **Drag to dismiss:** dragging the chat down toward the keyboard should pull it down. The web can only approximate this (close the keyboard on a downward drag of the messages); it can't follow the finger like native apps. The iOS app gets it for free (`keyboardDismissMode="interactive"` on the message list). **Decided (2026-10-21):** fine to leave the drag gesture to the iOS app if the web version feels off.
+- Done (0.18.0): Send keeps focus (and the keyboard); dragging the messages down about 50px closes the keyboard.
+
+#### X7. Pull to refresh the chat list
+- Requested (2026-10-21): on the chat list, pulling down past the top refetches the chats, like most phone apps.
+- Live updates already arrive over the WebSocket, so this is mostly reassurance, but it does a real, light refresh: refetch the chat list (and friend requests), and reconnect the socket if it has dropped. Nothing else on screen changes; rows update in place without flashing.
+- A small spinner or arc appears under the bar while pulling, past a threshold it lets go and refreshes, then tucks away. Touch only (on a computer the list just scrolls). Respects reduced motion. Throttled so pulling repeatedly can't hammer the server (the request budget already caps it).
+- In the Home Screen app iOS Safari has no native pull-to-refresh, so this is ours to draw; in a browser tab it must not fight the browser's own reload gesture (`overscroll-behavior` on the list). The iOS app gets `RefreshControl`.
+- Done (0.18.0): a sage arc that turns as you pull and spins while refreshing; refetches at most every 3 seconds.
+
+#### X8. Chat list header buttons
+- Requested (2026-10-21): the New group button floats in the middle of the chat list bar and doesn't say "new group". It should sit next to Friends, read clearly as "create a group", and the two should be distinct. Friends could use a "plus" too.
+- **Needs approval** before it ships: options shown to Nate with screenshots.
 
 ### Infrastructure
 

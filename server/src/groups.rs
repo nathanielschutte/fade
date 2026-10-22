@@ -674,20 +674,81 @@ pub async fn mark_read(
     Path(group): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_member(&state.db, group, me.id).await?;
-    sqlx::query(
-        "UPDATE group_members SET last_read_id =
-           (SELECT COALESCE(MAX(id), 0) FROM group_messages WHERE group_id = ?1)
-         WHERE group_id = ?1 AND user_id = ?2",
-    )
-    .bind(group)
-    .bind(me.id)
-    .execute(&state.db)
-    .await?;
+    let moved = advance_read(&state.db, group, me.id).await?;
     // The caller's other devices clear their badge.
     state
         .hub
         .send(me.id, &Event::GroupsChanged { group_id: group });
+    // Everyone else updates "Seen by". Only when it moved, so reading an
+    // already-read chat sends nothing.
+    if let Some(last_read_id) = moved {
+        let others: Vec<i64> = member_ids(&state.db, group)
+            .await?
+            .into_iter()
+            .filter(|&id| id != me.id)
+            .collect();
+        state.hub.send_many(
+            &others,
+            &Event::GroupRead {
+                group_id: group,
+                user_id: me.id,
+                last_read_id,
+            },
+        );
+    }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Moves `user`'s read position to the group's newest message. Returns the
+/// new position if it moved forward.
+async fn advance_read(db: &SqlitePool, group: i64, user: i64) -> sqlx::Result<Option<i64>> {
+    let latest: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM group_messages WHERE group_id = ?")
+            .bind(group)
+            .fetch_one(db)
+            .await?;
+    let moved = sqlx::query(
+        "UPDATE group_members SET last_read_id = ?
+         WHERE group_id = ? AND user_id = ? AND left_at IS NULL AND last_read_id < ?",
+    )
+    .bind(latest)
+    .bind(group)
+    .bind(user)
+    .bind(latest)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok((moved > 0).then_some(latest))
+}
+
+/// How far a current member has read, for "Seen by".
+#[derive(Debug, Serialize, FromRow, PartialEq)]
+pub struct ReadPosition {
+    pub user_id: i64,
+    pub username: String,
+    pub last_read_id: i64,
+}
+
+pub async fn read_positions(db: &SqlitePool, group: i64) -> sqlx::Result<Vec<ReadPosition>> {
+    sqlx::query_as(
+        "SELECT m.user_id, u.username, m.last_read_id
+         FROM group_members m JOIN users u ON u.id = m.user_id
+         WHERE m.group_id = ? AND m.left_at IS NULL
+         ORDER BY m.user_id",
+    )
+    .bind(group)
+    .fetch_all(db)
+    .await
+}
+
+/// `GET /api/groups/{id}/reads`: every current member's read position.
+pub async fn reads(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(group): Path<i64>,
+) -> AppResult<Json<Vec<ReadPosition>>> {
+    require_member(&state.db, group, me.id).await?;
+    Ok(Json(read_positions(&state.db, group).await?))
 }
 
 #[cfg(test)]
@@ -742,5 +803,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, 2, "leaving keeps the row");
+    }
+
+    #[tokio::test]
+    async fn read_positions_move_forward_and_say_when() {
+        let db = temp_db().await;
+        for (id, name) in [(1, "ana"), (2, "ben"), (3, "cal")] {
+            sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (?, ?, 'h', 'k', 'w', 0)")
+                .bind(id).bind(name).execute(&db).await.unwrap();
+        }
+        sqlx::query("INSERT INTO groups (id, name, created_by, created_at) VALUES (9, 'g', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (9, 1, 'owner', 0), (9, 2, 'member', 0), (9, 3, 'member', 0)")
+            .execute(&db).await.unwrap();
+        for id in [40, 41] {
+            sqlx::query("INSERT INTO group_messages (id, group_id, sender_id, kind, body, created_at) VALUES (?, 9, 1, 'text', 'hi', 0)")
+                .bind(id).execute(&db).await.unwrap();
+        }
+
+        assert_eq!(advance_read(&db, 9, 2).await.unwrap(), Some(41));
+        assert_eq!(
+            advance_read(&db, 9, 2).await.unwrap(),
+            None,
+            "already there: nothing to announce"
+        );
+        sqlx::query("UPDATE group_members SET left_at = 5 WHERE group_id = 9 AND user_id = 3")
+            .execute(&db)
+            .await
+            .unwrap();
+        assert_eq!(
+            advance_read(&db, 9, 3).await.unwrap(),
+            None,
+            "former members don't move"
+        );
+
+        let seen = read_positions(&db, 9).await.unwrap();
+        assert_eq!(
+            seen,
+            vec![
+                ReadPosition {
+                    user_id: 1,
+                    username: "ana".into(),
+                    last_read_id: 0
+                },
+                ReadPosition {
+                    user_id: 2,
+                    username: "ben".into(),
+                    last_read_id: 41
+                },
+            ]
+        );
     }
 }

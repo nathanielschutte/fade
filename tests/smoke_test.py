@@ -126,6 +126,14 @@ def check_groups(tag, a, a_tok, b, b_tok):
     ok(call("POST", f"/groups/{gid}/read", c_tok))
     assert [x for x in ok(call("GET", "/groups", c_tok)).json() if x["id"] == gid][0]["unread"] == 0
 
+    # "Seen by": members see how far each member has read; outsiders see nothing.
+    reads = {r["user_id"]: r for r in ok(call("GET", f"/groups/{gid}/reads", b_tok)).json()}
+    assert set(reads) == {a["id"], b["id"], c["id"]}, reads
+    assert reads[c["id"]]["last_read_id"] == m["id"] and reads[c["id"]]["username"] == c["username"]
+    assert reads[a["id"]]["last_read_id"] < m["id"]
+    ok(call("GET", f"/groups/{gid}/reads", d_tok), 404)
+    ok(call("GET", f"/groups/{gid}/reads"), 401)
+
     # Only the owner removes others; removed members lose access; nothing is deleted.
     ok(call("DELETE", f"/groups/{gid}/members/{c['id']}", b_tok), 400)
     ok(call("DELETE", f"/groups/{gid}/members/{c['id']}", a_tok))
@@ -418,6 +426,11 @@ async def check_live(tag):
     ok(call("POST", "/push/subscriptions", b_tok, json={**sub, "keys": {"p256dh": "AAAA", "auth": sub["keys"]["auth"]}}), 400)
     ok(call("POST", "/push/subscriptions", json=sub), 401)
     ok(call("POST", "/push/subscriptions", b_tok, json=sub))
+    ok(call("POST", "/push/subscriptions", b_tok, json=sub))                  # the app sends it on every launch
+    if DB:
+        rows = sqlite3.connect(DB).execute(
+            "SELECT COUNT(*) FROM push_subscriptions WHERE endpoint = ?", (phone.endpoint,)).fetchone()[0]
+        assert rows == 1, f"an unchanged subscription made {rows} rows"
     vapid = ok(call("GET", "/config")).json()["vapid_public_key"]
 
     # While napsack is on ben's screen, no push: the app shows it.

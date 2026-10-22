@@ -37,11 +37,13 @@ const state = {
   activeGroupId: null,         // group id of the open group chat (activeId is null then)
   groupMessages: new Map(),    // group id -> GroupMessage[], oldest first
   groupHistory: new Map(),     // group id -> { hasMore, loading }
+  groupReads: new Map(),       // group id -> Map(user id -> { username, last }): how far each member has read
   groupDetail: null,           // the group shown in the info sheet
   messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
   history: new Map(),          // friend id -> { hasMore, loading } for paging back
   ws: null,
   wsRetry: 0,
+  wsTimer: null,               // the next reconnect attempt, while the socket is down
 };
 
 // ---------- helpers ----------
@@ -706,6 +708,7 @@ function signOutLocally() {
   state.groups = [];
   state.activeGroupId = null;
   state.groupMessages.clear();
+  state.groupReads.clear();
   state.groupHistory.clear();
 
   localStorage.removeItem(TOKEN_KEY);
@@ -779,6 +782,67 @@ function refreshChatsSoon() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(refreshChats, 150);
 }
+
+// Pull to refresh: dragging the chat list down past its top refetches chats,
+// groups, and requests, and reconnects the socket if it's down. Live updates
+// usually make it a no-op, but it's what people expect a list to do.
+const PULL_TRIGGER = 64; // px the indicator must reach (half the finger's travel)
+const pull = { from: null, height: 0, busy: false, last: 0 };
+
+function setPull(h) {
+  pull.height = h;
+  $("#pull").style.height = `${h}px`;
+  $("#pull").style.setProperty("--pull-turn", `${h * 4}deg`);
+}
+
+async function pullRefresh() {
+  pull.busy = true;
+  const started = Date.now();
+  // At most every few seconds, however often someone pulls.
+  if (started - pull.last > 3000) {
+    pull.last = started;
+    if (!state.ws || state.ws.readyState === WebSocket.CLOSED) {
+      state.wsRetry = 0;
+      connectSocket();
+    }
+    await Promise.all([refreshChats(), refreshGroups(), refreshRequests()]);
+    report("debug", "chat list pulled to refresh");
+  }
+  // Long enough to see that something happened.
+  await new Promise((r) => setTimeout(r, Math.max(0, 500 - (Date.now() - started))));
+  pull.busy = false;
+}
+
+$("#chat-list").addEventListener("touchstart", (e) => {
+  pull.from = !pull.busy && $("#chat-list").scrollTop <= 0 ? e.touches[0].clientY : null;
+}, { passive: true });
+
+$("#chat-list").addEventListener("touchmove", (e) => {
+  if (pull.from == null) return;
+  const dy = e.touches[0].clientY - pull.from;
+  if (dy <= 0 || $("#chat-list").scrollTop > 0) {
+    if (pull.height) setPull(0);
+    return;
+  }
+  e.preventDefault(); // napsack draws this pull, not the browser
+  $("#pull").classList.remove("settling");
+  setPull(Math.min(dy * 0.5, PULL_TRIGGER * 1.4));
+}, { passive: false });
+
+async function endPull(e) {
+  if (pull.from == null) return;
+  pull.from = null;
+  const el = $("#pull");
+  el.classList.add("settling");
+  if (e.type === "touchcancel" || pull.height < PULL_TRIGGER) return setPull(0);
+  setPull(44);
+  el.classList.add("refreshing");
+  await pullRefresh();
+  el.classList.remove("refreshing");
+  setPull(0);
+}
+$("#chat-list").addEventListener("touchend", endPull);
+$("#chat-list").addEventListener("touchcancel", endPull);
 
 function chatStatus(chat) {
   if (chat.keyChanged) return { text: "Safety code changed" };
@@ -1069,7 +1133,7 @@ function renderMessages() {
     } else {
       const canOpen = !mine && m.snap_state === "pending";
       const chip = canOpen
-        ? el("button", { type: "button", class: "snap-chip", onclick: () => viewSnap(m) },
+        ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
             el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic")
         : el("span", { class: "snap-chip done" },
             el("span", { class: "marker", "aria-hidden": "true" }), snapLabel(m, mine));
@@ -1103,6 +1167,7 @@ $("#composer").addEventListener("submit", async (e) => {
   const friendId = state.activeId;
   if (!text || !friendId) return;
   input.value = "";
+  fitComposer();
   try {
     const replyTo = state.replyTo && !state.replyTo.group ? state.replyTo.id : null;
     const ciphertext = await e2e.encryptText2(await keyFor(friendId), text, replyTo, state.me.id, friendId);
@@ -1113,9 +1178,44 @@ $("#composer").addEventListener("submit", async (e) => {
     if (state.activeId === friendId) renderMessages();
   } catch (err) {
     input.value = text;
+    fitComposer();
     alert(err.message);
   }
 });
+
+// The message box grows with what's typed; style.css caps it at four lines,
+// past which it scrolls inside.
+function fitComposer() {
+  const input = $("#composer-input");
+  input.style.height = "auto";
+  input.style.height = `${input.scrollHeight + 2}px`; // + the borders (border-box)
+}
+$("#composer-input").addEventListener("input", fitComposer);
+
+// On a computer, Enter sends and Shift+Enter starts a new line. On a phone,
+// Return starts a new line and the Send button sends, like iMessage.
+const touchFirst = matchMedia("(hover: none) and (pointer: coarse)");
+$("#composer-input").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing || touchFirst.matches) return;
+  e.preventDefault();
+  $("#composer").requestSubmit();
+});
+
+// Sending keeps the keyboard up: pressing Send never takes focus from the box.
+$("#composer .send").addEventListener("mousedown", (e) => e.preventDefault());
+
+// Dragging the chat down toward the keyboard puts it away, roughly like a
+// native app (the web can't make the keyboard follow the finger).
+let dragFrom = null;
+$("#messages").addEventListener("touchstart", (e) => { dragFrom = e.touches[0].clientY; }, { passive: true });
+$("#messages").addEventListener("touchmove", (e) => {
+  const input = $("#composer-input");
+  if (dragFrom == null || document.activeElement !== input) return;
+  if (e.touches[0].clientY - dragFrom > 48) {
+    input.blur();
+    dragFrom = null;
+  }
+}, { passive: true });
 
 // ---------- reactions and replies ----------
 
@@ -1442,6 +1542,7 @@ if ("serviceWorker" in navigator) {
 // ---------- realtime ----------
 
 function connectSocket() {
+  clearTimeout(state.wsTimer); // a pending retry, if this call came from somewhere else
   if (!state.token) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
@@ -1461,7 +1562,7 @@ function connectSocket() {
     report("debug", "socket closed", { code: e.code });
     if (state.ws !== ws || !state.token) return;
     const delay = Math.min(30_000, 1000 * 2 ** state.wsRetry++);
-    setTimeout(connectSocket, delay);
+    state.wsTimer = setTimeout(connectSocket, delay);
   };
 }
 
@@ -1564,11 +1665,26 @@ async function handleEvent(ev) {
       }
       break;
     }
-    case "groups_changed":
+    case "group_read": {
+      const reads = state.groupReads.get(ev.group_id);
+      const r = reads?.get(ev.user_id);
+      if (r && ev.last_read_id > r.last) {
+        r.last = ev.last_read_id;
+        if (ev.group_id === state.activeGroupId) renderMessages();
+      } else if (reads && !r && ev.group_id === state.activeGroupId) {
+        loadGroupReads(ev.group_id); // someone new
+      }
+      break;
+    }
+    case "groups_changed": {
+      const members = groupById(ev.group_id)?.member_count;
       await refreshGroups();
+      // Someone joined or left: "Seen by" needs the new member list.
+      if (ev.group_id === state.activeGroupId && groupById(ev.group_id)?.member_count !== members) loadGroupReads(ev.group_id);
       if (ev.group_id === state.activeGroupId) renderGroupHeader();
       if ($("#group-dialog").open && state.groupDetail?.id === ev.group_id) openGroupInfo(ev.group_id);
       break;
+    }
   }
 }
 
@@ -1684,6 +1800,7 @@ async function openGroup(groupId) {
     renderMessages();
     fillGroupViewport(groupId);
     markGroupRead(groupId);
+    loadGroupReads(groupId);
   } catch (err) {
     report("warn", "opening group failed", { group_id: groupId, ...errorFields(err) });
   }
@@ -1728,6 +1845,31 @@ function fillGroupViewport(groupId) {
   if (state.activeGroupId === groupId && list.scrollHeight <= list.clientHeight + 40) loadOlderGroup(groupId);
 }
 
+/** Where each member has read up to, for "Seen by". */
+async function loadGroupReads(groupId) {
+  try {
+    const rows = await getJSON(`/groups/${groupId}/reads`);
+    state.groupReads.set(groupId, new Map(rows.map((r) => [r.user_id, { username: r.username, last: r.last_read_id }])));
+  } catch (err) {
+    report("warn", "loading group reads failed", { group_id: groupId, ...errorFields(err) });
+    return;
+  }
+  if (state.activeGroupId === groupId) renderMessages();
+}
+
+/** "Seen by Ana and Ben" under the newest message: who else has read that far. */
+function seenByText(groupId, last) {
+  const reads = state.groupReads.get(groupId);
+  if (!reads || !last) return null;
+  const others = [...reads].filter(([id]) => id !== state.me.id && id !== last.sender_id);
+  const seen = others.filter(([, r]) => r.last >= last.id).map(([id, r]) => personName(id, r.username));
+  if (!seen.length) return null;
+  if (seen.length === others.length && others.length > 2) return "Seen by everyone";
+  if (seen.length > 3) return `Seen by ${seen.slice(0, 2).join(", ")}, and ${seen.length - 2} others`;
+  if (seen.length === 1) return `Seen by ${seen[0]}`;
+  return `Seen by ${seen.slice(0, -1).join(", ")}${seen.length > 2 ? "," : ""} and ${seen[seen.length - 1]}`;
+}
+
 async function markGroupRead(groupId) {
   if (!groupById(groupId)?.unread) return;
   try {
@@ -1765,6 +1907,8 @@ function renderGroupMessages() {
     if (m.body) content.push(el("span", { class: "msg-body", text: m.body }));
     items.push(...bubble(m, mine, content));
   }
+  const seen = seenByText(state.activeGroupId, msgs[msgs.length - 1]);
+  if (seen) items.push(el("li", { class: "msg-meta seen-by", text: seen }));
   if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
   list.replaceChildren(...items);
   if (nearBottom || !list.dataset.scrolled) {
@@ -1778,7 +1922,7 @@ function groupPicChip(m, mine) {
   const p = m.pic;
   const seen = p.viewers.includes(state.me.id);
   if (!mine && !seen && !p.discard_reason) {
-    return el("button", { type: "button", class: "snap-chip", onclick: () => viewGroupPic(m) },
+    return el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
       el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic");
   }
   const label = mine
@@ -1789,17 +1933,19 @@ function groupPicChip(m, mine) {
   return el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), label);
 }
 
+/** Opens one group pic; false if it couldn't be shown. */
 async function viewGroupPic(m) {
   let res;
   try {
     res = await api(`/groups/${m.group_id}/pics/${m.pic.id}`);
   } catch (err) {
     if (err.status !== 410) alert(err.message); // 410: opened elsewhere or expired; the socket updates the chat
-    return;
+    return false;
   }
   let caption = "";
   try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
   showInViewer(await res.blob(), `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`, caption);
+  return true;
 }
 
 async function sendGroupPic(groupId) {
@@ -1848,6 +1994,7 @@ $("#group-picture-input").addEventListener("change", async (e) => {
 
 async function sendGroupText(groupId, input, text) {
   input.value = "";
+  fitComposer();
   try {
     const replyTo = state.replyTo?.group ? state.replyTo.id : undefined;
     const m = await getJSON(`/groups/${groupId}/messages`, { method: "POST", json: { text, reply_to: replyTo } });
@@ -1856,6 +2003,7 @@ async function sendGroupText(groupId, input, text) {
     if (state.activeGroupId === groupId) renderMessages();
   } catch (err) {
     input.value = text;
+    fitComposer();
     report("warn", "sending group text failed", { group_id: groupId, ...errorFields(err) });
     alert(err.message);
   }
@@ -2631,12 +2779,55 @@ $("#send-snap").addEventListener("click", async () => {
 
 // ---------- snap viewer ----------
 
-const viewer = { url: null, timer: null };
+// A `run` taps through every unopened pic in the chat: closing one opens the
+// next. Each pic is still marked opened when it's fetched, so stopping halfway
+// (Escape, or leaving the app) leaves the rest unopened.
+const viewer = { url: null, timer: null, run: null, loading: false };
 
+/** Unopened pics in the open chat, oldest first. */
+function waitingPics() {
+  if (state.activeGroupId) {
+    return (state.groupMessages.get(state.activeGroupId) || []).filter((m) => m.pic
+      && m.sender_id !== state.me.id && !m.pic.viewers.includes(state.me.id) && !m.pic.discard_reason);
+  }
+  return (state.messages.get(state.activeId) || []).filter((m) => m.kind === "snap"
+    && m.sender_id !== state.me.id && m.snap_state === "pending");
+}
+
+/** Tapping a pic opens it, then the others waiting in the chat, one by one. */
+function openPics(first) {
+  if (viewer.loading) return;
+  viewer.run = { seen: new Set() };
+  openPic(first);
+}
+
+async function openPic(m) {
+  const run = viewer.run;
+  run.seen.add(m.id);
+  viewer.loading = true;
+  let shown = false;
+  try {
+    shown = await (m.pic ? viewGroupPic(m) : viewSnap(m));
+  } finally {
+    viewer.loading = false;
+  }
+  if (viewer.run === run && !shown) nextPic(); // opened elsewhere or expired: on to the next
+}
+
+function nextPic() {
+  if (viewer.loading) return;
+  const run = viewer.run;
+  const next = run && waitingPics().find((m) => !run.seen.has(m.id));
+  if (!next) return stopViewer();
+  clearViewer(); // the viewer stays up, empty, while the next one loads
+  openPic(next);
+}
+
+/** Opens and decrypts one direct pic; false if it couldn't be shown. */
 async function viewSnap(m) {
   if (![1, 2].includes(m.format ?? 1)) {
     alert("This pic was sent from a newer version of napsack. Reload the page to open it.");
-    return;
+    return false;
   }
   let sealed;
   try {
@@ -2644,16 +2835,17 @@ async function viewSnap(m) {
   } catch (err) {
     // 410 means opened elsewhere or expired; the socket will update the chat.
     if (err.status !== 410) alert(err.message);
-    return;
+    return false;
   }
   let pic;
   try {
     pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
   } catch {
     alert("This pic couldn't be decrypted.");
-    return;
+    return false;
   }
   showInViewer(new Blob([pic.photo], { type: "image/jpeg" }), personName(m.sender_id, ""), pic.caption);
+  return true;
 }
 
 function showInViewer(blob, from, caption = "") {
@@ -2663,20 +2855,25 @@ function showInViewer(blob, from, caption = "") {
   $("#viewer-from").textContent = from;
   $("#viewer-caption").textContent = caption;
   $("#viewer-caption").hidden = !caption;
+  // "2 of 3", counting pics that arrive while viewing.
+  const run = viewer.run;
+  const left = run ? waitingPics().filter((m) => !run.seen.has(m.id)).length : 0;
+  const total = (run?.seen.size ?? 1) + left;
+  $("#viewer-count").textContent = `${run?.seen.size ?? 1} of ${total}`;
+  $("#viewer-count").hidden = total < 2;
+  $("#viewer-hint").textContent = left ? "Tap for the next pic" : "Tap to close";
   v.style.setProperty("--view-ms", `${VIEW_MS}ms`);
   img.onload = () => {
     v.classList.add("running");
-    viewer.timer = setTimeout(closeViewer, VIEW_MS);
+    viewer.timer = setTimeout(nextPic, VIEW_MS);
   };
   img.src = viewer.url;
   v.hidden = false;
 }
 
-function closeViewer() {
+function clearViewer() {
   clearTimeout(viewer.timer);
-  const v = $("#viewer");
-  v.classList.remove("running");
-  v.hidden = true;
+  $("#viewer").classList.remove("running");
   const img = $("#viewer-image");
   img.onload = null;
   img.removeAttribute("src");
@@ -2684,10 +2881,16 @@ function closeViewer() {
   viewer.url = null;
 }
 
-$("#viewer").addEventListener("click", closeViewer);
+function stopViewer() {
+  viewer.run = null;
+  clearViewer();
+  $("#viewer").hidden = true;
+}
+
+$("#viewer").addEventListener("click", nextPic);
 $("#viewer").addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#viewer").hidden) closeViewer();
+  if (e.key === "Escape" && !$("#viewer").hidden) stopViewer();
 });
 
 // Keep relative timestamps fresh.

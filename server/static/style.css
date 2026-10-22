@@ -42,7 +42,7 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 [hidden] { display: none !important; }
-button, input { font: inherit; color: inherit; }
+button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 h1, h2, h3, p { margin: 0; }
@@ -86,7 +86,7 @@ svg {
 
 .field { display: grid; gap: 0.35rem; }
 .field span { font-size: var(--step--1); color: var(--fixer); }
-.field input, .composer input {
+.field input, .composer textarea {
   width: 100%;
   min-height: 2.875rem;
   padding: 0 0.9rem;
@@ -94,8 +94,8 @@ svg {
   border-radius: var(--radius-s);
   background: var(--deep);
 }
-.field input:focus, .composer input:focus { outline: none; border-color: var(--sage); }
-.field input:disabled, .composer input:disabled { opacity: 0.5; }
+.field input:focus, .composer textarea:focus { outline: none; border-color: var(--sage); }
+.field input:disabled, .composer textarea:disabled { opacity: 0.5; }
 .field-hint { font-size: var(--step--1); color: var(--fixer); }
 
 .form-error { min-height: 1.4em; color: var(--danger); font-size: var(--step--1); }
@@ -165,7 +165,7 @@ svg {
 
 /* ---------- chat list ---------- */
 
-.chat-list { list-style: none; margin: 0; padding: 0.25rem 0; overflow-y: auto; flex: 1; }
+.chat-list { list-style: none; margin: 0; padding: 0.25rem 0; overflow-y: auto; flex: 1; overscroll-behavior-y: contain; }
 .chat-item {
   width: 100%;
   display: grid; grid-template-columns: 0.75rem 2rem minmax(0, 1fr) auto; align-items: center; gap: 0.6rem;
@@ -262,11 +262,21 @@ button.snap-chip:hover { background: rgba(147, 197, 163, 0.12); }
 
 .composer {
   flex: none;
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: flex-end; gap: 0.5rem;
   padding: 0.6rem var(--pad) max(0.6rem, env(safe-area-inset-bottom));
   border-top: 1px solid var(--rule);
 }
-.composer input { border-radius: 999px; }
+/* Grows with the message (app.js sets the height) up to four lines, then
+   scrolls inside. One line is 46px tall, so the radius makes it a pill there
+   and a rounded box once it grows. */
+.composer textarea {
+  display: block; resize: none;
+  padding: 0.65rem 0.9rem;
+  border-radius: 1.4375rem;
+  line-height: 1.45;
+  max-height: calc(4 * 1.45em + 1.3rem + 2px);
+  overflow-y: auto;
+}
 .composer .send { flex: none; }
 .snap-button { flex: none; color: var(--sage); }
 .snap-button:disabled { opacity: 0.4; cursor: default; }
@@ -396,6 +406,11 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
   background: rgba(12, 20, 16, 0.6);
   text-align: center; overflow-wrap: anywhere;
 }
+.viewer-count {
+  position: absolute; top: calc(max(0.75rem, env(safe-area-inset-top)) + 0.75rem); right: 1rem;
+  font-size: var(--step--1); font-weight: 600; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 6px rgba(12, 20, 16, 0.8);
+}
 .viewer-hint {
   position: absolute; bottom: max(1rem, env(safe-area-inset-bottom));
   font-size: var(--step--1); color: var(--fixer);
@@ -404,6 +419,23 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 @media (prefers-reduced-motion: reduce) {
   /* Keep the timer, drop the dissolve. */
   .viewer.running img, .viewer.running .viewer-tint { animation: none; }
+}
+
+/* ---------- pull to refresh (chat list) ----------
+   Grows as the list is pulled past its top; the arc turns with the pull and
+   spins while refreshing. app.js sets the height. */
+.pull { flex: none; height: 0; overflow: hidden; display: grid; place-items: center; }
+.pull.settling { transition: height 200ms ease; }
+.pull-arc {
+  width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  border: 2px solid var(--rule); border-top-color: var(--sage);
+  transform: rotate(var(--pull-turn, 0deg));
+}
+.pull.refreshing .pull-arc { animation: pull-spin 0.8s linear infinite; }
+@keyframes pull-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .pull.settling { transition: none; }
+  .pull.refreshing .pull-arc { animation: none; }
 }
 
 /* ---------- admin ----------
@@ -417,7 +449,7 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
   border: 1px solid var(--rule); border-radius: 999px;
   color: var(--fixer); font-size: var(--step--1); font-weight: 500; vertical-align: middle;
 }
-.admin-updated { margin-left: auto; color: var(--fixer); font-size: var(--step--1); }
+.admin-updated { color: var(--fixer); font-size: var(--step--1); }
 .admin {
   max-width: 68rem; margin: 0 auto;
   padding: 1.25rem var(--pad) 3rem;
@@ -511,7 +543,9 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 
 /* ---------- admin: tabs and log viewer ---------- */
 
-.admin-tabs { display: flex; gap: 0.25rem; margin-left: 1rem; }
+/* The tabs push everything after them to the right, so they stay put whether
+   or not "Updated …" is showing (it hides on Logs). */
+.admin-tabs { display: flex; gap: 0.25rem; margin-left: 1rem; margin-right: auto; }
 .admin-tabs a {
   padding: 0.35rem 0.75rem; border-radius: 999px;
   color: var(--fixer); text-decoration: none; font-size: var(--step--1);

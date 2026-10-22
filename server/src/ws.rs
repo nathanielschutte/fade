@@ -43,6 +43,12 @@ pub enum Event {
     },
     /// A group's name, members, or your read position changed; refetch it.
     GroupsChanged { group_id: i64 },
+    /// Another member read the group up to `last_read_id` ("Seen by").
+    GroupRead {
+        group_id: i64,
+        user_id: i64,
+        last_read_id: i64,
+    },
     /// A friend (or, with `group_id`, a group member) is typing. Never stored.
     Typing { from: i64, group_id: Option<i64> },
     /// A friend opened napsack (`active`) or closed it, at `last_seen_at`.

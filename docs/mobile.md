@@ -54,7 +54,8 @@ The development build will point at a server you choose: your own (`scripts/test
 ## Decisions still open
 
 - **Which address the app talks to.** An installed app keeps whatever server address it was built with, and old versions stay installed for months. Since the domain will change again, the app should use an address that never changes (for example a dedicated `api.` name, or a small "where is the server" lookup), or every move needs the old domain kept forever. Decide before the first TestFlight build.
-- **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload.
+- **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload. Once settled, record the answer in `app.config.ts` (`ios.infoPlist.ITSAppUsesNonExemptEncryption`) so it isn't asked on every build. This is a legal declaration, so it's yours to make; Apple's export compliance help in App Store Connect walks through it.
+- **A reviewer account for external TestFlight** (see TestFlight): one production account for Apple's reviewer, or wait on external testing.
 
 ## Versions, builds, and releases
 
@@ -75,6 +76,29 @@ Shipping:
 2. **JavaScript-only fix.** `eas update --channel production` publishes it. Only installed apps with the same native fingerprint receive it, so a fix can't reach an app whose native side it doesn't match. It's bound by the same compatibility rules as everything else.
 
 Release order always follows [RELEASING.md](RELEASING.md): server first, then the app. Raise `min_client_versions.ios` only after the newer app is out and installed.
+
+## TestFlight
+
+TestFlight is how early users get the app before the App Store: they install Apple's TestFlight app, tap a link, and get every new build automatically. Each build lasts 90 days.
+
+**Plan (2026-10-21): prove the pipeline first, with the crypto check screen as build 1.** Signing, uploading, and Apple's paperwork are where first-time apps get stuck, and none of it depends on what the app does. Once build 1 is on your phone through TestFlight, every later milestone ships the same way in minutes.
+
+One-time setup (in `mobile/`, in WSL):
+1. **An App Store Connect API key**, so EAS can sign and upload without an interactive Apple sign-in (and CI can later): App Store Connect › Users and Access › Integrations › App Store Connect API › generate a key with the **App Manager** role. Download the `.p8` (Apple offers it once) and keep it out of the repo. Give it to EAS with `npx eas-cli@latest credentials` (iOS › App Store Connect API Key); EAS stores it for the project.
+2. **A production build:** `npx eas-cli@latest build --profile production --platform ios`. The first run makes the distribution certificate and provisioning profile.
+3. **Upload:** `npx eas-cli@latest submit --platform ios --latest`. The first submit creates the app in App Store Connect (bundle id `com.getattr.napsack`, permanent). App names are unique across the whole App Store: if "napsack" is taken, the store name needs a suffix ("napsack chat"), while the name under the icon stays "napsack".
+4. **Export compliance** (asked per build until it's declared in `app.config.ts` with `ios.infoPlist.ITSAppUsesNonExemptEncryption`). See Decisions still open.
+
+Getting it to people:
+- **Internal testing** (you, and anyone you add to the App Store Connect team, up to 100): no review, available minutes after processing. Start here.
+- **External testing** (friends, up to 10,000, by email or a **public link**): the first build of each version goes through Beta App Review, usually about a day. It asks for a short description, a feedback email, and **sign-in details for the reviewer**, since napsack needs an account. That means one real account for Apple on production (the user's call; CLAUDE.md says no test accounts in production without asking). Later builds of the same version usually skip review.
+- Feedback: testers can screenshot and send notes from inside TestFlight; they show in App Store Connect.
+
+Order, then:
+1. Build 1 (crypto check) to internal TestFlight. Read the checks on your phone. This also finishes milestone 1.
+2. Skeleton (milestone 2) to internal TestFlight; decide the server address first (Decisions still open).
+3. When it's usable day to day: an external group with a public link for friends.
+4. Push (milestone 4) before or soon after friends join, since a messenger without notifications feels broken.
 
 ## First milestones
 

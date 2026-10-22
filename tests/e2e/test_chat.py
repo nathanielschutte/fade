@@ -182,21 +182,26 @@ async def main():
             assert formats == [(2,)], formats
             print("caption is end-to-end encrypted; pics wait on disk as ciphertext, format 2")
 
-        # Sam opens both: decrypts and shows the image, then it's gone.
+        # Sam taps the first and sees both, back to back: each decrypts and shows,
+        # then it's gone. Closing the first opens the second straight away.
+        chip = b.locator("button.snap-chip").first
+        await expect(chip).to_be_visible(timeout=10000)
+        await chip.click()
         for i in range(2):
-            chip = b.locator("button.snap-chip").first
-            await expect(chip).to_be_visible(timeout=10000)
-            await chip.click()
+            await expect(b.locator("#viewer-count")).to_have_text(f"{i + 1} of 2")
             await wait_js(b, "document.querySelector('#viewer-image').complete && document.querySelector('#viewer-image').naturalWidth > 0")
             dims = await b.evaluate("[document.querySelector('#viewer-image').naturalWidth, document.querySelector('#viewer-image').naturalHeight]")
             print(f"snap {i + 1} decrypted and shown at {dims[0]}x{dims[1]}")
             assert max(dims) <= 1280
             if i == 0:
                 await expect(b.locator("#viewer-caption")).to_have_text("first light over the lake")
+                await expect(b.locator("#viewer-hint")).to_have_text("Tap for the next pic")
                 await shot(b, "4-viewer")
             else:
                 await expect(b.locator("#viewer-caption")).to_be_hidden()
+                await expect(b.locator("#viewer-hint")).to_have_text("Tap to close")
             await b.click("#viewer")
+        await expect(b.locator("#viewer")).to_be_hidden()
         await expect(b.locator("button.snap-chip")).to_have_count(0)
 
         # Reload: key comes back from IndexedDB without the password.

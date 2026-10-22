@@ -65,7 +65,7 @@ async def befriend(asker, asked, name_of_asked, name_of_asker):
 async def send(page, friend, text):
     await page.locator(".chat-item", has_text=friend).click()
     await page.fill("#composer-input", text)
-    await page.press("#composer-input", "Enter")
+    await page.click("#composer .send")  # works on phones too, where Return is a new line
     await expect(page.locator(".msg", has_text=text)).to_be_visible(timeout=10000)
 
 
@@ -206,7 +206,7 @@ async def main():
         await expect(cal.locator("#key-warning")).to_be_hidden(timeout=10000)
         await expect(cal.locator(".msg", has_text="ben to cal, early")).to_be_visible()
         await cal.fill("#composer-input", "accepted unchecked")
-        await cal.press("#composer-input", "Enter")
+        await cal.click("#composer .send")  # a phone: Return is a new line there
         await expect(cal.locator(".msg", has_text="accepted unchecked")).to_be_visible(timeout=10000)
         await expect(ben.locator(".chat-item", has_text=CAL)).to_be_visible()
         await ben.locator(".chat-item", has_text=CAL).click()

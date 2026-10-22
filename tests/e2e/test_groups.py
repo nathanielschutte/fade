@@ -97,6 +97,12 @@ async def main():
         await expect(group_item(cal).locator(".marker.text")).to_have_count(0, timeout=10000)
         print("messages live; unread clears on open")
 
+        # "Seen by", live: Cal opening the group shows under Ben's message.
+        await expect(ben.locator(".seen-by")).to_contain_text(CAL, timeout=10000)
+        await expect(ben.locator(".seen-by")).to_contain_text("Seen by")
+        assert await ben.locator(".seen-by").count() == 1
+        print("seen by:", await ben.locator(".seen-by").text_content())
+
         # Hostile text is shown as text: no element is created, nothing runs.
         xss = '<img src=x onerror="window.__xss=1"><b>bold</b>'
         await ben.fill("#composer-input", xss)

@@ -11,6 +11,11 @@ OTHER = f"bob_{uuid.uuid4().hex[:5]}"
 errors = []
 
 
+# Where the header's tabs and Chats button sit (x of each), to check they don't move.
+BAR_SPOTS = """() => ['#tab-overview', '#tab-logs', '.admin-bar .button']
+  .map((s) => Math.round(document.querySelector(s).getBoundingClientRect().x))"""
+
+
 async def page_for(browser, label, width=1100, height=800):
     ctx = await browser.new_context(viewport={"width": width, "height": height})
     p = await ctx.new_page()
@@ -96,10 +101,14 @@ async def main():
         await expect(admin.locator("#tip")).to_be_visible()
         await expect(admin.locator("#tip")).to_contain_text("messages")
         await shot(admin, "admin-desktop")
+        spots = await admin.evaluate(BAR_SPOTS)
 
         # Logs tab: events are there and searchable, and nothing secret is logged.
         await admin.click("#tab-logs")
         await expect(admin.locator("#view-logs")).to_be_visible()
+        # The header doesn't shift between tabs ("Updated …" hides on Logs).
+        assert await admin.evaluate(BAR_SPOTS) == spots, (spots, await admin.evaluate(BAR_SPOTS))
+        assert spots[0] < 300, f"tabs should sit by the wordmark, not float mid-bar: {spots}"
         await expect(admin.locator("#log-rows tr").first).to_be_visible()
         logs = await admin.evaluate("""async () => (await fetch('/api/admin/logs?limit=500&level=debug',
             { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } })).json()""")
@@ -152,8 +161,10 @@ async def main():
         overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"page scrolls sideways by {overflow}px"
         await shot(phone, "admin-phone")
-        await phone.goto(BASE + "/admin#logs")
+        phone_spots = await phone.evaluate(BAR_SPOTS)
+        await phone.click("#tab-logs")
         await expect(phone.locator("#log-rows tr").first).to_be_visible()
+        assert await phone.evaluate(BAR_SPOTS) == phone_spots, (phone_spots, await phone.evaluate(BAR_SPOTS))
         overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"logs page scrolls sideways by {overflow}px"
         await shot(phone, "admin-logs-phone", full_page=False)

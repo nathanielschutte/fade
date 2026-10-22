@@ -229,8 +229,28 @@ pub async fn subscribe(
         ));
     }
     let session = session_of(&headers)?;
+    let p256dh = req.keys.p256dh.trim_end_matches('=');
+    let auth = req.keys.auth.trim_end_matches('=');
     let at = now();
     let mut tx = state.db.begin().await?;
+    // The app sends its subscription on every launch; an unchanged one is
+    // already recorded, so it doesn't need a new row each time.
+    let unchanged: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM push_subscriptions
+         WHERE user_id = ? AND session_hash = ? AND endpoint = ? AND p256dh = ? AND auth = ?
+           AND ended_at IS NULL",
+    )
+    .bind(me.id)
+    .bind(&session)
+    .bind(&req.endpoint)
+    .bind(p256dh)
+    .bind(auth)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if unchanged.is_some() {
+        tracing::debug!(user_id = me.id, "push subscription unchanged");
+        return Ok(Json(json!({ "ok": true })));
+    }
     sqlx::query(
         "UPDATE push_subscriptions SET ended_at = ?, end_reason = 'replaced'
          WHERE endpoint = ? AND ended_at IS NULL",
@@ -246,8 +266,8 @@ pub async fn subscribe(
     .bind(me.id)
     .bind(&session)
     .bind(&req.endpoint)
-    .bind(req.keys.p256dh.trim_end_matches('='))
-    .bind(req.keys.auth.trim_end_matches('='))
+    .bind(p256dh)
+    .bind(auth)
     .bind(at)
     .execute(&mut *tx)
     .await?;
@@ -404,12 +424,25 @@ async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<
                     "push subscription gone"
                 );
             }
-            Ok(r) => tracing::warn!(
-                user_id = user,
-                subscription_id = id,
-                status = r.status().as_u16(),
-                "push refused"
-            ),
+            Ok(r) => {
+                // Push services say why in a short body, e.g. Apple's
+                // {"reason":"BadDeviceToken"}. It names the problem, never the message.
+                let status = r.status().as_u16();
+                let reason: String = r
+                    .text()
+                    .await
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect();
+                tracing::warn!(
+                    user_id = user,
+                    subscription_id = id,
+                    status,
+                    reason = ?reason,
+                    "push refused"
+                )
+            }
             Err(e) => {
                 tracing::warn!(user_id = user, subscription_id = id, error = %e, "push send failed")
             }

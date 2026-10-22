@@ -334,6 +334,7 @@ fn router(state: SharedState) -> Router {
             get(groups::messages).post(groups::send),
         )
         .route("/groups/{group_id}/read", post(groups::mark_read))
+        .route("/groups/{group_id}/reads", get(groups::reads))
         .route(
             "/groups/{group_id}/pics",
             post(group_pics::upload).layer(DefaultBodyLimit::max(snap_limit)),
