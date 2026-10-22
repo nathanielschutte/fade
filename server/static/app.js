@@ -40,6 +40,7 @@ const state = {
   groupHistory: new Map(),     // group id -> { hasMore, loading }
   groupReads: new Map(),       // group id -> Map(user id -> { username, last }): how far each member has read
   showHidden: false,           // the chat list is showing hidden chats
+  search: { q: "", hits: null }, // the chat list's search box, and message matches (null while looking)
   groupDetail: null,           // the group shown in the info sheet
   messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
   history: new Map(),          // friend id -> { hasMore, loading } for paging back
@@ -909,8 +910,14 @@ function preview(text) {
 
 /** One chat in the list. `actions` (favorite, hide, leave) sit behind the
  * row: a phone swipes it aside to reach them, a computer shows them on hover. */
-function chatRow({ name, status, time, current, onclick, group, avatar, actions = [] }) {
+function chatRow({ name, status, time, current, onclick, group, avatar, actions = [], muted = false }) {
   const cls = ["chat-item"];
+  // Muted: no unread dot or bold, and a 🔕 by the name.
+  if (muted) {
+    status = { ...status, marker: null };
+    name = `${name} 🔕`;
+    cls.push("is-muted");
+  }
   if (status.marker === "snap") cls.push("has-unread", "has-snap");
   else if (status.marker === "text") cls.push("has-unread");
   if (group) cls.push("is-group");
@@ -936,6 +943,7 @@ const ROW_ICONS = {
   star: "M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.7l5.9-.9z",
   archive: "M4 6.5h16v3.5H4zM5.5 10v8.5h13V10M10 13.5h4",
   leave: "M14 4.5h4.5v15H14M10 8l-4 4 4 4M6 12h9",
+  bell: "M6.5 16.5V11a5.5 5.5 0 0 1 9-4.25M17.5 10.5v6l1.5 1.5H8.5M10 20.5a2 2 0 0 0 4 0M4 4l16 16",
 };
 function rowIcon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -963,11 +971,14 @@ function renderChatList() {
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
         avatar: el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
           paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
+        muted: chat.muted,
         actions: chat.hidden
           ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${chatName(chat)} again`, run: () => unhideChat(chat.id) }]
           : [favoriteAction(chat, chatName(chat), () => setFavorite("chats", chat.id, !chat.favorite)),
+            muteAction("chats", chat, chatName(chat)),
             { label: "Hide", icon: "archive", aria: `Hide your chat with ${chatName(chat)}`, run: () => hideChat(chat.id) }],
       }),
+      search: `${chatName(chat)} ${chat.username}`.toLowerCase(),
     })),
     ...state.groups.map((g) => ({
       at: g.last_message?.created_at ?? 0,
@@ -978,18 +989,28 @@ function renderChatList() {
         name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
         current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
         avatar: paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g),
+        muted: g.muted,
         actions: [favoriteAction(g, g.name, () => setFavorite("groups", g.id, !g.favorite)),
+          muteAction("groups", g, g.name),
           { label: "Leave", icon: "leave", cls: "danger", aria: `Leave ${g.name}`, run: (e) => leaveFromList(e.currentTarget, g) }],
       }),
+      search: g.name.toLowerCase(),
     })),
   ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
 
-  const shown = entries.filter((e) => !e.hidden);
-  const favorites = shown.filter((e) => e.favorite);
-  const rest = shown.filter((e) => !e.favorite);
-  const hidden = entries.filter((e) => e.hidden);
   const heading = (text) => el("li", { class: "list-heading", text });
   const items = [];
+  const q = state.search.q.trim().toLowerCase();
+  if (q) {
+    // Searching: chats whose name matches (hidden ones too), then messages that do.
+    const named = entries.filter((e) => e.search.includes(q));
+    items.push(heading("Chats"), ...(named.length ? named.map((e) => e.row) : [el("li", { class: "search-note", text: "No chats by that name." })]));
+    if (q.length >= 2) items.push(heading("Messages"), ...searchResults(q));
+  }
+  const shown = q ? [] : entries.filter((e) => !e.hidden);
+  const favorites = shown.filter((e) => e.favorite);
+  const rest = shown.filter((e) => !e.favorite);
+  const hidden = q ? [] : entries.filter((e) => e.hidden);
   if (favorites.length) items.push(heading("Favorites"), ...favorites.map((e) => e.row), heading("Chats"));
   items.push(...rest.map((e) => e.row));
   if (hidden.length) {
@@ -1002,7 +1023,8 @@ function renderChatList() {
   rowSwipe.open = null;
   $("#chat-list").replaceChildren(...items);
   $("#chat-empty").hidden = entries.length > 0;
-  const unread = state.chats.reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0) + state.groups.reduce((n, g) => n + g.unread, 0);
+  const unread = state.chats.reduce((n, c) => n + (c.hidden || c.muted ? 0 : c.unread), 0)
+    + state.groups.reduce((n, g) => n + (g.muted ? 0 : g.unread), 0);
   document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
 }
 
@@ -1087,6 +1109,143 @@ async function leaveFromList(btn, g) {
   } catch (err) {
     alert(err.message);
   }
+}
+
+// ---------- mute (X3) ----------
+// No notifications (the server skips them) and no unread dot, for 8 hours, a
+// week, or until turned back on. Private, and on every device, like favorites.
+
+function muteAction(kind, item, name) {
+  return item.muted
+    ? { label: "Unmute", icon: "bell", aria: `Unmute ${name}`, run: () => setMute(kind, item.id, name, false) }
+    : { label: "Mute", icon: "bell", aria: `Mute ${name}`, run: () => openMuteDialog(kind, item.id, name) };
+}
+
+let muteTarget = null;
+function openMuteDialog(kind, id, name) {
+  muteTarget = { kind, id, name };
+  $("#mute-title").textContent = `Mute ${name}`;
+  $("#mute-dialog").showModal();
+}
+for (const b of document.querySelectorAll("#mute-dialog [data-hours]")) {
+  b.addEventListener("click", () => {
+    $("#mute-dialog").close();
+    if (muteTarget) setMute(muteTarget.kind, muteTarget.id, muteTarget.name, true, Number(b.dataset.hours) || null);
+  });
+}
+
+async function setMute(kind, id, name, on, hours = null) {
+  const item = kind === "groups" ? groupById(id) : chatById(id);
+  if (!item) return;
+  const was = { muted: item.muted, muted_until: item.muted_until };
+  item.muted = on;
+  renderChatList();
+  try {
+    const r = await getJSON(`/${kind}/${id}/mute`, { method: "PUT", json: hours ? { on, hours } : { on } });
+    item.muted_until = r.muted_until;
+    if (on) showToast(`Muted ${name}.`, () => setMute(kind, id, name, false));
+  } catch (err) {
+    Object.assign(item, was);
+    renderChatList();
+    alert(err.message);
+  }
+}
+
+// ---------- search (X3) ----------
+// Messages are end-to-end encrypted, so searching happens here: over each
+// chat's latest messages, fetched and decrypted at most once a minute. Chat
+// names match as you type.
+const SEARCH_DEPTH = 200;
+const searchCache = new Map(); // "d:<id>" or "g:<id>" -> { at, msgs }
+let searchTimer = null;
+
+$("#chat-search").addEventListener("input", (e) => {
+  state.search = { q: e.target.value, hits: null };
+  renderChatList();
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length >= 2) searchTimer = setTimeout(() => runSearch(q), 250);
+});
+$("#chat-search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") clearSearch();
+});
+
+function clearSearch() {
+  $("#chat-search").value = "";
+  state.search = { q: "", hits: null };
+  renderChatList();
+}
+
+async function searchHistory(src) {
+  const cached = searchCache.get(src.key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.msgs;
+  const msgs = await getJSON(src.url);
+  await Promise.all(msgs.map(src.decrypt));
+  searchCache.set(src.key, { at: Date.now(), msgs });
+  return msgs;
+}
+
+async function runSearch(q) {
+  const needle = q.toLowerCase();
+  const sources = [
+    ...state.chats.map((c) => ({
+      key: `d:${c.id}`, name: chatName(c), open: () => openChat(c.id),
+      url: `/chats/${c.id}/messages?limit=${SEARCH_DEPTH}`, decrypt, text: (m) => (m.kind === "text" ? m.text : null),
+    })),
+    ...state.groups.map((g) => ({
+      key: `g:${g.id}`, name: g.name, open: () => openGroup(g.id),
+      url: `/groups/${g.id}/messages?limit=${SEARCH_DEPTH}`, decrypt: openGroupMessage,
+      text: (m) => (m.kind === "text" && !m.pic && !m.undecryptable ? m.body : null),
+    })),
+  ];
+  const hits = [];
+  for (let i = 0; i < sources.length; i += 4) {
+    const batch = sources.slice(i, i + 4);
+    const loaded = await Promise.all(batch.map((src) => searchHistory(src).catch((err) => {
+      report("warn", "search loading failed", errorFields(err));
+      return [];
+    })));
+    if (state.search.q.trim() !== q) return; // typing moved on
+    batch.forEach((src, k) => {
+      for (const m of loaded[k]) {
+        const t = src.text(m);
+        if (t && t.toLowerCase().includes(needle)) hits.push({ src, m, t });
+      }
+    });
+  }
+  hits.sort((a, b) => b.m.created_at - a.m.created_at);
+  state.search.hits = hits.slice(0, 30);
+  renderChatList();
+}
+
+/** The "Messages" part of the list while searching. */
+function searchResults(q) {
+  const hits = state.search.hits;
+  if (!hits) return [el("li", { class: "search-note", text: "Looking through your messages…" })];
+  if (!hits.length) return [el("li", { class: "search-note", text: "No messages with that in the last 200 of each chat." })];
+  return hits.map((h) => {
+    const i = h.t.toLowerCase().indexOf(q);
+    const start = Math.max(0, i - 30);
+    const end = i + q.length;
+    return el("li", {}, el("button", { type: "button", class: "search-hit", onclick: () => openHit(h) },
+      el("span", { class: "search-who" },
+        el("span", { text: h.src.name }),
+        el("span", { class: "search-time", text: relTime(h.m.created_at) })),
+      el("span", { class: "search-snippet" },
+        `${start > 0 ? "…" : ""}${h.t.slice(start, i)}`,
+        el("mark", { text: h.t.slice(i, end) }),
+        `${h.t.slice(end, end + 70)}${h.t.length > end + 70 ? "…" : ""}`)));
+  });
+}
+
+/** Opens the chat and, if the message is in what's loaded, brings it into view. */
+async function openHit(h) {
+  await h.src.open();
+  const li = $(`#messages [data-key="${h.src.key[0]}:${h.m.id}"]`);
+  if (!li) return;
+  li.scrollIntoView({ block: "center" });
+  li.classList.add("flash");
+  setTimeout(() => li.classList.remove("flash"), 1700);
 }
 
 let toastTimer = null;

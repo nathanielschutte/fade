@@ -21,7 +21,7 @@ use crate::{
     auth::AuthUser,
     db::{self, now},
     error::{AppError, AppResult},
-    marks::FAVORITE_GROUP,
+    marks::{FAVORITE_GROUP, MUTED_GROUP},
     ws::Event,
     SharedState,
 };
@@ -107,6 +107,10 @@ pub struct GroupSummary {
     unread: i64,
     /// One of my favorites. Only I see it (marks.rs).
     favorite: bool,
+    /// I muted it: no notifications or unread dot (marks.rs).
+    muted: bool,
+    /// When that mute ends by itself; null while muted means until turned off.
+    muted_until: Option<i64>,
     /// Current group picture, for `GET /api/groups/{id}/avatar/{avatar_id}`.
     avatar_id: Option<i64>,
     /// Always false in version 1. Clients show a notice when it's false.
@@ -460,6 +464,7 @@ struct SummaryRow {
     last_id: Option<i64>,
     unread: i64,
     favorite: Option<bool>,
+    muted_raw: Option<i64>,
 }
 
 /// `GET /api/groups`: the caller's current groups, newest activity first.
@@ -475,7 +480,7 @@ pub async fn list(
             (SELECT COUNT(*) FROM group_messages gm
               WHERE gm.group_id = g.id AND gm.id > m.last_read_id AND gm.kind = 'text'
                 AND gm.sender_id != ?1 AND gm.id > m.visible_after_id) AS unread,
-            {FAVORITE_GROUP} AS favorite
+            {FAVORITE_GROUP} AS favorite, {MUTED_GROUP} AS muted_raw
          FROM group_members m JOIN groups g ON g.id = m.group_id
          WHERE m.user_id = ?1 AND m.left_at IS NULL"
     ))
@@ -500,6 +505,8 @@ pub async fn list(
             last_message,
             unread: r.unread,
             favorite: r.favorite.unwrap_or(false),
+            muted: crate::marks::muted(r.muted_raw, now()).0,
+            muted_until: crate::marks::muted(r.muted_raw, now()).1,
             encrypted: false,
             avatar_id: crate::group_pics::current_avatar(&state.db, r.id).await?,
         });

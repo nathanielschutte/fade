@@ -302,6 +302,14 @@ fn router(state: SharedState) -> Router {
             axum::routing::put(marks::hide_chat),
         )
         .route(
+            "/chats/{friend_id}/mute",
+            axum::routing::put(marks::mute_chat),
+        )
+        .route(
+            "/groups/{group_id}/mute",
+            axum::routing::put(marks::mute_group),
+        )
+        .route(
             "/groups/{group_id}/favorite",
             axum::routing::put(marks::favorite_group),
         )

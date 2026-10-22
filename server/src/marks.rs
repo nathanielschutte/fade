@@ -39,6 +39,121 @@ pub const HIDDEN_UPTO: &str = "(SELECT CASE WHEN k.value = 1 THEN COALESCE(k.upt
      FROM chat_marks k
      WHERE k.user_id = ?1 AND k.kind = 'hidden' AND k.friend_id = u.id ORDER BY k.id DESC LIMIT 1)";
 
+/// For the chat list: `?1`'s current mute on chat `u` (a friend) or `g` (a
+/// group), as when it ends: NULL when not muted, 0 when muted until turned
+/// off, else the Unix time it ends (which may already have passed: see `muted`).
+pub const MUTED_FRIEND: &str = "(SELECT CASE WHEN k.value = 1 THEN COALESCE(k.until_at, 0) END
+     FROM chat_mutes k WHERE k.user_id = ?1 AND k.friend_id = u.id ORDER BY k.id DESC LIMIT 1)";
+pub const MUTED_GROUP: &str = "(SELECT CASE WHEN k.value = 1 THEN COALESCE(k.until_at, 0) END
+     FROM chat_mutes k WHERE k.user_id = ?1 AND k.group_id = g.id ORDER BY k.id DESC LIMIT 1)";
+
+/// From the column above: (muted now, when it ends if it ends by itself).
+pub fn muted(raw: Option<i64>, now: i64) -> (bool, Option<i64>) {
+    match raw {
+        None => (false, None),
+        Some(0) => (true, None),
+        Some(until) if until > now => (true, Some(until)),
+        Some(_) => (false, None),
+    }
+}
+
+/// Mutes last at most a year (or until turned off).
+const MAX_MUTE_HOURS: i64 = 24 * 365;
+
+/// Whether `user` has muted the chat a notification with `tag` belongs to
+/// ("dm-<friend>" or "group-<group>"). Friend requests are never muted.
+pub async fn muted_for_tag(db: &SqlitePool, user: i64, tag: &str) -> sqlx::Result<bool> {
+    let chat = if let Some(id) = tag.strip_prefix("dm-").and_then(|s| s.parse().ok()) {
+        Chat::Friend(id)
+    } else if let Some(id) = tag.strip_prefix("group-").and_then(|s| s.parse().ok()) {
+        Chat::Group(id)
+    } else {
+        return Ok(false);
+    };
+    let (friend, group) = chat.ids();
+    let raw: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT CASE WHEN value = 1 THEN COALESCE(until_at, 0) END FROM chat_mutes
+         WHERE user_id = ? AND friend_id IS ? AND group_id IS ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user)
+    .bind(friend)
+    .bind(group)
+    .fetch_optional(db)
+    .await?;
+    Ok(muted(raw.flatten(), now()).0)
+}
+
+#[derive(Deserialize)]
+pub struct MuteRequest {
+    on: bool,
+    /// How long, in hours; none (with `on`) means until turned off.
+    hours: Option<i64>,
+}
+
+async fn set_mute(
+    db: &SqlitePool,
+    user: i64,
+    chat: Chat,
+    req: &MuteRequest,
+) -> AppResult<Option<i64>> {
+    let until = match (req.on, req.hours) {
+        (true, Some(h)) if (1..=MAX_MUTE_HOURS).contains(&h) => Some(now() + h * 3600),
+        (true, Some(_)) => return Err(AppError::bad("Mute for between an hour and a year.")),
+        _ => None,
+    };
+    let (friend, group) = chat.ids();
+    sqlx::query(
+        "INSERT INTO chat_mutes (user_id, friend_id, group_id, value, until_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(user)
+    .bind(friend)
+    .bind(group)
+    .bind(req.on)
+    .bind(until)
+    .bind(now())
+    .execute(db)
+    .await?;
+    Ok(until)
+}
+
+/// `PUT /api/chats/{friend_id}/mute` `{"on": bool, "hours": 8}`: no
+/// notifications and no unread dot from this chat, for `hours` or until
+/// turned off (no `hours`).
+pub async fn mute_chat(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(friend): Path<i64>,
+    Json(req): Json<MuteRequest>,
+) -> AppResult<Json<Value>> {
+    crate::friends::require_friend(&state, me.id, friend).await?;
+    let until = set_mute(&state.db, me.id, Chat::Friend(friend), &req).await?;
+    tracing::info!(
+        user_id = me.id,
+        friend_id = friend,
+        on = req.on,
+        "chat muted"
+    );
+    state.hub.send(me.id, &Event::FriendsChanged);
+    Ok(Json(json!({ "muted": req.on, "muted_until": until })))
+}
+
+/// `PUT /api/groups/{group_id}/mute`, like `mute_chat`.
+pub async fn mute_group(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(group): Path<i64>,
+    Json(req): Json<MuteRequest>,
+) -> AppResult<Json<Value>> {
+    crate::groups::require_member(&state.db, group, me.id).await?;
+    let until = set_mute(&state.db, me.id, Chat::Group(group), &req).await?;
+    tracing::info!(user_id = me.id, group_id = group, on = req.on, "chat muted");
+    state
+        .hub
+        .send(me.id, &Event::GroupsChanged { group_id: group });
+    Ok(Json(json!({ "muted": req.on, "muted_until": until })))
+}
+
 /// A hidden chat stays hidden until something newer than what was there
 /// when it was hidden arrives.
 pub fn is_hidden(hidden_upto: Option<i64>, last_message_id: Option<i64>) -> bool {
@@ -236,6 +351,66 @@ mod tests {
             .execute(db)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn mutes_end_by_themselves() {
+        assert_eq!(muted(None, 100), (false, None));
+        assert_eq!(muted(Some(0), 100), (true, None), "until turned off");
+        assert_eq!(muted(Some(500), 100), (true, Some(500)));
+        assert_eq!(muted(Some(50), 100), (false, None), "over");
+    }
+
+    #[tokio::test]
+    async fn muting_silences_that_chat_only() {
+        let db = temp_db().await;
+        people(&db, 3).await;
+        let on = |hours| MuteRequest { on: true, hours };
+        set_mute(&db, 1, Chat::Friend(2), &on(None)).await.unwrap();
+        assert!(muted_for_tag(&db, 1, "dm-2").await.unwrap());
+        assert!(
+            !muted_for_tag(&db, 1, "dm-3").await.unwrap(),
+            "another chat"
+        );
+        assert!(
+            !muted_for_tag(&db, 2, "dm-1").await.unwrap(),
+            "the friend's side"
+        );
+        assert!(
+            !muted_for_tag(&db, 1, "requests").await.unwrap(),
+            "friend requests always come through"
+        );
+        set_mute(
+            &db,
+            1,
+            Chat::Friend(2),
+            &MuteRequest {
+                on: false,
+                hours: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!muted_for_tag(&db, 1, "dm-2").await.unwrap());
+        sqlx::query("INSERT INTO groups (id, name, created_by, created_at) VALUES (7, 'g', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        set_mute(&db, 1, Chat::Group(7), &on(Some(8)))
+            .await
+            .unwrap();
+        assert!(muted_for_tag(&db, 1, "group-7").await.unwrap());
+        assert!(set_mute(&db, 1, Chat::Friend(2), &on(Some(0)))
+            .await
+            .is_err());
+        assert!(set_mute(&db, 1, Chat::Friend(2), &on(Some(24 * 366)))
+            .await
+            .is_err());
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_mutes")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows, 3, "unmuting adds a row; nothing is deleted");
     }
 
     #[test]

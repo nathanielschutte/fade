@@ -980,3 +980,27 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 }
 .sticker-pick { width: 2.75rem; height: 2.75rem; border: 0; border-radius: var(--radius-s); background: none; font-size: 1.6rem; line-height: 1; }
 .sticker-pick:hover { background: var(--wash); }
+
+/* ---------- search and mute (chat list) ---------- */
+.list-search { flex: none; padding: 0.5rem var(--pad) 0.25rem; }
+.list-search input {
+  width: 100%; min-height: 2.5rem; padding: 0 0.9rem;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--ink); color: var(--paper); font: inherit;
+}
+.list-search input:focus { outline: none; border-color: var(--sage); }
+.search-note { padding: 0.5rem var(--pad) 0.75rem; color: var(--fixer); font-size: var(--step--1); }
+.search-hit {
+  width: 100%; display: grid; gap: 0.1rem;
+  padding: 0.65rem var(--pad); border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.search-hit:hover { background: rgba(38, 55, 47, 0.6); }
+.search-who { display: flex; justify-content: space-between; gap: 0.5rem; font-weight: 600; }
+.search-time { flex: none; color: var(--fixer); font-weight: 400; font-size: var(--step--1); }
+.search-snippet { color: var(--fixer); font-size: var(--step--1); overflow-wrap: anywhere; }
+.search-snippet mark { background: rgba(147, 197, 163, 0.28); color: var(--paper); border-radius: 3px; padding: 0 1px; }
+.flash { animation: flash 1.7s ease-out; }
+@keyframes flash { 0%, 40% { background: rgba(147, 197, 163, 0.22); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .flash { animation: none; outline: 1px solid var(--sage); } }
+.mute-options { display: grid; gap: 0.5rem; margin-bottom: 0.5rem; }

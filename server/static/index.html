@@ -97,6 +97,9 @@
       <p>Save a recovery key, so a forgotten password can't cost you your messages.</p>
       <button type="button" class="button" id="recovery-nudge-button">Set up</button>
     </div>
+    <div class="list-search">
+      <input type="search" id="chat-search" placeholder="Search" aria-label="Search chats and messages" autocomplete="off" enterkeyhint="search">
+    </div>
     <div class="pull" id="pull" aria-hidden="true"><span class="pull-arc"></span></div>
     <ul class="chat-list" id="chat-list"></ul>
     <div class="empty" id="chat-empty" hidden>
@@ -389,6 +392,22 @@
   <div class="picture-row">
     <button type="button" class="button primary" id="invite-accept">Add</button>
     <button type="button" class="button" data-close>Not now</button>
+  </div>
+</dialog>
+
+<!-- Mute a chat -->
+<dialog id="mute-dialog" class="sheet" aria-labelledby="mute-title">
+  <header class="sheet-head">
+    <h2 id="mute-title">Mute</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="sheet-text">No notifications and no unread dot from this chat. It's still there to open whenever you like.</p>
+  <div class="mute-options">
+    <button type="button" class="button" data-hours="8">For 8 hours</button>
+    <button type="button" class="button" data-hours="168">For a week</button>
+    <button type="button" class="button" data-hours="0">Until I turn it back on</button>
   </div>
 </dialog>
 

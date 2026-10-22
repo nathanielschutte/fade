@@ -11,7 +11,7 @@ use crate::{
     birthdays::BIRTHDAY_MD,
     db::{self, now, pair, Message, UserPublic},
     error::{AppError, AppResult},
-    marks::{FAVORITE_FRIEND, HIDDEN_UPTO},
+    marks::{FAVORITE_FRIEND, HIDDEN_UPTO, MUTED_FRIEND},
     people::{AVATAR_ID, DISPLAY_NAME, NICKNAME},
     ws::Event,
     SharedState,
@@ -33,6 +33,7 @@ struct ChatRow {
     favorite: Option<bool>,
     hidden_upto: Option<i64>,
     birthday: Option<String>,
+    muted_raw: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -66,6 +67,10 @@ pub struct ChatSummary {
     streak: i64,
     /// That streak runs out tonight unless you both send one today.
     streak_expiring: bool,
+    /// I muted this chat: no notifications or unread dot (marks.rs).
+    muted: bool,
+    /// When that mute ends by itself; null while muted means until turned off.
+    muted_until: Option<i64>,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -78,7 +83,7 @@ pub async fn list_chats(
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
-            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday,
+            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
                  OR (m.sender_id = u.id AND m.recipient_id = ?1)
@@ -121,6 +126,8 @@ pub async fn list_chats(
             birthday: row.birthday,
             streak: streaks.get(&row.id).map_or(0, |s| s.current),
             streak_expiring: streaks.get(&row.id).is_some_and(|s| s.expiring),
+            muted: crate::marks::muted(row.muted_raw, now()).0,
+            muted_until: crate::marks::muted(row.muted_raw, now()).1,
             last_message,
             unread: row.unread,
         });

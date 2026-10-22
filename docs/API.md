@@ -11,8 +11,9 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
 | `GET  /me` | `{id, username, is_admin, display_name, avatar_id, has_recovery_key, key_reset_at}` |
-| `GET  /friends?tz=` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden, birthday, streak, streak_expiring}]`, newest first. `tz`: minutes east of UTC, for counting days (default UTC). `streak`: days in a row you've both sent each other a pic (apps show it from 3); `streak_expiring`: it ends tonight unless you both send one. `nickname`, `favorite`, and `hidden` are yours alone; `birthday` is theirs as `"MM-DD"` |
+| `GET  /friends?tz=` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden, birthday, streak, streak_expiring, muted, muted_until}]`, newest first. `tz`: minutes east of UTC, for counting days (default UTC). `streak`: days in a row you've both sent each other a pic (apps show it from 3); `streak_expiring`: it ends tonight unless you both send one. `nickname`, `favorite`, and `hidden` are yours alone; `birthday` is theirs as `"MM-DD"` |
 | `PUT  /chats/{friend_id}/favorite` | `{on}`: keep this chat at the top of your list. Up to 10 favorites (direct and groups together); 400 past that |
+| `PUT  /chats/{friend_id}/mute` · `PUT /groups/{id}/mute` | `{on, hours?}`: no notifications and no unread dot from that chat, for `hours` (1 to 8,760) or until turned off (no `hours`). Private. Lists carry `muted` and `muted_until` (null while muted means until turned off) |
 | `PUT  /chats/{friend_id}/hidden` | `{on}`: hide (archive) the chat from your list, or show it again. Messages stay; a newer message, from either side, shows it again by itself |
 | `DELETE /friends/{id}` | Unfriend |
 | `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). Both have `birthday: {month, day, year}` or null; a friend's has `streak: {current, expiring, longest}`, yours `longest_streak`. Takes `?tz=` like `/friends`. 404 for anyone else |
@@ -25,7 +26,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /chats/{friend}/read` | Marks their texts as read |
 | `POST /chats/{friend}/snaps?format=2` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
-| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` (`encrypted` predates format 3 and stays false; messages say their own `format`). `GET /groups/{id}` members include `public_key`, for encrypting to them |
+| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` (`encrypted` predates format 3 and stays false; messages say their own `format`). Also `muted`, `muted_until`. `GET /groups/{id}` members include `public_key`, for encrypting to them |
 | `PUT  /groups/{id}/favorite` | `{on}`: a favorite group (counts toward the 10). Groups aren't hidden; you leave them |
 | `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
 | `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |

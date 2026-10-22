@@ -481,6 +481,16 @@ async def check_live(tag):
     req_note = phone.decrypt(rx.wait_for(name, 3)[2][2])
     assert req_note == {"title": "napsack", "body": f"{c['username']} wants to be friends", "tag": "requests", "url": "/#friends"}, req_note
 
+    # A muted chat stays quiet; unmuted, it notifies again.
+    ok(call("PUT", f"/chats/{a['id']}/mute", b_tok, json={"on": True}))
+    quiet = rx.count(name)
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    await asyncio.sleep(1.0)
+    assert rx.count(name) == quiet, "a muted chat doesn't notify"
+    ok(call("PUT", f"/chats/{a['id']}/mute", b_tok, json={"on": False}))
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    rx.wait_for(name, quiet + 1)
+
     # Signing out ends that browser's notifications.
     ok(call("POST", "/auth/logout", b_tok))
     b_tok = ok(call("POST", "/auth/login", json={"username": b["username"], "auth_key": AUTH_KEY})).json()["token"]
@@ -661,6 +671,21 @@ def check_marks(tag, a, a_tok, b, b_tok):
     if DB:
         rows = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM chat_marks WHERE user_id = ?", (a["id"],)).fetchone()[0]
         assert rows == 5, f"every change is a new row, none deleted: {rows}"
+
+    # Muting: for a while or until turned off; only for friends and members; private.
+    ok(call("PUT", f"/chats/{s['id']}/mute", a_tok, json={"on": True}), 404)
+    for bad in (0, -1, 24 * 366):
+        ok(call("PUT", f"/chats/{b['id']}/mute", a_tok, json={"on": True, "hours": bad}), 400)
+    r = ok(call("PUT", f"/chats/{b['id']}/mute", a_tok, json={"on": True, "hours": 8})).json()
+    assert r["muted"] and abs(r["muted_until"] - (time.time() + 8 * 3600)) < 60, r
+    mine = view(a_tok, b)
+    assert mine["muted"] is True and mine["muted_until"] == r["muted_until"] and view(b_tok, a)["muted"] is False
+    ok(call("PUT", f"/chats/{b['id']}/mute", a_tok, json={"on": True}))
+    assert view(a_tok, b)["muted"] is True and view(a_tok, b)["muted_until"] is None, "until turned off"
+    ok(call("PUT", f"/chats/{b['id']}/mute", a_tok, json={"on": False}))
+    assert view(a_tok, b)["muted"] is False
+    ok(call("PUT", f"/groups/{g['id']}/mute", b_tok, json={"on": True, "hours": 168}))
+    assert group_view(b_tok, g["id"])["muted"] is True and group_view(a_tok, g["id"])["muted"] is False
 
 
 def check_guard(tag):

@@ -349,6 +349,15 @@ pub fn notify(state: &SharedState, user: i64, note: Note) {
     }
     let state = state.clone();
     tokio::spawn(async move {
+        // A chat they muted stays quiet (marks.rs).
+        match crate::marks::muted_for_tag(&state.db, user, &note.tag).await {
+            Ok(true) => {
+                tracing::debug!(user_id = user, "push skipped: chat muted");
+                return;
+            }
+            Ok(false) => {}
+            Err(e) => tracing::warn!(user_id = user, error = %e, "checking mute failed"),
+        }
         if let Err(e) = deliver(&state, user, &note).await {
             tracing::warn!(user_id = user, error = %e, "push delivery failed");
         }

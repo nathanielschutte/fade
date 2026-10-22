@@ -172,6 +172,50 @@ async def main():
         assert overflow <= 0, f"the list scrolls sideways by {overflow}px"
         print("phone: swipe for actions, hidden chat reopens, two-tap leave")
 
+        # Mute: Ana mutes Cal for 8 hours; Cal's next message brings no dot or count.
+        await row(ana, CAL).hover()
+        await row(ana, CAL).locator(".row-action", has_text="Mute").click()
+        await expect(ana.locator("#mute-dialog")).to_be_visible()
+        await expect(ana.locator("#mute-title")).to_have_text(f"Mute {CAL}")
+        await ana.click("#mute-dialog [data-hours='8']")
+        await expect(row(ana, CAL).locator(".chat-name")).to_contain_text("🔕")
+        await expect(ana.locator("#toast")).to_contain_text(f"Muted {CAL}")
+        title_before = await ana.title()
+        await row(cal, ANA).click()
+        await cal.fill("#composer-input", "muted hello")
+        await cal.click("#composer .send")
+        await expect(row(ana, CAL).locator(".chat-status")).to_have_text("muted hello", timeout=10000)
+        assert await row(ana, CAL).locator(".marker.text").count() == 0, "no unread dot"
+        assert await ana.title() == title_before, "a muted chat doesn't add to the unread count"
+        await row(ana, CAL).hover()
+        await row(ana, CAL).locator(".row-action", has_text="Unmute").click()
+        await expect(row(ana, CAL).locator(".chat-name")).not_to_contain_text("🔕")
+        await expect(row(ana, CAL).locator(".marker.text")).to_have_count(1)
+        print("mute: no dot or count while muted; unmuted, it's back")
+
+        # Search: chats by name as you type, then messages (decrypted here, not on the server).
+        await ana.fill("#chat-search", CAL[:5])
+        await expect(ana.locator("#chat-list .chat-row")).to_have_count(1)
+        await ana.fill("#chat-search", "you there")
+        hit = ana.locator(".search-hit", has_text=BEN)
+        await expect(hit).to_be_visible(timeout=15000)
+        await expect(hit.locator("mark")).to_have_text("you there")
+        await shot(ana, "search", full_page=False)
+        await hit.click()
+        await expect(ana.locator("#chat-title")).to_have_text(BEN)
+        await expect(ana.locator("#messages .msg", has_text="you there?")).to_be_in_viewport()
+        await ana.fill("#chat-search", "zzz no such words")
+        await expect(ana.locator(".search-note", has_text="No messages")).to_be_visible(timeout=15000)
+        await ana.press("#chat-search", "Escape")
+        await expect(ana.locator("#chat-search")).to_have_value("")
+        await expect(row(ana, CAL)).to_be_visible()
+        # On a phone the search box fits.
+        await ben.tap("#back-button") if await ben.locator("#back-button").is_visible() else None
+        await expect(ben.locator("#chat-search")).to_be_visible()
+        overflow = await ben.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"scrolls sideways by {overflow}px"
+        print("search: chats by name, messages by text, a hit opens the chat at the message")
+
         await browser.close()
     print("MARKS TEST PASSED")
 
