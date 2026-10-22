@@ -56,10 +56,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Draw on pics](#f13-draw-on-pics): a pen, stickers, and undo, flattened into the photo before it's encrypted | 0.22.0 |
 | [Streaks](#f15-streaks): 🔥 and a count when you've both sent pics every day, ⌛ when it's about to end | 0.23.0 |
 | [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 |
+| [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.24.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -299,6 +300,10 @@ Production runs **0.24.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - Requested (2026-10-21): "I want to be able to remove people from groups."
 - Today the group's owner can already remove members (group info sheet: tap the group's name, then Remove next to a member); nobody else can. To decide while building: is the request about finding it (make it easier to reach, e.g. from the member list), or about who may remove (anyone who added that person, or any member)? Default unless Nate says otherwise: keep owner-only removal, make it easier to find, and say in the sheet who can remove.
 - Done (0.20.0), the default: the member list says who can remove people ("You're the owner, so you can remove people" / "Only Ana can remove people"), and Remove takes two taps like Leave. **Open:** if Nate wants other members to remove people too (for example whoever added them), that's a server rule change in `groups::remove_member`.
+
+#### X10. Befriend people from a group
+- Requested (2026-10-22): a new friend of Nate's was added to a group with four of Nate's other friends he didn't know, and needed an easy way to add them.
+- Done (0.24.1): in a group's member list, anyone who isn't your friend yet has **Add friend** (an ordinary friend request, with its usual limits), then **Requested**; if they asked you, **Accept**. The sheet updates live when the other person accepts. `test_groups.py` covers it.
 
 ### Infrastructure
 

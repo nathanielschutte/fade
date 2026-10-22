@@ -1,7 +1,7 @@
 """Group chats through the real UI: create, message, add, remove, rename,
 leave, all live across four browsers. Settings come from the environment;
 see common.py."""
-import asyncio, sqlite3, uuid
+import asyncio, re, sqlite3, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import BASE, DB, INVITE, launch, save_recovery_key, shot
@@ -194,6 +194,29 @@ async def main():
         await expect(group_item(ben).locator(".avatar img")).to_be_visible()
         await expect(ben.locator(".group-event", has_text=f"{ANA} changed the group picture")).to_be_visible()
         print("group picture: set by a member, shown to the others live")
+
+        # Dee only knows Ana. From the member list she adds Ben; Ben accepts from his.
+        await group_item(dee).click()
+        await dee.click("#chat-title")
+        ben_row = dee.locator("#group-members .person", has_text=BEN)
+        await expect(ben_row.locator("button", has_text="Add friend")).to_be_visible(timeout=10000)
+        await expect(dee.locator("#group-members .person", has_text=ANA).locator("button", has_text="Add friend")).to_have_count(0)
+        await ben_row.locator("button", has_text="Add friend").click()
+        await expect(dee.locator("#group-note")).to_have_text(f"Request sent to {BEN}.")
+        await expect(ben_row).to_contain_text("Requested")
+        await ben.click("#chat-title")
+        dee_row = ben.locator("#group-members .person", has_text=DEE)
+        await dee_row.locator("button", has_text="Accept").click()
+        await expect(ben.locator("#group-note")).to_have_text(f"You and {DEE} are now friends.", timeout=10000)
+        await expect(dee_row.locator("button", has_text=re.compile("Add friend|Accept"))).to_have_count(0)  # friends now
+        await expect(dee_row.locator(".link-name")).to_be_visible()                        # their name opens their profile
+        await expect(ben_row.locator(".link-name")).to_be_visible(timeout=10000)  # Dee's sheet caught up live
+        await expect(dee.locator(".chat-item:not(.is-group)", has_text=BEN)).to_have_count(1, timeout=10000)  # a new chat in her list
+        await shot(dee, "group-befriend-phone", full_page=False)
+        await dee.click("#group-dialog [data-close]")
+        await dee.click("#back-button")  # (a phone: back to the chat list)
+        await ben.click("#group-dialog [data-close]")
+        print("befriending from a group: add, requested, accept, both sheets live")
 
         # Ben isn't the owner: no Remove buttons, but he can rename.
         await ben.click("#chat-title")

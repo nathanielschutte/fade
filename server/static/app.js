@@ -1994,7 +1994,8 @@ async function handleEvent(ev) {
     }
     case "friends_changed":
       await refreshChats();
-      refreshRequests();
+      await refreshRequests();
+      if ($("#group-dialog").open && state.groupDetail) openGroupInfo(state.groupDetail.id);
       refreshMe();
       refreshGroups(); // names in group lists come from the friends list
       if (state.activeGroupId) renderMessages();
@@ -2608,6 +2609,7 @@ async function openGroupInfo(groupId) {
         ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, personName(m.id, m.username))
         : el("span", { class: "person-name", text: me ? `${personName(m.id, m.username)} (you)` : m.username }),
       m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
+      !me && !friend ? befriendControl(g, m) : null,
       g.role === "owner" && !me
         ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
           onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
@@ -2645,6 +2647,39 @@ async function groupAction(fn, done) {
 
 const addToGroup = (g, f) => groupAction(
   () => api(`/groups/${g.id}/members`, { method: "POST", json: { user_id: f.id } }), `Added ${chatName(f)}.`);
+/**
+ * People in a group aren't always each other's friends. Next to anyone who
+ * isn't mine yet: Add friend (an ordinary friend request), Requested once I've
+ * asked, or Accept if they asked me. The sheet redraws when that changes.
+ */
+function befriendControl(g, m) {
+  const name = personName(m.id, m.username);
+  if (state.requests.outgoing.some((r) => r.id === m.id)) {
+    return el("span", { class: "person-meta", text: "Requested" });
+  }
+  if (state.requests.incoming.some((r) => r.id === m.id)) {
+    return el("button", { type: "button", class: "button primary", "aria-label": `Accept ${name}'s friend request`,
+      onclick: () => groupFriendAction(g, () => api(`/friends/requests/${m.id}/accept`, { method: "POST" }), `You and ${name} are now friends.`) }, "Accept");
+  }
+  return el("button", { type: "button", class: "button", "aria-label": `Add ${name} as a friend`,
+    onclick: () => groupFriendAction(g, async () => {
+      const res = await getJSON("/friends/requests", { method: "POST", json: { username: m.username } });
+      return res.status === "friends" ? `You and ${name} are now friends.` : `Request sent to ${name}.`;
+    }) }, "Add friend");
+}
+
+async function groupFriendAction(g, fn, done) {
+  try {
+    const said = await fn();
+    $("#group-note").textContent = typeof said === "string" ? said : done;
+  } catch (err) {
+    $("#group-note").textContent = err.message;
+    return;
+  }
+  await Promise.all([refreshRequests(), refreshChats()]);
+  if ($("#group-dialog").open && state.groupDetail?.id === g.id) openGroupInfo(g.id);
+}
+
 /** Removing someone takes two taps, like leaving. */
 function removeFromGroup(btn, g, m) {
   if (!btn.dataset.confirm) {
