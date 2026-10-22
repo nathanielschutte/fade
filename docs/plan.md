@@ -11,17 +11,16 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 1 | [Favorites](stories/favorites.md) | Features | In progress | Nate's first feature, built by hand; starts X3 |
-| 2 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
-| 3 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 4 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 5 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 6 | [Chat list tools: pin, mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Gets useful as the friend list grows |
-| 7 | [Group chats: end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first ("seen by" shipped) |
-| 8 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 11 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
+| 2 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
+| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 5 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
+| 6 | [Group chats: end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first ("seen by" shipped) |
+| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -54,10 +53,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 |
 | [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 |
 | iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
+| [Favorites](stories/favorites.md) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.18.2**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -237,8 +237,11 @@ Production runs **0.18.2**. Releases ship with `scripts/deploy.sh`; commit what 
 - Proposal: an account bar at the bottom of the chat list, with your avatar and name (opens your profile), an Admin link for admins, and Sign out. It's visible on phones too, since the chat list is the home screen there. The Friends sheet goes back to just friends and requests.
 
 #### X3. Chat list tools: pin, mute, search
-- **Favorites** first: [stories/favorites.md](stories/favorites.md) (in progress).
-- **Pin** up to 3 chats to the top; **mute** a chat (no notifications, no unread dot, for 8 hours / a week / always); **archive** quiet chats out of the list (they come back on a new message).
+- **Favorites** first: [stories/favorites.md](stories/favorites.md). Taken over from Nate's story on 2026-10-21 and shipped with hiding (below), since both are marks on a chat row.
+- **Decided (2026-10-21), favorites:** direct chats and groups both; up to 10; they sit in a "Favorites" section at the top, newest message first (choosing the order by hand can come later); kept on the server so they follow you, private to you. Unfriending or leaving keeps the mark but frees the slot, and it's a favorite again if the chat comes back.
+- **Decided (2026-10-21), hiding** (Nate: "swipe and clear a convo... just hide it and remove any local client data... group chats you would just leave"): a direct chat can be hidden from your list; its messages stay on the server, and the browser drops what it had loaded (the friend's pinned key stays, so a changed safety code is still caught). A new message from either side brings it back, as does opening it from "Hidden chats". Groups get Leave instead (two taps).
+- Done (0.19.0): one append-only table, `chat_marks` (newest row per user, chat, and kind wins, like nicknames). `PUT /chats/{id}/favorite`, `PUT /groups/{id}/favorite`, `PUT /chats/{id}/hidden`; `favorite`/`hidden` on the lists; other devices update through `friends_changed`/`groups_changed`. A phone swipes a row left for its actions; a computer shows them on hover. "Hid your chat with Maya. Undo". Tests: `marks.rs`, `check_marks` in the smoke test, `tests/e2e/test_marks.py`.
+- **Pin** is covered by favorites. Still to do: **mute** a chat (no notifications, no unread dot, for 8 hours / a week / always).
 - **Search:** find a chat by name, and search message text. Direct messages are end-to-end encrypted, so search runs in the browser over decrypted history (loading older pages as needed); group messages can be searched on the server.
 - Pin/mute/archive are stored per person on the server (append-only state, Rule 1) so they follow you to new devices.
 

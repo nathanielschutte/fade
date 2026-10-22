@@ -858,3 +858,70 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .invite-list .person { font-size: var(--step--1); }
 .invite-list .person-name { font-weight: 400; color: var(--fixer); }
 #invite-dialog .picture-row { gap: 0.5rem; }
+
+/* ---------- favorites, hidden chats, row actions ---------- */
+.list-heading {
+  padding: 0.75rem var(--pad) 0.2rem;
+  font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fixer);
+}
+.hidden-toggle { padding: 0.5rem var(--pad) 1rem; }
+.hidden-toggle .link { font-size: var(--step--1); }
+
+/* Each row covers its actions; a swipe (touch) slides it aside to show them.
+   The row is opaque so nothing behind shows through, hover included. */
+.chat-row { position: relative; overflow: hidden; }
+.chat-row .chat-item { position: relative; z-index: 1; background: var(--deep); transition: transform 180ms ease; }
+.chat-row .chat-item:hover { background: linear-gradient(rgba(38, 55, 47, 0.6), rgba(38, 55, 47, 0.6)), var(--deep); }
+.chat-row .chat-item[aria-current="true"] { background: var(--wash); }
+.chat-row.swiping .chat-item { transition: none; }
+.row-actions { position: absolute; top: 0; bottom: 0; right: 0; display: flex; }
+.row-action {
+  min-width: 5rem; padding: 0 0.9rem; border: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.2rem;
+  background: var(--wash); color: var(--paper);
+  font: inherit; font-size: var(--step--1); font-weight: 600; cursor: pointer;
+}
+.row-action svg { width: 1.25rem; height: 1.25rem; }
+.row-action.fav { background: var(--sage); color: var(--on-sage); }
+.row-action.fav.on svg { fill: currentColor; }
+.row-action.danger { background: var(--danger); color: var(--on-sage); }
+
+/* Anything but a touch screen (a mouse, a trackpad): small round icon buttons
+   over the time at the row's right end, shown on hover or keyboard focus.
+   The words become the tooltip and the accessible name. */
+@media not all and (pointer: coarse) {
+  .row-actions {
+    top: 50%; bottom: auto; right: 0.6rem; transform: translateY(-50%); z-index: 2;
+    gap: 0.3rem; opacity: 0; pointer-events: none;
+  }
+  .chat-row:hover .row-actions, .chat-row:focus-within .row-actions { opacity: 1; pointer-events: auto; }
+  .row-action {
+    min-width: 0; width: 2rem; height: 2rem; padding: 0;
+    border: 1px solid var(--rule); border-radius: 50%; background: var(--ink); color: var(--paper);
+  }
+  .row-action svg { width: 1.05rem; height: 1.05rem; }
+  .row-action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .row-action:hover { background: var(--wash); }
+  .row-action.fav { background: var(--ink); color: var(--sage); }
+  .row-action.danger { background: var(--ink); color: var(--danger); }
+  .row-action.danger.confirm { background: var(--danger); color: var(--on-sage); border-color: var(--danger); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-row .chat-item { transition: none; }
+}
+
+/* A short note with Undo, floating above the bottom. */
+.toast {
+  position: fixed; z-index: 21;
+  left: 50%; transform: translateX(-50%);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  max-width: calc(100vw - 2rem);
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  background: var(--wash); border: 1px solid var(--rule); border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-size: var(--step--1);
+}
+.toast[hidden] { display: none; }
+.toast .button { flex: none; min-height: 2.1rem; }

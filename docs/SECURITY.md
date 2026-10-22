@@ -63,6 +63,7 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Friend requests | 50 per person per day | |
 | Invite links | 20 new per person per day; 10 live at once; each 10 uses, 7 days | |
 | New groups | 20 per person per day; 32 people per group | |
+| Favorites | 10 per person (direct chats and groups together) | Turning one on or off adds a row (Rule 1); writes are capped by the write budgets |
 | Unopened pics on disk | 256 MB direct, 200 MB group | `FADE_SNAP_DISK_MB`, `FADE_GROUP_PIC_DISK_MB` |
 | Uploads stop when the data disk has less than | 150 MB free | |
 | All writes stop when the data disk has less than | 40 MB free (so the database can't fill the disk) | |

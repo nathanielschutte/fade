@@ -10,6 +10,7 @@ use crate::{
     auth::AuthUser,
     db::{self, now, pair, Message, UserPublic},
     error::{AppError, AppResult},
+    marks::{FAVORITE_FRIEND, HIDDEN_UPTO},
     people::{AVATAR_ID, DISPLAY_NAME, NICKNAME},
     ws::Event,
     SharedState,
@@ -28,6 +29,8 @@ struct ChatRow {
     last_seen_at: Option<i64>,
     last_id: Option<i64>,
     unread: i64,
+    favorite: Option<bool>,
+    hidden_upto: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +54,10 @@ pub struct ChatSummary {
     last_message: Option<Message>,
     /// Unread texts plus unopened snaps from this friend.
     unread: i64,
+    /// One of my favorites, kept at the top of my list. Only I see it (marks.rs).
+    favorite: bool,
+    /// I hid (archived) this chat and nothing newer has arrived since.
+    hidden: bool,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -61,6 +68,7 @@ pub async fn list_chats(
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
+            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
                  OR (m.sender_id = u.id AND m.recipient_id = ?1)
@@ -98,6 +106,8 @@ pub async fn list_chats(
             } else {
                 None
             },
+            hidden: crate::marks::is_hidden(row.hidden_upto, row.last_id),
+            favorite: row.favorite.unwrap_or(false),
             last_message,
             unread: row.unread,
         });

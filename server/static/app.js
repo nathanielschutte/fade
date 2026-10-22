@@ -38,6 +38,7 @@ const state = {
   groupMessages: new Map(),    // group id -> GroupMessage[], oldest first
   groupHistory: new Map(),     // group id -> { hasMore, loading }
   groupReads: new Map(),       // group id -> Map(user id -> { username, last }): how far each member has read
+  showHidden: false,           // the chat list is showing hidden chats
   groupDetail: null,           // the group shown in the info sheet
   messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
   history: new Map(),          // friend id -> { hasMore, loading } for paging back
@@ -813,23 +814,59 @@ async function pullRefresh() {
   pull.busy = false;
 }
 
+// One finger on the list is either a sideways swipe on a row (its actions) or
+// a vertical drag (scrolling, or pulling to refresh at the top). The first
+// few pixels of movement decide which, and it stays that way until lift.
+const drag = { x: 0, y: 0, mode: null, row: null, from: 0, width: 0, shift: 0 };
+
 $("#chat-list").addEventListener("touchstart", (e) => {
-  pull.from = !pull.busy && $("#chat-list").scrollTop <= 0 ? e.touches[0].clientY : null;
+  const t = e.touches[0];
+  drag.x = t.clientX;
+  drag.y = t.clientY;
+  drag.mode = null;
+  drag.row = e.target.closest(".chat-row");
+  const actions = drag.row?.querySelector(".row-actions");
+  drag.width = actions ? actions.offsetWidth : 0;
+  drag.from = drag.row && drag.row === rowSwipe.open ? -drag.width : 0;
+  pull.from = !pull.busy && $("#chat-list").scrollTop <= 0 ? t.clientY : null;
 }, { passive: true });
 
 $("#chat-list").addEventListener("touchmove", (e) => {
+  const t = e.touches[0];
+  const dx = t.clientX - drag.x;
+  const dy = t.clientY - drag.y;
+  if (!drag.mode) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    drag.mode = Math.abs(dx) > Math.abs(dy) && drag.width ? "swipe" : "vertical";
+    if (drag.mode === "swipe" && rowSwipe.open && rowSwipe.open !== drag.row) closeSwipedRow();
+  }
+  if (drag.mode === "swipe") {
+    e.preventDefault(); // napsack moves the row, not the page
+    drag.shift = Math.max(-drag.width, Math.min(0, drag.from + dx));
+    shiftRow(drag.row, drag.shift, false);
+    return;
+  }
   if (pull.from == null) return;
-  const dy = e.touches[0].clientY - pull.from;
-  if (dy <= 0 || $("#chat-list").scrollTop > 0) {
+  const pulled = t.clientY - pull.from;
+  if (pulled <= 0 || $("#chat-list").scrollTop > 0) {
     if (pull.height) setPull(0);
     return;
   }
   e.preventDefault(); // napsack draws this pull, not the browser
   $("#pull").classList.remove("settling");
-  setPull(Math.min(dy * 0.5, PULL_TRIGGER * 1.4));
+  setPull(Math.min(pulled * 0.5, PULL_TRIGGER * 1.4));
 }, { passive: false });
 
-async function endPull(e) {
+async function endDrag(e) {
+  if (drag.mode === "swipe") {
+    // Past halfway it opens; otherwise it slides back.
+    const open = e.type !== "touchcancel" && drag.shift < -drag.width / 2;
+    shiftRow(drag.row, open ? -drag.width : 0);
+    rowSwipe.open = open ? drag.row : null;
+    drag.mode = null;
+    return;
+  }
+  drag.mode = null;
   if (pull.from == null) return;
   pull.from = null;
   const el = $("#pull");
@@ -841,8 +878,8 @@ async function endPull(e) {
   el.classList.remove("refreshing");
   setPull(0);
 }
-$("#chat-list").addEventListener("touchend", endPull);
-$("#chat-list").addEventListener("touchcancel", endPull);
+$("#chat-list").addEventListener("touchend", endDrag);
+$("#chat-list").addEventListener("touchcancel", endDrag);
 
 function chatStatus(chat) {
   if (chat.keyChanged) return { text: "Safety code changed" };
@@ -869,49 +906,213 @@ function preview(text) {
   return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS - 1).join("")}…` : chars.join("");
 }
 
-function chatRow({ name, status, time, current, onclick, group, avatar }) {
+/** One chat in the list. `actions` (favorite, hide, leave) sit behind the
+ * row: a phone swipes it aside to reach them, a computer shows them on hover. */
+function chatRow({ name, status, time, current, onclick, group, avatar, actions = [] }) {
   const cls = ["chat-item"];
   if (status.marker === "snap") cls.push("has-unread", "has-snap");
   else if (status.marker === "text") cls.push("has-unread");
   if (group) cls.push("is-group");
-  return el("li", {},
-    el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick },
+  // While a row is swiped open, a tap anywhere on the list just closes it.
+  const open = () => (rowSwipe.open ? closeSwipedRow() : onclick());
+  return el("li", { class: "chat-row" },
+    el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick: open },
       el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
       avatar,
       el("span", { class: "chat-text" },
         el("span", { class: "chat-name", text: name }),
         el("span", { class: "chat-status", text: preview(status.text) })),
       el("span", { class: "chat-time", text: time ? relTime(time) : "" }),
-    ));
+    ),
+    actions.length ? el("div", { class: "row-actions" }, ...actions.map((a) =>
+      el("button", { type: "button", class: `row-action ${a.cls ?? ""}`, "aria-label": a.aria, title: a.aria, onclick: a.run },
+        rowIcon(a.icon), el("span", { class: "row-action-label", text: a.label })))) : null);
 }
 
+// Row action icons. A computer shows just these (small, over the time); a
+// phone shows the words behind the swiped row.
+const ROW_ICONS = {
+  star: "M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.7l5.9-.9z",
+  archive: "M4 6.5h16v3.5H4zM5.5 10v8.5h13V10M10 13.5h4",
+  leave: "M14 4.5h4.5v15H14M10 8l-4 4 4 4M6 12h9",
+};
+function rowIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", ROW_ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
+/** Favorites first, then everything else, each newest first. Hidden direct
+ * chats sit out of the list behind a "Hidden chats" link. */
 function renderChatList() {
-  const rows = [
+  const entries = [
     ...state.chats.map((chat) => ({
       at: chat.last_message?.created_at ?? 0,
       name: chatName(chat),
+      favorite: chat.favorite,
+      hidden: chat.hidden,
       row: chatRow({
         name: chatName(chat), status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
         time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
         avatar: el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
           paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
+        actions: chat.hidden
+          ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${chatName(chat)} again`, run: () => unhideChat(chat.id) }]
+          : [favoriteAction(chat, chatName(chat), () => setFavorite("chats", chat.id, !chat.favorite)),
+            { label: "Hide", icon: "archive", aria: `Hide your chat with ${chatName(chat)}`, run: () => hideChat(chat.id) }],
       }),
     })),
     ...state.groups.map((g) => ({
       at: g.last_message?.created_at ?? 0,
       name: g.name,
+      favorite: g.favorite,
+      hidden: false,
       row: chatRow({
         name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
         current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
         avatar: paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g),
+        actions: [favoriteAction(g, g.name, () => setFavorite("groups", g.id, !g.favorite)),
+          { label: "Leave", icon: "leave", cls: "danger", aria: `Leave ${g.name}`, run: (e) => leaveFromList(e.currentTarget, g) }],
       }),
     })),
   ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
-  $("#chat-list").replaceChildren(...rows.map((r) => r.row));
-  $("#chat-empty").hidden = rows.length > 0;
-  const unread = state.chats.reduce((n, c) => n + c.unread, 0) + state.groups.reduce((n, g) => n + g.unread, 0);
+
+  const shown = entries.filter((e) => !e.hidden);
+  const favorites = shown.filter((e) => e.favorite);
+  const rest = shown.filter((e) => !e.favorite);
+  const hidden = entries.filter((e) => e.hidden);
+  const heading = (text) => el("li", { class: "list-heading", text });
+  const items = [];
+  if (favorites.length) items.push(heading("Favorites"), ...favorites.map((e) => e.row), heading("Chats"));
+  items.push(...rest.map((e) => e.row));
+  if (hidden.length) {
+    items.push(el("li", { class: "hidden-toggle" }, el("button", {
+      type: "button", class: "link", "aria-expanded": state.showHidden ? "true" : "false",
+      onclick: () => { state.showHidden = !state.showHidden; renderChatList(); },
+    }, state.showHidden ? "Hide hidden chats" : `Hidden chats (${hidden.length})`)));
+    if (state.showHidden) items.push(...hidden.map((e) => e.row));
+  }
+  rowSwipe.open = null;
+  $("#chat-list").replaceChildren(...items);
+  $("#chat-empty").hidden = entries.length > 0;
+  const unread = state.chats.reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0) + state.groups.reduce((n, g) => n + g.unread, 0);
   document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
+}
+
+function favoriteAction(chat, name, run) {
+  return chat.favorite
+    ? { label: "Unfavorite", icon: "star", cls: "fav on", aria: `Remove ${name} from favorites`, run }
+    : { label: "Favorite", icon: "star", cls: "fav", aria: `Add ${name} to favorites`, run };
+}
+
+// ---------- favorites and hidden chats ----------
+// Both are private to me and kept on the server (marks.rs), so they follow me
+// to my other devices, which hear about changes through friends_changed /
+// groups_changed.
+
+async function setFavorite(kind, id, on) {
+  const item = kind === "groups" ? groupById(id) : chatById(id);
+  if (!item) return;
+  item.favorite = on; // show it at once; the server has the final say
+  renderChatList();
+  try {
+    await api(`/${kind}/${id}/favorite`, { method: "PUT", json: { on } });
+  } catch (err) {
+    item.favorite = !on;
+    renderChatList();
+    alert(err.message);
+  }
+}
+
+/** Off the list until a new message or until I open it again. The messages
+ * stay on the server; what this browser had loaded for it is dropped. */
+async function hideChat(friendId) {
+  const chat = chatById(friendId);
+  if (!chat) return;
+  chat.hidden = true;
+  forgetChat(friendId);
+  if (state.activeId === friendId) closeChat();
+  renderChatList();
+  showToast(`Hid your chat with ${chatName(chat)}.`, () => unhideChat(friendId));
+  try {
+    await api(`/chats/${friendId}/hidden`, { method: "PUT", json: { on: true } });
+    report("info", "chat hidden", { friend_id: friendId });
+  } catch (err) {
+    chat.hidden = false;
+    renderChatList();
+    alert(err.message);
+  }
+}
+
+async function unhideChat(friendId) {
+  const chat = chatById(friendId);
+  if (!chat?.hidden) return;
+  chat.hidden = false;
+  renderChatList();
+  try {
+    await api(`/chats/${friendId}/hidden`, { method: "PUT", json: { on: false } });
+  } catch (err) {
+    report("warn", "unhiding chat failed", { friend_id: friendId, ...errorFields(err) });
+  }
+}
+
+/** What this browser holds for a chat, besides the friend's pinned key (kept,
+ * so a changed safety code is still caught if the chat comes back). */
+function forgetChat(friendId) {
+  for (const m of state.messages.get(friendId) || []) state.plaintext.delete(m.id);
+  state.messages.delete(friendId);
+  state.history.delete(friendId);
+  state.typing.delete(`d:${friendId}`);
+}
+
+/** Leaving from the list takes two taps, like the group's info sheet. */
+async function leaveFromList(btn, g) {
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.querySelector(".row-action-label").textContent = "Tap to leave";
+    btn.setAttribute("aria-label", `Tap again to leave ${g.name}`);
+    btn.title = "Click again to leave";
+    btn.classList.add("confirm");
+    return;
+  }
+  try {
+    await leaveGroup(g.id);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+let toastTimer = null;
+/** A short note at the bottom, with Undo when there's something to undo. */
+function showToast(text, undo) {
+  clearTimeout(toastTimer);
+  $("#toast-text").textContent = text;
+  $("#toast-undo").hidden = !undo;
+  $("#toast-undo").onclick = () => { hideToast(); undo(); };
+  $("#toast").hidden = false;
+  toastTimer = setTimeout(hideToast, 6000);
+}
+function hideToast() {
+  clearTimeout(toastTimer);
+  $("#toast").hidden = true;
+}
+
+// Swiping a row sideways (touch) slides it over to show its actions. The
+// list's touch handlers below decide whether a drag is a swipe or a scroll.
+const rowSwipe = { open: null };
+function shiftRow(row, px, animate = true) {
+  const item = row.querySelector(".chat-item");
+  row.classList.toggle("swiping", !animate);
+  item.style.transform = px ? `translateX(${px}px)` : "";
+}
+function closeSwipedRow() {
+  if (rowSwipe.open) shiftRow(rowSwipe.open, 0);
+  rowSwipe.open = null;
 }
 
 // ---------- conversation ----------
@@ -919,6 +1120,7 @@ function renderChatList() {
 async function openChat(friendId) {
   const chat = chatById(friendId);
   if (!chat) return;
+  if (chat.hidden) unhideChat(friendId); // opening a hidden chat brings it back
   if (state.activeId !== friendId) {
     setReply(null);
     state.actionFor = null;
@@ -2144,15 +2346,24 @@ $("#leave-group").addEventListener("click", async () => {
     return;
   }
   try {
-    await api(`/groups/${g.id}/members/${state.me.id}`, { method: "DELETE" });
-    report("info", "left group", { group_id: g.id });
     $("#group-dialog").close();
-    if (state.activeGroupId === g.id) closeChat();
-    await refreshGroups();
+    await leaveGroup(g.id);
   } catch (err) {
     $("#group-note").textContent = err.message;
   }
 });
+
+/** Leaves a group and drops what this browser had loaded for it. The group
+ * and its messages stay on the server for the others (and its history). */
+async function leaveGroup(groupId) {
+  await api(`/groups/${groupId}/members/${state.me.id}`, { method: "DELETE" });
+  report("info", "left group", { group_id: groupId });
+  if (state.activeGroupId === groupId) closeChat();
+  state.groupMessages.delete(groupId);
+  state.groupHistory.delete(groupId);
+  state.groupReads.delete(groupId);
+  await refreshGroups();
+}
 
 // A deploy restarts the server, which drops every socket, so a reconnect is
 // the moment to notice this tab is running an older build than the server.

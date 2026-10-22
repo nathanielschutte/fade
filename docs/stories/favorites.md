@@ -1,5 +1,7 @@
 # Story: Favorites
 
+> Shipped in 0.19.0 (taken over and finished on 2026-10-21; see X3 in [plan.md](../plan.md) for the decisions).
+
 **As someone with a lot of chats, I want to mark my closest friends (and groups) as favorites, so they're always at the top of my chat list, whatever else is going on.**
 
 This is yours to build. What follows is the shape of the problem: what "done" looks like, the questions you'll have to answer, and where in the code to start looking. How to build it is up to you. Read [ONBOARDING.md](../ONBOARDING.md) first.

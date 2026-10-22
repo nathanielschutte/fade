@@ -11,6 +11,7 @@ mod guard;
 mod images;
 mod invites;
 mod logs;
+mod marks;
 mod people;
 mod presence;
 mod profiles;
@@ -290,6 +291,18 @@ fn router(state: SharedState) -> Router {
         )
         .route("/me", get(auth::me))
         .route("/friends", get(friends::list_chats))
+        .route(
+            "/chats/{friend_id}/favorite",
+            axum::routing::put(marks::favorite_chat),
+        )
+        .route(
+            "/chats/{friend_id}/hidden",
+            axum::routing::put(marks::hide_chat),
+        )
+        .route(
+            "/groups/{group_id}/favorite",
+            axum::routing::put(marks::favorite_group),
+        )
         .route("/friends/{user_id}", delete(friends::remove))
         .route("/users/{user_id}/profile", get(profiles::get))
         .route(

@@ -21,6 +21,7 @@ use crate::{
     auth::AuthUser,
     db::{self, now},
     error::{AppError, AppResult},
+    marks::FAVORITE_GROUP,
     ws::Event,
     SharedState,
 };
@@ -74,6 +75,8 @@ pub struct GroupSummary {
     member_count: i64,
     last_message: Option<GroupMessage>,
     unread: i64,
+    /// One of my favorites. Only I see it (marks.rs).
+    favorite: bool,
     /// Current group picture, for `GET /api/groups/{id}/avatar/{avatar_id}`.
     avatar_id: Option<i64>,
     /// Always false in version 1. Clients show a notice when it's false.
@@ -259,6 +262,7 @@ struct SummaryRow {
     member_count: i64,
     last_id: Option<i64>,
     unread: i64,
+    favorite: Option<bool>,
 }
 
 /// `GET /api/groups`: the caller's current groups, newest activity first.
@@ -266,17 +270,18 @@ pub async fn list(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<GroupSummary>>> {
-    let rows = sqlx::query_as::<_, SummaryRow>(
+    let rows = sqlx::query_as::<_, SummaryRow>(&format!(
         "SELECT g.id, g.name, m.role,
             (SELECT COUNT(*) FROM group_members x WHERE x.group_id = g.id AND x.left_at IS NULL) AS member_count,
             (SELECT MAX(gm.id) FROM group_messages gm
               WHERE gm.group_id = g.id AND gm.id > m.visible_after_id) AS last_id,
             (SELECT COUNT(*) FROM group_messages gm
               WHERE gm.group_id = g.id AND gm.id > m.last_read_id AND gm.kind = 'text'
-                AND gm.sender_id != ?1 AND gm.id > m.visible_after_id) AS unread
+                AND gm.sender_id != ?1 AND gm.id > m.visible_after_id) AS unread,
+            {FAVORITE_GROUP} AS favorite
          FROM group_members m JOIN groups g ON g.id = m.group_id
-         WHERE m.user_id = ?1 AND m.left_at IS NULL",
-    )
+         WHERE m.user_id = ?1 AND m.left_at IS NULL"
+    ))
     .bind(me.id)
     .fetch_all(&state.db)
     .await?;
@@ -293,6 +298,7 @@ pub async fn list(
             member_count: r.member_count,
             last_message,
             unread: r.unread,
+            favorite: r.favorite.unwrap_or(false),
             encrypted: false,
             avatar_id: crate::group_pics::current_avatar(&state.db, r.id).await?,
         });

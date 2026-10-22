@@ -11,7 +11,9 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
 | `GET  /me` | `{id, username, is_admin, display_name, avatar_id, has_recovery_key, key_reset_at}` |
-| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread}]`, newest first. `nickname` is yours for them |
+| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden}]`, newest first. `nickname`, `favorite`, and `hidden` are yours alone |
+| `PUT  /chats/{friend_id}/favorite` | `{on}`: keep this chat at the top of your list. Up to 10 favorites (direct and groups together); 400 past that |
+| `PUT  /chats/{friend_id}/hidden` | `{on}`: hide (archive) the chat from your list, or show it again. Messages stay; a newer message, from either side, shows it again by itself |
 | `DELETE /friends/{id}` | Unfriend |
 | `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). 404 for anyone else |
 | `GET  /friends/requests` | `{incoming: [...], outgoing: [...]}` |
@@ -23,7 +25,8 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /chats/{friend}/read` | Marks their texts as read |
 | `POST /chats/{friend}/snaps?format=2` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
-| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, encrypted: false}]` |
+| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` |
+| `PUT  /groups/{id}/favorite` | `{on}`: a favorite group (counts toward the 10). Groups aren't hidden; you leave them |
 | `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
 | `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |
 | `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |

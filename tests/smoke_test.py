@@ -521,6 +521,45 @@ async def check_live(tag):
     print("  live: presence, typing, push (encrypted, signed, who-not-what), reactions, replies")
 
 
+def check_marks(tag, a, a_tok, b, b_tok):
+    """Favorites and hidden chats: only for friends and members, private to
+    whoever sets them, and nothing is ever deleted."""
+    rs = ok(register(f"loner_{tag}")).json(); s = rs["user"]
+    view = lambda tok, who: [c for c in ok(call("GET", "/friends", tok)).json() if c["id"] == who["id"]][0]
+    group_view = lambda tok, gid: [g for g in ok(call("GET", "/groups", tok)).json() if g["id"] == gid][0]
+
+    ok(call("PUT", f"/chats/{s['id']}/favorite", a_tok, json={"on": True}), 404)   # not a friend
+    ok(call("PUT", f"/chats/{s['id']}/hidden", a_tok, json={"on": True}), 404)
+    ok(call("PUT", f"/chats/{b['id']}/favorite", json={"on": True}), 401)
+    assert view(a_tok, b)["favorite"] is False and view(a_tok, b)["hidden"] is False
+
+    # Favorites: mine alone; the friend sees no difference.
+    ok(call("PUT", f"/chats/{b['id']}/favorite", a_tok, json={"on": True}))
+    ok(call("PUT", f"/chats/{b['id']}/favorite", a_tok, json={"on": True}))      # again: no change
+    assert view(a_tok, b)["favorite"] is True and view(b_tok, a)["favorite"] is False
+    ok(call("PUT", f"/chats/{b['id']}/favorite", a_tok, json={"on": False}))
+    assert view(a_tok, b)["favorite"] is False
+
+    g = ok(call("POST", "/groups", a_tok, json={"name": f"marks {tag}", "member_ids": [b["id"]]})).json()
+    ok(call("PUT", f"/groups/{g['id']}/favorite", rs["token"], json={"on": True}), 404)  # not a member
+    ok(call("PUT", f"/groups/{g['id']}/favorite", b_tok, json={"on": True}))
+    assert group_view(b_tok, g["id"])["favorite"] is True and group_view(a_tok, g["id"])["favorite"] is False
+
+    # Hiding: off my list until a new message (from either side) brings it back.
+    ok(call("PUT", f"/chats/{b['id']}/hidden", a_tok, json={"on": True}))
+    assert view(a_tok, b)["hidden"] is True and view(b_tok, a)["hidden"] is False
+    ok(call("POST", f"/chats/{a['id']}/messages", b_tok, json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    assert view(a_tok, b)["hidden"] is False, "a new message shows the chat again"
+    ok(call("PUT", f"/chats/{b['id']}/hidden", a_tok, json={"on": True}))
+    assert view(a_tok, b)["hidden"] is True
+    assert len(ok(call("GET", f"/chats/{b['id']}/messages", a_tok)).json()) > 0, "hiding keeps the messages"
+    ok(call("PUT", f"/chats/{b['id']}/hidden", a_tok, json={"on": False}))
+    assert view(a_tok, b)["hidden"] is False
+    if DB:
+        rows = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM chat_marks WHERE user_id = ?", (a["id"],)).fetchone()[0]
+        assert rows == 5, f"every change is a new row, none deleted: {rows}"
+
+
 def check_guard(tag):
     """Abuse protection (guard.rs). A forwarded address stands in for real
     traffic through Caddy; local requests skip the per-address rules."""
@@ -796,6 +835,7 @@ async def main():
 
     check_people(tag, a, a_tok, b, b_tok)
     check_groups(tag, a, a_tok, b, b_tok)
+    check_marks(tag, a, a_tok, b, b_tok)
 
     # Signing out revokes the session; it doesn't come back.
     ok(call("POST", "/auth/logout", a_tok))
