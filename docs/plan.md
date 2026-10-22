@@ -12,15 +12,18 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
-| 2 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 5 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
-| 6 | [Group chats: end-to-end encryption](#f17-group-chats-seen-by-then-end-to-end) | Features | Planned | Groups are the one unencrypted part; design first ("seen by" shipped) |
-| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [Admin "Online now" count](#d3-admin-online-now-count) | Debug | Up next | Requested: shows 0 while Nate is online; check it's right |
+| 3 | [Removing people from groups](#x9-removing-people-from-groups) | Experience | Up next | Requested |
+| 4 | [Birthday on profiles](#f19-birthday-and-more-profile-fields) | Features | Up next | Requested: optional birthday, maybe more fields |
+| 5 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
+| 6 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 7 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 8 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
+| 9 | [Group chats: end-to-end encryption](group-encryption.md) | Features | Needs decision | Design written ([group-encryption.md](group-encryption.md)); five decisions for Nate before building |
+| 10 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 11 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 12 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 13 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -204,7 +207,12 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### F17. Group chats: "seen by", then end-to-end
 - **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member). Done (0.18.0): `GET /groups/{id}/reads` and a live `group_read` event; "Seen by everyone" once all of 3+ others have read it.
-- **End-to-end encryption for groups:** the one part of napsack the server can read. Design doc first: likely a group key per membership change, sent to each member encrypted with their pair key (sender keys), so adding or removing someone rotates the key. A new group message format; old plaintext messages stay as they are. Big, careful work; the iOS app needs the same design.
+- **End-to-end encryption for groups:** the one part of napsack the server can read. Nate (2026-10-21): "a key point of interest... design it thoroughly and document the approach in the repo."
+- **Design written (2026-10-21): [group-encryption.md](group-encryption.md).** Recommends a fresh key per message, wrapped for each member with the pair key they already share with the sender (rather than a shared group key): sender authenticity among members, no key rotation when someone leaves, only primitives we already use. Format 3, readers before writers, then Phase 2 (an authenticated member list). Five open decisions listed at the end of the doc; nothing gets built until Nate answers them.
+
+#### F19. Birthday and more profile fields
+- Requested (2026-10-21): "more profile field entries like a birthday (optional)."
+- Friends-only like the rest of the profile (server-visible, not end-to-end encrypted). Birthday as month and day, with the year optional; friends see it on your profile, and maybe a small 🎂 on the day. Other candidates to offer: pronouns, a short "about" line. Stored append-only like display names (Rule 1), validated like other text (`text.rs`).
 
 #### F18. Disappearing texts
 - Per-chat setting: texts disappear 24 hours after they're read (like Snapchat's default).
@@ -225,6 +233,10 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - Client side debug logs. Browser/iOS client debug logs should be viewable in the admin log viewer as well (see above)
 - Same rule: nothing decrypted leaves the device, so clients log events and errors, never text or pictures.
 - Done (0.6.0): `POST /api/logs` (signed in or not, 50 entries per request, 300 per user per minute, fields bounded and content-looking names redacted). The web app reports uncaught errors, failed loads and sends, decryption failures, key changes, socket connects, pic compression, and sign-in results. The viewer's Source filter splits server from apps.
+
+#### D3. Admin "Online now" count
+- Requested (2026-10-21): the admin overview's "Online now" / "open connections" doesn't always look right; Nate saw 0 while he was online looking at it.
+- To check: what the tile counts (live sockets in the hub, or visible ones?), whether the admin page itself holds a socket (it may not: /admin doesn't open one), and whether a phone in the background has its socket closed by iOS. Fix the count or the label so it says exactly what it measures, with a test.
 
 ### Experience/visual
 
@@ -276,6 +288,10 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - Requested (2026-10-21): the New group button floats in the middle of the chat list bar and doesn't say "new group". It should sit next to Friends, read clearly as "create a group", and the two should be distinct. Friends could use a "plus" too.
 - **Decided (2026-10-21):** Friends keeps its icon and sheet (adding, invites, requests). Next to it, a **+** for everything else you can start. With one thing to start (New group), + goes straight to it; once there's a second, + becomes a short menu. Options were on the design canvas's Proposals page.
 - Done (0.18.1): wordmark left; Friends then + on the right; + is a soft filled circle labeled "New group". `test_groups.py` checks the placement at desktop and phone width.
+
+#### X9. Removing people from groups
+- Requested (2026-10-21): "I want to be able to remove people from groups."
+- Today the group's owner can already remove members (group info sheet: tap the group's name, then Remove next to a member); nobody else can. To decide while building: is the request about finding it (make it easier to reach, e.g. from the member list), or about who may remove (anyone who added that person, or any member)? Default unless Nate says otherwise: keep owner-only removal, make it easier to find, and say in the sheet who can remove.
 
 ### Infrastructure
 

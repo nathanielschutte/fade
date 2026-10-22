@@ -160,7 +160,7 @@ View-once is a server promise, not a cryptographic one. The recipient's screen s
 
 Group chats are **not end-to-end encrypted yet.** Group messages travel over HTTPS and sit on an encrypted disk, but the napsack server can read them, unlike direct chats. Every group shows a notice saying so, and group messages carry `format` 0 ("not encrypted"), so a future encrypted version can be told apart.
 
-Doing it properly means giving each group a shared key, handing it to members through their own keys, and replacing it whenever someone leaves. That's planned; until then, keep anything private to direct chats.
+The design for encrypting them is written up in [group-encryption.md](group-encryption.md): each message gets its own key, wrapped for each member with the key that member already shares with the sender. It isn't built yet; until it is, keep anything private to direct chats.
 
 ## Profiles
 

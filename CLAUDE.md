@@ -14,7 +14,7 @@ Same for pictures: people see **pic** ("Tap to view pic", "Pics sent"); the code
 - `mobile/`: the iOS app (Expo, React Native, TypeScript). Plan and setup: [mobile.md](docs/mobile.md).
 - `infra/`: Terraform for AWS (one EC2 instance, Caddy, a separate EBS data volume).
 - `tests/`: API smoke test, browser tests, pinned crypto vectors. `scripts/`: test, deploy, rollback, ssh.
-- `docs/`: [ONBOARDING.md](docs/ONBOARDING.md) (start here), [plan.md](docs/plan.md) (task tracker), [API.md](docs/API.md) (every endpoint and socket event; update it with any API change), [OPERATIONS.md](docs/OPERATIONS.md) (AWS, settings, shell), [SECURITY.md](docs/SECURITY.md) (protections, limits, what to do when attacked), [RELEASING.md](docs/RELEASING.md) (versioning and compatibility rules), [how-napsack-works.md](docs/how-napsack-works.md) (encryption), [mobile.md](docs/mobile.md) (iOS plan).
+- `docs/`: [ONBOARDING.md](docs/ONBOARDING.md) (start here), [plan.md](docs/plan.md) (task tracker), [API.md](docs/API.md) (every endpoint and socket event; update it with any API change), [OPERATIONS.md](docs/OPERATIONS.md) (AWS, settings, shell), [SECURITY.md](docs/SECURITY.md) (protections, limits, what to do when attacked), [RELEASING.md](docs/RELEASING.md) (versioning and compatibility rules), [how-napsack-works.md](docs/how-napsack-works.md) (encryption), [group-encryption.md](docs/group-encryption.md) (design for encrypting groups), [mobile.md](docs/mobile.md) (iOS plan).
 
 The live site is <https://napsack.getattr.com>. The domain will change again: never hardcode it. Scripts read it from `terraform output url`.
 
