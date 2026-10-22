@@ -71,7 +71,18 @@ async def main():
             await friends(ana, other, name)
 
         # Ana creates the group with Ben and Cal.
-        await ana.click("#new-group-button")
+        # The bar: wordmark on the left; Friends, then +, together on the right.
+        # + says what it does (today it goes straight to New group).
+        await expect(ana.locator("#start-button")).to_have_attribute("aria-label", "New group")
+        for page in (ana, dee):  # desktop and phone
+            box = await page.evaluate("""() => Object.fromEntries(['.list-pane > .bar', '#friends-button', '#start-button']
+              .map((s) => [s, document.querySelector(s).getBoundingClientRect().toJSON()]))""")
+            bar, friends_b, start_b = box[".list-pane > .bar"], box["#friends-button"], box["#start-button"]
+            assert friends_b["right"] <= start_b["left"] <= friends_b["right"] + 12, (friends_b, start_b)
+            assert bar["right"] - start_b["right"] <= 12, "+ sits at the right edge"
+        await shot(dee, "list-bar-phone", full_page=False)
+        await shot(ana, "list-bar-desktop", full_page=False)
+        await ana.click("#start-button")
         await ana.fill("#new-group-name", GROUP)
         await expect(ana.locator("#new-group-friends .person-name")).to_have_count(3)
         for name in (BEN, CAL):

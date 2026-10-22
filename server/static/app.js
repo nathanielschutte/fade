@@ -2023,7 +2023,14 @@ function friendPicker(friends, checked = new Set()) {
   });
 }
 
-$("#new-group-button").addEventListener("click", () => {
+// The + in the chat list bar starts something new. Friends (adding, invites)
+// has its own button, so this holds everything else. With one thing to start,
+// + goes straight to it; when there's a second, + becomes a short menu of
+// these, and the bar looks the same.
+const START_ACTIONS = [{ label: "New group", run: openNewGroup }];
+$("#start-button").addEventListener("click", () => START_ACTIONS[0].run());
+
+function openNewGroup() {
   $("#new-group-form").reset();
   $("#new-group-note").textContent = "";
   const friends = [...state.chats].sort((a, b) => chatName(a).localeCompare(chatName(b)));
@@ -2031,7 +2038,7 @@ $("#new-group-button").addEventListener("click", () => {
   if (!friends.length) $("#new-group-friends").append(el("li", { class: "muted", text: "Add some friends first." }));
   $("#new-group-dialog").showModal();
   $("#new-group-name").focus();
-});
+}
 
 $("#new-group-form").addEventListener("submit", async (e) => {
   e.preventDefault();

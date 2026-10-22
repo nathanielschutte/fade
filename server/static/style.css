@@ -119,6 +119,12 @@ svg {
   color: var(--sage);
 }
 .wordmark.small { font-size: var(--step-1); letter-spacing: -0.01em; }
+/* Chat list bar: the wordmark on the left, Friends and + together on the right. */
+.list-pane > .bar .wordmark { margin-right: auto; }
+/* + starts something new (today, a group): a soft filled circle sets it
+   apart from the Friends icon beside it. */
+.start-button { background: var(--wash); }
+.start-button:hover { background: rgba(147, 197, 163, 0.18); }
 
 /* ---------- auth ---------- */
 
