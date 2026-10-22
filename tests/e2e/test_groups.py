@@ -1,10 +1,10 @@
 """Group chats through the real UI: create, message, add, remove, rename,
 leave, all live across four browsers. Settings come from the environment;
 see common.py."""
-import asyncio, uuid
+import asyncio, sqlite3, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, DB, INVITE, launch, save_recovery_key, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL, DEE = (f"{n}_{tag}" for n in ("ana", "ben", "cal", "dee"))
@@ -107,6 +107,21 @@ async def main():
         await expect(cal.locator(".msg", has_text="who's driving?")).to_be_visible()
         await expect(group_item(cal).locator(".marker.text")).to_have_count(0, timeout=10000)
         print("messages live; unread clears on open")
+
+        # End-to-end encrypted: everyone reads it, the server holds only ciphertext,
+        # and the chat says from where on (and that the name and picture aren't).
+        await expect(cal.locator(".group-event", has_text="end-to-end encrypted from now on")).to_be_visible()
+        await expect(cal.locator("#group-notice")).to_contain_text("The group's name and picture aren't")
+        if DB:
+            # (The database is shared with the other tests; look at this group only.)
+            db = sqlite3.connect(DB)
+            rows = db.execute("""SELECT gm.id, gm.format, gm.body FROM group_messages gm JOIN groups g ON g.id = gm.group_id
+                                 WHERE g.name = ? AND gm.kind = 'text'""", (GROUP,)).fetchall()
+            assert rows and all(f == 3 for _, f, _ in rows), rows
+            assert not any("driving" in b for _, _, b in rows), "the server has no plaintext"
+            keys = db.execute("SELECT COUNT(*) FROM group_message_keys WHERE message_id = ?", (rows[0][0],)).fetchone()[0]
+            assert keys == 3, f"one key per member (ana, ben, cal): {keys}"
+        print("encrypted: members read it, the database holds only ciphertext")
 
         # "Seen by", live: Cal opening the group shows under Ben's message.
         await expect(ben.locator(".seen-by")).to_contain_text(CAL, timeout=10000)

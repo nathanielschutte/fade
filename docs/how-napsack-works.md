@@ -21,7 +21,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 
 ## At a glance
 
-Every direct text and every pic is encrypted in the sender's browser and decrypted in the recipient's. **Group chats are the exception for now:** see [Group chats](#group-chats). The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
+Every direct text and pic, and every group message and pic, is encrypted in the sender's browser and decrypted in the recipients'. A group's name and picture, and group reactions, aren't: see [Group chats](#group-chats). The server stores and forwards ciphertext. It still has to know some things to deliver messages at all:
 
 | The server knows | The server never sees |
 |---|---|
@@ -158,9 +158,22 @@ View-once is a server promise, not a cryptographic one. The recipient's screen s
 
 ## Group chats
 
-Group chats are **not end-to-end encrypted yet.** Group messages travel over HTTPS and sit on an encrypted disk, but the napsack server can read them, unlike direct chats. Every group shows a notice saying so, and group messages carry `format` 0 ("not encrypted"), so a future encrypted version can be told apart.
+Group messages and pics are **end-to-end encrypted** (format 3). The full design, with the reasons and the threat model, is in [group-encryption.md](group-encryption.md). In short:
 
-The design for encrypting them is written up in [group-encryption.md](group-encryption.md): each message gets its own key, wrapped for each member with the key that member already shares with the sender. It isn't built yet; until it is, keep anything private to direct chats.
+```
+each message:
+  K        = 32 random bytes, used once
+  content  = AES-GCM(K, the text or pic, "napsack/v3/group/<group>/<sender>/<message id>/<text|pic>")
+  for each member m (the sender too, for their other devices):
+    wrap[m] = AES-GCM(group wrap key(sender, m), K,
+                      "napsack/v3/group-key/<group>/<sender>/<m>/<message id>/<SHA-256 of content>/<SHA-256 of the member list>")
+
+group wrap key(a, b) = HKDF(ECDH(a, b), salt "napsack/v1/pair/<lower id>/<higher id>", info "napsack/v3/group-keys")
+```
+
+The server stores the content once and one 60-byte wrap per member, and gives each member only their own. A wrap only the sender and that member could have made proves who sent the message, so neither the server nor another member can forge one. Someone who joins can't read what came before; someone who leaves or is removed isn't wrapped for again. Members' keys are pinned like friends' keys: if one changes, the app won't send to that group.
+
+**Not encrypted:** the group's **name** and **picture** (the server can see them, and each group says so), **reactions** in groups (which emoji), and messages sent before the group switched, which stay `format` 0 and readable by the server. The switch happened by itself with the first encrypted message, shown in the chat as "Messages and pics here are end-to-end encrypted from now on".
 
 ## Profiles
 

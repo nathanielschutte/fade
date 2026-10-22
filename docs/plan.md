@@ -16,7 +16,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
 | 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 5 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
-| 6 | [Group chats: end-to-end encryption](group-encryption.md) | Features | In progress | Approved 2026-10-21 (Approach D); building next |
+| 6 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
 | 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
 | 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
@@ -55,10 +55,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
 | [Favorites](stories/favorites.md) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
 | [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 |
+| **[End-to-end encrypted group chats](group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.20.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.21.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -206,7 +207,7 @@ Production runs **0.20.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F17. Group chats: "seen by", then end-to-end
 - **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member). Done (0.18.0): `GET /groups/{id}/reads` and a live `group_read` event; "Seen by everyone" once all of 3+ others have read it.
 - **End-to-end encryption for groups:** the one part of napsack the server can read. Nate (2026-10-21): "a key point of interest... design it thoroughly and document the approach in the repo."
-- **Decided (2026-10-21), Nate:** build Approach D from the design; existing groups switch automatically, no one asked; group names and pictures stay server-visible, but the app must say clearly that group pictures (and names) aren't encrypted; Phase 2 (authenticated member list) later, and never at the cost of easy invites (growing the app and keeping it approachable comes first while sign-up is invite-only); forward secrecy out of scope. Status: being built (readers first, then writers).
+- **Decided (2026-10-21), Nate:** build Approach D from the design; existing groups switch automatically, no one asked; group names and pictures stay server-visible, but the app must say clearly that group pictures (and names) aren't encrypted; Phase 2 (authenticated member list) later, and never at the cost of easy invites (growing the app and keeping it approachable comes first while sign-up is invite-only); forward secrecy out of scope. Status: Phase 1 built and shipped (0.21.0): see [group-encryption.md, Built](group-encryption.md#built). Still to do: encrypt group reactions; refuse new plain-text group messages; Phase 2 later.
 - **Design written (2026-10-21): [group-encryption.md](group-encryption.md).** Recommends a fresh key per message, wrapped for each member with the pair key they already share with the sender (rather than a shared group key): sender authenticity among members, no key rotation when someone leaves, only primitives we already use. Format 3, readers before writers, then Phase 2 (an authenticated member list). Five open decisions listed at the end of the doc; nothing gets built until Nate answers them.
 
 #### F19. Birthday and more profile fields

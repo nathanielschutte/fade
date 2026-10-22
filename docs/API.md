@@ -25,13 +25,13 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /chats/{friend}/read` | Marks their texts as read |
 | `POST /chats/{friend}/snaps?format=2` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted |
 | `GET  /snaps/{id}` | View once; returns the encrypted bytes |
-| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` |
+| `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` (`encrypted` predates format 3 and stays false; messages say their own `format`). `GET /groups/{id}` members include `public_key`, for encrypting to them |
 | `PUT  /groups/{id}/favorite` | `{on}`: a favorite group (counts toward the 10). Groups aren't hidden; you leave them |
 | `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
 | `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |
 | `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
-| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{text, reply_to?}` (plain text, `format` 0) |
+| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{format: 3, content, client_id, recipients, wraps}` (end-to-end encrypted; [group-encryption.md](group-encryption.md)): `recipients` must be exactly the current members, you included (409 if the group changed: refetch and seal again), one 60-byte `wraps[member id]` each, `client_id` 16 random bytes (a repeat is 409). Format 3 messages come back with `content`, `client_id`, `recipients`, `sender_public_key`, and only your own `key`; `body` is empty. `{text, reply_to?}` (plain, `format` 0) still works for old clients |
 | `POST /groups/{id}/read` | Marks the group read; tells the other members (`group_read`) if it moved |
 | `GET /groups/{id}/reads` | `[{user_id, username, last_read_id}]` for current members, for "Seen by" |
 | `POST /auth/unlock` | `{auth_key}` with a session: returns your password-wrapped key, so the client can wrap it again |
@@ -54,7 +54,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
 | `PUT  /me/birthday` | `{month, day, year?}`: your birthday, for friends (profile, and `birthday: "MM-DD"` in their `/friends`). Real dates only; the year is optional (1900 to this year). `{}` clears it |
 | `PUT  /friends/{id}/nickname` | `{name}`: a nickname for a friend that only you see. Empty clears it |
-| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic (raw JPEG/PNG/WebP body; re-encoded by the server; optional `?caption=`, one line, 200 characters) · open it, once per member, not the sender; the caption comes back in `X-Napsack-Caption`, percent-encoded. Gone once everyone has opened it, or after 30 days |
+| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic: `?format=3` with the sealed bytes as the body and `X-Napsack-Keys: {client_id, recipients, wraps}` (the caption is sealed inside); or (old clients) a raw JPEG/PNG/WebP body, re-encoded by the server, with `?caption=` · open it, once per member, not the sender: format 3 comes back as the sealed bytes (`application/octet-stream`); old ones as an image with the caption in `X-Napsack-Caption`. Gone once everyone has opened it, or after 30 days |
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |

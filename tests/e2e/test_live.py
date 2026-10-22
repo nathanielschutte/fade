@@ -116,7 +116,7 @@ async def main():
         await expect(ana.locator(".reaction")).to_have_count(0, timeout=10000)
         print("direct chat: replies and encrypted reactions, live")
 
-        # The same in a group (plain, like the rest of a group).
+        # The same in a group (end-to-end encrypted; the reply travels inside it).
         group = await api(ana, "/groups", "POST", {"name": f"live {tag}", "member_ids": [ben_id]})
         await expect(ben.locator(".chat-item", has_text=f"live {tag}")).to_be_visible(timeout=10000)
         await ben.locator(".chat-item", has_text=f"live {tag}").click()

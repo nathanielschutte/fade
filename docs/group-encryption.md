@@ -1,6 +1,6 @@
 # Group chats, end-to-end encrypted (design)
 
-Status: **approved, being built.** Written 2026-10-21 for F17 in [plan.md](plan.md); Nate's decisions are at the end. Read [how-napsack-works.md](how-napsack-works.md) first: this builds directly on the direct-chat scheme.
+Status: **Phase 1 built (0.21.0).** Written 2026-10-21 for F17 in [plan.md](plan.md); Nate's decisions are at the end, and what's built (and what isn't yet) is under [Built](#built). Read [how-napsack-works.md](how-napsack-works.md) first: this builds directly on the direct-chat scheme.
 
 Today group chats are the one part of napsack the server can read (`format` 0). This document is how they stop being that, and how we'll know it's done right.
 
@@ -145,3 +145,18 @@ Phase 1 already protects content from a server that's only curious (reading the 
 3. **Group names and pictures stay visible to the server**, but **the app has to say so**, pictures especially: "we should document and notify that pictures are still unencrypted. that's important." The group's info sheet and the encrypted notice both say that the group's name and picture aren't encrypted (the messages and pics inside are).
 4. **Phase 2 (an authenticated member list) waits, and must not make inviting people harder.** "I want to make sure we take precedence on the importance of growing the app and making it approachable... dont implement user onboarding friction with stuff like this for right now." Any Phase 2 design has to keep adding a friend to a group (and invite links) as easy as today: no extra verification steps for people. Tracked in the plan, not built.
 5. **Forward secrecy** stays out of scope for now.
+
+## Built
+
+Phase 1, in 0.21.0 (2026-10-22):
+
+- `shared/crypto/crypto.js`: `groupWrapKey`, `encryptGroup`/`decryptGroup`, and text and pic helpers, exactly as specified above. Pinned vectors in `tests/vectors/group3.json`, opened by an independent Python implementation (`check_group3.py`) and by every client (`vector-checks.js`: Node, Chromium, the iPhone).
+- Server: migration 0014; `groups::check_e2e` (exact member list, one 60-byte wrap each, 16-byte message id), `prepare_for` (each viewer gets only their own wrap, everywhere a message leaves the server, live events included), encrypted pics stored and served as opaque bytes. The group's first encrypted message adds the "encrypted from now on" event.
+- Web app: every group text and pic is sealed; members' keys are pinned on first sight like friends' (a changed key blocks sending to that group); a 409 refetches the members and seals again once.
+- **Readers and writers shipped together.** The web app is the only client and loads the new version on reload (the update banner asks); there's no iOS build in use yet, and the iOS app reads format 3 from its first build (the vectors run on the phone). A tab left open from before shows a format 3 message as an empty line until it reloads.
+
+Not yet:
+
+- **Group reactions** are still plain emoji the server can see (the group sheet says so). Next: seal them like messages (kind `reaction`, the target message id in the associated data).
+- **Refusing format 0** for new group messages, once no old client could still be sending it (rollout step 3).
+- **Phase 2** (an authenticated member list), on Nate's condition that it adds no friction to inviting people.

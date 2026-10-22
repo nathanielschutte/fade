@@ -33,7 +33,7 @@ const state = {
   chats: [],
   requests: { incoming: [], outgoing: [] },
   activeId: null,              // friend id of the open chat
-  groups: [],                  // GroupSummary[] (not end-to-end encrypted in v1)
+  groups: [],                  // GroupSummary[] (messages end-to-end encrypted; names and pictures aren't)
   activeGroupId: null,         // group id of the open group chat (activeId is null then)
   groupMessages: new Map(),    // group id -> GroupMessage[], oldest first
   groupHistory: new Map(),     // group id -> { hasMore, loading }
@@ -1842,6 +1842,7 @@ async function handleEvent(ev) {
     case "group_message": {
       const m = ev.message;
       stopTyping(`g:${m.group_id}:${m.sender_id}`);
+      await openGroupMessage(m);
       upsertGroupMessage(m);
       if (m.group_id === state.activeGroupId) {
         renderMessages();
@@ -1880,6 +1881,7 @@ async function handleEvent(ev) {
       break;
     }
     case "groups_changed": {
+      groupMemberKeys.delete(ev.group_id);
       const members = groupById(ev.group_id)?.member_count;
       await refreshGroups();
       // Someone joined or left: "Seen by" needs the new member list.
@@ -1892,14 +1894,121 @@ async function handleEvent(ev) {
 }
 
 // ---------- groups ----------
-// Version 1 isn't end-to-end encrypted: messages go to the server as plain
-// text, and every group says so. Direct chats are unaffected.
+// Group messages and pics are end-to-end encrypted (format 3,
+// docs/group-encryption.md): each is sealed once with a fresh key, wrapped
+// for every member with the key the sender shares with them. The group's name
+// and picture aren't encrypted, and every group says so. Messages from before
+// a group switched stay plain text (format 0).
 
 const groupById = (id) => state.groups.find((g) => g.id === id);
 
+// ---------- group encryption ----------
+
+const groupWrapKeys = new Map();   // "<user id>:<public key>" -> wrap key with them
+const groupPlain = new Map();      // message id -> { text, replyTo }, or null if it couldn't be opened
+const groupMemberKeys = new Map(); // group id -> [{ id, username, public_key }] from the server
+
+class KeyChangedError extends Error {}
+
+async function groupWrapKeyFor(userId, pub) {
+  const k = `${userId}:${pub}`;
+  if (!groupWrapKeys.has(k)) groupWrapKeys.set(k, await e2e.groupWrapKey(state.identity.privateKey, pub, state.me.id, userId));
+  return groupWrapKeys.get(k);
+}
+
+/**
+ * The key I'll encrypt to for someone in a group: mine, the one I pinned for
+ * them, or (the first time I see them, friend or not) the server's, which
+ * gets pinned. If the server now says something else, their key changed:
+ * refuse, exactly as a direct chat does.
+ */
+async function sendingKey(member) {
+  if (member.id === state.me.id) return state.identity.publicKey;
+  const pinned = state.pins[member.id];
+  if (!pinned) {
+    state.pins[member.id] = member.public_key;
+    await keystore.saveLocal(pinsKey(), state.pins);
+    return member.public_key;
+  }
+  if (pinned !== member.public_key) {
+    report("warn", "group member key changed; group blocked", { user_id: member.id });
+    throw new KeyChangedError(`${personName(member.id, member.username)}'s safety code changed, so napsack won't send to this group. `
+      + "If you're friends, check it in your chat with them.");
+  }
+  return pinned;
+}
+
+/** Keys that could have sealed a message from `senderId`: mine, my pins (newest first), else the server's on first sight. */
+async function readingKeys(senderId, serverPub) {
+  if (senderId === state.me.id) return [state.identity.publicKey];
+  const pinned = state.pins[senderId];
+  if (pinned) return [pinned, ...[...(state.pastPins[senderId] || [])].reverse()];
+  if (!serverPub) return [];
+  state.pins[senderId] = serverPub;
+  await keystore.saveLocal(pinsKey(), state.pins);
+  return [serverPub];
+}
+
+/** Opens a format 3 text in place: `body` and `reply_to` become what the sender wrote. */
+async function openGroupMessage(m) {
+  if (m.format !== e2e.GROUP_FORMAT || m.kind !== "text") return m;
+  if (m.pic) return m; // pics open when tapped
+  if (!groupPlain.has(m.id)) {
+    let body = null;
+    const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.client_id, recipients: m.recipients || [] };
+    for (const pub of m.key && m.content ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
+      try {
+        body = await e2e.decryptGroupText(e2e.fromB64(m.content), m.key, { ...opts, wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
+        break;
+      } catch {}
+    }
+    if (!body) report("warn", "group decrypt failed", { message_id: m.id, group_id: m.group_id, has_key: Boolean(m.key) });
+    groupPlain.set(m.id, body);
+  }
+  const body = groupPlain.get(m.id);
+  m.body = body?.text ?? "";
+  m.reply_to = body?.replyTo ?? null;
+  m.undecryptable = !body;
+  return m;
+}
+
+/** Current members, with keys; `fresh` refetches (after the server said the group changed). */
+async function groupMembers(groupId, fresh = false) {
+  if (fresh || !groupMemberKeys.has(groupId)) {
+    const g = await getJSON(`/groups/${groupId}`);
+    groupMemberKeys.set(groupId, g.members);
+  }
+  return groupMemberKeys.get(groupId);
+}
+
+/**
+ * Seals something for everyone in the group and sends it. If someone joined
+ * or left meanwhile, the server says 409: refetch the members, seal again
+ * (with a new message id), and send once more.
+ */
+async function sealAndSend(groupId, seal, send) {
+  for (let attempt = 0; ; attempt++) {
+    const wrapKeys = new Map();
+    for (const member of await groupMembers(groupId, attempt > 0)) {
+      wrapKeys.set(member.id, await groupWrapKeyFor(member.id, await sendingKey(member)));
+    }
+    const sealed = await seal({ groupId, senderId: state.me.id, wrapKeys });
+    try {
+      return await send(sealed);
+    } catch (err) {
+      if (err.status === 409 && attempt === 0) continue;
+      throw err;
+    }
+  }
+}
+
+const keysHeader = (s) => JSON.stringify({ client_id: s.clientId, recipients: s.recipients, wraps: s.wraps });
+
 async function refreshGroups() {
   try {
-    state.groups = await getJSON("/groups");
+    const groups = await getJSON("/groups");
+    await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
+    state.groups = groups;
   } catch (err) {
     report("warn", "loading groups failed", errorFields(err));
     return;
@@ -1928,6 +2037,7 @@ function groupEventText(m) {
     case "renamed": return `${actor} renamed the group to “${e.name}”`;
     case "owner": return e.target === state.me.id ? "You're now the owner" : `${personName(e.target, e.target_name)} is now the owner`;
     case "picture": return `${actor} changed the group picture`;
+    case "encrypted": return "Messages and pics here are end-to-end encrypted from now on. The group's name and picture aren't.";
     default: return "The group changed";
   }
 }
@@ -1942,7 +2052,7 @@ function groupStatus(g) {
   }
   const text = m.kind === "event"
     ? groupEventText(m)
-    : `${m.sender_id === state.me.id ? "You" : personName(m.sender_id, m.sender_name)}: ${m.body}`;
+    : `${m.sender_id === state.me.id ? "You" : personName(m.sender_id, m.sender_name)}: ${m.undecryptable ? "Encrypted message" : m.body}`;
   return { text, marker: g.unread ? "text" : null };
 }
 
@@ -1992,6 +2102,7 @@ async function openGroup(groupId) {
   renderMessages();
   try {
     const page = await getJSON(`/groups/${groupId}/messages?limit=${PAGE}`);
+    await Promise.all(page.map(openGroupMessage));
     if (state.activeGroupId !== groupId) return;
     const loaded = state.groupMessages.get(groupId);
     if (loaded?.length && page.length && page[0].id <= loaded[loaded.length - 1].id) {
@@ -2013,6 +2124,19 @@ async function openGroup(groupId) {
 function upsertGroupMessage(m) {
   const msgs = state.groupMessages.get(m.group_id);
   if (!msgs) return; // not loaded yet; it'll fetch on open
+  // However it arrived (a reaction's response, a pic's update), a sealed
+  // message shows what it says: from what's already been opened, or by
+  // opening it now and drawing again.
+  if (m.format === e2e.GROUP_FORMAT && m.kind === "text" && !m.pic) {
+    if (groupPlain.has(m.id)) {
+      const body = groupPlain.get(m.id);
+      m.body = body?.text ?? "";
+      m.reply_to = body?.replyTo ?? null;
+      m.undecryptable = !body;
+    } else {
+      openGroupMessage(m).then(() => { if (state.activeGroupId === m.group_id) renderMessages(); });
+    }
+  }
   const i = msgs.findIndex((x) => x.id === m.id);
   if (i >= 0) msgs[i] = m;
   else msgs.push(m);
@@ -2027,6 +2151,7 @@ async function loadOlderGroup(groupId) {
   renderMessages();
   try {
     const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${PAGE}`);
+    await Promise.all(page.map(openGroupMessage));
     const have = new Set(msgs.map((m) => m.id));
     msgs.unshift(...page.filter((m) => !have.has(m.id)));
     h.hasMore = page.length === PAGE;
@@ -2105,6 +2230,10 @@ function renderGroupMessages() {
       items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : personName(m.sender_id, m.sender_name)}  ${clockTime(m.created_at)}` }));
       prevSender = m.sender_id;
     }
+    if (m.undecryptable) {
+      items.push(el("li", { class: `msg undecryptable ${mine ? "mine" : ""}`, text: "Couldn't decrypt this message." }));
+      continue;
+    }
     const content = [];
     if (m.pic) content.push(groupPicChip(m, mine));
     if (m.body) content.push(el("span", { class: "msg-body", text: m.body }));
@@ -2145,9 +2274,24 @@ async function viewGroupPic(m) {
     if (err.status !== 410) alert(err.message); // 410: opened elsewhere or expired; the socket updates the chat
     return false;
   }
+  const from = `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`;
+  if (m.format === e2e.GROUP_FORMAT) {
+    const sealed = new Uint8Array(await res.arrayBuffer());
+    const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.client_id, recipients: m.recipients || [] };
+    for (const pub of m.key ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
+      try {
+        const pic = await e2e.decryptGroupPic(sealed, m.key, { ...opts, wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
+        showInViewer(new Blob([pic.photo], { type: "image/jpeg" }), from, pic.caption);
+        return true;
+      } catch {}
+    }
+    report("warn", "group pic decrypt failed", { message_id: m.id, group_id: m.group_id });
+    alert("This pic couldn't be decrypted.");
+    return false;
+  }
   let caption = "";
   try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
-  showInViewer(await res.blob(), `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`, caption);
+  showInViewer(await res.blob(), from, caption);
   return true;
 }
 
@@ -2155,10 +2299,13 @@ async function sendGroupPic(groupId) {
   const btn = $("#send-snap");
   btn.disabled = true;
   try {
-    const caption = encodeURIComponent($("#snap-caption").value.trim());
-    const m = await getJSON(`/groups/${groupId}/pics${caption ? `?caption=${caption}` : ""}`, {
-      method: "POST", body: camera.blob, headers: { "Content-Type": "image/jpeg" },
-    });
+    const caption = $("#snap-caption").value.trim();
+    const photo = new Uint8Array(await camera.blob.arrayBuffer());
+    const m = await sealAndSend(groupId,
+      (opts) => e2e.encryptGroupPic(photo, caption, opts),
+      (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
+        method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
+      }));
     upsertGroupMessage(m);
     if (state.activeGroupId === groupId) renderMessages();
     $("#camera-dialog").close();
@@ -2199,8 +2346,14 @@ async function sendGroupText(groupId, input, text) {
   input.value = "";
   fitComposer();
   try {
-    const replyTo = state.replyTo?.group ? state.replyTo.id : undefined;
-    const m = await getJSON(`/groups/${groupId}/messages`, { method: "POST", json: { text, reply_to: replyTo } });
+    const replyTo = state.replyTo?.group ? state.replyTo.id : null;
+    const m = await sealAndSend(groupId,
+      (opts) => e2e.encryptGroupText(text, replyTo, opts),
+      (s) => getJSON(`/groups/${groupId}/messages`, { method: "POST", json: {
+        format: e2e.GROUP_FORMAT, content: e2e.toB64(s.content), client_id: s.clientId, recipients: s.recipients, wraps: s.wraps,
+      } }));
+    groupPlain.set(m.id, { text, replyTo });
+    await openGroupMessage(m);
     setReply(null);
     upsertGroupMessage(m);
     if (state.activeGroupId === groupId) renderMessages();
