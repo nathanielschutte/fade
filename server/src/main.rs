@@ -1,6 +1,7 @@
 mod account;
 mod admin;
 mod auth;
+mod birthdays;
 mod chats;
 mod db;
 mod error;
@@ -310,6 +311,7 @@ fn router(state: SharedState) -> Router {
             get(people::get_avatar),
         )
         .route("/me/name", axum::routing::put(people::set_display_name))
+        .route("/me/birthday", axum::routing::put(birthdays::set))
         .route("/me/settings", axum::routing::put(presence::set_settings))
         .route("/invites", get(invites::list).post(invites::create))
         .route("/invites/{invite_id}/revoke", post(invites::revoke))

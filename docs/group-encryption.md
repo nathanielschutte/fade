@@ -1,6 +1,6 @@
 # Group chats, end-to-end encrypted (design)
 
-Status: **design, not built.** Written 2026-10-21 for F17 in [plan.md](plan.md). Decisions marked **Open** need Nate before any code. Read [how-napsack-works.md](how-napsack-works.md) first: this builds directly on the direct-chat scheme.
+Status: **approved, being built.** Written 2026-10-21 for F17 in [plan.md](plan.md); Nate's decisions are at the end. Read [how-napsack-works.md](how-napsack-works.md) first: this builds directly on the direct-chat scheme.
 
 Today group chats are the one part of napsack the server can read (`format` 0). This document is how they stop being that, and how we'll know it's done right.
 
@@ -138,10 +138,10 @@ Phase 1 already protects content from a server that's only curious (reading the 
 - **Independent check:** a Python decryptor (like `tests/push_receiver.py` does for push) opens a stored format 3 message with a test member's private key, proving the bytes match the spec rather than just our own code.
 - **Browser tests:** a three-person group sends texts, a reply, a reaction, and a pic; someone added later can't read earlier messages; someone removed can't read later ones; a member's changed key blocks sending; the database and the server log contain none of the plaintext.
 
-## Open decisions (for Nate)
+## Decisions (Nate, 2026-10-21)
 
-1. **Approach D** (a fresh key per message, wrapped for each member) rather than a shared group key. Recommended for the reasons above.
-2. **Existing groups switch automatically** in step 2 of the rollout, with the "encrypted from here on" event, rather than asking someone to turn it on. Recommended: there's nothing for people to decide.
-3. **Group names and pictures stay visible to the server** in this version. Recommended, for now.
-4. **Phase 2** (authenticated member list) right after Phase 1, or later.
-5. **Forward secrecy** stays out of scope for groups (as for direct chats) and becomes its own project for both.
+1. **Approach D**, a fresh key per message wrapped for each member: "Approach D should work, let's at least try it out."
+2. **Existing groups switch automatically**, with no one asked: "dont ask anyone."
+3. **Group names and pictures stay visible to the server**, but **the app has to say so**, pictures especially: "we should document and notify that pictures are still unencrypted. that's important." The group's info sheet and the encrypted notice both say that the group's name and picture aren't encrypted (the messages and pics inside are).
+4. **Phase 2 (an authenticated member list) waits, and must not make inviting people harder.** "I want to make sure we take precedence on the importance of growing the app and making it approachable... dont implement user onboarding friction with stuff like this for right now." Any Phase 2 design has to keep adding a friend to a group (and invite links) as easy as today: no extra verification steps for people. Tracked in the plan, not built.
+5. **Forward secrecy** stays out of scope for now.

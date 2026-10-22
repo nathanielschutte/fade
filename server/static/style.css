@@ -925,3 +925,18 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 }
 .toast[hidden] { display: none; }
 .toast .button { flex: none; min-height: 2.1rem; }
+
+/* ---------- birthday (profile) ---------- */
+.birthday-form { margin-top: 1rem; display: grid; gap: 0.5rem; }
+.birthday-fields { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; min-width: 0; }
+.birthday-fields legend { font-size: var(--step--1); color: var(--fixer); padding: 0; margin-bottom: 0.35rem; }
+.birthday-fields select, .birthday-fields input {
+  min-height: 2.875rem; padding: 0 0.75rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--deep); color: var(--paper); font: inherit;
+}
+.birthday-fields select:focus, .birthday-fields input:focus { outline: none; border-color: var(--sage); }
+#birthday-month { flex: 1 1 8rem; min-width: 0; }
+#birthday-day { flex: 0 0 5rem; }
+#birthday-year { flex: 0 0 5.5rem; min-width: 0; }
+.birthday-form .picture-row { flex-wrap: wrap; gap: 0.5rem; }

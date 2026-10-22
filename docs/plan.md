@@ -12,16 +12,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
-| 2 | [Birthday on profiles](#f19-birthday-and-more-profile-fields) | Features | Up next | Requested: optional birthday, maybe more fields |
-| 3 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 4 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 5 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 6 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
-| 7 | [Group chats: end-to-end encryption](group-encryption.md) | Features | Needs decision | Design written ([group-encryption.md](group-encryption.md)); five decisions for Nate before building |
-| 8 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 9 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 10 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 11 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
+| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 5 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
+| 6 | [Group chats: end-to-end encryption](group-encryption.md) | Features | In progress | Approved 2026-10-21 (Approach D); building next |
+| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -55,11 +54,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 |
 | iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
 | [Favorites](stories/favorites.md) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
-| [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps | 0.19.1 |
+| [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.20.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -207,11 +206,13 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F17. Group chats: "seen by", then end-to-end
 - **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member). Done (0.18.0): `GET /groups/{id}/reads` and a live `group_read` event; "Seen by everyone" once all of 3+ others have read it.
 - **End-to-end encryption for groups:** the one part of napsack the server can read. Nate (2026-10-21): "a key point of interest... design it thoroughly and document the approach in the repo."
+- **Decided (2026-10-21), Nate:** build Approach D from the design; existing groups switch automatically, no one asked; group names and pictures stay server-visible, but the app must say clearly that group pictures (and names) aren't encrypted; Phase 2 (authenticated member list) later, and never at the cost of easy invites (growing the app and keeping it approachable comes first while sign-up is invite-only); forward secrecy out of scope. Status: being built (readers first, then writers).
 - **Design written (2026-10-21): [group-encryption.md](group-encryption.md).** Recommends a fresh key per message, wrapped for each member with the pair key they already share with the sender (rather than a shared group key): sender authenticity among members, no key rotation when someone leaves, only primitives we already use. Format 3, readers before writers, then Phase 2 (an authenticated member list). Five open decisions listed at the end of the doc; nothing gets built until Nate answers them.
 
 #### F19. Birthday and more profile fields
 - Requested (2026-10-21): "more profile field entries like a birthday (optional)."
 - Friends-only like the rest of the profile (server-visible, not end-to-end encrypted). Birthday as month and day, with the year optional; friends see it on your profile, and maybe a small 🎂 on the day. Other candidates to offer: pronouns, a short "about" line. Stored append-only like display names (Rule 1), validated like other text (`text.rs`).
+- Done (0.20.0): birthday on your profile (month and day; year optional, 1900 to now; real dates only, Feb 29 fine without a year), shown to friends on your profile, and a 🎂 by your name in friends' chat lists on the day (their own time zone). `user_birthdays` (migration 0013), append-only. **Still to offer:** pronouns, a short "about" line.
 
 #### F18. Disappearing texts
 - Per-chat setting: texts disappear 24 hours after they're read (like Snapchat's default).
@@ -236,7 +237,7 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### D3. Admin "Online now" count
 - Requested (2026-10-21): the admin overview's "Online now" / "open connections" doesn't always look right; Nate saw 0 while he was online looking at it.
 - Found: the count itself was right (people with at least one live connection, and the connections), but the admin page held no connection of its own. Looking at /admin without the app open elsewhere (and on the Home Screen app, Admin replaces the app page) meant you weren't counted: 0 while plainly online. A phone app in the background also drops its connection (iOS suspends it), so it isn't counted until it's opened again; that part is expected.
-- Done (0.19.1): the admin page keeps its own live connection while it's showing, so looking at it counts as being online, and the tiles refresh once it's connected. It never claims to be on screen, so notifications still arrive. `test_admin.py` checks the tile reads 1 with only the admin page open (it read 0 before).
+- Done (0.20.0): the admin page keeps its own live connection while it's showing, so looking at it counts as being online, and the tiles refresh once it's connected. It never claims to be on screen, so notifications still arrive. `test_admin.py` checks the tile reads 1 with only the admin page open (it read 0 before).
 
 ### Experience/visual
 
@@ -292,7 +293,7 @@ Production runs **0.19.0**. Releases ship with `scripts/deploy.sh`; commit what 
 #### X9. Removing people from groups
 - Requested (2026-10-21): "I want to be able to remove people from groups."
 - Today the group's owner can already remove members (group info sheet: tap the group's name, then Remove next to a member); nobody else can. To decide while building: is the request about finding it (make it easier to reach, e.g. from the member list), or about who may remove (anyone who added that person, or any member)? Default unless Nate says otherwise: keep owner-only removal, make it easier to find, and say in the sheet who can remove.
-- Done (0.19.1), the default: the member list says who can remove people ("You're the owner, so you can remove people" / "Only Ana can remove people"), and Remove takes two taps like Leave. **Open:** if Nate wants other members to remove people too (for example whoever added them), that's a server rule change in `groups::remove_member`.
+- Done (0.20.0), the default: the member list says who can remove people ("You're the owner, so you can remove people" / "Only Ana can remove people"), and Remove takes two taps like Leave. **Open:** if Nate wants other members to remove people too (for example whoever added them), that's a server rule change in `groups::remove_member`.
 
 ### Infrastructure
 

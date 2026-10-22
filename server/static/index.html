@@ -293,6 +293,19 @@
     <input type="file" id="profile-picture-input" accept="image/*" hidden>
     <button type="button" class="button" id="profile-picture-clear">Remove picture</button>
   </div>
+  <form id="profile-birthday-form" class="birthday-form" novalidate hidden>
+    <fieldset class="birthday-fields">
+      <legend>Birthday</legend>
+      <select name="month" id="birthday-month" aria-label="Birthday month"><option value="">Month</option></select>
+      <select name="day" id="birthday-day" aria-label="Birthday day"><option value="">Day</option></select>
+      <input name="year" id="birthday-year" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="Year" aria-label="Birthday year (optional)">
+    </fieldset>
+    <div class="picture-row">
+      <button type="submit" class="button">Save birthday</button>
+      <button type="button" class="button" id="birthday-clear">Remove</button>
+    </div>
+    <p class="field-hint">Optional. Friends see it on your profile, with a 🎂 by your name on the day. The year is up to you.</p>
+  </form>
   <p class="form-note" id="profile-edit-note" role="status"></p>
   <section class="profile-security" id="profile-security" hidden>
     <h3>Account security</h3>

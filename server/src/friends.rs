@@ -8,6 +8,7 @@ use sqlx::{FromRow, SqlitePool};
 
 use crate::{
     auth::AuthUser,
+    birthdays::BIRTHDAY_MD,
     db::{self, now, pair, Message, UserPublic},
     error::{AppError, AppResult},
     marks::{FAVORITE_FRIEND, HIDDEN_UPTO},
@@ -31,6 +32,7 @@ struct ChatRow {
     unread: i64,
     favorite: Option<bool>,
     hidden_upto: Option<i64>,
+    birthday: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -58,6 +60,8 @@ pub struct ChatSummary {
     favorite: bool,
     /// I hid (archived) this chat and nothing newer has arrived since.
     hidden: bool,
+    /// Their birthday as "MM-DD", if they've set one (birthdays.rs), for a 🎂 on the day.
+    birthday: Option<String>,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -68,7 +72,7 @@ pub async fn list_chats(
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
-            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto,
+            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
                  OR (m.sender_id = u.id AND m.recipient_id = ?1)
@@ -108,6 +112,7 @@ pub async fn list_chats(
             },
             hidden: crate::marks::is_hidden(row.hidden_upto, row.last_id),
             favorite: row.favorite.unwrap_or(false),
+            birthday: row.birthday,
             last_message,
             unread: row.unread,
         });

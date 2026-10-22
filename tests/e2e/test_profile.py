@@ -1,7 +1,7 @@
 """Profiles: your own (friends and counts) and a friend's (what you share),
 opened from the Friends sheet and from a chat's title.
 Settings come from the environment; see common.py."""
-import asyncio, uuid
+import asyncio, datetime, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import BASE, INVITE, launch, save_recovery_key, shot
@@ -134,12 +134,31 @@ async def main():
         await expect(ben.locator(".chat-item", has_text="Sis").locator(".avatar")).to_have_text("S")
         print("names, private nicknames, and pictures: set, seen live, removed")
 
+        # A birthday: today's date, so friends see the cake in their list today.
+        today = datetime.date.today()
+        await ana.click("#my-profile")
+        await ana.click("#profile-birthday-form button[type=submit]")          # nothing picked yet
+        await expect(ana.locator("#profile-edit-note")).to_have_text("Pick a month and a day.")
+        await ana.select_option("#birthday-month", str(today.month))
+        await ana.select_option("#birthday-day", str(today.day))
+        await ana.fill("#birthday-year", "94")
+        await ana.click("#profile-birthday-form button[type=submit]")
+        await expect(ana.locator("#profile-edit-note")).to_have_text("The year is four digits, or leave it empty.")
+        await ana.fill("#birthday-year", "1994")
+        await ana.click("#profile-birthday-form button[type=submit]")
+        await expect(ana.locator("#profile-edit-note")).to_have_text("Birthday saved.", timeout=10000)
+        await expect(stat(ana, "Birthday")).to_contain_text(f"{today.day}, 1994")
+        await ana.click("#profile-dialog [data-close]")
+        await expect(ben.locator(".chat-item .chat-name", has_text="Sis 🎂")).to_be_visible(timeout=10000)
+        print("birthday: set with checks, on the profile, a cake on the day")
+
         # On a phone, the chat title opens the friend's profile and nothing overflows.
         await cal.locator(".chat-item", has_text="Ana Banana").click()
         await cal.click("#chat-title")
         await expect(cal.locator("#profile-name")).to_have_text("Ana Banana")
         await expect(stat(cal, "Texts between you")).to_have_text("0")
         await expect(stat(cal, "First message")).to_have_text("—")
+        await expect(stat(cal, "Birthday")).to_contain_text(", 1994")
         await expect(cal.locator("#profile-people .person-name")).to_have_text([BEN])
         overflow = await cal.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"profile scrolls sideways by {overflow}px"

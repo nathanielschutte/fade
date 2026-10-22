@@ -261,7 +261,26 @@ def check_people(tag, a, a_tok, b, b_tok):
     ok(call("DELETE", "/me/avatar", a_tok))
     assert ok(call("GET", "/me", a_tok)).json()["avatar_id"] is None and friend_view(b_tok, a)["avatar_id"] is None
     ok(call("GET", f"/users/{a['id']}/avatar/{av2}", b_tok), 404)
-    print("  people: names, private nicknames, pictures; friends only")
+
+    # Birthdays: real dates only, the year optional, friends see it, clearing keeps history.
+    for bad in [{"month": 13, "day": 1}, {"month": 2, "day": 30}, {"month": 2, "day": 29, "year": 2023},
+                {"month": 4, "day": 31}, {"month": 5, "day": 5, "year": 1800}, {"month": 5, "day": 5, "year": 3000},
+                {"month": 5}]:
+        ok(call("PUT", "/me/birthday", a_tok, json=bad), 400)
+    ok(call("PUT", "/me/birthday", json={"month": 3, "day": 3}), 401)
+    ok(call("PUT", "/me/birthday", a_tok, json={"month": 2, "day": 29}))              # no year: fine
+    ok(call("PUT", "/me/birthday", a_tok, json={"month": 3, "day": 9, "year": 1994}))
+    assert ok(call("GET", f"/users/{a['id']}/profile", a_tok)).json()["birthday"] == {"month": 3, "day": 9, "year": 1994}
+    assert ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()["birthday"] == {"month": 3, "day": 9, "year": 1994}
+    assert friend_view(b_tok, a)["birthday"] == "03-09"
+    ok(call("GET", f"/users/{a['id']}/profile", s_tok), 404)                           # strangers see nothing
+    ok(call("PUT", "/me/birthday", a_tok, json={}))
+    assert ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()["birthday"] is None
+    assert friend_view(b_tok, a)["birthday"] is None
+    if DB:
+        n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_birthdays WHERE user_id = ?", (a["id"],)).fetchone()[0]
+        assert n == 3, n
+    print("  people: names, private nicknames, pictures, birthdays; friends only")
 
 
 # Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in.

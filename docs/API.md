@@ -11,11 +11,11 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
 | `GET  /me` | `{id, username, is_admin, display_name, avatar_id, has_recovery_key, key_reset_at}` |
-| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden}]`, newest first. `nickname`, `favorite`, and `hidden` are yours alone |
+| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden, birthday}]`, newest first. `nickname`, `favorite`, and `hidden` are yours alone; `birthday` is theirs as `"MM-DD"` |
 | `PUT  /chats/{friend_id}/favorite` | `{on}`: keep this chat at the top of your list. Up to 10 favorites (direct and groups together); 400 past that |
 | `PUT  /chats/{friend_id}/hidden` | `{on}`: hide (archive) the chat from your list, or show it again. Messages stay; a newer message, from either side, shows it again by itself |
 | `DELETE /friends/{id}` | Unfriend |
-| `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). 404 for anyone else |
+| `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). Both have `birthday: {month, day, year}` or null. 404 for anyone else |
 | `GET  /friends/requests` | `{incoming: [...], outgoing: [...]}` |
 | `POST /friends/requests` | `{username}`. Auto-accepts if they already asked you |
 | `POST /friends/requests/{id}/accept` | |
@@ -52,6 +52,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |
 | `POST /me/avatar` · `DELETE /me/avatar` | Set your profile picture (raw small image; re-encoded) · remove it. Every picture is kept |
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
+| `PUT  /me/birthday` | `{month, day, year?}`: your birthday, for friends (profile, and `birthday: "MM-DD"` in their `/friends`). Real dates only; the year is optional (1900 to this year). `{}` clears it |
 | `PUT  /friends/{id}/nickname` | `{name}`: a nickname for a friend that only you see. Empty clears it |
 | `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic (raw JPEG/PNG/WebP body; re-encoded by the server; optional `?caption=`, one line, 200 characters) · open it, once per member, not the sender; the caption comes back in `X-Napsack-Caption`, percent-encoded. Gone once everyone has opened it, or after 30 days |
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |

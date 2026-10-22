@@ -956,7 +956,8 @@ function renderChatList() {
       favorite: chat.favorite,
       hidden: chat.hidden,
       row: chatRow({
-        name: chatName(chat), status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
+        name: chat.birthday === todayMD() ? `${chatName(chat)} 🎂` : chatName(chat),
+        status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
         time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
         avatar: el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
@@ -2487,6 +2488,7 @@ async function openProfile(userId) {
       ...stat("Pics received", s.pics_received),
       ...stat("Your pics opened", s.pics_sent ? `${s.pics_opened} of ${s.pics_sent}` : "—"),
       ...stat("Friends", p.friends.length),
+      ...(p.birthday ? stat("Birthday", birthdayText(p.birthday)) : []),
     );
     $("#profile-people-title").textContent = p.friends.length ? "Your friends" : "No friends yet";
     people = p.friends;
@@ -2499,6 +2501,7 @@ async function openProfile(userId) {
       ...stat("First message", t.first_message_at ? longDate(t.first_message_at) : "—"),
       ...stat("Joined napsack", longDate(p.joined_at)),
       ...stat("Their friends", p.friend_count),
+      ...(p.birthday ? stat("Birthday", birthdayText(p.birthday)) : []),
     );
     $("#profile-people-title").textContent = "Friends you share";
     people = p.mutual_friends;
@@ -2540,11 +2543,18 @@ function renderProfileEdit(p) {
   $("#security-note").textContent = "";
   if (mine) renderSecurity();
   $("#profile-picture-clear").hidden = !p.avatar_id;
+  $("#profile-birthday-form").hidden = !mine;
+  if (mine) {
+    $("#birthday-month").value = p.birthday ? String(p.birthday.month) : "";
+    $("#birthday-day").value = p.birthday ? String(p.birthday.day) : "";
+    $("#birthday-year").value = p.birthday?.year ? String(p.birthday.year) : "";
+    $("#birthday-clear").hidden = !p.birthday;
+  }
   $("#profile-edit-note").textContent = "";
 }
 
 function hideProfileEdit() {
-  for (const id of ["#profile-name-form", "#profile-name-hint", "#profile-picture-row", "#profile-security"]) $(id).hidden = true;
+  for (const id of ["#profile-name-form", "#profile-name-hint", "#profile-picture-row", "#profile-security", "#profile-birthday-form"]) $(id).hidden = true;
   $("#profile-edit-note").textContent = "";
 }
 
@@ -2582,6 +2592,44 @@ $("#profile-picture-input").addEventListener("change", (e) => {
     await api("/me/avatar", { method: "POST", body: blob, headers: { "Content-Type": "image/jpeg" } });
   }, "Picture updated.");
 });
+
+// ---------- birthday (F19) ----------
+// Month and day, the year optional; friends see it, with a 🎂 on the day.
+
+const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString(undefined, { month: "long" }));
+$("#birthday-month").append(...MONTHS.map((m, i) => el("option", { value: String(i + 1), text: m })));
+$("#birthday-day").append(...Array.from({ length: 31 }, (_, i) => el("option", { value: String(i + 1), text: String(i + 1) })));
+
+/** "March 9" or "March 9, 1994". */
+function birthdayText(b) {
+  return b.year ? `${MONTHS[b.month - 1]} ${b.day}, ${b.year}` : `${MONTHS[b.month - 1]} ${b.day}`;
+}
+
+/** Today in my own time zone, as the chat list's "MM-DD". */
+function todayMD() {
+  const d = new Date();
+  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+$("#profile-birthday-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const month = Number($("#birthday-month").value) || null;
+  const day = Number($("#birthday-day").value) || null;
+  const yearText = $("#birthday-year").value.trim();
+  if (!month || !day) {
+    $("#profile-edit-note").textContent = "Pick a month and a day.";
+    return;
+  }
+  if (yearText && !/^\d{4}$/.test(yearText)) {
+    $("#profile-edit-note").textContent = "The year is four digits, or leave it empty.";
+    return;
+  }
+  profileAction(() => api("/me/birthday", { method: "PUT", json: { month, day, year: yearText ? Number(yearText) : null } }),
+    "Birthday saved.");
+});
+
+$("#birthday-clear").addEventListener("click", () =>
+  profileAction(() => api("/me/birthday", { method: "PUT", json: {} }), "Birthday removed."));
 
 $("#profile-picture-clear").addEventListener("click", () =>
   profileAction(() => api("/me/avatar", { method: "DELETE" }), "Picture removed."));

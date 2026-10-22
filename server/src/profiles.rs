@@ -11,6 +11,7 @@ use sqlx::{FromRow, SqlitePool};
 
 use crate::{
     auth::AuthUser,
+    birthdays::Birthday,
     db::pair,
     error::{AppError, AppResult},
     friends::require_friend,
@@ -51,6 +52,8 @@ pub enum Profile {
         display_name: Option<String>,
         avatar_id: Option<i64>,
         joined_at: i64,
+        /// Optional; friends see it too (birthdays.rs).
+        birthday: Option<Birthday>,
         friends: Vec<FriendEntry>,
         stats: MyStats,
     },
@@ -62,6 +65,7 @@ pub enum Profile {
         nickname: Option<String>,
         avatar_id: Option<i64>,
         joined_at: i64,
+        birthday: Option<Birthday>,
         friends_since: i64,
         friend_count: i64,
         mutual_friends: Vec<FriendEntry>,
@@ -168,6 +172,7 @@ pub async fn get(
             display_name,
             avatar_id,
             joined_at,
+            birthday: crate::birthdays::current(db, me.id).await?,
             friends: friends_of(db, me.id).await?,
             stats: my_stats(db, me.id).await?,
         }));
@@ -202,6 +207,7 @@ pub async fn get(
         nickname,
         avatar_id,
         joined_at,
+        birthday: crate::birthdays::current(db, id).await?,
         friends_since,
         friend_count,
         mutual_friends: mutual_friends(db, me.id, id).await?,

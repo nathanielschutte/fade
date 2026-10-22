@@ -111,7 +111,7 @@ async fn record_name(
 }
 
 /// Tells you (other tabs) and every friend to refetch names and pictures.
-async fn tell_friends(state: &SharedState, me: i64) -> AppResult<()> {
+pub(crate) async fn tell_friends(state: &SharedState, me: i64) -> AppResult<()> {
     let mut ids: Vec<i64> = crate::profiles::friends_of(&state.db, me)
         .await?
         .into_iter()
