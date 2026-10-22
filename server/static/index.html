@@ -411,6 +411,24 @@
   <div class="camera-stage">
     <video id="camera-video" playsinline muted autoplay></video>
     <img id="camera-preview" alt="Your pic" hidden>
+    <canvas class="draw-layer" id="draw-layer" hidden></canvas>
+    <div class="sticker-layer" id="sticker-layer" hidden></div>
+    <div class="draw-tools" id="draw-tools" hidden>
+      <button type="button" class="draw-tool" id="draw-pen" aria-pressed="false" aria-label="Draw" title="Draw">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 10.5-10.5a2.1 2.1 0 0 0-3-3L5 16l-1 4z"/></svg>
+      </button>
+      <div class="draw-colors" id="draw-colors" role="group" aria-label="Colors" hidden></div>
+      <button type="button" class="draw-tool text" id="draw-size" hidden>Thin</button>
+      <button type="button" class="draw-tool" id="draw-sticker" aria-label="Add a sticker" title="Stickers">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M9.5 10h.01M14.5 10h.01M8.5 13.5a4 4 0 0 0 7 0"/></svg>
+      </button>
+      <button type="button" class="draw-tool text" id="sticker-smaller" aria-label="Make the sticker smaller" hidden>−</button>
+      <button type="button" class="draw-tool text" id="sticker-bigger" aria-label="Make the sticker bigger" hidden>+</button>
+      <button type="button" class="draw-tool" id="draw-undo" aria-label="Undo" title="Undo" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+      </button>
+    </div>
+    <div class="sticker-tray" id="sticker-tray" role="group" aria-label="Stickers" hidden></div>
     <input id="snap-caption" class="snap-caption" type="text" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" hidden>
     <p class="camera-message" id="camera-message" hidden></p>
   </div>

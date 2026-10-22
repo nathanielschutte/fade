@@ -55,6 +55,7 @@ const ADMIN_JS: Asset = asset!("../static/admin.js");
 // Installing napsack as an app, and notifications (push.rs).
 const SW_JS: Asset = asset!("../static/sw.js");
 const QR_JS: Asset = asset!("../static/qr.js");
+const DRAW_JS: Asset = asset!("../static/draw.js");
 const MANIFEST: Asset = asset!("../static/manifest.webmanifest");
 const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
@@ -98,6 +99,7 @@ pub fn routes() -> Router<SharedState> {
         // At the root, so it can show notifications for the whole site.
         .route("/sw.js", get(|| async { script(SW_JS.text()) }))
         .route("/qr.js", get(|| async { script(QR_JS.text()) }))
+        .route("/draw.js", get(|| async { script(DRAW_JS.text()) }))
         .route(
             "/manifest.webmanifest",
             get(|| async {
@@ -241,6 +243,7 @@ mod dev {
             &ADMIN_HTML,
             &ADMIN_JS,
             &QR_JS,
+            &DRAW_JS,
         ];
         Json(json!({
             "css": modified_ms(&STYLE_CSS),

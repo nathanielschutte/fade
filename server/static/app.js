@@ -5,6 +5,7 @@
 import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
 import { qrSvg } from "/qr.js";
+import { createDrawing } from "/draw.js";
 
 const APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
@@ -2300,7 +2301,7 @@ async function sendGroupPic(groupId) {
   btn.disabled = true;
   try {
     const caption = $("#snap-caption").value.trim();
-    const photo = new Uint8Array(await camera.blob.arrayBuffer());
+    const photo = await finalPhoto();
     const m = await sealAndSend(groupId,
       (opts) => e2e.encryptGroupPic(photo, caption, opts),
       (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
@@ -3042,6 +3043,28 @@ function stopStream() {
   $("#camera-video").srcObject = null;
 }
 
+// Drawing on the pic before it's sent (draw.js).
+const drawing = createDrawing({
+  img: $("#camera-preview"), stage: $(".camera-stage"), canvas: $("#draw-layer"), layer: $("#sticker-layer"),
+  penButton: $("#draw-pen"), colors: $("#draw-colors"), sizeButton: $("#draw-size"),
+  stickerButton: $("#draw-sticker"), stickerTray: $("#sticker-tray"),
+  bigger: $("#sticker-bigger"), smaller: $("#sticker-smaller"), undoButton: $("#draw-undo"),
+});
+
+function showDrawing(on) {
+  for (const id of ["#draw-layer", "#sticker-layer", "#draw-tools"]) $(id).hidden = !on;
+  drawing.reset();
+}
+
+/** The photo to send: as taken, or with the drawing flattened into it and compressed again. */
+async function finalPhoto() {
+  if (!drawing.hasMarks()) return new Uint8Array(await camera.blob.arrayBuffer());
+  const flat = drawing.flatten();
+  const blob = await compressPhoto(flat, flat.width, flat.height);
+  report("debug", "pic drawn on", { bytes: blob.size });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 function showCapture() {
   clearPreview();
   $("#camera-video").hidden = false;
@@ -3058,6 +3081,7 @@ function clearPreview() {
   const img = $("#camera-preview");
   img.removeAttribute("src");
   img.hidden = true;
+  showDrawing(false);
 }
 
 function showPreview(blob) {
@@ -3067,6 +3091,7 @@ function showPreview(blob) {
   const img = $("#camera-preview");
   img.src = camera.previewUrl;
   img.hidden = false;
+  showDrawing(true);
   $("#camera-video").hidden = true;
   cameraMessage("");
   $("#capture-controls").hidden = true;
@@ -3189,7 +3214,7 @@ $("#send-snap").addEventListener("click", async () => {
   const btn = $("#send-snap");
   btn.disabled = true;
   try {
-    const photo = new Uint8Array(await camera.blob.arrayBuffer());
+    const photo = await finalPhoto();
     // Format 2: the caption is sealed in with the photo, so only the friend sees it.
     const caption = $("#snap-caption").value.trim();
     const sealed = await e2e.encryptPic(await keyFor(friendId), photo, caption, state.me.id, friendId);

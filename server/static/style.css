@@ -940,3 +940,43 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 #birthday-day { flex: 0 0 5rem; }
 #birthday-year { flex: 0 0 5.5rem; min-width: 0; }
 .birthday-form .picture-row { flex-wrap: wrap; gap: 0.5rem; }
+
+/* ---------- drawing on a pic (draw.js) ----------
+   An overlay canvas and a sticker layer sit exactly over the photo (draw.js
+   sizes them); the toolbar floats at the top of the camera. */
+.draw-layer, .sticker-layer { position: absolute; }
+.draw-layer { touch-action: none; pointer-events: none; }
+.draw-layer.drawing { pointer-events: auto; cursor: crosshair; }
+.sticker-layer { pointer-events: none; }
+.sticker {
+  position: absolute; transform: translate(-50%, -50%);
+  line-height: 1; pointer-events: auto; touch-action: none; cursor: grab;
+  user-select: none; -webkit-user-select: none;
+}
+.sticker.selected { outline: 2px dashed rgba(228, 236, 230, 0.8); outline-offset: 4px; border-radius: var(--radius-s); }
+.draw-tools {
+  position: absolute; z-index: 2;
+  top: max(0.75rem, env(safe-area-inset-top)); left: 0.75rem; right: 0.75rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+}
+.draw-tool {
+  min-width: 2.75rem; height: 2.75rem; padding: 0 0.7rem;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: rgba(12, 20, 16, 0.7); color: var(--paper);
+  font: inherit; font-weight: 600; font-size: var(--step-0);
+}
+.draw-tool svg { width: 1.3rem; height: 1.3rem; }
+.draw-tool[aria-pressed="true"] { background: var(--sage); color: var(--on-sage); border-color: var(--sage); }
+.draw-tool:disabled { opacity: 0.4; }
+.draw-colors { display: flex; gap: 0.35rem; padding: 0 0.2rem; }
+.swatch { width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 2px solid rgba(228, 236, 230, 0.35); }
+.swatch[aria-pressed="true"] { border-color: var(--paper); box-shadow: 0 0 0 2px rgba(12, 20, 16, 0.8); }
+.sticker-tray {
+  position: absolute; z-index: 2;
+  top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.4rem); left: 0.75rem; right: 0.75rem;
+  display: flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.4rem;
+  background: rgba(12, 20, 16, 0.88); border: 1px solid var(--rule); border-radius: var(--radius-m);
+}
+.sticker-pick { width: 2.75rem; height: 2.75rem; border: 0; border-radius: var(--radius-s); background: none; font-size: 1.6rem; line-height: 1; }
+.sticker-pick:hover { background: var(--wash); }

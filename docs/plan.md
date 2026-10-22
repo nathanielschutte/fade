@@ -12,15 +12,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
-| 2 | [Draw on pics](#f13-draw-on-pics) | Features | Planned | Fun, browser only, no server or format change |
-| 3 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
-| 4 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 5 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
-| 6 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 8 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 9 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
-| 10 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 2 | [Streaks](#f15-streaks) | Features | Planned | Snapchat's stickiest feature, from metadata the server already has |
+| 3 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
+| 4 | [Chat list tools: mute, search](#x3-chat-list-tools-pin-mute-search) | Experience | Planned | Favorites and hiding shipped; mute and search next |
+| 5 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 6 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 7 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
+| 8 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 9 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -56,10 +55,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Favorites](stories/favorites.md) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
 | [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 |
 | **[End-to-end encrypted group chats](group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 |
+| [Draw on pics](#f13-draw-on-pics): a pen, stickers, and undo, flattened into the photo before it's encrypted | 0.22.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.21.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.22.0**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
@@ -186,6 +186,7 @@ Production runs **0.21.0**. Releases ship with `scripts/deploy.sh`; commit what 
 - After taking a pic, draw on it with a finger or mouse (a few colors and sizes, undo), and drop emoji stickers you can move and resize. Captions (F6) already exist.
 - Entirely in the browser: the drawing is flattened into the JPEG before it's compressed and encrypted, so there's no server change and no new format. Works for group pics too.
 - Pointer events, so touch, pen, and mouse all work; the canvas respects the mirrored front camera.
+- Done (0.22.0): `server/static/draw.js`. After taking or choosing a pic: a pen (six colors, thin or thick), emoji stickers you drag, resize (+/−, the mouse wheel, or a pinch), and undo for all of it. The drawing is kept relative to the photo, then flattened into it and compressed again before it's encrypted, for direct and group pics alike. `tests/e2e/test_draw.py` reads the received photo's pixels.
 
 #### F14. Invite links and QR codes
 - Today everyone signs up with one shared invite code from Terraform, then types usernames to add friends.
