@@ -765,7 +765,7 @@ async function refreshMe() {
 
 async function refreshChats() {
   try {
-    const chats = await getJSON("/friends");
+    const chats = await getJSON(`/friends?tz=${tzOffset()}`);
     await checkPins(chats);
     state.chats = chats;
     await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
@@ -957,7 +957,7 @@ function renderChatList() {
       favorite: chat.favorite,
       hidden: chat.hidden,
       row: chatRow({
-        name: chat.birthday === todayMD() ? `${chatName(chat)} 🎂` : chatName(chat),
+        name: chatRowName(chat),
         status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
         time: chat.last_message?.created_at,
         current: chat.id === state.activeId, onclick: () => openChat(chat.id),
@@ -2600,6 +2600,8 @@ function paintGroupAvatar(node, g) {
   return node;
 }
 
+const days = (n) => `${n} ${n === 1 ? "day" : "days"}`;
+
 function stat(label, value) {
   return [el("dt", { text: label }), el("dd", { text: String(value) })];
 }
@@ -2615,7 +2617,7 @@ async function openProfile(userId) {
 
   let p;
   try {
-    p = await getJSON(`/users/${userId}/profile`);
+    p = await getJSON(`/users/${userId}/profile?tz=${tzOffset()}`);
   } catch (err) {
     $("#profile-name").textContent = "";
     $("#profile-sub").textContent = "";
@@ -2642,6 +2644,7 @@ async function openProfile(userId) {
       ...stat("Pics received", s.pics_received),
       ...stat("Your pics opened", s.pics_sent ? `${s.pics_opened} of ${s.pics_sent}` : "—"),
       ...stat("Friends", p.friends.length),
+      ...(p.longest_streak ? stat("Longest pic streak", days(p.longest_streak)) : []),
       ...(p.birthday ? stat("Birthday", birthdayText(p.birthday)) : []),
     );
     $("#profile-people-title").textContent = p.friends.length ? "Your friends" : "No friends yet";
@@ -2655,6 +2658,9 @@ async function openProfile(userId) {
       ...stat("First message", t.first_message_at ? longDate(t.first_message_at) : "—"),
       ...stat("Joined napsack", longDate(p.joined_at)),
       ...stat("Their friends", p.friend_count),
+      ...(p.streak?.current >= STREAK_SHOWN
+        ? stat("Pic streak", `🔥 ${days(p.streak.current)}${p.streak.expiring ? ", ends tonight ⌛" : ""}`) : []),
+      ...(p.streak?.longest ? stat("Longest pic streak", days(p.streak.longest)) : []),
       ...(p.birthday ? stat("Birthday", birthdayText(p.birthday)) : []),
     );
     $("#profile-people-title").textContent = "Friends you share";
@@ -2757,6 +2763,24 @@ $("#birthday-day").append(...Array.from({ length: 31 }, (_, i) => el("option", {
 /** "March 9" or "March 9, 1994". */
 function birthdayText(b) {
   return b.year ? `${MONTHS[b.month - 1]} ${b.day}, ${b.year}` : `${MONTHS[b.month - 1]} ${b.day}`;
+}
+
+/** Minutes east of UTC: streaks and birthdays count days in my own time zone. */
+const tzOffset = () => -new Date().getTimezoneOffset();
+
+// ---------- streaks (F15) ----------
+// Days in a row we've both sent each other a pic, worked out by the server
+// (streaks.rs). Shown from 3 days: 🔥 and the count, and ⌛ when it runs out
+// tonight unless we both send one today.
+const STREAK_SHOWN = 3;
+
+function streakText(count, expiring) {
+  return count >= STREAK_SHOWN ? ` 🔥${count}${expiring ? "⌛" : ""}` : "";
+}
+
+/** A friend's name in the list, with a 🔥 streak and a 🎂 on their birthday. */
+function chatRowName(chat) {
+  return `${chatName(chat)}${streakText(chat.streak ?? 0, chat.streak_expiring)}${chat.birthday === todayMD() ? " 🎂" : ""}`;
 }
 
 /** Today in my own time zone, as the chat list's "MM-DD". */

@@ -20,6 +20,7 @@ mod push;
 mod ratelimit;
 mod reactions;
 mod snaps;
+mod streaks;
 mod sysinfo;
 mod text;
 mod version;

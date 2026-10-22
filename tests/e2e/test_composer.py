@@ -118,12 +118,12 @@ async def main():
         # Pull to refresh: the chat list refetches, and the indicator tucks away after.
         await ben.tap("#back-button")
         await expect(ben.locator("#chat-list")).to_be_visible()
-        async with ben.expect_request(lambda r: r.method == "GET" and r.url.endswith("/api/friends"), timeout=5000):
+        async with ben.expect_request(lambda r: r.method == "GET" and r.url.split("?")[0].endswith("/api/friends"), timeout=5000):
             await drag(ben, "#chat-list", 220)
         await expect(ben.locator("#pull")).to_have_css("height", "0px", timeout=5000)
         # A short pull doesn't.
         fetched = []
-        ben.on("request", lambda r: r.url.endswith("/api/friends") and fetched.append(r))
+        ben.on("request", lambda r: r.url.split("?")[0].endswith("/api/friends") and fetched.append(r))
         await asyncio.sleep(3.2)  # past the refresh throttle
         await drag(ben, "#chat-list", 60)
         await asyncio.sleep(1)

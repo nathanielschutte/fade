@@ -601,6 +601,29 @@ def check_group_e2e(tag, a, a_tok, b, b_tok):
     print("  groups, encrypted: exact member lists, own keys only, replays refused, sealed pics")
 
 
+def check_streaks(tag, a, a_tok, b, b_tok):
+    """Streaks: days in a row both friends sent each other a pic, in the
+    viewer's time zone. The test database gets backdated pics directly (the
+    API only ever stamps "now")."""
+    view = lambda tok, who, tz=0: [c for c in ok(call("GET", f"/friends?tz={tz}", tok)).json() if c["id"] == who["id"]][0]
+    assert view(a_tok, b)["streak"] == 0 and view(a_tok, b)["streak_expiring"] is False
+    ok(call("GET", "/friends?tz=999999", a_tok))                          # clamped to a real zone
+    if not DB:
+        return
+    today = int(time.time()) // 86400
+    db = sqlite3.connect(DB)
+    for d in (today - 2, today - 1, today):
+        for frm, to, sec in ((a["id"], b["id"], 60), (b["id"], a["id"], 61)):
+            db.execute("INSERT INTO messages (sender_id, recipient_id, kind, created_at, snap_state, format) VALUES (?, ?, 'snap', ?, 'opened', 2)",
+                       (frm, to, d * 86400 + sec))
+    db.commit()
+    assert view(a_tok, b)["streak"] == 3 and view(b_tok, a)["streak"] == 3
+    friend = ok(call("GET", f"/users/{b['id']}/profile?tz=0", a_tok)).json()
+    assert friend["streak"]["current"] == 3 and friend["streak"]["longest"] == 3 and friend["streak"]["expiring"] is False
+    assert ok(call("GET", f"/users/{a['id']}/profile?tz=0", a_tok)).json()["longest_streak"] >= 3
+    print("  streaks: both ways, every day, counted in the viewer's day")
+
+
 def check_marks(tag, a, a_tok, b, b_tok):
     """Favorites and hidden chats: only for friends and members, private to
     whoever sets them, and nothing is ever deleted."""
@@ -917,6 +940,7 @@ async def main():
     check_groups(tag, a, a_tok, b, b_tok)
     check_marks(tag, a, a_tok, b, b_tok)
     check_group_e2e(tag, a, a_tok, b, b_tok)
+    check_streaks(tag, a, a_tok, b, b_tok)
 
     # Signing out revokes the session; it doesn't come back.
     ok(call("POST", "/auth/logout", a_tok))

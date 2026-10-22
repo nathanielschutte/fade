@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -62,13 +62,19 @@ pub struct ChatSummary {
     hidden: bool,
     /// Their birthday as "MM-DD", if they've set one (birthdays.rs), for a 🎂 on the day.
     birthday: Option<String>,
+    /// Days in a row you've both sent each other a pic (streaks.rs); shown from 3.
+    streak: i64,
+    /// That streak runs out tonight unless you both send one today.
+    streak_expiring: bool,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
 pub async fn list_chats(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
+    Query(tz): Query<crate::streaks::Tz>,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
+    let streaks = crate::streaks::for_friends(&state.db, me.id, tz.offset_minutes()).await?;
     let rows = sqlx::query_as::<_, ChatRow>(&format!(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
@@ -113,6 +119,8 @@ pub async fn list_chats(
             hidden: crate::marks::is_hidden(row.hidden_upto, row.last_id),
             favorite: row.favorite.unwrap_or(false),
             birthday: row.birthday,
+            streak: streaks.get(&row.id).map_or(0, |s| s.current),
+            streak_expiring: streaks.get(&row.id).is_some_and(|s| s.expiring),
             last_message,
             unread: row.unread,
         });

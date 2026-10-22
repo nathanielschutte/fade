@@ -1,10 +1,10 @@
 """Profiles: your own (friends and counts) and a friend's (what you share),
 opened from the Friends sheet and from a chat's title.
 Settings come from the environment; see common.py."""
-import asyncio, datetime, uuid
+import asyncio, datetime, re, sqlite3, time, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, DB, INVITE, launch, save_recovery_key, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -45,7 +45,8 @@ PICK_IMAGE = """async (selector) => {
 
 
 def stat(page, label):
-    return page.locator("#profile-stats dt", has_text=label).locator("xpath=following-sibling::dd[1]")
+    """The value next to exactly this label ("Pic streak", not "Longest pic streak")."""
+    return page.locator("#profile-stats dt", has_text=re.compile(f"^{re.escape(label)}$")).locator("xpath=following-sibling::dd[1]")
 
 
 async def main():
@@ -151,6 +152,29 @@ async def main():
         await ana.click("#profile-dialog [data-close]")
         await expect(ben.locator(".chat-item .chat-name", has_text="Sis 🎂")).to_be_visible(timeout=10000)
         print("birthday: set with checks, on the profile, a cake on the day")
+
+        # A three-day pic streak between Ana and Ben (backdated straight into the
+        # test database; the API only stamps "now"): a flame and the count.
+        if DB:
+            db = sqlite3.connect(DB)
+            ids = dict(db.execute("SELECT username, id FROM users WHERE username IN (?, ?)", (ANA, BEN)).fetchall())
+            # Days count in the viewer's own zone: put each pic just after Ben's local midnight.
+            off = await ben.evaluate("-new Date().getTimezoneOffset()") * 60
+            today = (int(time.time()) + off) // 86400
+            for d in (today - 2, today - 1, today):
+                for frm, to, sec in ((ids[ANA], ids[BEN], 60), (ids[BEN], ids[ANA], 61)):
+                    db.execute("INSERT INTO messages (sender_id, recipient_id, kind, created_at, snap_state, format) VALUES (?, ?, 'snap', ?, 'opened', 2)",
+                               (frm, to, d * 86400 - off + sec))
+            db.commit()
+            await ben.reload()
+            await expect(ben.locator("#app")).to_be_visible(timeout=10000)
+            await expect(ben.locator(".chat-item .chat-name", has_text="Sis")).to_contain_text("🔥3", timeout=10000)
+            await ben.locator(".chat-item", has_text="Sis").click()
+            await ben.click("#chat-title")
+            await expect(stat(ben, "Pic streak")).to_contain_text("🔥 3 days")
+            await expect(stat(ben, "Longest pic streak")).to_have_text("3 days")
+            await ben.click("#profile-dialog [data-close]")
+            print("streaks: a flame and the count in the list, and on the profile")
 
         # On a phone, the chat title opens the friend's profile and nothing overflows.
         await cal.locator(".chat-item", has_text="Ana Banana").click()

@@ -11,11 +11,11 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
 | `GET  /me` | `{id, username, is_admin, display_name, avatar_id, has_recovery_key, key_reset_at}` |
-| `GET  /friends` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden, birthday}]`, newest first. `nickname`, `favorite`, and `hidden` are yours alone; `birthday` is theirs as `"MM-DD"` |
+| `GET  /friends?tz=` | Chat list: `[{id, username, display_name, nickname, avatar_id, public_key, last_message, unread, favorite, hidden, birthday, streak, streak_expiring}]`, newest first. `tz`: minutes east of UTC, for counting days (default UTC). `streak`: days in a row you've both sent each other a pic (apps show it from 3); `streak_expiring`: it ends tonight unless you both send one. `nickname`, `favorite`, and `hidden` are yours alone; `birthday` is theirs as `"MM-DD"` |
 | `PUT  /chats/{friend_id}/favorite` | `{on}`: keep this chat at the top of your list. Up to 10 favorites (direct and groups together); 400 past that |
 | `PUT  /chats/{friend_id}/hidden` | `{on}`: hide (archive) the chat from your list, or show it again. Messages stay; a newer message, from either side, shows it again by itself |
 | `DELETE /friends/{id}` | Unfriend |
-| `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). Both have `birthday: {month, day, year}` or null. 404 for anyone else |
+| `GET  /users/{id}/profile` | Your own (`kind: "me"`: friends, your counts) or a friend's (`kind: "friend"`: what you share, mutual friends). Both have `birthday: {month, day, year}` or null; a friend's has `streak: {current, expiring, longest}`, yours `longest_streak`. Takes `?tz=` like `/friends`. 404 for anyone else |
 | `GET  /friends/requests` | `{incoming: [...], outgoing: [...]}` |
 | `POST /friends/requests` | `{username}`. Auto-accepts if they already asked you |
 | `POST /friends/requests/{id}/accept` | |

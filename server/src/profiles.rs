@@ -3,7 +3,7 @@
 //! can't see message content.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::Serialize;
@@ -15,6 +15,7 @@ use crate::{
     db::pair,
     error::{AppError, AppResult},
     friends::require_friend,
+    streaks::{Streak, Tz},
     SharedState,
 };
 
@@ -56,6 +57,8 @@ pub enum Profile {
         birthday: Option<Birthday>,
         friends: Vec<FriendEntry>,
         stats: MyStats,
+        /// Your longest pic streak with anyone (streaks.rs).
+        longest_streak: i64,
     },
     Friend {
         id: i64,
@@ -70,6 +73,8 @@ pub enum Profile {
         friend_count: i64,
         mutual_friends: Vec<FriendEntry>,
         together: Together,
+        /// Your pic streak together: now, whether it's about to run out, and the longest.
+        streak: Streak,
     },
 }
 
@@ -160,8 +165,10 @@ pub async fn get(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(id): Path<i64>,
+    Query(tz): Query<Tz>,
 ) -> AppResult<Json<Profile>> {
     let db = &state.db;
+    let streaks = crate::streaks::for_friends(db, me.id, tz.offset_minutes()).await?;
     if id == me.id {
         let (username, joined_at) = joined(db, me.id).await?.ok_or(AppError::Unauthorized)?;
         let (display_name, avatar_id) = crate::people::own_profile(db, me.id).await?;
@@ -175,6 +182,7 @@ pub async fn get(
             birthday: crate::birthdays::current(db, me.id).await?,
             friends: friends_of(db, me.id).await?,
             stats: my_stats(db, me.id).await?,
+            longest_streak: streaks.values().map(|s| s.longest).max().unwrap_or(0),
         }));
     }
 
@@ -212,6 +220,7 @@ pub async fn get(
         friend_count,
         mutual_friends: mutual_friends(db, me.id, id).await?,
         together: together(db, me.id, id).await?,
+        streak: streaks.get(&id).copied().unwrap_or_default(),
     }))
 }
 
