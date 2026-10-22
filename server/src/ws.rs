@@ -39,7 +39,7 @@ pub enum Event {
     /// A new message (or membership event) in a group you're in.
     GroupMessage {
         group_id: i64,
-        message: crate::groups::GroupMessage,
+        message: Box<crate::groups::GroupMessage>,
     },
     /// A group's name, members, or your read position changed; refetch it.
     GroupsChanged { group_id: i64 },

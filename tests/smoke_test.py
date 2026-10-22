@@ -540,6 +540,67 @@ async def check_live(tag):
     print("  live: presence, typing, push (encrypted, signed, who-not-what), reactions, replies")
 
 
+def check_group_e2e(tag, a, a_tok, b, b_tok):
+    """End-to-end encrypted group messages (format 3, docs/group-encryption.md):
+    the server checks the member list and the keys' shapes, stores the sealed
+    content once, and hands each member only their own key. The crypto itself
+    is checked by the vectors and the browser tests."""
+    out_tok = ok(register(f"grpout_{tag}")).json()["token"]
+    g = ok(call("POST", "/groups", a_tok, json={"name": f"sealed {tag}", "member_ids": [b["id"]]})).json()
+    gid, members = g["id"], sorted([a["id"], b["id"]])
+    detail = ok(call("GET", f"/groups/{gid}", b_tok)).json()
+    assert all(m["public_key"] for m in detail["members"]), "members come with their public keys"
+
+    def sealed(recipients=members, **over):
+        body = {"format": 3, "content": b64(os.urandom(80)), "client_id": b64(os.urandom(16)),
+                "recipients": recipients, "wraps": {str(i): b64(os.urandom(60)) for i in recipients}}
+        body.update(over)
+        return body
+
+    ok(call("POST", f"/groups/{gid}/messages", out_tok, json=sealed()), 404)                    # not a member
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed([a["id"]])), 409)            # stale member list
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(wraps={str(a["id"]): b64(os.urandom(60))})), 400)
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(wraps={str(i): b64(os.urandom(59)) for i in members})), 400)
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(content="")), 400)
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(client_id=b64(os.urandom(8)))), 400)
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(format=7)), 400)
+
+    first = sealed()
+    m = ok(call("POST", f"/groups/{gid}/messages", a_tok, json=first)).json()
+    assert m["format"] == 3 and m["body"] == "" and m["content"] == first["content"], m
+    assert m["key"] == first["wraps"][str(a["id"])] and m["recipients"] == members and m["sender_public_key"]
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=first), 409)                        # a replay
+    ok(call("POST", f"/groups/{gid}/messages", b_tok, json=sealed()))
+
+    seen = ok(call("GET", f"/groups/{gid}/messages", b_tok)).json()
+    mine = [x for x in seen if x["id"] == m["id"]][0]
+    assert mine["key"] == first["wraps"][str(b["id"])] and mine["content"] == first["content"]
+    assert first["wraps"][str(a["id"])] not in json.dumps(seen), "nobody gets another member's key"
+    started = [x for x in seen if x["kind"] == "event" and json.loads(x["body"])["type"] == "encrypted"]
+    assert len(started) == 1 and started[0]["id"] < m["id"], "one 'encrypted from now on' event, first"
+    last = [x for x in ok(call("GET", "/groups", b_tok)).json() if x["id"] == gid][0]["last_message"]
+    assert last["format"] == 3 and last["key"] and last["content"]
+
+    # Pics: sealed bytes, view-once, served exactly as sent.
+    photo = os.urandom(700)
+    keys = {"client_id": b64(os.urandom(16)), "recipients": members,
+            "wraps": {str(i): b64(os.urandom(60)) for i in members}}
+    ok(call("POST", f"/groups/{gid}/pics?format=3", a_tok, data=photo), 400)                  # no keys
+    pm = ok(call("POST", f"/groups/{gid}/pics?format=3", a_tok, data=photo,
+                 headers={"X-Napsack-Keys": json.dumps(keys)})).json()
+    assert pm["format"] == 3 and pm["pic"] and pm["key"] == keys["wraps"][str(a["id"])]
+    r = ok(call("GET", f"/groups/{gid}/pics/{pm['pic']['id']}", b_tok))
+    assert r.content == photo and r.headers["content-type"] == "application/octet-stream"
+    ok(call("GET", f"/groups/{gid}/pics/{pm['pic']['id']}", b_tok), 410)                     # view once
+
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "an old client"}))         # format 0 still works
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM group_message_keys WHERE message_id = ?", (m["id"],)).fetchone()[0] == 2
+        assert db.execute("SELECT body FROM group_messages WHERE id = ?", (m["id"],)).fetchone()[0] == first["content"]
+    print("  groups, encrypted: exact member lists, own keys only, replays refused, sealed pics")
+
+
 def check_marks(tag, a, a_tok, b, b_tok):
     """Favorites and hidden chats: only for friends and members, private to
     whoever sets them, and nothing is ever deleted."""
@@ -855,6 +916,7 @@ async def main():
     check_people(tag, a, a_tok, b, b_tok)
     check_groups(tag, a, a_tok, b, b_tok)
     check_marks(tag, a, a_tok, b, b_tok)
+    check_group_e2e(tag, a, a_tok, b, b_tok)
 
     # Signing out revokes the session; it doesn't come back.
     ok(call("POST", "/auth/logout", a_tok))

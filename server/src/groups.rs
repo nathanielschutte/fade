@@ -31,6 +31,13 @@ pub const MAX_MEMBERS: i64 = 32;
 const MAX_TEXT_CHARS: usize = 2000;
 /// `format` of an unencrypted group message.
 pub const FORMAT_PLAINTEXT: i64 = 0;
+/// `format` of an end-to-end encrypted group message (docs/group-encryption.md).
+pub const FORMAT_E2E: i64 = 3;
+/// A format 3 text's sealed content, decoded: the 2,000-character envelope
+/// with room for escapes, plus IV and tag.
+const MAX_E2E_CONTENT_BYTES: usize = 16 * 1024;
+/// A wrapped message key: IV (12) + key (32) + GCM tag (16).
+const WRAP_BYTES: usize = 60;
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct GroupMessage {
@@ -52,16 +59,39 @@ pub struct GroupMessage {
     pub pic: Option<crate::group_pics::PicInfo>,
     #[sqlx(skip)]
     pub reactions: Vec<crate::reactions::GroupReaction>,
+    /// Format 3: the sender's random message id (base64).
+    pub client_id: Option<String>,
+    /// Format 3: the member list the sender encrypted for, as stored (JSON).
+    #[serde(skip)]
+    #[sqlx(rename = "recipients")]
+    pub recipients_json: Option<String>,
+    /// Format 3: that member list, which readers need to check their key.
+    #[sqlx(skip)]
+    pub recipients: Option<Vec<i64>>,
+    /// Format 3: the sealed content (base64). `body` is empty for these, so a
+    /// client that predates format 3 shows nothing rather than gibberish.
+    /// Pics keep theirs in the pic file.
+    #[sqlx(skip)]
+    pub content: Option<String>,
+    /// Format 3: the viewer's own wrap of the message key. Nobody gets anyone else's.
+    #[sqlx(skip)]
+    pub key: Option<String>,
+    /// Format 3: the sender's public key, to unwrap with. Clients check it
+    /// against the key they pinned for that person.
+    pub sender_public_key: Option<String>,
 }
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
-        gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to
+        gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to,
+        gm.client_id, gm.recipients, CASE WHEN gm.format = 3 THEN u.public_key END AS sender_public_key
      FROM group_messages gm JOIN users u ON u.id = gm.sender_id";
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct Member {
     pub id: i64,
     pub username: String,
+    /// For encrypting to them (format 3). Clients pin it on first sight.
+    pub public_key: String,
     pub role: String,
     pub joined_at: i64,
     pub added_by: Option<i64>,
@@ -142,7 +172,7 @@ pub async fn member_ids(db: &SqlitePool, group: i64) -> sqlx::Result<Vec<i64>> {
 
 pub async fn members(db: &SqlitePool, group: i64) -> sqlx::Result<Vec<Member>> {
     sqlx::query_as(
-        "SELECT u.id, u.username, m.role, m.joined_at, m.added_by
+        "SELECT u.id, u.username, u.public_key, m.role, m.joined_at, m.added_by
          FROM group_members m JOIN users u ON u.id = m.user_id
          WHERE m.group_id = ? AND m.left_at IS NULL
          ORDER BY m.role = 'owner' DESC, lower(u.username)",
@@ -221,17 +251,184 @@ async fn username(db: &SqlitePool, id: i64) -> sqlx::Result<String> {
         .await
 }
 
-/// Sends a new group message to everyone currently in the group.
+/// Sends a new group message to everyone currently in the group. A format 3
+/// message goes to each member with their own key.
 pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
     let ids = member_ids(&state.db, message.group_id).await?;
-    state.hub.send_many(
-        &ids,
-        &Event::GroupMessage {
-            group_id: message.group_id,
-            message,
-        },
-    );
+    if message.format != FORMAT_E2E {
+        state.hub.send_many(
+            &ids,
+            &Event::GroupMessage {
+                group_id: message.group_id,
+                message: Box::new(message),
+            },
+        );
+        return Ok(());
+    }
+    for id in ids {
+        let mut m = message.clone();
+        prepare_for(&state.db, id, std::slice::from_mut(&mut m)).await?;
+        state.hub.send(
+            id,
+            &Event::GroupMessage {
+                group_id: m.group_id,
+                message: Box::new(m),
+            },
+        );
+    }
     Ok(())
+}
+
+/// Readies format 3 messages for one viewer: content out of `body`, the
+/// member list parsed, and that viewer's own wrap attached (or none, if it
+/// wasn't sent to them). Safe to call twice on the same message.
+pub async fn prepare_for(
+    db: &SqlitePool,
+    viewer: i64,
+    messages: &mut [GroupMessage],
+) -> sqlx::Result<()> {
+    for m in messages.iter_mut().filter(|m| m.format == FORMAT_E2E) {
+        if m.content.is_none() && m.pic_id.is_none() {
+            m.content = Some(std::mem::take(&mut m.body));
+        }
+        m.recipients = m
+            .recipients_json
+            .as_deref()
+            .and_then(|j| serde_json::from_str(j).ok());
+        m.key = sqlx::query_scalar(
+            "SELECT wrapped FROM group_message_keys WHERE message_id = ? AND user_id = ?",
+        )
+        .bind(m.id)
+        .bind(viewer)
+        .fetch_optional(db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// What a format 3 sender sends besides the content.
+#[derive(Deserialize)]
+pub struct E2eKeys {
+    pub client_id: String,
+    pub recipients: Vec<i64>,
+    /// Member id (as a string, JSON object keys being strings) -> wrapped key.
+    pub wraps: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum E2eProblem {
+    /// The sender's member list isn't the group's: they should refetch and resend.
+    Stale,
+    Bad(&'static str),
+}
+
+/// Checks a format 3 send against the group's current members (sorted).
+/// Returns the wraps by member id.
+pub fn check_e2e(members: &[i64], keys: &E2eKeys) -> Result<Vec<(i64, String)>, E2eProblem> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    if STANDARD.decode(&keys.client_id).map(|b| b.len()).ok() != Some(16) {
+        return Err(E2eProblem::Bad("That message id isn't valid."));
+    }
+    let mut recipients = keys.recipients.clone();
+    recipients.sort_unstable();
+    recipients.dedup();
+    if recipients.len() != keys.recipients.len() {
+        return Err(E2eProblem::Bad("That member list has someone twice."));
+    }
+    if recipients != members {
+        return Err(E2eProblem::Stale);
+    }
+    if keys.wraps.len() != members.len() {
+        return Err(E2eProblem::Bad("There has to be one key for each member."));
+    }
+    let mut out = Vec::with_capacity(members.len());
+    for (id, wrapped) in &keys.wraps {
+        let id: i64 = id
+            .parse()
+            .map_err(|_| E2eProblem::Bad("Keys are by member id."))?;
+        if !members.contains(&id) {
+            return Err(E2eProblem::Bad(
+                "There's a key for someone not in the group.",
+            ));
+        }
+        if STANDARD.decode(wrapped).map(|b| b.len()).ok() != Some(WRAP_BYTES) {
+            return Err(E2eProblem::Bad("A key isn't the right size."));
+        }
+        out.push((id, wrapped.clone()));
+    }
+    out.sort_unstable();
+    Ok(out)
+}
+
+impl From<E2eProblem> for AppError {
+    fn from(p: E2eProblem) -> Self {
+        match p {
+            E2eProblem::Stale => AppError::Conflict(
+                "The group changed while you were writing. Sending again.".into(),
+            ),
+            E2eProblem::Bad(m) => AppError::bad(m),
+        }
+    }
+}
+
+/// The group's first encrypted message gets an event before it: "Messages
+/// here are end-to-end encrypted from now on." Call inside the send's
+/// transaction. Returns the event's id, if this was the first.
+pub async fn mark_encrypted_start(
+    tx: &mut sqlx::SqliteConnection,
+    group: i64,
+    sender: i64,
+    at: i64,
+) -> sqlx::Result<Option<i64>> {
+    let already: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM group_messages WHERE group_id = ? AND format = 3 LIMIT 1",
+    )
+    .bind(group)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if already.is_some() {
+        return Ok(None);
+    }
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at)
+         VALUES (?, ?, 'event', ?, 0, ?) RETURNING id",
+    )
+    .bind(group)
+    .bind(sender)
+    .bind(json!({ "type": "encrypted" }).to_string())
+    .bind(at)
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(Some(id))
+}
+
+/// Stores a format 3 message's wraps. Inside the send's transaction.
+pub async fn store_wraps(
+    tx: &mut sqlx::SqliteConnection,
+    message: i64,
+    wraps: &[(i64, String)],
+) -> sqlx::Result<()> {
+    for (user, wrapped) in wraps {
+        sqlx::query(
+            "INSERT INTO group_message_keys (message_id, user_id, wrapped) VALUES (?, ?, ?)",
+        )
+        .bind(message)
+        .bind(user)
+        .bind(wrapped)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// A replayed format 3 message hits the unique index on its message id.
+pub fn replay(e: sqlx::Error) -> AppError {
+    match e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => {
+            AppError::Conflict("That message was already sent.".into())
+        }
+        e => e.into(),
+    }
 }
 
 async fn detail(db: &SqlitePool, group: i64, role: String) -> AppResult<GroupDetail> {
@@ -288,7 +485,11 @@ pub async fn list(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let last_message = match r.last_id {
-            Some(id) => Some(get_message(&state.db, id).await?),
+            Some(id) => {
+                let mut m = get_message(&state.db, id).await?;
+                prepare_for(&state.db, me.id, std::slice::from_mut(&mut m)).await?;
+                Some(m)
+            }
             None => None,
         };
         out.push(GroupSummary {
@@ -606,23 +807,43 @@ pub async fn messages(
     out.reverse();
     crate::group_pics::attach(&state.db, &mut out).await?;
     crate::reactions::attach_group(&state.db, &mut out).await?;
+    prepare_for(&state.db, me.id, &mut out).await?;
     Ok(Json(out))
 }
 
 #[derive(Deserialize)]
 pub struct NewText {
+    /// Format 0: the text itself.
+    #[serde(default)]
     text: String,
-    /// A message in this group to reply to.
+    /// Format 0: a message in this group to reply to (format 3 replies travel
+    /// inside the encrypted envelope).
     reply_to: Option<i64>,
+    /// 3 for an end-to-end encrypted message; 0 or absent for plain text.
+    #[serde(default)]
+    format: i64,
+    /// Format 3: base64 of the sealed content.
+    content: Option<String>,
+    /// Format 3: `client_id`, `recipients`, `wraps`.
+    #[serde(flatten)]
+    keys: Option<E2eKeys>,
 }
 
-/// `POST /api/groups/{id}/messages`: plain text (not end-to-end encrypted in v1).
+/// `POST /api/groups/{id}/messages`: an end-to-end encrypted message
+/// (`format` 3: `content`, `client_id`, `recipients`, `wraps`), or plain text
+/// (format 0, from clients that predate encryption).
 pub async fn send(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
     Path(group): Path<i64>,
     Json(req): Json<NewText>,
 ) -> AppResult<Json<GroupMessage>> {
+    if req.format == FORMAT_E2E {
+        return send_e2e(state, me.id, group, req).await;
+    }
+    if req.format != FORMAT_PLAINTEXT {
+        return Err(AppError::bad("Unknown message format."));
+    }
     let (_, visible_after) = require_member(&state.db, group, me.id).await?;
     let text = req.text.trim();
     if text.is_empty() {
@@ -671,6 +892,63 @@ pub async fn send(
     broadcast(&state, message.clone()).await?;
     notify_members(&state, group, me.id, "new message").await?;
     Ok(Json(message))
+}
+
+async fn send_e2e(
+    state: SharedState,
+    me: i64,
+    group: i64,
+    req: NewText,
+) -> AppResult<Json<GroupMessage>> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    require_member(&state.db, group, me).await?;
+    let keys = req
+        .keys
+        .ok_or_else(|| AppError::bad("An encrypted message needs its keys."))?;
+    let content = req.content.unwrap_or_default();
+    let size = STANDARD.decode(&content).map(|b| b.len()).unwrap_or(0);
+    if !(12 + 16 + 1..=MAX_E2E_CONTENT_BYTES).contains(&size) {
+        return Err(AppError::bad("That message is empty or too long."));
+    }
+    let mut members = member_ids(&state.db, group).await?;
+    members.sort_unstable();
+    let wraps = check_e2e(&members, &keys)?;
+    let recipients =
+        serde_json::to_string(&members).map_err(|e| AppError::Internal(e.to_string()))?;
+    let at = now();
+    let mut tx = state.db.begin().await?;
+    let started = mark_encrypted_start(&mut tx, group, me, at).await?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at, client_id, recipients)
+         VALUES (?, ?, 'text', ?, 3, ?, ?, ?) RETURNING id",
+    )
+    .bind(group)
+    .bind(me)
+    .bind(&content)
+    .bind(at)
+    .bind(&keys.client_id)
+    .bind(&recipients)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(replay)?;
+    store_wraps(&mut tx, id, &wraps).await?;
+    tx.commit().await?;
+    tracing::debug!(
+        group_id = group,
+        message_id = id,
+        from = me,
+        "group text sent, encrypted"
+    );
+    if let Some(event) = started {
+        tracing::info!(group_id = group, "group switched to end-to-end encryption");
+        broadcast(&state, get_message(&state.db, event).await?).await?;
+    }
+    let message = get_message(&state.db, id).await?;
+    broadcast(&state, message.clone()).await?;
+    notify_members(&state, group, me, "new message").await?;
+    let mut mine = message;
+    prepare_for(&state.db, me, std::slice::from_mut(&mut mine)).await?;
+    Ok(Json(mine))
 }
 
 /// `POST /api/groups/{id}/read`: everything up to now is read.
@@ -809,6 +1087,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, 2, "leaving keeps the row");
+    }
+
+    #[test]
+    fn encrypted_sends_must_match_the_group_exactly() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let wrap = STANDARD.encode([7u8; 60]);
+        let keys = |recipients: Vec<i64>, wraps: Vec<(&str, String)>, client_id: String| E2eKeys {
+            client_id,
+            recipients,
+            wraps: wraps.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        };
+        let mid = STANDARD.encode([1u8; 16]);
+        let members = [3, 7];
+        let ok = keys(
+            vec![7, 3],
+            vec![("3", wrap.clone()), ("7", wrap.clone())],
+            mid.clone(),
+        );
+        assert_eq!(
+            check_e2e(&members, &ok).unwrap(),
+            vec![(3, wrap.clone()), (7, wrap.clone())]
+        );
+
+        // Someone joined or left meanwhile: the sender refetches and resends.
+        let stale = keys(
+            vec![3, 7, 9],
+            vec![
+                ("3", wrap.clone()),
+                ("7", wrap.clone()),
+                ("9", wrap.clone()),
+            ],
+            mid.clone(),
+        );
+        assert_eq!(check_e2e(&members, &stale), Err(E2eProblem::Stale));
+        assert_eq!(
+            check_e2e(
+                &members,
+                &keys(vec![3], vec![("3", wrap.clone())], mid.clone())
+            ),
+            Err(E2eProblem::Stale)
+        );
+        // Malformed: a missing or extra key, a wrong-size key, a bad message id, a duplicate.
+        for bad in [
+            keys(vec![3, 7], vec![("3", wrap.clone())], mid.clone()),
+            keys(
+                vec![3, 7],
+                vec![("3", wrap.clone()), ("9", wrap.clone())],
+                mid.clone(),
+            ),
+            keys(
+                vec![3, 7],
+                vec![("3", wrap.clone()), ("7", STANDARD.encode([7u8; 59]))],
+                mid.clone(),
+            ),
+            keys(
+                vec![3, 7],
+                vec![("3", wrap.clone()), ("seven", wrap.clone())],
+                mid.clone(),
+            ),
+            keys(
+                vec![3, 7],
+                vec![("3", wrap.clone()), ("7", wrap.clone())],
+                STANDARD.encode([1u8; 15]),
+            ),
+            keys(
+                vec![3, 3, 7],
+                vec![("3", wrap.clone()), ("7", wrap.clone())],
+                mid.clone(),
+            ),
+        ] {
+            assert!(matches!(check_e2e(&members, &bad), Err(E2eProblem::Bad(_))));
+        }
     }
 
     #[tokio::test]

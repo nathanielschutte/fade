@@ -183,9 +183,18 @@ pub const MAX_CAPTION_CHARS: usize = 200;
 #[derive(serde::Deserialize)]
 pub struct UploadParams {
     /// `?caption=...`: shown with the pic when it's opened. Query strings are never logged.
+    /// Format 0 only; a format 3 caption is sealed in with the photo.
     #[serde(default)]
     caption: String,
+    /// `?format=3`: an end-to-end encrypted pic (docs/group-encryption.md).
+    #[serde(default)]
+    format: i64,
 }
+
+/// Format 3 pics carry their keys in this header: JSON `{client_id, recipients, wraps}`.
+const KEYS_HEADER: &str = "x-napsack-keys";
+/// Sealed: caption length (2) + at least a little photo, plus IV and tag.
+const MIN_E2E_PIC_BYTES: usize = 12 + 16 + 2 + MIN_IMAGE_BYTES;
 
 /// One line, checked like any other text people see (text.rs). Blank is none.
 fn clean_caption(raw: &str) -> AppResult<Option<String>> {
@@ -207,8 +216,15 @@ pub async fn upload(
     AuthUser(me): AuthUser,
     Path(group): Path<i64>,
     Query(params): Query<UploadParams>,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<GroupMessage>> {
+    if params.format == groups::FORMAT_E2E {
+        return upload_e2e(state, me.id, group, &headers, body).await;
+    }
+    if params.format != groups::FORMAT_PLAINTEXT {
+        return Err(AppError::bad("Unknown pic format."));
+    }
     groups::require_member(&state.db, group, me.id).await?;
     let caption = clean_caption(&params.caption)?;
     if body.len() < MIN_IMAGE_BYTES {
@@ -292,6 +308,119 @@ pub async fn upload(
     Ok(Json(message))
 }
 
+/// An end-to-end encrypted group pic: opaque bytes the server can't open, so
+/// unlike format 0 pics it isn't rebuilt by `images::clean`. Each member's
+/// app decodes it after decrypting, like a direct pic. View-once and the
+/// 30-day lifetime work the same.
+async fn upload_e2e(
+    state: SharedState,
+    me: i64,
+    group: i64,
+    headers: &axum::http::HeaderMap,
+    body: Bytes,
+) -> AppResult<Json<GroupMessage>> {
+    groups::require_member(&state.db, group, me).await?;
+    let keys: groups::E2eKeys = headers
+        .get(KEYS_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| serde_json::from_str(v).ok())
+        .ok_or_else(|| AppError::bad("An encrypted pic needs its keys."))?;
+    if body.len() < MIN_E2E_PIC_BYTES {
+        return Err(AppError::bad("That pic was empty."));
+    }
+    if body.len() > state.config.snap_max_bytes {
+        return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
+    }
+    crate::guard::check_upload_room(&state)?;
+    if !state.image_upload_limit.allow(&me.to_string()) {
+        return Err(AppError::TooManyRequests(
+            "You're sending pics too fast. Wait a minute.".into(),
+        ));
+    }
+    let mut members = groups::member_ids(&state.db, group).await?;
+    members.sort_unstable();
+    let wraps = groups::check_e2e(&members, &keys)?;
+    let recipients =
+        serde_json::to_string(&members).map_err(|e| AppError::Internal(e.to_string()))?;
+    let (_, held) = pending(&state.db).await?;
+    if held as usize + body.len() > state.config.group_pic_disk_bytes {
+        tracing::warn!(
+            group_id = group,
+            held,
+            "group pic rejected: disk cap reached"
+        );
+        return Err(AppError::Unavailable(
+            "The server is holding too many unopened pics. Try again later.".into(),
+        ));
+    }
+
+    let at = now();
+    let mut tx = state.db.begin().await?;
+    let started = groups::mark_encrypted_start(&mut tx, group, me, at).await?;
+    let pic: i64 = sqlx::query_scalar(
+        "INSERT INTO group_pics (group_id, sender_id, bytes, mime, caption, created_at, expires_at, format)
+         VALUES (?, ?, ?, 'application/octet-stream', NULL, ?, ?, 3) RETURNING id",
+    )
+    .bind(group)
+    .bind(me)
+    .bind(body.len() as i64)
+    .bind(at)
+    .bind(at + state.config.group_pic_ttl.as_secs() as i64)
+    .fetch_one(&mut *tx)
+    .await?;
+    let path = pic_path(&state, pic);
+    let tmp = path.with_extension("tmp");
+    tokio::fs::write(&tmp, &body)
+        .await
+        .map_err(|e| AppError::Internal(format!("writing pic: {e}")))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|e| AppError::Internal(format!("saving pic: {e}")))?;
+    let inserted: Result<i64, AppError> = sqlx::query_scalar(
+        "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at, pic_id, client_id, recipients)
+         VALUES (?, ?, 'text', '', 3, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(group)
+    .bind(me)
+    .bind(at)
+    .bind(pic)
+    .bind(&keys.client_id)
+    .bind(&recipients)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(groups::replay);
+    let id = match inserted {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(e);
+        }
+    };
+    groups::store_wraps(&mut tx, id, &wraps).await?;
+    if let Err(e) = tx.commit().await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(e.into());
+    }
+
+    tracing::info!(
+        group_id = group,
+        pic_id = pic,
+        from = me,
+        bytes = body.len(),
+        "group pic sent, encrypted"
+    );
+    if let Some(event) = started {
+        tracing::info!(group_id = group, "group switched to end-to-end encryption");
+        groups::broadcast(&state, groups::get_message(&state.db, event).await?).await?;
+    }
+    let message = groups::get_message(&state.db, id).await?;
+    groups::broadcast(&state, message.clone()).await?;
+    groups::notify_members(&state, group, me, "sent a pic").await?;
+    let mut mine = message;
+    groups::prepare_for(&state.db, me, std::slice::from_mut(&mut mine)).await?;
+    Ok(Json(mine))
+}
+
 /// sender, mime, discarded_at, expires_at, message id, caption
 type PicRow = (i64, String, Option<i64>, i64, i64, Option<String>);
 
@@ -357,6 +486,17 @@ pub async fn view(
     );
     discard_if_everyone_opened(&state, pic).await?;
     rebroadcast(&state, pic).await?;
+    if mime == "application/octet-stream" {
+        // Format 3: sealed bytes, opened by the member's app with their key.
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            data,
+        )
+            .into_response());
+    }
     let mut response = image_response(&mime, data);
     if let Some(caption) = caption {
         // Headers are ASCII; the client decodes this with decodeURIComponent.

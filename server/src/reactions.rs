@@ -236,8 +236,9 @@ pub async fn react_group(
     .bind(now())
     .execute(&state.db)
     .await?;
-    let message = groups::get_message(&state.db, message_id).await?;
+    let mut message = groups::get_message(&state.db, message_id).await?;
     groups::broadcast(&state, message.clone()).await?;
+    groups::prepare_for(&state.db, me.id, std::slice::from_mut(&mut message)).await?;
     if req.emoji.is_some() && author != me.id {
         let group_name: String = sqlx::query_scalar("SELECT name FROM groups WHERE id = ?")
             .bind(group)
