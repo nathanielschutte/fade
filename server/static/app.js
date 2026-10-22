@@ -2277,6 +2277,12 @@ async function openGroupInfo(groupId) {
   $("#group-sub").textContent = `${g.members.length} ${g.members.length === 1 ? "person" : "people"} · you're ${g.role === "owner" ? "the owner" : "a member"}`;
   if (document.activeElement !== $("#rename-input")) $("#rename-input").value = g.name;
   $("#group-members-title").textContent = `Members (${g.members.length})`;
+  // Who can remove people: only the owner (the server enforces it). Saying so
+  // saves everyone else from looking for a button that isn't there.
+  const owner = g.members.find((m) => m.role === "owner");
+  $("#group-remove-hint").textContent = g.role === "owner"
+    ? "You're the owner, so you can remove people. Everything they sent stays in the chat."
+    : `Only ${owner ? personName(owner.id, owner.username) : "the owner"} can remove people. You can add your friends.`;
   $("#group-members").replaceChildren(...g.members.map((m) => {
     const me = m.id === state.me.id;
     const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
@@ -2289,7 +2295,8 @@ async function openGroupInfo(groupId) {
         : el("span", { class: "person-name", text: me ? `${personName(m.id, m.username)} (you)` : m.username }),
       m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
       g.role === "owner" && !me
-        ? el("button", { type: "button", class: "button", onclick: () => removeFromGroup(g, m) }, "Remove")
+        ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
+          onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
         : null);
   }));
   const inGroup = new Set(g.members.map((m) => m.id));
@@ -2324,8 +2331,16 @@ async function groupAction(fn, done) {
 
 const addToGroup = (g, f) => groupAction(
   () => api(`/groups/${g.id}/members`, { method: "POST", json: { user_id: f.id } }), `Added ${chatName(f)}.`);
-const removeFromGroup = (g, m) => groupAction(
-  () => api(`/groups/${g.id}/members/${m.id}`, { method: "DELETE" }), `Removed ${personName(m.id, m.username)}.`);
+/** Removing someone takes two taps, like leaving. */
+function removeFromGroup(btn, g, m) {
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again to remove";
+    btn.classList.add("danger");
+    return;
+  }
+  groupAction(() => api(`/groups/${g.id}/members/${m.id}`, { method: "DELETE" }), `Removed ${personName(m.id, m.username)}.`);
+}
 
 $("#rename-form").addEventListener("submit", (e) => {
   e.preventDefault();

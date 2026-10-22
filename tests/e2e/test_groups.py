@@ -136,7 +136,12 @@ async def main():
         await expect(group_item(dee)).to_be_visible(timeout=10000)
 
         # Ana removes Cal, who has the group open: it closes for Cal.
-        await ana.locator("#group-members .person", has_text=CAL).locator("button", has_text="Remove").click()
+        await expect(ana.locator("#group-remove-hint")).to_contain_text("you can remove people")
+        remove = ana.locator("#group-members .person", has_text=CAL).locator("button", has_text="Remove")
+        await remove.click()                                   # two taps, like leaving
+        await expect(remove).to_have_text("Tap again to remove")
+        await expect(ana.locator("#group-members .person")).to_have_count(4)
+        await remove.click()
         await expect(ana.locator("#group-members .person")).to_have_count(3, timeout=10000)
         await expect(group_item(cal)).to_have_count(0, timeout=10000)
         await expect(cal.locator("#chat")).to_be_hidden()
@@ -179,6 +184,7 @@ async def main():
         await ben.click("#chat-title")
         await expect(ben.locator("#group-members .person")).to_have_count(3)
         await expect(ben.locator("#group-members button", has_text="Remove")).to_have_count(0)
+        await expect(ben.locator("#group-remove-hint")).to_have_text(f"Only {ANA} can remove people. You can add your friends.")
         await ben.fill("#rename-input", "Road trip 2026")
         await ben.click("#rename-form button")
         await expect(ana.locator("#chat-title")).to_have_text("Road trip 2026", timeout=10000)
