@@ -53,10 +53,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | Push refusals log the push service's reason; an unchanged subscription no longer adds a row | 0.17.3 |
 | [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 |
 | [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 |
+| iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.18.1**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
+Production runs **0.18.2**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
 **Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 

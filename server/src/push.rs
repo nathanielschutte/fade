@@ -356,12 +356,20 @@ pub fn notify(state: &SharedState, user: i64, note: Note) {
 }
 
 /// Push services accept a short topic so a newer notification replaces an
-/// undelivered one: base64url characters, at most 32.
-fn topic(tag: &str) -> String {
-    tag.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(32)
-        .collect()
+/// undelivered one. Apple decodes it as base64url, so it must be a valid
+/// encoding, not just base64url characters ("dm-10" is refused with
+/// BadWebPushTopic: 5 characters can't be base64). And the tag itself says
+/// who sent it, so it's keyed with the subscription's auth secret, which only
+/// the server and that browser know: the same chat always gets the same
+/// topic, and the push service learns nothing from it. 18 bytes encode to
+/// exactly 24 characters, within the 32 allowed.
+fn topic(tag: &str, auth: &[u8]) -> String {
+    use hkdf::Hkdf;
+    let mut out = [0u8; 18];
+    Hkdf::<Sha256>::new(Some(auth), tag.as_bytes())
+        .expand(b"napsack push topic", &mut out)
+        .expect("18 bytes is a valid HKDF length");
+    B64URL.encode(out)
 }
 
 async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<()> {
@@ -381,10 +389,11 @@ async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<
         };
         let mut salt = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut salt);
+        let auth = B64URL.decode(&auth)?;
         let body = encrypt(
             &payload,
             &B64URL.decode(&p256dh)?,
-            &B64URL.decode(&auth)?,
+            &auth,
             &SecretKey::random(&mut OsRng),
             salt,
         )
@@ -397,7 +406,7 @@ async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<
             .post(url)
             .header("TTL", TTL)
             .header("Urgency", "high")
-            .header("Topic", topic(&note.tag))
+            .header("Topic", topic(&note.tag, &auth))
             .header("Content-Encoding", "aes128gcm")
             .header("Content-Type", "application/octet-stream")
             .header("Authorization", auth_header)
@@ -535,6 +544,36 @@ mod tests {
         }
         assert!(allowed_endpoint("http://127.0.0.1:9/x", true).is_some());
         assert!(allowed_endpoint("http://10.0.0.1:9/x", true).is_none());
-        assert_eq!(topic("dm-7 & more!"), "dm-7more");
+    }
+
+    /// Apple refused "dm-10" (BadWebPushTopic): topics must decode as
+    /// base64url. Every topic is 24 valid characters, stable per chat and
+    /// browser, and doesn't reveal the tag.
+    #[test]
+    fn topics_are_valid_base64url_and_opaque() {
+        let auth = [7u8; 16];
+        let other = [8u8; 16];
+        for tag in [
+            "dm-1",
+            "dm-10",
+            "dm-11",
+            "dm-123456",
+            "group-3",
+            "requests",
+            "",
+        ] {
+            let t = topic(tag, &auth);
+            assert_eq!(t.len(), 24, "{tag}");
+            assert_eq!(B64URL.decode(&t).unwrap().len(), 18, "{tag}");
+            assert!(t
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+            assert_eq!(t, topic(tag, &auth), "same chat, same topic");
+            assert_ne!(t, topic(tag, &other), "each browser gets its own");
+            if !tag.is_empty() {
+                assert!(!t.contains(tag), "the tag doesn't show through");
+            }
+        }
+        assert_ne!(topic("dm-10", &auth), topic("dm-11", &auth));
     }
 }

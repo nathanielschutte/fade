@@ -37,6 +37,11 @@ class Browser:
         """What PushSubscription.toJSON() gives a page."""
         return {"endpoint": self.endpoint, "keys": {"p256dh": b64url(self.public), "auth": b64url(self.auth)}}
 
+    def topic(self, tag):
+        """The Topic header the server should send for `tag` (push.rs, topic):
+        keyed with this browser's auth secret, 24 base64url characters."""
+        return b64url(hkdf(self.auth, tag.encode(), b"napsack push topic", 18))
+
     def decrypt(self, body):
         """RFC 8291 (aes128gcm), one record."""
         salt, rs, idlen = body[:16], int.from_bytes(body[16:20], "big"), body[20]

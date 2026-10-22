@@ -446,7 +446,9 @@ async def check_live(tag):
     ok(call("PUT", "/me/name", a_tok, json={"name": "Ana Live"}))
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
     name, headers, body = rx.wait_for(phone.endpoint.rsplit("/", 1)[-1])[0]
-    assert headers["content-encoding"] == "aes128gcm" and headers["ttl"] == "86400" and headers["topic"] == f"dm-{a['id']}"
+    assert headers["content-encoding"] == "aes128gcm" and headers["ttl"] == "86400"
+    # The topic collapses notes per chat without telling the push service who sent them.
+    assert headers["topic"] == phone.topic(f"dm-{a['id']}") and len(headers["topic"]) == 24, headers["topic"]
     assert headers["urgency"] == "high"
     assert check_vapid(headers["authorization"], rx.origin) == vapid
     note = phone.decrypt(body)
