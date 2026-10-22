@@ -248,6 +248,29 @@ async function load() {
   render(await res.json());
   $("#message").hidden = true;
   $("#admin").hidden = false;
+  connectPresence();
+}
+
+// Looking at this page counts as being online, like having the app open, so
+// "Online now" includes whoever is looking at it. (Before, the page held no
+// connection, and an admin checking from the Home Screen app, where /admin
+// replaces the app, saw 0 while plainly online.) The socket never says the
+// page is on screen, so notifications for new messages still arrive.
+let presence = null;
+function connectPresence() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token || (presence && presence.readyState <= WebSocket.OPEN)) return;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
+  presence = ws;
+  ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token }));
+  ws.onmessage = (e) => {
+    // Once the server counts this connection, show the count that includes it.
+    try {
+      if (JSON.parse(e.data).type === "ready" && currentTab() === "overview") load();
+    } catch {}
+  };
+  ws.onclose = () => setTimeout(() => { if (visible()) connectPresence(); }, 5000);
 }
 
 // ---------- logs ----------

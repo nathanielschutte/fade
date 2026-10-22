@@ -94,6 +94,10 @@ async def main():
         print("stats:", {k: stats["users"][k] for k in ("total", "active_24h", "online", "sockets")},
               "texts", stats["messages"]["texts"], "today", today)
         await expect(admin.locator("#t-users")).to_have_text(str(stats["users"]["total"]))
+        # Looking at the admin page counts as being online (the other user's
+        # app tab is on a non-admin page now, so it's just the admin).
+        await expect(admin.locator("#t-online")).to_have_text("1", timeout=10000)
+        await expect(admin.locator("#t-online-sub")).to_have_text("1 open connection")
         await expect(admin.locator("#users tr")).to_have_count(len(names))
 
         # Tooltip on the last bar.
