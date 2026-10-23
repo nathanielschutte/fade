@@ -957,7 +957,8 @@ def check_metrics(not_admin):
     assert latest["requests"][1] > 0, "this test's own requests are counted"
     assert host["status"] in ("ok", "watch", "red") and isinstance(host["reasons"], list)
     assert host["info"]["vcpus"] >= 1 and host["info"]["mem_total"] > 0
-    assert host["series"] and all(p["t"] >= data["generated_at"] - 3600 for p in host["series"])
+    # Each reading overlaps the hour: a minute that ends inside it counts (its start may be before).
+    assert host["series"] and all(p["t"] + p["s"] > data["generated_at"] - 3600 for p in host["series"])
     if not REMOTE:  # (a deployed server is on AWS)
         assert data["on_aws"] is False and host["estimate"] is None and host["credits"] is None
     assert ok(call("GET", "/admin/metrics?hours=100000", adm)).json()["hours"] == 72

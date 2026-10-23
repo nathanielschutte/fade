@@ -51,4 +51,22 @@ Results are saved next to the accounts file. Watch staging's own Metrics tab (si
 
 ### Results
 
-See below; filled in after each run.
+**2026-10-23, 0.30.0, t4g.nano (2 vCPUs, 412 MB), from home over the internet.** Accounts are friends in a ring (3 on each side); each holds a socket and sends texts to friends. Times are seen from the test machine, so about 33 ms of every one is the round trip from home to us-east-1. Server figures are staging's own Metrics readings.
+
+| Online | Texts a minute each | Texts/s | Send p50 / p95 | Delivery p50 / p95 | Errors | Server CPU (machine, peak) | Memory (machine) | napsack's memory |
+|---|---|---|---|---|---|---|---|---|
+| 50 | 6 | 5.7 | 34 / 44 ms | 33 / 43 ms | 0 | under 5% | 50% | 47 MB |
+| 100 | 6 | 10.8 | 34 / 41 ms | 33 / 41 ms | 0 | under 5% | 53% | 55 MB |
+| 200 | 6 | 22.3 | 34 / 41 ms | 34 / 40 ms | 0 | under 5% | 63% | 74 MB |
+| 400 | 6 | 47.6 | 35 / 49 ms | 34 / 49 ms | 0 | 7% | 80% | 108 MB |
+| 400 | 30 | 207 | 37 / 53 ms | 37 / 52 ms | 0 | 19% | 85% | 113 MB |
+| 400 | 60 | 392 | 38 / 48 ms | 37 / 48 ms | 0 | 34% | 85% | 120 MB |
+| 400 | 120 | 718 | 41 / 71 ms | 44 / 82 ms | 0 | 56% | 86% | 122 MB |
+
+Every text arrived (delivered = sent at every stage), and `/api/health` stayed under 160 ms throughout.
+
+What it means:
+- **Memory runs out first, not CPU.** Each connected person costs about 175 KB in napsack (47 MB at 50 sockets, 108 MB at 400), plus Caddy's share for the TLS connection. At 400 the machine was at 86%. Production's cap of 500 live connections (`FADE_MAX_SOCKETS`) is about right for a nano; [mono-scaling.md](mono-scaling.md) step 2 has the fixes (cap journald, a smaller WebSocket read buffer) and the upgrade (t4g.micro).
+- **Throughput is far past what napsack needs.** 718 texts a second used about half the machine (napsack itself 36%). Today's production traffic is a few texts a minute. The load generator, on one home machine, was near its own limit at that stage, so the server's real ceiling is higher.
+- **CPU credits:** a busy minute like the last stage spends credits (a nano's free baseline is 5% of the machine); at that rate a full bank lasts about six hours, then texts would slow to the baseline. Normal traffic never gets near it.
+- Not measured yet: pics (encryption happens on phones, but uploads and disk writes don't), group fan-out to 32 members, and many sign-ins at once (each is a deliberately slow password hash: registering 390 accounts four at a time took a few minutes).

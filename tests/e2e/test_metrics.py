@@ -2,7 +2,7 @@
 real readings of the test machine. Checks the status, the charts, hovering,
 the ranges, the table, and the layout on a phone. Settings come from the
 environment; see common.py."""
-import asyncio
+import asyncio, re
 from playwright.async_api import async_playwright, expect
 
 from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
@@ -92,7 +92,8 @@ async def check_metrics(p, phase):
     titles = await p.locator(".mchart h2").all_inner_texts()
     for t in ("CPU", "Memory", "Server memory", "Disk space", "Requests", "Response time", "Live connections"):
         assert t in titles, titles
-    assert "CPU credits" not in titles, "credits only on AWS"
+    if not REMOTE:
+        assert "CPU credits" not in titles, "credits only on AWS"
     # Every chart drew its data: a line or, for a single reading, a dot.
     # (Charts are drawn on the next frame and redrawn on each refresh, so give it a moment.)
     await expect(p.locator(".mchart svg")).to_have_count(len(titles))
@@ -129,10 +130,20 @@ async def main():
         await check_metrics(admin, "1 hour")
 
         # Hovering a chart shows the reading under the pointer.
-        cpu = admin.locator(".mchart", has=admin.locator("h2", has_text="CPU")).first.locator(".mhit")
-        box = await cpu.bounding_box()
-        await admin.mouse.move(box["x"] + box["width"] - 4, box["y"] + box["height"] / 2)
-        await expect(admin.locator("#tip")).to_be_visible()
+        # (The charts redraw with each new reading; a redraw under a still
+        # pointer can drop the tip, so move again if it isn't up yet.)
+        cpu = admin.locator(".mchart", has=admin.locator("h2", has_text=re.compile(r"^CPU$"))).first.locator(".mhit")
+        await cpu.scroll_into_view_if_needed()  # (staging's incidents can push it below the fold)
+        for attempt in range(3):
+            box = await cpu.bounding_box()
+            await admin.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2)
+            await admin.mouse.move(box["x"] + box["width"] - 4, box["y"] + box["height"] / 2)
+            try:
+                await expect(admin.locator("#tip")).to_be_visible(timeout=3000)
+                break
+            except AssertionError:
+                if attempt == 2:
+                    raise
         assert "Machine:" in await admin.locator("#tip").inner_text()
         await shot(admin, "metrics-desktop")
         await admin.mouse.move(5, 5)

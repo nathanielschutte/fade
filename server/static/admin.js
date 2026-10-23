@@ -911,10 +911,11 @@ function timelineText(e) {
   else if (e.error) parts.push(`Unhealthy: ${e.error}`);
   if (e.instance) {
     const i = e.instance;
-    parts.push(`server ${i.state}${i.instance_status ? `, checks ${i.system_status}/${i.instance_status}` : ""}${i.ssm ? `, SSM ${i.ssm}` : ""}`);
+    parts.push(`Server ${i.state}${i.instance_status ? `, checks ${i.system_status}/${i.instance_status}` : ""}${i.ssm ? `, SSM ${i.ssm}` : ""}`);
   }
-  if (e.action) parts.push(`tried to ${e.action.name}: ${e.action.result ?? "no answer"}`);
-  if (e.note && !e.action) parts.push(e.note);
+  if (e.action) parts.push(`Tried to ${e.action.name}: ${e.action.result ?? "no answer"}`);
+  // (The monitor notes "healthy again" on recovery, which the first part already says.)
+  else if (e.note && e.healthy !== true) parts.push(e.note[0].toUpperCase() + e.note.slice(1));
   return parts.join(". ");
 }
 

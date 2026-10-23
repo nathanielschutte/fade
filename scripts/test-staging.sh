@@ -37,6 +37,7 @@ failed=()
 for t in tests/e2e/test_*.py; do
   case "$t" in
     */test_dev_reload.py) echo "==> $t: skipped (staging runs a release build)"; continue ;;
+    */test_live.py) echo "==> $t: skipped (needs a push receiver on this machine, which staging can't reach)"; continue ;;
   esac
   echo "==> $t"
   (cd tests/e2e && "$PY" "$(basename "$t")") || failed+=("$t")

@@ -35,6 +35,8 @@ async def installed_page(browser):
 
 
 async def top_of(page, selector):
+    # (It may still be drawing: over a real network the page takes a moment.)
+    await expect(page.locator(selector).first).to_be_visible(timeout=15000)
     box = await page.locator(selector).first.bounding_box()
     assert box, f"{selector} isn't on screen"
     return box["y"]
