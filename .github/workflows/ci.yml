@@ -75,10 +75,13 @@ jobs:
     permissions:
       contents: read
       id-token: write # GitHub OIDC -> the fade-github-staging role; no stored keys
+    # The shared settings (region, bucket, app name) live in the production
+    # environment, which this job can't see; it falls back to what Terraform
+    # names them (infra/main.tf), and the bucket is found from the account.
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
-      STAGING_APP: ${{ vars.APP_NAME }}-staging
+      STAGING_APP: ${{ vars.APP_NAME || 'fade' }}-staging
       STAGING_URL: ${{ vars.STAGING_URL }}
       ROLE: ${{ vars.STAGING_DEPLOY_ROLE_ARN }}
     steps:
@@ -117,6 +120,9 @@ jobs:
         with:
           role-to-assume: ${{ env.ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Artifacts bucket
+        if: env.SKIP != '1' && env.BUCKET == ''
+        run: echo "BUCKET=fade-artifacts-$(aws sts get-caller-identity --query Account --output text)-$AWS_REGION" >> "$GITHUB_ENV"
       - name: Upload the candidate (keep the newest ten)
         if: env.SKIP != '1'
         run: bash scripts/release.sh candidate "$BUILD"

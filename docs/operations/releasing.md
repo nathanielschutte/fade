@@ -129,6 +129,6 @@ The details live in [mobile.md](../design/mobile.md). The short version:
 Done for napsack.io; for a new copy:
 
 1. **Let GitHub deploy.** Apply `infra/github.tf` (part of `terraform apply` in `infra/`), then `terraform output github_actions_variables`.
-2. **Set the repository variables** that output lists, in GitHub under Settings → Secrets and variables → Actions → Variables: `AWS_REGION`, `ARTIFACTS_BUCKET`, `APP_NAME`, `APP_URL`, `AWS_DEPLOY_ROLE_ARN`, `STAGING_DEPLOY_ROLE_ARN`, `STAGING_URL`. Without the two `STAGING_` ones, CI still tests every push but skips the staging deploy, with a warning.
+2. **Set the repository variables** that output lists, in GitHub under Settings → Secrets and variables → Actions → Variables: `AWS_REGION`, `ARTIFACTS_BUCKET`, `APP_NAME`, `APP_URL`, `AWS_DEPLOY_ROLE_ARN`, `STAGING_DEPLOY_ROLE_ARN`, `STAGING_URL`. They can live in the `production` environment (napsack.io's do), except the two `STAGING_` ones, which must be repository variables: the staging job runs in the `staging` environment and can't see production's. It falls back to `us-east-1`, the app name `fade`, and the bucket Terraform names from the account. Without the `STAGING_` ones, CI still tests every push but skips the staging deploy, with a warning.
 3. **Environments** (Settings → Environments): `staging` and `production` are created the first time a job uses them. Add yourself as a required reviewer on `production` if you want to approve each release.
 4. **Protect `main`**: require the CI checks to pass.
