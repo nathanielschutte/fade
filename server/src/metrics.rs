@@ -782,11 +782,15 @@ async fn aws_loop(state: SharedState) {
                 }
             }
         }
+        // The bill is production's (App=fade). A non-production copy
+        // (staging) doesn't read it: its role has no Cost Explorer access,
+        // by design (infra/staging/main.tf).
+        let production = state.config.environment.is_none();
         let fresh = m
             .cached("billing")
             .await
             .is_some_and(|(_, at)| now() - at < BILLING_EVERY_SECS);
-        if !fresh && now() >= billing_retry_at {
+        if production && !fresh && now() >= billing_retry_at {
             let t = now();
             match aws
                 .costs(
@@ -1293,6 +1297,8 @@ pub async fn get(
         "on_aws": matches!(m.aws.get(), Some(Some(_))),
         "aws_problems": if admin { json!(m.aws_problems.lock().unwrap().clone()) } else { json!({}) },
         "cost_visible": admin,
+        // Only production reads the bill (see aws_loop).
+        "billing_read": state.config.environment.is_none(),
         "hosts": hosts,
         "billing": billing,
     })))

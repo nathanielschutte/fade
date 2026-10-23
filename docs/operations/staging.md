@@ -10,6 +10,12 @@ A second, separate napsack at <https://staging.napsack.io>, for running the brow
 - **Its own accounts.** Its own invite code (in `infra/staging/terraform.tfvars`, gitignored) and admin list (`e2e_admin`, `smoke_admin`, the test accounts). Nobody's real data is on it.
 - Cost: about $7.40 a month (instance $3.07, Elastic IP $3.65, volumes $0.72). `terraform -chdir=infra/staging destroy` removes it all (allowed for staging only; it holds no user data). Never run destroy in `infra/`.
 
+## How you know you're on it
+
+`FADE_ENVIRONMENT=staging` (in staging's settings) makes every page say so: "napsack (staging)" in the tab, a **staging** tag by the wordmark, a thin amber band across the top (and the browser bar, on phones), and the build in the bottom-right corner: `staging · v0.31.0 · f3fe492 · up 2h` (environment, server version, commit, time since the last restart, so a deploy shows). Notifications from staging start with `[staging]`.
+
+It's all added on top of the design (`server/static/env.js`, and the "non-production copies" section of `style.css`, keyed on `<html data-env>`), so changing the design never means changing staging. Production leaves `FADE_ENVIRONMENT` unset and shows none of it. `tests/e2e/test_environment.py` checks both, and that the build line never covers any text.
+
 ## Why production can't be touched from it
 
 | Path | What stops it |
@@ -17,6 +23,7 @@ A second, separate napsack at <https://staging.napsack.io>, for running the brow
 | Production's settings (`/fade/env`, `/fade/admins`) | Staging's role explicitly denies `ssm:GetParameter*` on `/fade` and `/fade/*`, and denies `GetParametersByPath` everywhere. An explicit Deny beats `AmazonSSMManagedInstanceCore`, which would otherwise allow it. Checked from the staging machine: both are AccessDenied. |
 | Production's backups and data | Staging's role has no access to the backups bucket and no backup timer. Production's database is on production's volume, which staging can't attach (different Terraform state; `prevent_destroy` in production). |
 | Production's releases | Staging can read only `releases/staging/*`. `scripts/deploy.sh` with `FADE_STACK=staging` writes only there (the `release_prefix` output). |
+| Production's bill | Staging's role has no Cost Explorer access, and a non-production server doesn't ask (its Metrics tab says billing is read in production only). Staging's own resources are tagged `App=fade-staging` in AWS Billing. |
 | Production's health monitor | It watches instances tagged `App=fade` only, so it never restarts staging, and staging failures never page anyone. |
 | Production's Terraform | Separate state. After every staging apply, `terraform plan` in `infra/` should still say "No changes". |
 | Shared network | Separate security group; production's group doesn't allow anything from staging beyond what it allows from the internet. |

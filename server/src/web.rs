@@ -59,6 +59,8 @@ const DRAW_JS: Asset = asset!("../static/draw.js");
 // The friend map: the math is shared with the iOS app (shared/graph/graph.js); the drawing is the web app's.
 const GRAPH_JS: Asset = asset!("../../shared/graph/graph.js");
 const GRAPH_VIEW_JS: Asset = asset!("../static/graph-view.js");
+// Marks non-production copies (staging) on every page.
+const ENV_JS: Asset = asset!("../static/env.js");
 const MANIFEST: Asset = asset!("../static/manifest.webmanifest");
 const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
@@ -102,6 +104,7 @@ pub fn routes() -> Router<SharedState> {
         // At the root, so it can show notifications for the whole site.
         .route("/sw.js", get(|| async { script(SW_JS.text()) }))
         .route("/qr.js", get(|| async { script(QR_JS.text()) }))
+        .route("/env.js", get(|| async { script(ENV_JS.text()) }))
         .route("/draw.js", get(|| async { script(DRAW_JS.text()) }))
         .route("/graph.js", get(|| async { script(GRAPH_JS.text()) }))
         .route(
@@ -254,6 +257,7 @@ mod dev {
             &DRAW_JS,
             &GRAPH_JS,
             &GRAPH_VIEW_JS,
+            &ENV_JS,
         ];
         Json(json!({
             "css": modified_ms(&STYLE_CSS),
@@ -281,6 +285,10 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
         "build": version::BUILD,
         "message_formats": version::MESSAGE_FORMATS,
         "min_client_versions": min_versions,
+        // Non-production copies only ("staging"); null in production.
+        "environment": state.config.environment,
+        // When this server started (unix seconds), for the build line on non-production copies.
+        "started_at": crate::db::now() - state.started_at.elapsed().as_secs() as i64,
         // The browser's applicationServerKey for push subscriptions (push.rs).
         "vapid_public_key": state.vapid.public,
     }))
@@ -301,6 +309,7 @@ mod tests {
             &ADMIN_HTML,
             &GRAPH_JS,
             &GRAPH_VIEW_JS,
+            &ENV_JS,
         ] {
             assert!(std::path::Path::new(asset.path).is_file(), "{}", asset.path);
             assert_eq!(asset.text(), std::fs::read_to_string(asset.path).unwrap());

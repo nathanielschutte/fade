@@ -74,6 +74,10 @@ pub struct Config {
     pub public_url: String,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
     pub push_allow_local: bool,
+    /// Which non-production copy this is ("staging"), or None for production
+    /// (`FADE_ENVIRONMENT`). Clients mark every page with it and show the
+    /// build, so nobody mistakes it for the real thing.
+    pub environment: Option<String>,
     /// Hard caps and budgets against abuse (guard.rs).
     pub limits: guard::Limits,
     /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/operations/backups.md).
@@ -83,6 +87,23 @@ pub struct Config {
     /// The metrics store (metrics.rs), next to the database by default.
     pub metrics_db: std::path::PathBuf,
     pub metrics_retention_hours: i64,
+}
+
+/// `FADE_ENVIRONMENT`: a short lowercase name for a non-production copy
+/// ("staging"). Empty, "production" or "prod" mean production (None).
+fn environment(raw: &str) -> anyhow::Result<Option<String>> {
+    let name = raw.trim().to_lowercase();
+    if name.is_empty() || name == "production" || name == "prod" {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        name.len() <= 20
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        "FADE_ENVIRONMENT must be a short name of letters, digits, and hyphens, like \"staging\""
+    );
+    Ok(Some(name))
 }
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> {
@@ -126,6 +147,7 @@ impl Config {
             group_pic_disk_bytes: env_or::<usize>("FADE_GROUP_PIC_DISK_MB", 200)? * 1024 * 1024,
             public_url: env_or("FADE_PUBLIC_URL", "https://localhost".to_string())?,
             push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
+            environment: environment(&std::env::var("FADE_ENVIRONMENT").unwrap_or_default())?,
             limits: {
                 let d = guard::Limits::default();
                 guard::Limits {
@@ -630,4 +652,24 @@ async fn shutdown_signal() {
     let term = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     tracing::info!("shutting down");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::environment;
+
+    #[test]
+    fn environment_names() {
+        for prod in ["", "  ", "production", "Prod"] {
+            assert_eq!(environment(prod).unwrap(), None, "{prod:?}");
+        }
+        assert_eq!(
+            environment(" Staging ").unwrap().as_deref(),
+            Some("staging")
+        );
+        assert_eq!(environment("qa-2").unwrap().as_deref(), Some("qa-2"));
+        for bad in ["stag ing", "<b>x</b>", "a-very-long-environment-name"] {
+            assert!(environment(bad).is_err(), "{bad:?}");
+        }
+    }
 }

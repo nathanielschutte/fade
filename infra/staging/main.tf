@@ -65,6 +65,8 @@ locals {
     "FADE_INVITE_CODE=${var.invite_code}",
     "FADE_ADMINS=${join(",", var.admins)}",
     "FADE_PUBLIC_URL=https://${local.domain}",
+    # Marks every page and notification as staging (server/static/env.js).
+    "FADE_ENVIRONMENT=staging",
     # Room to load test: well past production's safety caps. (Sessions per
     # person stay at production's 4, which the smoke test checks.)
     "FADE_MAX_ACCOUNTS=100000",

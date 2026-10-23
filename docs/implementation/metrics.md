@@ -139,7 +139,7 @@ It refreshes every 10 seconds on the 1-hour view and every minute otherwise, onl
 
 Not in the estimate: EBS snapshots (a few cents), S3 requests (fractions of a cent), and data transfer (the first 100 GB a month are free). The **next size up** shows its price and free CPU baseline, to compare when a status turns red.
 
-**Billed** is AWS's own number from Cost Explorer for everything tagged `App=fade`: this month so far and last month, with every service of a cent or more. AWS marks the current month as estimated until it closes. Billing data starts the day the `App` cost tag was turned on in AWS Billing; tags don't apply to costs from before unless AWS backfills them (an option on the cost allocation tags page).
+**Billed** is AWS's own number from Cost Explorer for everything tagged `App=fade`: this month so far and last month, with every service of a cent or more. AWS marks the current month as estimated until it closes. Billing data starts the day the `App` cost tag was turned on in AWS Billing; tags don't apply to costs from before unless AWS backfills them (an option on the cost allocation tags page). The `App` tag was turned on on 2026-10-23 and backfilled to 2026-10-01 (`aws ce start-cost-allocation-tag-backfill`; `aws ce list-cost-allocation-tag-backfill-history` shows progress). The instance role's `ReadCosts` permission covers the call. Only production reads the bill; a non-production copy (`FADE_ENVIRONMENT`) says so instead. Not tagged, so not counted: the domain's yearly registration (Route 53 Domains), and anything else in the account.
 
 ## More than one machine
 

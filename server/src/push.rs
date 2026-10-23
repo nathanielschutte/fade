@@ -343,9 +343,13 @@ pub struct Note {
 /// Sends `note` to every browser `user` turned notifications on in, unless
 /// napsack is on their screen right now. Returns at once; delivery happens
 /// in the background.
-pub fn notify(state: &SharedState, user: i64, note: Note) {
+pub fn notify(state: &SharedState, user: i64, mut note: Note) {
     if state.hub.is_visible(user) {
         return;
+    }
+    // A notification from staging says so, like its pages do.
+    if let Some(env) = &state.config.environment {
+        note.title = format!("[{env}] {}", note.title);
     }
     let state = state.clone();
     tokio::spawn(async move {

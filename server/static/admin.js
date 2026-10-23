@@ -1,4 +1,5 @@
 import { chatName, chatSummary, counts, drawGraph, groupLetter, isChat, widthChanged } from "/graph-view.js";
+import { markEnvironment, withEnvironment } from "/env.js";
 
 // napsack admin panel. Reads /api/admin/stats with the normal session token;
 // the server decides who's an admin. Shows counts only, never content.
@@ -700,8 +701,10 @@ function renderCost(data) {
       }
     }
     out.push(el("p", { class: "panel-note", text: `From AWS Cost Explorer, everything tagged App=fade. Checked ${ago(data.billing.fetched_at)}.` }));
+  } else if (data.on_aws && data.billing_read === false) {
+    out.push(el("p", { class: "panel-note", text: "Billed amounts are read in production only. This copy's own resources are tagged App=fade-staging in AWS Billing." }));
   } else if (data.on_aws && !data.aws_problems?.["reading the bill from Cost Explorer"]) {
-    out.push(el("p", { class: "panel-note", text: "Billed amounts appear here about a day after the App cost tag is turned on in AWS Billing." }));
+    out.push(el("p", { class: "panel-note", text: "No billed amounts tagged App=fade yet. AWS counts tagged costs from when the App cost tag was turned on (October 23, 2026, backfilled to October 1), and Cost Explorer shows them about a day later." }));
   }
   // Usually a missing permission on the instance's role (infra/main.tf: ReadCpuCredits, ReadCosts).
   for (const [what, error] of Object.entries(data.aws_problems || {})) {
@@ -1187,6 +1190,11 @@ function showTab() {
 
 /** Who's looking, and so which tabs they get. */
 async function start() {
+  // A non-production copy says so (env.js), signed in or not.
+  fetch("/api/config").then((r) => r.json()).then((config) => {
+    document.title = withEnvironment(document.title, config);
+    markEnvironment(config);
+  }).catch(() => {});
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return fail("Sign in first.");
   let res;

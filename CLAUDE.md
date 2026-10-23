@@ -84,6 +84,7 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 
 - Match the surrounding code: naming, comment density, error style. Comments explain *why*.
 - User-facing errors say what happened and what to do, plainly (`AppError::bad("...")`).
+- Non-production copies are marked on top of the design: `FADE_ENVIRONMENT` (staging sets `staging`), `server/static/env.js`, and the "non-production copies" section of `style.css`, keyed on `<html data-env>`. Design work never accounts for it, and production never sets it.
 - The web client has a strict CSP: no inline scripts or `style` attributes. Set styles through CSSOM (`el.style.height = ...`) and keep CSS in `style.css`. No third-party scripts, fonts, or CDNs.
 - Keep the web client build-free. Add a dependency only when it does real work, and say why in the change.
 - Encryption: anything in `shared/crypto/crypto.js` that changes bytes on the wire is a new message format, never an edit to an existing one. The pinned vectors in `tests/vectors/` are never regenerated. Every client runs `shared/crypto/vector-checks.js` against them (Node in `scripts/test.sh`, the iPhone from the app). If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.

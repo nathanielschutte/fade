@@ -961,6 +961,8 @@ def check_metrics(not_admin):
     assert host["series"] and all(p["t"] + p["s"] > data["generated_at"] - 3600 for p in host["series"])
     if not REMOTE:  # (a deployed server is on AWS)
         assert data["on_aws"] is False and host["estimate"] is None and host["credits"] is None
+    # Only production reads the bill; staging (a named environment) doesn't.
+    assert data["billing_read"] is (not REMOTE), data["billing_read"]
     assert ok(call("GET", "/admin/metrics?hours=100000", adm)).json()["hours"] == 72
     assert ok(call("GET", "/admin/metrics?hours=0", adm)).json()["hours"] == 1
     print("  metrics: admins only, live readings of this machine, ranges clamped")
@@ -1093,6 +1095,9 @@ def check_versions(token):
     cfg = ok(call("GET", "/config")).json()
     assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2] and cfg["snap_ttl_hours"] == 720, cfg
     assert cfg["server_version"] and cfg["build"], cfg
+    # Which copy this is: null in production (and here, locally); staging names itself.
+    assert cfg["environment"] == ("staging" if REMOTE else None), cfg
+    assert isinstance(cfg["started_at"], int) and cfg["started_at"] <= time.time() + 5, cfg
     min_ios = cfg["min_client_versions"].get("ios")
     if not min_ios:
         print("  (no minimum iOS version configured; skipping 426 checks)")

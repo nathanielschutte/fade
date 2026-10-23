@@ -5,10 +5,12 @@
 import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
 import { qrSvg } from "/qr.js";
+import { markEnvironment, withEnvironment } from "/env.js";
 import { createDrawing } from "/draw.js";
 import { chatName as mapChatName, chatSummary, drawGraph, groupLetter, isChat, widthChanged } from "/graph-view.js";
 
-const APP_NAME = "napsack";
+// "napsack (staging)" on a non-production copy (env.js), set at boot.
+let APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
 const MAX_EDGE = 1280;         // longest side of a snap, before any further shrinking
 const SNAP_TARGET_BYTES = 200 * 1024;
@@ -4132,6 +4134,9 @@ setInterval(() => { if (state.me) renderChatList(); }, 60_000);
   } catch {
     state.config = { invite_required: false };
   }
+  APP_NAME = withEnvironment(APP_NAME, state.config);
+  document.title = APP_NAME;
+  markEnvironment(state.config);
   await readInviteLink();
   if (state.token) {
     try {
