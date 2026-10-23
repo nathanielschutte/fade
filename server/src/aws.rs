@@ -24,6 +24,19 @@ pub struct Instance {
     pub instance_type: String,
     pub region: String,
     pub zone: String,
+    /// The AWS account, which names the app's buckets (see `s3_buckets`).
+    #[serde(default)]
+    pub account: String,
+}
+
+impl Instance {
+    /// The app's S3 buckets, named as in infra (`<app>-backups-<account>-<region>`).
+    pub fn s3_buckets(&self) -> Vec<String> {
+        ["backups", "artifacts"]
+            .iter()
+            .map(|kind| format!("fade-{kind}-{}-{}", self.account, self.region))
+            .collect()
+    }
 }
 
 #[derive(Clone)]
@@ -63,6 +76,7 @@ impl Aws {
                 instance_type: field("instanceType"),
                 region: field("region"),
                 zone: field("availabilityZone"),
+                account: field("accountId"),
             },
             http,
             creds: Mutex::new(None),
@@ -162,19 +176,65 @@ impl Aws {
     ) -> anyhow::Result<Vec<(i64, f64)>> {
         // CloudWatch returns at most 1,440 points per call.
         let period = (((end - start) / 1440 + 59) / 60 * 60).max(300);
+        let id = self.instance.id.clone();
+        self.metric(
+            "AWS/EC2",
+            name,
+            &[("InstanceId", &id)],
+            statistic,
+            start,
+            end,
+            period,
+        )
+        .await
+    }
+
+    /// The newest daily size, in bytes, of a bucket's objects in one storage
+    /// class ("StandardStorage", "GlacierInstantRetrievalStorage"). None if
+    /// it holds nothing in that class. S3 publishes these once a day, free.
+    pub async fn bucket_bytes(&self, bucket: &str, class: &str) -> anyhow::Result<Option<f64>> {
+        let end = crate::db::now();
+        let points = self
+            .metric(
+                "AWS/S3",
+                "BucketSizeBytes",
+                &[("BucketName", bucket), ("StorageType", class)],
+                "Average",
+                end - 3 * 86_400,
+                end,
+                86_400,
+            )
+            .await?;
+        Ok(points.last().map(|p| p.1))
+    }
+
+    /// GetMetricStatistics for one metric, dimensions given as (name, value).
+    #[allow(clippy::too_many_arguments)]
+    async fn metric(
+        &self,
+        namespace: &str,
+        name: &str,
+        dimensions: &[(&str, &str)],
+        statistic: &str,
+        start: i64,
+        end: i64,
+        period: i64,
+    ) -> anyhow::Result<Vec<(i64, f64)>> {
         let q = |k: &str, v: &str| (k.to_owned(), v.to_owned());
-        let query = [
+        let mut query = vec![
             q("Action", "GetMetricStatistics"),
             q("Version", "2010-08-01"),
-            q("Namespace", "AWS/EC2"),
+            q("Namespace", namespace),
             q("MetricName", name),
-            q("Dimensions.member.1.Name", "InstanceId"),
-            q("Dimensions.member.1.Value", &self.instance.id),
             q("StartTime", &iso(start)),
             q("EndTime", &iso(end)),
             q("Period", &period.to_string()),
             q("Statistics.member.1", statistic),
         ];
+        for (i, (k, v)) in dimensions.iter().enumerate() {
+            query.push(q(&format!("Dimensions.member.{}.Name", i + 1), k));
+            query.push(q(&format!("Dimensions.member.{}.Value", i + 1), v));
+        }
         let host = format!("monitoring.{}.amazonaws.com", self.instance.region);
         let xml = self
             .call(
@@ -490,6 +550,22 @@ mod tests {
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, \
              SignedHeaders=content-type;host;x-amz-date, \
              Signature=5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7"
+        );
+    }
+
+    #[test]
+    fn bucket_names_follow_infra() {
+        let i = Instance {
+            account: "705059992745".into(),
+            region: "us-east-1".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            i.s3_buckets(),
+            [
+                "fade-backups-705059992745-us-east-1",
+                "fade-artifacts-705059992745-us-east-1"
+            ]
         );
     }
 

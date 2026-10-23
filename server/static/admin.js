@@ -578,7 +578,7 @@ function drawChart(box, spec, points, range) {
       ...series.map((s) => {
         const v = s.get(p);
         const spread = v && v[2] - v[0] > 1e-9 ? ` (${fmtValue(spec.unit, v[0])}–${fmtValue(spec.unit, v[2])})` : "";
-        return el("span", {}, el("i", { class: `swatch ${s.cls}`, "aria-hidden": "true" }),
+        return el("span", {}, el("i", { class: `mswatch ${s.cls}`, "aria-hidden": "true" }),
           `${s.name}: ${v ? fmtValue(spec.unit, v[1]) : "—"}`, el("span", { class: "tip-sub", text: spread }));
       }),
     );
@@ -642,6 +642,11 @@ function renderCost(data) {
       el("p", { class: "mcost-total" }, el("strong", { text: usd(est.total) }), " a month at today's rate"),
       el("dl", { class: "facts" }, est.lines.flatMap((l) => [el("dt", { text: l.name }), el("dd", { text: l.usd == null ? "—" : usd(l.usd) })])),
     );
+    if (est.s3?.length) {
+      const what = (b) => (b.includes("-backups-") ? "backups" : "releases");
+      const cls = (c) => (c === "StandardStorage" ? "" : " (Glacier)");
+      out.push(el("p", { class: "panel-note", text: `S3 holds ${est.s3.map((x) => `${what(x.bucket)}${cls(x.class)} ${size(x.gb * 1024 ** 3)}`).join(" · ")}. EBS snapshots add a few cents.` }));
+    }
     const server = est.lines.find((l) => l.name === "Server")?.usd;
     if (est.next) {
       const more = server == null ? "" : `, ${usd(est.next.usd - server)} more`;
@@ -658,7 +663,8 @@ function renderCost(data) {
         el("strong", { text: `${monthName(mo.start)}${current ? " so far" : ""}: ${usd(mo.total)}` }),
         mo.estimated ? " (AWS's running estimate)" : " (billed)"));
       if (mo.services.length) {
-        out.push(el("p", { class: "panel-note", text: mo.services.slice(0, 4).map((s) => `${s.service.replace(/^Amazon |^AWS /, "")} ${usd(s.usd)}`).join(" · ") }));
+        // Every service with a cent or more (S3, snapshots under "EC2 - Other", ...), largest first.
+        out.push(el("p", { class: "panel-note", text: mo.services.map((s) => `${s.service.replace(/^Amazon |^AWS /, "")} ${usd(s.usd)}`).join(" · ") }));
       }
     }
     out.push(el("p", { class: "panel-note", text: `From AWS Cost Explorer, everything tagged App=fade. Checked ${ago(data.billing.fetched_at)}.` }));
@@ -708,7 +714,7 @@ function renderMetrics() {
     for (const [name, sum] of sums) rows.push([spec.title, name, spec.unit, sum]);
     const legend = sums.length > 1
       ? el("div", { class: "mlegend" }, sums.map(([name, sum], i) => el("span", {},
-          el("i", { class: `swatch series-${i + 1}`, "aria-hidden": "true" }), `${name} `, el("b", { text: fmtValue(spec.unit, sum?.now) }))))
+          el("i", { class: `mswatch series-${i + 1}`, "aria-hidden": "true" }), `${name} `, el("b", { text: fmtValue(spec.unit, sum?.now) }))))
       : el("span", { class: "mnow", text: fmtValue(spec.unit, sums[0]?.[1]?.now) });
     box.append(el("header", { class: "panel-head" }, el("h2", { text: spec.title }), legend));
     if (spec.note) box.append(el("p", { class: "panel-note mchart-note", text: spec.note }));

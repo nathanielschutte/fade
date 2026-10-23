@@ -115,6 +115,16 @@ pub struct Metrics {
     credits: Mutex<Option<Credits>>,
     /// What's failing when reading AWS (e.g. "reading the bill ..." -> "AccessDenied"), for the page.
     aws_problems: Mutex<BTreeMap<String, String>>,
+    /// What the app's S3 buckets hold, from CloudWatch (once a day there).
+    s3: Mutex<Option<Vec<S3Stored>>>,
+}
+
+/// One bucket's bytes in one storage class.
+#[derive(Clone, Debug, Serialize)]
+pub struct S3Stored {
+    pub bucket: String,
+    pub class: &'static str,
+    pub bytes: f64,
 }
 
 impl Metrics {
@@ -137,6 +147,7 @@ impl Metrics {
             aws: OnceLock::new(),
             credits: Mutex::default(),
             aws_problems: Mutex::default(),
+            s3: Mutex::default(),
         }
     }
 
@@ -714,6 +725,8 @@ async fn aws_loop(state: SharedState) {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // After a failed bill, try again in an hour (each call costs $0.01).
     let mut billing_retry_at = 0;
+    // Bucket sizes change once a day; check every six hours (an hour after a failure).
+    let mut s3_next = 0;
     loop {
         tick.tick().await;
         // Only burstable instances (t2/t3/t4g) have credits.
@@ -748,6 +761,19 @@ async fn aws_loop(state: SharedState) {
                 }
             }
         }
+        if now() >= s3_next {
+            match s3_usage(aws).await {
+                Ok(stored) => {
+                    m.aws_worked(S3_READ);
+                    *m.s3.lock().unwrap() = Some(stored);
+                    s3_next = now() + 6 * 3600;
+                }
+                Err(e) => {
+                    m.aws_failed(S3_READ, &e);
+                    s3_next = now() + 3600;
+                }
+            }
+        }
         let fresh = m
             .cached("billing")
             .await
@@ -779,6 +805,25 @@ async fn aws_loop(state: SharedState) {
 
 const CREDITS_READ: &str = "reading CPU credits from CloudWatch";
 const BILLING_READ: &str = "reading the bill from Cost Explorer";
+const S3_READ: &str = "reading bucket sizes from CloudWatch";
+
+/// Every app bucket's size in each storage class it uses (backups move to
+/// Glacier Instant Retrieval after 30 days; infra/backups.tf).
+async fn s3_usage(aws: &Aws) -> anyhow::Result<Vec<S3Stored>> {
+    let mut stored = Vec::new();
+    for bucket in aws.instance.s3_buckets() {
+        for (class, _) in S3_CLASSES {
+            if let Some(bytes) = aws.bucket_bytes(&bucket, class).await? {
+                stored.push(S3Stored {
+                    bucket: bucket.clone(),
+                    class,
+                    bytes,
+                });
+            }
+        }
+    }
+    Ok(stored)
+}
 
 impl Metrics {
     /// Notes a failed AWS read for the page. Logged as a warning the first
@@ -954,6 +999,11 @@ fn minutes_per_point(points: &[Point]) -> f64 {
 /// On-demand prices in us-east-1 (USD), checked October 2026.
 const HOURS_PER_MONTH: f64 = 730.0;
 const GP3_PER_GB_MONTH: f64 = 0.08;
+/// S3 storage classes the app uses, as CloudWatch names them, and their price per GB-month.
+const S3_CLASSES: [(&str, f64); 2] = [
+    ("StandardStorage", 0.023),
+    ("GlacierInstantRetrievalStorage", 0.004),
+];
 const PUBLIC_IPV4_PER_HOUR: f64 = 0.005;
 /// Burstable instances in unlimited mode pay this per vCPU-hour of surplus
 /// credits (one credit is one vCPU-minute). t4g: $0.04; t2/t3: $0.05.
@@ -1024,10 +1074,11 @@ fn credit_max(info: &HostInfo) -> f64 {
     size_of(info).map_or(144.0, |s| s.vcpus * s.baseline_pct / 100.0 * 60.0 * 24.0)
 }
 
-/// A month at today's rate: the instance, its disks, its public address, and
-/// any extra CPU paid for in the last day. Backups and snapshots are a few
-/// cents more; the billed figure has everything.
-fn estimate(info: &HostInfo, credits: Option<&Credits>) -> Value {
+/// A month at today's rate: the instance, its disks, its public address, what
+/// the S3 buckets hold (backups and releases), and any extra CPU paid for in
+/// the last day. EBS snapshots are a few cents more; the billed figure has
+/// everything.
+fn estimate(info: &HostInfo, credits: Option<&Credits>, s3: Option<&[S3Stored]>) -> Value {
     let Some(kind) = info.instance.as_ref().map(|i| i.instance_type.as_str()) else {
         return Value::Null;
     };
@@ -1053,6 +1104,21 @@ fn estimate(info: &HostInfo, credits: Option<&Credits>) -> Value {
                 .sum()
         })
         .unwrap_or(0.0);
+    let gib = 1024f64.powi(3);
+    let s3_lines: Vec<Value> = s3
+        .unwrap_or_default()
+        .iter()
+        .map(|st| {
+            let per_gb = S3_CLASSES.iter().find(|c| c.0 == st.class).map_or(0.0, |c| c.1);
+            json!({ "bucket": st.bucket, "class": st.class, "gb": st.bytes / gib, "usd": st.bytes / gib * per_gb })
+        })
+        .collect();
+    let s3_usd = s3.map(|_| {
+        s3_lines
+            .iter()
+            .filter_map(|l| l["usd"].as_f64())
+            .sum::<f64>()
+    });
     let lines = [
         ("Server", price.map(|p| p * HOURS_PER_MONTH)),
         ("Disks", Some(disk_gb * GP3_PER_GB_MONTH)),
@@ -1060,6 +1126,7 @@ fn estimate(info: &HostInfo, credits: Option<&Credits>) -> Value {
             "Public address",
             Some(PUBLIC_IPV4_PER_HOUR * HOURS_PER_MONTH),
         ),
+        ("Storage (S3)", s3_usd),
         (
             "Extra CPU",
             Some(charged_day * 30.0 * surplus_per_credit(kind)),
@@ -1070,6 +1137,7 @@ fn estimate(info: &HostInfo, credits: Option<&Credits>) -> Value {
         "lines": lines.iter().map(|(name, usd)| json!({ "name": name, "usd": usd })).collect::<Vec<_>>(),
         "total": lines.iter().map(|l| l.1.unwrap_or(0.0)).sum::<f64>(),
         "disk_gb": disk_gb,
+        "s3": s3.map(|_| s3_lines),
         "next": next.map(|n| json!({
             "instance_type": n.name,
             "usd": n.per_hour * HOURS_PER_MONTH,
@@ -1104,6 +1172,7 @@ pub async fn get(
     let local = m.info.lock().unwrap().clone();
     let live: Vec<Point> = m.live.lock().unwrap().iter().cloned().collect();
     let credits = m.credits.lock().unwrap().clone();
+    let s3 = m.s3.lock().unwrap().clone();
 
     let mut stored = m.minutes(since.min(t - 15 * 60)).await?;
     let mut infos: BTreeMap<String, HostInfo> = BTreeMap::new();
@@ -1167,7 +1236,7 @@ pub async fn get(
             "latest": recent.last().map(|p| &p.v),
             "series": series,
             "credits": host_credits,
-            "estimate": estimate(&info, host_credits),
+            "estimate": estimate(&info, host_credits, if is_local { s3.as_deref() } else { None }),
         }));
     }
 
@@ -1357,8 +1426,9 @@ mod tests {
             ]),
             ..Default::default()
         };
-        let e = estimate(&info, None);
+        let e = estimate(&info, None, None);
         assert_eq!(e["disk_gb"], 9.0);
+        assert!(e["s3"].is_null(), "unknown until CloudWatch answers");
         let total = e["total"].as_f64().unwrap();
         // 3.066 server + 0.72 disks + 3.65 address
         assert!((total - 7.436).abs() < 0.001, "{total}");
@@ -1369,16 +1439,48 @@ mod tests {
             points: vec![(now(), 0.0, 60.0)],
             updated_at: now(),
         };
-        let extra = estimate(&info, Some(&paying))["lines"][3]["usd"]
-            .as_f64()
-            .unwrap();
+        let line = |e: &Value, name: &str| {
+            e["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|l| l["name"] == name)
+                .unwrap()["usd"]
+                .as_f64()
+        };
+        let extra = line(&estimate(&info, Some(&paying), None), "Extra CPU").unwrap();
         assert!(
             (extra - 1.2).abs() < 1e-9,
             "60 credits a day for 30 days at $0.04/60: {extra}"
         );
         assert!(
-            estimate(&HostInfo::default(), None).is_null(),
+            estimate(&HostInfo::default(), None, None).is_null(),
             "no estimate off AWS"
+        );
+
+        // S3: 2 GiB in Standard and 10 GiB of older backups in Glacier IR.
+        let gib = 1024f64.powi(3);
+        let stored = [
+            S3Stored {
+                bucket: "fade-backups-1-us-east-1".into(),
+                class: "StandardStorage",
+                bytes: 2.0 * gib,
+            },
+            S3Stored {
+                bucket: "fade-backups-1-us-east-1".into(),
+                class: "GlacierInstantRetrievalStorage",
+                bytes: 10.0 * gib,
+            },
+        ];
+        let e = estimate(&info, None, Some(&stored));
+        let s3 = line(&e, "Storage (S3)").unwrap();
+        assert!((s3 - (2.0 * 0.023 + 10.0 * 0.004)).abs() < 1e-9, "{s3}");
+        assert!((e["total"].as_f64().unwrap() - (7.436 + s3)).abs() < 0.001);
+        assert_eq!(e["s3"][1]["gb"], 10.0);
+        assert_eq!(
+            line(&estimate(&info, None, Some(&[])), "Storage (S3)"),
+            Some(0.0),
+            "empty buckets cost nothing"
         );
     }
 

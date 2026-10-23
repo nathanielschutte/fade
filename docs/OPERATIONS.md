@@ -70,7 +70,7 @@ The server reads these environment variables. In production they come from an AW
 
 ## Metrics
 
-`/admin#metrics` shows how the machine and the server are doing: a status per machine (All good, Worth watching, In the red, with the reasons), cost, and charts for the last hour (10-second readings), 24 hours, or the whole retention window (3 days by default; each minute kept as min/avg/max, so spikes stay visible).
+How every figure is measured and drawn: [metrics.md](metrics.md). In short, `/admin#metrics` shows how the machine and the server are doing: a status per machine (All good, Worth watching, In the red, with the reasons), cost, and charts for the last hour (10-second readings), 24 hours, or the whole retention window (3 days by default; each minute kept as min/avg/max, so spikes stay visible).
 
 - **Where it comes from:** the server reads `/proc` every 10 seconds (machine CPU including steal and iowait, memory, both disks' space and activity, network; its own CPU, memory, threads, open files) and times every request (exact p50/p95/p99 per minute). History is in `metrics.db` on the data volume, so it survives deploys.
 - **What "in the red" means:** memory or a disk over 90% (80% is "watch"), the server near its 400 MB systemd limit, response times (p95) over 2 seconds (500 ms watch), server errors, or AWS holding back CPU (steal). A t4g is burstable, so for CPU what matters is the **credit balance** (from CloudWatch every 5 minutes, free): low credits mean that past zero, CPU over the free baseline (5% on a t4g.nano) is billed. The CPU chart draws that baseline.

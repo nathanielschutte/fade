@@ -1072,9 +1072,10 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .mnow { font-size: var(--step--1); font-variant-numeric: tabular-nums; }
 .mlegend { display: flex; flex-wrap: wrap; gap: 0.15rem 0.75rem; font-size: var(--step--1); color: var(--fixer); }
 .mlegend b { color: var(--paper); font-weight: 600; font-variant-numeric: tabular-nums; }
-.swatch { display: inline-block; width: 0.7rem; height: 0.18rem; margin-right: 0.35rem; vertical-align: middle; border-radius: 2px; background: currentColor; }
-.swatch.series-1 { color: var(--series-1); }
-.swatch.series-2 { color: var(--series-2); }
+/* "mswatch", not "swatch": that's the drawing palette's color buttons. */
+.mswatch { display: inline-block; width: 0.7rem; height: 0.18rem; margin-right: 0.35rem; vertical-align: middle; border-radius: 2px; background: currentColor; }
+.mswatch.series-1 { color: var(--series-1); }
+.mswatch.series-2 { color: var(--series-2); }
 .mplot { min-height: 170px; }
 /* Not an icon: none of the global svg stroke. */
 .mchart-svg { display: block; width: 100%; height: auto; overflow: visible; stroke: none; }
