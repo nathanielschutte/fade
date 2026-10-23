@@ -200,9 +200,11 @@ async def main():
             else:
                 await expect(b.locator("#viewer-caption")).to_be_hidden()
                 await expect(b.locator("#viewer-hint")).to_have_text("Tap to close")
+            await asyncio.sleep(0.7)  # a tap right as a pic appears is ignored (TAP_GUARD_MS)
             await b.click("#viewer")
         await expect(b.locator("#viewer")).to_be_hidden()
-        await expect(b.locator("button.snap-chip")).to_have_count(0)
+        # Gone once the app has confirmed each open.
+        await expect(b.locator("button.snap-chip")).to_have_count(0, timeout=10000)
 
         # Reload: key comes back from IndexedDB without the password.
         await b.reload()

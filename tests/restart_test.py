@@ -58,6 +58,8 @@ def after():
     s = json.load(open(STATE))
     r = ok(call("GET", f"/snaps/{s['kept']}", s["b_tok"]))
     assert r.content == bytes.fromhex(s["bytes"]), "pic changed across the restart"
+    # Fetching doesn't open it; the app confirms once it's on screen.
+    ok(call("POST", f"/snaps/{s['kept']}/opened", s["b_tok"]))
     ok(call("GET", f"/snaps/{s['kept']}", s["b_tok"]), 410)
     assert not os.path.exists(os.path.join(PIC_DIR, f"{s['kept']}.bin")), "opened pic's file is gone"
     ok(call("GET", f"/snaps/{s['lost']}", s["b_tok"]), 410)

@@ -57,6 +57,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Streaks](#f15-streaks): 🔥 and a count when you've both sent pics every day, ⌛ when it's about to end | 0.23.0 |
 | [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 |
 | [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 |
+| [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
@@ -306,6 +307,18 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Done (0.24.1): in a group's member list, anyone who isn't your friend yet has **Add friend** (an ordinary friend request, with its usual limits), then **Requested**; if they asked you, **Accept**. The sheet updates live when the other person accepts. `test_groups.py` covers it.
 
 ### Infrastructure
+
+#### X11. Bad connections
+
+Asked for after pics "opened" without showing up. The cause: the server counted a pic as opened when it sent it, so a dropped download, a slow decode, or a tap before the pic appeared lost it (the logs showed pics opened 1-2 seconds apart while tapping through). Shipped in 0.25.0:
+
+- **Pics open only once shown.** Fetching doesn't open a pic; the app confirms (`POST .../opened`) once it's on screen. Unconfirmed fetches count as opened after 15 minutes, so fetching isn't a way around view-once. The viewer says "Opening…" while it loads and explains a failure; the pic stays unopened. Taps in the first 600ms after a pic appears are ignored.
+- **Sends are safe to retry.** Texts and pics carry a `client_id`; a resend returns what's stored instead of a copy (groups already had one). Texts go through an outbox: shown at once as "Sending…", retried, then "Not sent" with Try again / Remove, and sent by themselves when back online. Unsent texts live only in the page (never written to the device unencrypted).
+- **Reads retry, everything times out.** GETs retry twice on network errors and 502/503/504; requests give up after 20s (90s for pics).
+- **The live connection is checked.** A ping every 25s while on screen (and on coming back to the app); no pong in 10s means reconnect. Offline shows a note; back online reconnects and flushes the outbox.
+- Tests: `tests/e2e/test_resilience.py` (lost responses, offline, failing downloads), `check_resend` in the smoke test.
+
+Not yet: the iOS app needs the same (it will share the approach when it's built).
 
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).

@@ -22,17 +22,18 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /friends/requests/{id}/accept` | |
 | `DELETE /friends/requests/{id}` | Decline or cancel |
 | `GET  /chats/{friend}/messages?before=&limit=` | Oldest first |
-| `POST /chats/{friend}/messages` | `{ciphertext, format?}`: base64 of IV ‖ AES-GCM output; `format` defaults to 1 |
+| `POST /chats/{friend}/messages` | `{ciphertext, format?, client_id?}`: base64 of IV ‖ AES-GCM output; `format` defaults to 1. `client_id` (8–64 base64/base64url characters, picked by the app) makes a retry safe: sending again with the same one returns the message already stored, not a copy. Messages carry their `client_id` |
 | `POST /chats/{friend}/read` | Marks their texts as read |
-| `POST /chats/{friend}/snaps?format=2` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted |
-| `GET  /snaps/{id}` | View once; returns the encrypted bytes |
+| `POST /chats/{friend}/snaps?format=2&client_id=` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted. `client_id` as for texts: a retried upload returns the pic already stored |
+| `GET  /snaps/{id}` | The encrypted bytes (recipient only). Fetching doesn't open it, so a dropped download can be fetched again |
+| `POST /snaps/{id}/opened` | The recipient's app has shown the pic: now it's opened and discarded (a repeat is fine). A pic fetched but never confirmed counts as opened 15 minutes after the first fetch |
 | `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` (`encrypted` predates format 3 and stays false; messages say their own `format`). Also `muted`, `muted_until`. `GET /groups/{id}` members include `public_key`, for encrypting to them |
 | `PUT  /groups/{id}/favorite` | `{on}`: a favorite group (counts toward the 10). Groups aren't hidden; you leave them |
 | `POST /groups` | `{name, member_ids}` (your friends) → group with members; you're the owner |
 | `GET  /groups/{id}` · `PATCH /groups/{id}` | Details and current members · rename (`{name}`), any member |
 | `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
-| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{format: 3, content, client_id, recipients, wraps}` (end-to-end encrypted; [group-encryption.md](group-encryption.md)): `recipients` must be exactly the current members, you included (409 if the group changed: refetch and seal again), one 60-byte `wraps[member id]` each, `client_id` 16 random bytes (a repeat is 409). Format 3 messages come back with `content`, `client_id`, `recipients`, `sender_public_key`, and only your own `key`; `body` is empty. `{text, reply_to?}` (plain, `format` 0) still works for old clients |
+| `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{format: 3, content, client_id, recipients, wraps}` (end-to-end encrypted; [group-encryption.md](group-encryption.md)): `recipients` must be exactly the current members, you included (409 if the group changed: refetch and seal again), one 60-byte `wraps[member id]` each, `client_id` 16 random bytes (sending the same one again, after a dropped response, returns the message already stored). Format 3 messages come back with `content`, `client_id`, `recipients`, `sender_public_key`, and only your own `key`; `body` is empty. `{text, reply_to?}` (plain, `format` 0) still works for old clients |
 | `POST /groups/{id}/read` | Marks the group read; tells the other members (`group_read`) if it moved |
 | `GET /groups/{id}/reads` | `[{user_id, username, last_read_id}]` for current members, for "Seen by" |
 | `POST /auth/unlock` | `{auth_key}` with a session: returns your password-wrapped key, so the client can wrap it again |
@@ -55,13 +56,14 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
 | `PUT  /me/birthday` | `{month, day, year?}`: your birthday, for friends (profile, and `birthday: "MM-DD"` in their `/friends`). Real dates only; the year is optional (1900 to this year). `{}` clears it |
 | `PUT  /friends/{id}/nickname` | `{name}`: a nickname for a friend that only you see. Empty clears it |
-| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic: `?format=3` with the sealed bytes as the body and `X-Napsack-Keys: {client_id, recipients, wraps}` (the caption is sealed inside); or (old clients) a raw JPEG/PNG/WebP body, re-encoded by the server, with `?caption=` · open it, once per member, not the sender: format 3 comes back as the sealed bytes (`application/octet-stream`); old ones as an image with the caption in `X-Napsack-Caption`. Gone once everyone has opened it, or after 30 days |
+| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic: `?format=3` with the sealed bytes as the body and `X-Napsack-Keys: {client_id, recipients, wraps}` (the caption is sealed inside); or (old clients) a raw JPEG/PNG/WebP body, re-encoded by the server, with `?caption=`; a resend with the same `client_id` returns the pic already stored · fetch it (members, not the sender): format 3 comes back as the sealed bytes (`application/octet-stream`); old ones as an image with the caption in `X-Napsack-Caption`. Fetching doesn't open it |
+| `POST /groups/{id}/pics/{pic_id}/opened` | This member's app has shown the pic: it counts as opened for them (a repeat is fine; unconfirmed fetches count after 15 minutes). Gone once everyone has opened it, or after 30 days |
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |
 | `POST /logs` | Client diagnostics: `{entries: [{level, message, fields}]}`, up to 50 per request, rate-limited. Never send content; content-like fields are redacted |
 | `GET  /ws` | WebSocket. First frame: `{"type":"auth","token":"..."}` |
 
-Clients send `{"type":"visibility","visible":bool}` (no push while on screen) and `{"type":"typing","to"|"group":id}` over the socket. WebSocket events: `typing {from, group_id}`, `presence {user_id, active, last_seen_at}`, `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`, `group_message {group_id, message}`, `groups_changed {group_id}`, `group_read {group_id, user_id, last_read_id}`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
+Clients send `{"type":"visibility","visible":bool}` (no push while on screen), `{"type":"typing","to"|"group":id}`, and `{"type":"ping"}` (answered at once with `{"type":"pong"}`, so the app can tell a dead connection; the web app pings every 25 seconds while on screen) over the socket. WebSocket events: `typing {from, group_id}`, `presence {user_id, active, last_seen_at}`, `ready`, `message`, `message_updated`, `read {by, at}`, `friends_changed`, `group_message {group_id, message}`, `groups_changed {group_id}`, `group_read {group_id, user_id, last_read_id}`. On every `ready` the client refetches its state, so missed events while disconnected don't matter.
 
 Messages include `format`, the encryption scheme, so clients know how to read them: texts and pics are written as format 2 and format 1 stays readable; group messages are format 0 (not encrypted). The schemes are in [how-napsack-works.md](how-napsack-works.md).

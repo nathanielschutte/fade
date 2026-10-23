@@ -123,6 +123,7 @@ async def main():
         assert r > 180 and g < 130 and b < 130, f"the line: {(r, g, b)}"
         r2, g2, b2 = await ben.evaluate(PIXEL, [0.5, 0.8])
         assert abs(r2 - g2) < 20 and abs(g2 - b2) < 20 and 90 < r2 < 170, f"undone, so still gray: {(r2, g2, b2)}"
+        await asyncio.sleep(0.7)  # past the tap guard
         await ben.click("#viewer")
         print("the friend's photo has the drawing flattened in")
 

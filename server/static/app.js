@@ -73,43 +73,96 @@ class ApiError extends Error {
 }
 
 
-// Make an API call
-async function api(path, { method = "GET", json, body, headers = {} } = {}) {
+// Make an API call. Requests give up after a while rather than hang on a bad
+// connection, and reads (GETs) are tried again a couple of times on network
+// errors and the brief 502s of a deploy. Writes aren't retried here: the
+// outbox does that, with ids that make a resend safe. `as: "json"` or
+// `as: "bytes"` reads the body inside the same time limit.
+async function api(path, { method = "GET", json, body, headers = {}, timeout, retries, as } = {}) {
   const HEADERS = { ...headers };
 
   // our primary client authorization mechanism
   if (state.token) HEADERS.Authorization = `Bearer ${state.token}`;
-  
+
   if (json !== undefined) {
     HEADERS["Content-Type"] = "application/json";
     body = JSON.stringify(json);
   }
-  
-  let res;
-  try {
-    res = await fetch(`/api${path}`, { method, headers: HEADERS, body, cache: "no-store" });
-  } catch {
-    throw new ApiError("Can't reach the server. Check your connection.", 0);
-  }
 
-  // 401 Unauthorized, we have a token but it's not working
-  if (res.status === 401 && state.token && !path.startsWith("/auth/")) {
-    signOutLocally();
-    throw new ApiError("Your session ended. Sign in again.", 401);
-  }
+  const large = as === "bytes" || body instanceof Blob || body instanceof Uint8Array;
+  const limit = timeout ?? (large ? 90_000 : 20_000);
+  const tries = retries ?? (method === "GET" ? 2 : 0);
+  for (let attempt = 0; ; attempt++) {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), limit);
+    const lost = () => new ApiError(abort.signal.aborted
+      ? "The connection is too slow right now. Try again in a moment."
+      : "Can't reach the server. Check your connection.", 0);
+    try {
+      let res;
+      try {
+        res = await fetch(`/api${path}`, { method, headers: HEADERS, body, cache: "no-store", signal: abort.signal });
+      } catch {
+        throw lost();
+      }
 
-  if (!res.ok) {
-    let msg = `Request failed (${res.status}).`;
-    try { msg = (await res.json()).error || msg; } catch {}
-    throw new ApiError(msg, res.status);
-  }
+      // 401 Unauthorized, we have a token but it's not working
+      if (res.status === 401 && state.token && !path.startsWith("/auth/")) {
+        signOutLocally();
+        throw new ApiError("Your session ended. Sign in again.", 401);
+      }
 
-  return res;
+      if (!res.ok) {
+        let msg = `Request failed (${res.status}).`;
+        try { msg = (await res.json()).error || msg; } catch {}
+        throw new ApiError(msg, res.status);
+      }
+
+      if (as === "json") return await res.json();
+      if (as === "bytes") return new Uint8Array(await res.arrayBuffer());
+      return res;
+    } catch (err) {
+      // A body cut off mid-download counts as a dropped connection.
+      const e = err instanceof ApiError ? err : lost();
+      if (attempt < tries && retryable(e)) {
+        await sleep(700 * 3 ** attempt);
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
+/** Worth trying again: the connection dropped or timed out, or the server is briefly away. */
+function retryable(err) {
+  return err instanceof ApiError && (err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Tries `fn` up to `tries` times while the failure is the connection's, waiting a little longer each time. */
+async function withRetries(fn, tries = 3) {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= tries - 1 || !retryable(err)) throw err;
+      await sleep(1000 * 3 ** i);
+    }
+  }
+}
+
+/** A random id for something being sent, so the server can tell a retry from a new message. */
+function newClientId() {
+  return e2e.toB64(crypto.getRandomValues(new Uint8Array(16))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 // gimme dat json right away
-const getJSON = async (path, opts) => (await api(path, opts)).json();
+const getJSON = (path, opts) => api(path, { ...opts, as: "json" });
 
 function relTime(ts) {
   const s = Math.max(0, Date.now() / 1000 - ts);
@@ -722,6 +775,10 @@ function signOutLocally() {
   const ws = state.ws;
   state.ws = null;
   ws?.close();
+  clearInterval(conn.heartbeat);
+  clearTimeout(conn.pongTimer);
+  setConnBanner(null);
+  outbox.length = 0; // unsent texts were this account's
   $("#friends-dialog").close();
   showAuth();
 }
@@ -1503,7 +1560,9 @@ function renderMessages() {
       items.push(...bubble(m, mine, [chip]));
     }
   }
-  if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
+  const sending = outboxItems(`d:${state.activeId}`, prevSender);
+  items.push(...sending);
+  if (!msgs.length && !sending.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
   list.replaceChildren(...items);
   if (nearBottom || !list.dataset.scrolled) {
     list.scrollTop = list.scrollHeight;
@@ -1531,20 +1590,117 @@ $("#composer").addEventListener("submit", async (e) => {
   if (!text || !friendId) return;
   input.value = "";
   fitComposer();
-  try {
-    const replyTo = state.replyTo && !state.replyTo.group ? state.replyTo.id : null;
-    const ciphertext = await e2e.encryptText2(await keyFor(friendId), text, replyTo, state.me.id, friendId);
-    const m = await getJSON(`/chats/${friendId}/messages`, { method: "POST", json: { ciphertext, format: e2e.TEXT_FORMAT } });
-    state.plaintext.set(m.id, { text, replyTo });
-    setReply(null);
-    await upsertMessage(m);
-    if (state.activeId === friendId) renderMessages();
-  } catch (err) {
-    input.value = text;
-    fitComposer();
-    alert(err.message);
-  }
+  const replyTo = state.replyTo && !state.replyTo.group ? state.replyTo.id : null;
+  setReply(null);
+  const clientId = newClientId();
+  let ciphertext = null; // sealed once; every retry sends the same bytes and id
+  queueSend({
+    key: `d:${friendId}`, clientId, text, replyTo,
+    send: async () => {
+      ciphertext ??= await e2e.encryptText2(await keyFor(friendId), text, replyTo, state.me.id, friendId);
+      return getJSON(`/chats/${friendId}/messages`, {
+        method: "POST", json: { ciphertext, format: e2e.TEXT_FORMAT, client_id: clientId },
+      });
+    },
+    done: async (m) => {
+      state.plaintext.set(m.id, { text, replyTo });
+      await upsertMessage(m);
+      if (state.activeId === friendId) renderMessages();
+    },
+  });
 });
+
+// ---------- outbox ----------
+// Every text goes through here, so a bad connection doesn't lose it. It shows
+// at once as "Sending…" and is tried again a few times; each try carries the
+// same message id, so the server never stores it twice. If it still can't
+// go, it waits as "Not sent" with Try again, and goes by itself as soon as
+// napsack is back online. (Unsent texts live only in this page: they're
+// never written to the device unencrypted.)
+const outbox = []; // { key: "d:<friend>" | "g:<group>", clientId, text, replyTo, status, error, send, done }
+
+function queueSend(item) {
+  outbox.push(item);
+  attemptSend(item);
+}
+
+async function attemptSend(item) {
+  item.status = "sending";
+  item.error = null;
+  redrawOutbox(item);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const m = await item.send();
+      settleSend(item);
+      await item.done(m);
+      return;
+    } catch (err) {
+      if (!outbox.includes(item)) return; // it arrived another way meanwhile
+      item.error = err;
+      if (!retryable(err)) break;
+      if (i < 2) await sleep(1000 * 3 ** i);
+    }
+  }
+  if (!outbox.includes(item)) return;
+  item.status = "failed";
+  report("warn", "send failed", errorFields(item.error));
+  redrawOutbox(item);
+}
+
+function settleSend(item) {
+  const i = outbox.indexOf(item);
+  if (i >= 0) outbox.splice(i, 1);
+  redrawOutbox(item);
+}
+
+/** One of mine arrived over the socket: if it's still in the outbox, it went through. */
+function arrivedFromMe(m, plain) {
+  if (m.sender_id !== state.me.id || !m.client_id) return;
+  const item = outbox.find((x) => x.clientId === m.client_id);
+  if (!item) return;
+  plain.set(m.id, { text: item.text, replyTo: item.replyTo });
+  settleSend(item);
+}
+
+function redrawOutbox(item) {
+  const open = state.activeGroupId ? `g:${state.activeGroupId}` : state.activeId ? `d:${state.activeId}` : null;
+  if (item.key === open) renderMessages();
+}
+
+/** Back online, or reconnected: anything that failed for the connection's sake goes again. */
+function flushOutbox() {
+  for (const item of outbox) if (item.status === "failed" && retryable(item.error)) attemptSend(item);
+}
+
+/** Texts still on their way, at the bottom of a chat. */
+function outboxItems(key, prevSender) {
+  const items = outbox.filter((x) => x.key === key);
+  const out = [];
+  if (items.length && prevSender !== state.me.id) out.push(el("li", { class: "sender mine", text: "Me" }));
+  for (const item of items) {
+    out.push(el("li", { class: "msg mine pending" }, el("span", { class: "msg-body", text: item.text })));
+    if (item.status === "sending") {
+      out.push(el("li", { class: "msg-meta", text: "Sending…" }));
+      continue;
+    }
+    const why = retryable(item.error) || !item.error?.message ? "Not sent: no connection." : `Not sent: ${item.error.message}`;
+    out.push(el("li", { class: "msg-meta send-failed" }, `${why} `,
+      el("button", { type: "button", class: "link", onclick: () => attemptSend(item) }, "Try again"),
+      " · ",
+      el("button", { type: "button", class: "link", onclick: () => discardSend(item) }, "Remove")));
+  }
+  return out;
+}
+
+/** Gives up on a send; the text goes back in the box if it's empty, so nothing's lost. */
+function discardSend(item) {
+  settleSend(item);
+  const input = $("#composer-input");
+  if (!input.value) {
+    input.value = item.text;
+    fitComposer();
+  }
+}
 
 // The message box grows with what's typed; style.css caps it at four lines,
 // past which it scrolls inside.
@@ -1926,8 +2082,68 @@ function connectSocket() {
     if (state.ws !== ws || !state.token) return;
     const delay = Math.min(30_000, 1000 * 2 ** state.wsRetry++);
     state.wsTimer = setTimeout(connectSocket, delay);
+    // A short blip passes unnoticed; a longer one gets a note.
+    clearTimeout(conn.bannerTimer);
+    conn.bannerTimer = setTimeout(() => {
+      if (state.token && navigator.onLine && state.ws?.readyState !== WebSocket.OPEN) setConnBanner("Reconnecting…");
+    }, 4000);
   };
 }
+
+// ---------- connection ----------
+// The live connection can die without saying so (a phone switching networks,
+// a laptop waking up). While napsack is on screen it checks every 25 seconds,
+// and when it comes back on screen; no answer within 10 seconds means start a
+// new one. Going offline shows a note; coming back online reconnects at once
+// and sends whatever was waiting.
+const HEARTBEAT_MS = 25_000;
+const PONG_WAIT_MS = 10_000;
+const conn = { heartbeat: null, pongTimer: null, bannerTimer: null };
+
+function startHeartbeat() {
+  clearInterval(conn.heartbeat);
+  conn.heartbeat = setInterval(checkAlive, HEARTBEAT_MS);
+}
+
+function checkAlive() {
+  const ws = state.ws;
+  if (!ws || ws.readyState !== WebSocket.OPEN || document.visibilityState !== "visible") return;
+  clearTimeout(conn.pongTimer);
+  ws.send(JSON.stringify({ type: "ping" }));
+  conn.pongTimer = setTimeout(() => {
+    if (state.ws !== ws) return;
+    report("info", "socket unresponsive; reconnecting");
+    reconnectNow();
+  }, PONG_WAIT_MS);
+}
+
+/** Drops the current socket (without waiting on a dead one to close) and starts a new one. */
+function reconnectNow() {
+  const old = state.ws;
+  state.ws = null;
+  if (old) {
+    old.onclose = null;
+    try { old.close(); } catch {}
+  }
+  state.wsRetry = 0;
+  connectSocket();
+}
+
+function setConnBanner(text) {
+  clearTimeout(conn.bannerTimer);
+  $("#conn-banner").textContent = text ?? "";
+  $("#conn-banner").hidden = !text || !state.token;
+}
+
+window.addEventListener("offline", () => {
+  if (state.token) setConnBanner("You're offline. Messages will send when you're back.");
+});
+window.addEventListener("online", () => {
+  if (!state.token) return;
+  setConnBanner(null);
+  if (state.ws?.readyState !== WebSocket.OPEN) reconnectNow();
+  flushOutbox();
+});
 
 /** Sends a frame if the socket is open; these are hints, so dropping one is fine. */
 function sendFrame(frame) {
@@ -1944,6 +2160,8 @@ document.addEventListener("visibilitychange", () => {
   if (!state.ws || state.ws.readyState > WebSocket.OPEN) {
     state.wsRetry = 0;
     connectSocket();
+  } else {
+    checkAlive(); // it says it's open; make sure
   }
 });
 
@@ -1951,6 +2169,9 @@ async function handleEvent(ev) {
   switch (ev.type) {
     case "ready":
       state.wsRetry = 0;
+      setConnBanner(null);
+      startHeartbeat();
+      flushOutbox();
       sendVisibility();
       checkForUpdate();
       // Anything could have happened while disconnected.
@@ -1963,11 +2184,15 @@ async function handleEvent(ev) {
     case "auth_failed":
       signOutLocally();
       break;
+    case "pong":
+      clearTimeout(conn.pongTimer);
+      break;
     case "message":
     case "message_updated": {
       const m = ev.message;
       // Their message arrived, so they're done typing (don't wait out the timer).
       if (ev.type === "message" && m.sender_id !== state.me.id) stopTyping(`d:${m.sender_id}`);
+      if (ev.type === "message") arrivedFromMe(m, state.plaintext);
       await upsertMessage(m);
       const fid = friendOf(m);
       if (fid === state.activeId) {
@@ -2003,6 +2228,7 @@ async function handleEvent(ev) {
     case "group_message": {
       const m = ev.message;
       stopTyping(`g:${m.group_id}:${m.sender_id}`);
+      arrivedFromMe(m, groupPlain);
       await openGroupMessage(m);
       upsertGroupMessage(m);
       if (m.group_id === state.activeGroupId) {
@@ -2142,25 +2368,33 @@ async function groupMembers(groupId, fresh = false) {
   return groupMemberKeys.get(groupId);
 }
 
-/**
- * Seals something for everyone in the group and sends it. If someone joined
- * or left meanwhile, the server says 409: refetch the members, seal again
- * (with a new message id), and send once more.
- */
-async function sealAndSend(groupId, seal, send) {
-  for (let attempt = 0; ; attempt++) {
-    const wrapKeys = new Map();
-    for (const member of await groupMembers(groupId, attempt > 0)) {
-      wrapKeys.set(member.id, await groupWrapKeyFor(member.id, await sendingKey(member)));
-    }
-    const sealed = await seal({ groupId, senderId: state.me.id, wrapKeys });
-    try {
-      return await send(sealed);
-    } catch (err) {
-      if (err.status === 409 && attempt === 0) continue;
-      throw err;
-    }
+/** Seals something for everyone in the group (`fresh` refetches the members first). */
+async function sealFor(groupId, seal, fresh = false) {
+  const wrapKeys = new Map();
+  for (const member of await groupMembers(groupId, fresh)) {
+    wrapKeys.set(member.id, await groupWrapKeyFor(member.id, await sendingKey(member)));
   }
+  return seal({ groupId, senderId: state.me.id, wrapKeys });
+}
+
+/**
+ * A group send that survives a bad connection: sealed once, and every call
+ * posts the same sealed message (same message id, so the server returns what
+ * it already stored rather than a copy). If someone joined or left meanwhile,
+ * the server says 409: seal again for the new members and post that.
+ */
+function groupSender(groupId, seal, post) {
+  let sealed = null;
+  return async () => {
+    sealed ??= await sealFor(groupId, seal);
+    try {
+      return await post(sealed);
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      sealed = await sealFor(groupId, seal, true);
+      return post(sealed);
+    }
+  };
 }
 
 const keysHeader = (s) => JSON.stringify({ client_id: s.clientId, recipients: s.recipients, wraps: s.wraps });
@@ -2402,7 +2636,9 @@ function renderGroupMessages() {
   }
   const seen = seenByText(state.activeGroupId, msgs[msgs.length - 1]);
   if (seen) items.push(el("li", { class: "msg-meta seen-by", text: seen }));
-  if (!msgs.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
+  const sending = outboxItems(`g:${state.activeGroupId}`, prevSender);
+  items.push(...sending);
+  if (!msgs.length && !sending.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
   list.replaceChildren(...items);
   if (nearBottom || !list.dataset.scrolled) {
     list.scrollTop = list.scrollHeight;
@@ -2426,55 +2662,60 @@ function groupPicChip(m, mine) {
   return el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), label);
 }
 
-/** Opens one group pic; false if it couldn't be shown. */
-async function viewGroupPic(m) {
-  let res;
-  try {
-    res = await api(`/groups/${m.group_id}/pics/${m.pic.id}`);
-  } catch (err) {
-    if (err.status !== 410) alert(err.message); // 410: opened elsewhere or expired; the socket updates the chat
-    return false;
-  }
+/** Fetches (and for format 3, decrypts) one group pic: { blob, caption, from }. */
+async function loadGroupPic(m) {
+  const url = `/groups/${m.group_id}/pics/${m.pic.id}`;
   const from = `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`;
   if (m.format === e2e.GROUP_FORMAT) {
-    const sealed = new Uint8Array(await res.arrayBuffer());
+    const sealed = await api(url, { as: "bytes" });
     const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.client_id, recipients: m.recipients || [] };
     for (const pub of m.key ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
       try {
         const pic = await e2e.decryptGroupPic(sealed, m.key, { ...opts, wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
-        showInViewer(new Blob([pic.photo], { type: "image/jpeg" }), from, pic.caption);
-        return true;
+        return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from };
       } catch {}
     }
     report("warn", "group pic decrypt failed", { message_id: m.id, group_id: m.group_id });
-    alert("This pic couldn't be decrypted.");
-    return false;
+    throw new PicProblem("This pic couldn't be decrypted.");
   }
+  const res = await api(url);
   let caption = "";
   try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
-  showInViewer(await res.blob(), from, caption);
-  return true;
+  return { blob: await res.blob(), caption, from };
 }
 
 async function sendGroupPic(groupId) {
   const btn = $("#send-snap");
   btn.disabled = true;
+  cameraMessage("Sending…");
   try {
-    const caption = $("#snap-caption").value.trim();
-    const photo = await finalPhoto();
-    const m = await sealAndSend(groupId,
-      (opts) => e2e.encryptGroupPic(photo, caption, opts),
-      (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
-        method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
-      }));
+    // Sealed once per pic, so tapping Send again after a dropped connection
+    // resends the same one (the server keeps one copy).
+    if (!camera.groupSend) {
+      const caption = $("#snap-caption").value.trim();
+      const photo = await finalPhoto();
+      camera.groupSend = groupSender(groupId,
+        (opts) => e2e.encryptGroupPic(photo, caption, opts),
+        (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
+          method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
+        }));
+    }
+    const m = await withRetries(camera.groupSend);
     upsertGroupMessage(m);
     if (state.activeGroupId === groupId) renderMessages();
     $("#camera-dialog").close();
   } catch (err) {
-    cameraMessage(err.message);
+    cameraMessage(sendProblem(err));
   } finally {
     btn.disabled = false;
   }
+}
+
+/** What to say when a pic couldn't be sent. */
+function sendProblem(err) {
+  return retryable(err)
+    ? "Couldn't send: the connection dropped. Your pic is still here; tap Send to try again."
+    : err.message;
 }
 
 /** Square-cropped to 256px and kept small; group and profile pictures live in the database. */
@@ -2506,24 +2747,24 @@ $("#group-picture-input").addEventListener("change", async (e) => {
 async function sendGroupText(groupId, input, text) {
   input.value = "";
   fitComposer();
-  try {
-    const replyTo = state.replyTo?.group ? state.replyTo.id : null;
-    const m = await sealAndSend(groupId,
-      (opts) => e2e.encryptGroupText(text, replyTo, opts),
-      (s) => getJSON(`/groups/${groupId}/messages`, { method: "POST", json: {
+  const replyTo = state.replyTo?.group ? state.replyTo.id : null;
+  setReply(null);
+  const item = { key: `g:${groupId}`, clientId: null, text, replyTo };
+  item.send = groupSender(groupId,
+    (opts) => e2e.encryptGroupText(text, replyTo, opts),
+    (s) => {
+      item.clientId = s.clientId; // so the socket's copy can settle it
+      return getJSON(`/groups/${groupId}/messages`, { method: "POST", json: {
         format: e2e.GROUP_FORMAT, content: e2e.toB64(s.content), client_id: s.clientId, recipients: s.recipients, wraps: s.wraps,
-      } }));
+      } });
+    });
+  item.done = async (m) => {
     groupPlain.set(m.id, { text, replyTo });
     await openGroupMessage(m);
-    setReply(null);
     upsertGroupMessage(m);
     if (state.activeGroupId === groupId) renderMessages();
-  } catch (err) {
-    input.value = text;
-    fitComposer();
-    report("warn", "sending group text failed", { group_id: groupId, ...errorFields(err) });
-    alert(err.message);
-  }
+  };
+  queueSend(item);
 }
 
 // New group: a name and some friends.
@@ -3296,6 +3537,8 @@ function clearPreview() {
   if (camera.previewUrl) URL.revokeObjectURL(camera.previewUrl);
   camera.previewUrl = null;
   camera.blob = null;
+  camera.clientId = null;  // a new pic gets a new id...
+  camera.groupSend = null; // ...and is sealed afresh
   const img = $("#camera-preview");
   img.removeAttribute("src");
   img.hidden = true;
@@ -3431,6 +3674,10 @@ $("#send-snap").addEventListener("click", async () => {
   if (!camera.blob || !friendId) return;
   const btn = $("#send-snap");
   btn.disabled = true;
+  cameraMessage("Sending…");
+  // The same id on every try (and on Send again), so a retry after a dropped
+  // response isn't a second pic.
+  camera.clientId ??= newClientId();
   try {
     const photo = await finalPhoto();
     // Format 2: the caption is sealed in with the photo, so only the friend sees it.
@@ -3439,16 +3686,16 @@ $("#send-snap").addEventListener("click", async () => {
     if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
       throw new Error("That photo is too large to send.");
     }
-    const m = await getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}`, {
+    const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}&client_id=${camera.clientId}`, {
       method: "POST",
       body: sealed,
       headers: { "Content-Type": "application/octet-stream" },
-    });
+    }));
     await upsertMessage(m);
     renderMessages();
     $("#camera-dialog").close();
   } catch (err) {
-    cameraMessage(err.message);
+    cameraMessage(sendProblem(err));
   } finally {
     btn.disabled = false;
   }
@@ -3457,9 +3704,15 @@ $("#send-snap").addEventListener("click", async () => {
 // ---------- snap viewer ----------
 
 // A `run` taps through every unopened pic in the chat: closing one opens the
-// next. Each pic is still marked opened when it's fetched, so stopping halfway
-// (Escape, or leaving the app) leaves the rest unopened.
-const viewer = { url: null, timer: null, run: null, loading: false };
+// next. A pic counts as opened only once it's actually on screen: then the
+// app tells the server (`confirmOpened`). So a dropped download, a slow
+// decode, or a tap before it appears never loses one; it stays unopened, to
+// try again. Stopping halfway (Escape, or leaving the app) leaves the rest
+// unopened too.
+const viewer = { url: null, timer: null, run: null, loading: false, shownAt: 0 };
+// Taps this soon after a pic appears don't count: a quick double tap
+// shouldn't skip past a pic nobody saw.
+const TAP_GUARD_MS = 600;
 
 /** Unopened pics in the open chat, oldest first. */
 function waitingPics() {
@@ -3478,81 +3731,140 @@ function openPics(first) {
   openPic(first);
 }
 
+/** A pic that can't be shown for a reason other than the connection. */
+class PicProblem extends Error {}
+
 async function openPic(m) {
   const run = viewer.run;
   run.seen.add(m.id);
   viewer.loading = true;
-  let shown = false;
+  showOpening(m);
+  let pic;
   try {
-    shown = await (m.pic ? viewGroupPic(m) : viewSnap(m));
-  } finally {
+    pic = await (m.pic ? loadGroupPic(m) : loadSnap(m));
+  } catch (err) {
     viewer.loading = false;
+    if (viewer.run !== run) return;
+    // Opened on another device, or expired: on to the next.
+    if (err.status === 410 || err.status === 404) return nextPic();
+    report("warn", "opening a pic failed", { message_id: m.id, ...errorFields(err) });
+    return showViewerProblem(err instanceof PicProblem ? err.message
+      : "Couldn't load this pic. It's still unopened: try again when your connection is better.");
   }
-  if (viewer.run === run && !shown) nextPic(); // opened elsewhere or expired: on to the next
+  if (viewer.run !== run) {
+    viewer.loading = false; // stopped while it loaded: still unopened
+    return;
+  }
+  const shown = await showInViewer(pic);
+  viewer.loading = false;
+  if (shown) confirmOpened(m);
+  else if (viewer.run === run) showViewerProblem("This pic couldn't be shown. It's still unopened.");
 }
 
 function nextPic() {
   if (viewer.loading) return;
+  if (viewer.url && Date.now() - viewer.shownAt < TAP_GUARD_MS) return;
   const run = viewer.run;
   const next = run && waitingPics().find((m) => !run.seen.has(m.id));
   if (!next) return stopViewer();
-  clearViewer(); // the viewer stays up, empty, while the next one loads
+  clearViewer(); // the viewer stays up, saying "Opening…", while the next one loads
   openPic(next);
 }
 
-/** Opens and decrypts one direct pic; false if it couldn't be shown. */
-async function viewSnap(m) {
-  if (![1, 2].includes(m.format ?? 1)) {
-    alert("This pic was sent from a newer version of napsack. Reload the page to open it.");
-    return false;
-  }
-  let sealed;
-  try {
-    sealed = new Uint8Array(await (await api(`/snaps/${m.id}`)).arrayBuffer());
-  } catch (err) {
-    // 410 means opened elsewhere or expired; the socket will update the chat.
-    if (err.status !== 410) alert(err.message);
-    return false;
-  }
+/** Fetches and decrypts one direct pic: { blob, caption, from }. */
+async function loadSnap(m) {
+  if (![1, 2].includes(m.format ?? 1)) throw new PicProblem("This pic was sent from a newer version of napsack. Reload to open it.");
+  const sealed = await api(`/snaps/${m.id}`, { as: "bytes" });
   let pic;
   try {
     pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
   } catch {
-    alert("This pic couldn't be decrypted.");
-    return false;
+    throw new PicProblem("This pic couldn't be decrypted.");
   }
-  showInViewer(new Blob([pic.photo], { type: "image/jpeg" }), personName(m.sender_id, ""), pic.caption);
-  return true;
+  return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from: personName(m.sender_id, "") };
 }
 
-function showInViewer(blob, from, caption = "") {
-  viewer.url = URL.createObjectURL(blob);
-  const v = $("#viewer");
-  const img = $("#viewer-image");
-  $("#viewer-from").textContent = from;
-  $("#viewer-caption").textContent = caption;
-  $("#viewer-caption").hidden = !caption;
-  // "2 of 3", counting pics that arrive while viewing.
+/**
+ * Tells the server the pic was seen, so it's now opened (and gone). Tried a
+ * few times; if it never gets through, the server counts it as opened 15
+ * minutes after the fetch anyway.
+ */
+async function confirmOpened(m) {
+  const url = m.pic ? `/groups/${m.group_id}/pics/${m.pic.id}/opened` : `/snaps/${m.id}/opened`;
+  for (let i = 0; i < 5; i++) {
+    try {
+      await api(url, { method: "POST" });
+      return;
+    } catch (err) {
+      if (!retryable(err)) return;
+      await sleep(2000 * 2 ** i);
+    }
+  }
+  report("warn", "confirming a pic open failed", { message_id: m.id });
+}
+
+/** "2 of 3", counting pics that arrive while viewing. Returns how many are left after this one. */
+function updateCount() {
   const run = viewer.run;
   const left = run ? waitingPics().filter((m) => !run.seen.has(m.id)).length : 0;
   const total = (run?.seen.size ?? 1) + left;
   $("#viewer-count").textContent = `${run?.seen.size ?? 1} of ${total}`;
   $("#viewer-count").hidden = total < 2;
+  return left;
+}
+
+/** The viewer is up straight away, saying it's opening, so a slow connection doesn't look like nothing happened. */
+function showOpening(m) {
+  const v = $("#viewer");
+  v.classList.add("opening");
+  $("#viewer-error").hidden = true;
+  $("#viewer-from").textContent = personName(m.sender_id, m.sender_name ?? "");
+  $("#viewer-caption").hidden = true;
+  updateCount();
+  $("#viewer-hint").textContent = "Opening…";
+  v.hidden = false;
+}
+
+/** Shows a loaded pic and starts its timer. True once it's on screen. */
+async function showInViewer({ blob, from, caption = "" }) {
+  viewer.url = URL.createObjectURL(blob);
+  const v = $("#viewer");
+  const img = $("#viewer-image");
+  img.src = viewer.url;
+  try {
+    await img.decode();
+  } catch {
+    return false;
+  }
+  if (!viewer.url) return false; // closed while it decoded
+  v.classList.remove("opening");
+  $("#viewer-from").textContent = from;
+  $("#viewer-caption").textContent = caption;
+  $("#viewer-caption").hidden = !caption;
+  const left = updateCount();
   $("#viewer-hint").textContent = left ? "Tap for the next pic" : "Tap to close";
   v.style.setProperty("--view-ms", `${VIEW_MS}ms`);
-  img.onload = () => {
-    v.classList.add("running");
-    viewer.timer = setTimeout(nextPic, VIEW_MS);
-  };
-  img.src = viewer.url;
-  v.hidden = false;
+  v.classList.add("running");
+  viewer.timer = setTimeout(nextPic, VIEW_MS);
+  viewer.shownAt = Date.now();
+  return true;
+}
+
+/** Something went wrong: say so in the viewer; a tap closes it, and the pic stays unopened. */
+function showViewerProblem(text) {
+  $("#viewer").classList.remove("opening");
+  $("#viewer-error").textContent = text;
+  $("#viewer-error").hidden = false;
+  $("#viewer-hint").textContent = "Tap to close";
+  viewer.run = null;
 }
 
 function clearViewer() {
   clearTimeout(viewer.timer);
-  $("#viewer").classList.remove("running");
+  const v = $("#viewer");
+  v.classList.remove("running", "opening");
+  $("#viewer-error").hidden = true;
   const img = $("#viewer-image");
-  img.onload = null;
   img.removeAttribute("src");
   if (viewer.url) URL.revokeObjectURL(viewer.url);
   viewer.url = null;

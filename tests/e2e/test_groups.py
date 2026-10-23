@@ -179,6 +179,7 @@ async def main():
         await expect(ben.locator("#viewer-from")).to_contain_text(ANA)
         await expect(ben.locator("#viewer-caption")).to_have_text("<i>road</i> ✨ trip")  # as text
         assert await ben.locator("#viewer-caption i").count() == 0
+        await asyncio.sleep(0.7)  # past the tap guard
         await ben.click("#viewer")
         await expect(ben.locator(".snap-chip.done", has_text="Viewed")).to_be_visible(timeout=10000)
         await expect(ana.locator(".snap-chip.done", has_text="Opened by 1")).to_be_visible(timeout=10000)
