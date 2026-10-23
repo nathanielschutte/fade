@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "fade-server"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "aes-gcm",
  "anyhow",

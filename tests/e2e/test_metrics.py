@@ -10,6 +10,14 @@ from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
 ADMIN_PW = "correct horse battery"
 errors = []
 
+# Data marks (lines, bands, dots) that reach outside a chart's plot area.
+OUTSIDE = """() => [...document.querySelectorAll('.mchart-svg')].flatMap((s) => {
+  const w = s.viewBox.baseVal.width;
+  return [...s.querySelectorAll('.mline, .mband, .mdot')].map((e) => e.getBBox())
+    .filter((b) => b.x < 40 || b.x + b.width > w - 6)
+    .map((b) => [Math.round(b.x), Math.round(b.width), w]);
+})"""
+
 
 async def page_for(browser, label, **ctx):
     context = await browser.new_context(**ctx)
@@ -88,6 +96,34 @@ async def main():
         await admin.locator("#m-range .segment", has_text="3 days").click()
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("3 days")
         await check_metrics(admin)
+
+        # On AWS, CPU credits come back for the whole retention window whatever
+        # the range. Whatever's outside the range must not be drawn past the
+        # chart's edge (it was, before 0.26.2).
+        async def with_credits(route):
+            resp = await route.fetch()
+            body = await resp.json()
+            t = body["generated_at"]
+            for h in body["hosts"]:
+                # Oldest first, as CloudWatch returns them.
+                h["credits"] = {"points": [[t - i * 300, 144 - i % 60, 0] for i in reversed(range(864))], "updated_at": t}
+            await route.fulfill(response=resp, json=body)
+        await admin.route("**/api/admin/metrics*", with_credits)
+        for label in ("1 hour", "24 hours", "3 days"):
+            await admin.locator("#m-range .segment", has_text=label).click()
+            await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text(label)
+            await expect(admin.locator(".mchart h2", has_text="CPU credits")).to_have_count(1)
+            await asyncio.sleep(0.4)  # drawn on the next frame
+            outside = await admin.evaluate(OUTSIDE)
+            assert not outside, (label, outside)
+        await shot(admin, "metrics-credits-1h")
+        await admin.unroute("**/api/admin/metrics*")
+
+        # A quick second click mid-load still wins: the charts follow the highlighted range.
+        await admin.locator("#m-range .segment", has_text="1 hour").click()
+        await admin.locator("#m-range .segment", has_text="24 hours").click()
+        await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("24 hours")
+        await expect(admin.locator("#m-note")).to_have_text("Each point: a minute or more (average, with its range)")
 
         # A phone: one column, nothing wider than the screen.
         phone = await page_for(browser, "phone", viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)

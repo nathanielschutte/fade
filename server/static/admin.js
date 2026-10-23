@@ -683,8 +683,8 @@ function renderMetrics() {
 
   const ranges = [1, 24, data.retention_hours].filter((h, i, a) => h <= data.retention_hours && a.indexOf(h) === i);
   $("#m-range").replaceChildren(...ranges.map((h) => el("button", {
-    type: "button", class: "segment", "aria-pressed": String(h === data.hours),
-    onclick: () => { metrics.hours = h; loadMetrics(); },
+    type: "button", class: "segment", "aria-pressed": String(h === data.hours), "data-hours": h,
+    onclick: () => pickRange(h),
   }, h === 1 ? "1 hour" : h % 24 ? `${h} hours` : h === 24 ? "24 hours" : `${h / 24} days`)));
   $("#m-note").textContent = data.hours === 1 ? "Every 10 seconds" : "Each point: a minute or more (average, with its range)";
 
@@ -699,7 +699,10 @@ function renderMetrics() {
   const range = [data.generated_at - data.hours * 3600, data.generated_at];
   const rows = [];
   $("#m-charts").replaceChildren(...chartSpecs(host).map((spec) => {
-    const points = spec.points ?? host.series;
+    // Only what's inside the range: CPU credits come from CloudWatch for the
+    // whole retention window whatever the range, and anything outside it
+    // would be drawn past the chart's edge and stretch its scale.
+    const points = (spec.points ?? host.series).filter((p) => p.t >= range[0] && p.t <= range[1]);
     const box = el("section", { class: "panel mchart" });
     const sums = spec.series.map(([name, get]) => [name, summarize(points, get)]);
     for (const [name, sum] of sums) rows.push([spec.title, name, spec.unit, sum]);
@@ -726,29 +729,51 @@ function renderMetrics() {
   );
 }
 
+// One load at a time. A range picked mid-load gets its own load right after,
+// and an answer for a range no longer picked is dropped, so the charts always
+// match the highlighted button.
 async function loadMetrics() {
-  if (metrics.busy) return;
+  if (metrics.busy) {
+    metrics.again = true;
+    return;
+  }
   metrics.busy = true;
   try {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) return fail("Sign in first.");
+    const hours = metrics.hours;
     let res;
     try {
-      res = await fetch(`/api/admin/metrics?hours=${metrics.hours}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      res = await fetch(`/api/admin/metrics?hours=${hours}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
     } catch {
       $("#m-note").textContent = "Offline. Retrying…";
       return;
     }
     if (res.status === 401) return fail("Your session ended. Sign in again.");
     if (!res.ok) return fail("This page isn't available.");
-    metrics.data = await res.json();
+    const data = await res.json();
+    if (hours !== metrics.hours) return;
+    metrics.data = data;
     metrics.loadedAt = Date.now();
     $("#message").hidden = true;
     $("#admin").hidden = false;
     renderMetrics();
   } finally {
     metrics.busy = false;
+    if (metrics.again) {
+      metrics.again = false;
+      loadMetrics();
+    }
   }
+}
+
+function pickRange(hours) {
+  metrics.hours = hours;
+  // The button lights up at once; the charts follow when the data arrives.
+  for (const b of document.querySelectorAll("#m-range .segment")) {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.hours) === hours));
+  }
+  loadMetrics();
 }
 
 $("#m-host").addEventListener("change", (e) => { metrics.host = e.target.value; renderMetrics(); });
