@@ -68,6 +68,12 @@ variable "github_repo" {
   default     = "nathanielschutte/fade"
 }
 
+variable "github_repo_ids" {
+  description = "The same repo as GitHub's OIDC tokens name it, with the owner's and repo's numeric ids (owner@id/name@id). GitHub sends this form, which can't be matched by a renamed or re-created repo. Find them at https://api.github.com/repos/<owner>/<name> (owner.id, id)."
+  type        = string
+  default     = "nathanielschutte@47288798/fade@1426132226"
+}
+
 variable "admin_usernames" {
   description = "No longer used: Admins are the SSM parameter /<app_name>/admins, set with scripts/set-admins.sh, so the list stays out of source control (docs/implementation/roles.md)."
   type        = list(string)

@@ -100,7 +100,8 @@ In the artifacts bucket (`terraform output artifacts_bucket`):
 | `releases/tags/fade-server-<version>` | Releases, one per tag | Forever, never replaced |
 | `releases/fade-server` | What production runs | Replaced each release |
 | `releases/hotfix/fade-server-<version>-<sha>` | Hotfixes from `scripts/deploy.sh` | Forever |
-| `releases/fade-server-<version>-<sha>` | Builds from before this pipeline (up to 0.31.0) | Forever |
+
+Nothing else belongs under `releases/`. Each candidate and release carries the commit it was built from as S3 metadata (`build`); `aws s3api head-object --bucket <bucket> --key releases/tags/fade-server-0.31.1` shows it. Every version before the pipeline (0.1.0 to 0.31.0, shipped with `deploy.sh`) was moved into `releases/tags/` the same way on 2026-10-23, its build (with `-dirty` where it was built from uncommitted code) kept in the metadata.
 
 Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)), assumed through GitHub's OIDC, so no AWS keys are stored in GitHub. The staging job's role can write only `releases/main/` and reach only staging's server; the release job's role can't delete anything and reaches only production's servers.
 
@@ -113,7 +114,7 @@ Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)),
 ```sh
 scripts/rollback.sh                   # list releases, hotfixes, and older builds
 scripts/rollback.sh 1.3.2             # a release (releases/tags/)
-scripts/rollback.sh 1.3.2-a1b2c3d     # a hotfix, or a build from before the pipeline
+scripts/rollback.sh 1.3.2-a1b2c3d     # a hotfix (releases/hotfix/)
 ```
 
 It makes that build what production runs and installs it. Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).

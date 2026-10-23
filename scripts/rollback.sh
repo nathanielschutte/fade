@@ -3,7 +3,7 @@
 #
 #   scripts/rollback.sh              list the builds kept in S3
 #   scripts/rollback.sh 0.31.0       roll back to a release (releases/tags/)
-#   scripts/rollback.sh 0.31.0-6b3c483   or to a hotfix (releases/hotfix/), or an older build
+#   scripts/rollback.sh 0.31.0-6b3c483   or to a hotfix (releases/hotfix/)
 #
 # Works because migrations are additive and the server ignores ones it
 # doesn't know (docs/operations/releasing.md). Afterwards, a new release tag
@@ -25,12 +25,11 @@ list() {
 if [ $# -eq 0 ]; then
   echo "Releases (releases/tags/, newest last):"; list releases/tags/
   echo "Hotfixes (releases/hotfix/):"; list releases/hotfix/
-  echo "Older builds (releases/):"; list releases/
   exit 0
 fi
 
 KEY=""
-for k in "releases/tags/fade-server-$1" "releases/hotfix/fade-server-$1" "releases/fade-server-$1"; do
+for k in "releases/tags/fade-server-$1" "releases/hotfix/fade-server-$1"; do
   if aws s3 ls "s3://$BUCKET/$k" --region "$REGION" >/dev/null 2>&1; then KEY=$k; break; fi
 done
 [ -n "$KEY" ] || { echo "no build $1 in S3 (run without arguments to list them)"; exit 1; }

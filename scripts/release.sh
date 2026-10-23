@@ -8,7 +8,8 @@
 #                                       make it staging's, keep the newest $KEEP
 #   release.sh fetch-candidate <build>  download releases/main/fade-server-<build>, if it's kept
 #   release.sh publish <version>        upload dist/fade-server as releases/tags/fade-server-<version>
-#                                       (never over an existing one) and make it production's
+#                                       (never over an existing one; $BUILD as its build metadata)
+#                                       and make it production's
 #   release.sh backup <app>             back up the database on every <app> server first
 #   release.sh update <app> <url> <build>   run fade-update on every <app> server, then
 #                                       check <url> reports <build>
@@ -61,7 +62,7 @@ case "${1:-}" in
   candidate)
     BUILD=$2
     echo "==> release candidate $BUILD"
-    s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server-$BUILD"
+    s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server-$BUILD" --metadata "build=$BUILD"
     # What staging runs (its server pulls this key; infra/staging/main.tf).
     s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server"
     # Keep the newest $KEEP candidates; releases (releases/tags/) are kept forever.
@@ -94,7 +95,8 @@ case "${1:-}" in
     # A release is never replaced: a fix is a new version.
     if exists "$KEY"; then echo "$KEY already exists: bump the version in server/Cargo.toml"; exit 1; fi
     echo "==> release $VERSION"
-    s3 cp dist/fade-server "s3://$BUCKET/$KEY"
+    # The commit it was built from rides along as metadata ($BUILD, from the workflow).
+    s3 cp dist/fade-server "s3://$BUCKET/$KEY" --metadata "build=${BUILD:-unknown}"
     # What production runs (its servers pull this key, at boot and on fade-update).
     s3 cp dist/fade-server "s3://$BUCKET/releases/fade-server"
     ;;

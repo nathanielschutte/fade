@@ -53,10 +53,15 @@ data "aws_iam_policy_document" "github_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
+    # GitHub names the repo with its ids (owner@id/name@id); the plain
+    # owner/name form is kept for tokens from before that change.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:environment:${each.key}"]
+      values = compact([
+        var.github_repo_ids != "" ? "repo:${var.github_repo_ids}:environment:${each.key}" : "",
+        "repo:${var.github_repo}:environment:${each.key}",
+      ])
     }
   }
 }
