@@ -795,7 +795,8 @@ function enterApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
   renderAccountBar();
-  $("#admin-link").hidden = !state.me.is_admin;
+  // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
+  $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
   syncPush();
   if (location.hash) openFromLink(location.hash);
   refreshChats();

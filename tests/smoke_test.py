@@ -732,6 +732,91 @@ async def check_resend(tag):
 
 
 
+def check_roles(tag):
+    """Roles (docs/roles.md): what a User, a PowerUser, and an Admin can reach.
+    PowerUsers see how the app is doing, never more private data: no users
+    table, no cost, no logs, no reset codes, and on the graph everyone they
+    aren't friends with is anonymous (no username, no id, anywhere)."""
+    r = {n: ok(register(f"ro_{n}_{tag}")).json() for n in ("user", "power", "friend", "stranger", "pal")}
+    tok = {n: r[n]["token"] for n in r}
+    uid = {n: r[n]["user"]["id"] for n in r}
+    name = {n: r[n]["user"]["username"] for n in r}
+    befriend(tok["power"], r["friend"]["user"], tok["friend"], uid["power"])
+    befriend(tok["power"], r["pal"]["user"], tok["pal"], uid["power"])
+    befriend(tok["friend"], r["stranger"]["user"], tok["stranger"], uid["friend"])
+    adm = admin_token()
+
+    assert ok(call("GET", "/me", tok["user"])).json()["role"] == "user"
+    assert ok(call("GET", "/me", adm)).json()["role"] == "admin"
+
+    # A User: none of it exists.
+    for method, path in (("GET", "/admin/stats"), ("GET", "/admin/metrics"), ("GET", "/admin/graph"), ("GET", "/admin/roles"),
+                         ("GET", "/admin/logs"), ("POST", f"/admin/roles/{uid['friend']}"), ("DELETE", f"/admin/roles/{uid['friend']}"),
+                         ("POST", "/admin/roles/reload"), ("POST", f"/admin/users/{uid['friend']}/reset-code")):
+        ok(call(method, path, tok["user"]), 404)
+
+    # An Admin makes someone a PowerUser (once).
+    ok(call("POST", f"/admin/roles/{uid['power']}", adm))
+    ok(call("POST", f"/admin/roles/{uid['power']}", adm), 409)
+    ok(call("POST", f"/admin/roles/{uid['user']}", adm, ), 200)
+    ok(call("DELETE", f"/admin/roles/{uid['user']}", adm))                      # and takes it away
+    ok(call("DELETE", f"/admin/roles/{uid['user']}", adm), 404)
+    ok(call("POST", "/admin/roles/999999", adm), 404)
+    assert ok(call("GET", "/me", tok["power"])).json()["role"] == "power"
+    P = tok["power"]
+
+    # PowerUser: the overview without the users table; metrics without cost.
+    stats = ok(call("GET", "/admin/stats", P)).json()
+    assert stats["users"]["list"] is None and stats["users"]["total"] >= 5
+    assert name["stranger"] not in json.dumps(stats)
+    m = ok(call("GET", "/admin/metrics?hours=1", P)).json()
+    assert m["cost_visible"] is False and m["billing"] is None and m["aws_problems"] == {}
+    assert all(h["estimate"] is None for h in m["hosts"])
+    # No logs, no reset codes, no reloading the admin list, no taking roles away.
+    ok(call("GET", "/admin/logs", P), 404)
+    ok(call("POST", f"/admin/users/{uid['friend']}/reset-code", P), 404)
+    ok(call("POST", "/admin/roles/reload", P), 404)
+
+    # The graph: friends by name; everyone else anonymous, in every form.
+    for query in ("?all=1", f"?users={uid['power']}&depth=2", f"?users={uid['friend']}&depth=2"):
+        g = ok(call("GET", f"/admin/graph{query}", P)).json()
+        assert g["anonymous"] is True
+        text = json.dumps(g)
+        assert name["stranger"] not in text and name["user"] not in text, query
+        for n in g["graph"]["nodes"]:
+            if n.get("user_id") not in (uid["power"], uid["friend"], uid["pal"]):
+                assert "user_id" not in n and "username" not in n and n["key"].startswith("a") and n["alias"].startswith("Someone "), n
+        assert {p["id"] for p in g["people"]} == {uid["power"], uid["friend"], uid["pal"]}, g["people"]
+    g = ok(call("GET", f"/admin/graph?users={uid['friend']}&depth=1", P)).json()
+    stranger = next(n for n in g["graph"]["nodes"] if "alias" in n)
+    ok(call("GET", f"/admin/graph?users={uid['stranger']}", P), 400)          # not by id
+    seeded = ok(call("GET", f"/admin/graph?users={stranger['key']}", P)).json()  # by alias: fine
+    assert [n["key"] for n in seeded["graph"]["nodes"] if n["kind"] == "seed"] == [stranger["key"]]
+    # An Admin sees real names.
+    assert name["stranger"] in json.dumps(ok(call("GET", "/admin/graph?all=1", adm)).json())
+
+    # Roles: a PowerUser sees themselves and their friends, grants to friends only, revokes nothing.
+    roles = ok(call("GET", "/admin/roles", P)).json()
+    assert roles["role"] == "power"
+    assert {p["id"] for p in roles["people"]} == {uid["power"], uid["friend"], uid["pal"]}
+    assert all(p["granted_by"] is None for p in roles["people"])
+    ok(call("POST", f"/admin/roles/{uid['stranger']}", P), 404)
+    ok(call("POST", f"/admin/roles/{uid['power']}", P), 400)                     # not yourself
+    ok(call("POST", f"/admin/roles/{uid['friend']}", P))
+    ok(call("DELETE", f"/admin/roles/{uid['friend']}", P), 404)
+    assert ok(call("GET", "/me", tok["friend"])).json()["role"] == "power"
+    everyone = ok(call("GET", "/admin/roles", adm)).json()
+    granted = next(p for p in everyone["people"] if p["id"] == uid["friend"])
+    assert granted["role"] == "power" and granted["granted_by"] == name["power"]
+    ok(call("DELETE", f"/admin/roles/{uid['friend']}", adm))
+    ok(call("DELETE", f"/admin/roles/{uid['power']}", adm))
+    ok(call("GET", "/admin/stats", P), 404)                                       # back to User
+    ok(call("POST", "/admin/roles/reload", adm), 400)                             # no settings parameter here
+    if DB:
+        n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_roles WHERE user_id IN (?, ?, ?)", (uid["power"], uid["friend"], uid["user"])).fetchone()[0]
+        assert n == 3, f"grants are marked ended, never deleted: {n}"
+    print("  roles: Users see nothing; PowerUsers no names, cost, logs, or resets; Admins everything")
+
 def check_graph(tag):
     """The friend map: your own map only, with an anonymous ? for each person
     a friend knows that you don't; the admin graph for admins only."""
@@ -1132,6 +1217,7 @@ async def main():
     await check_resend(tag)
     await check_late_joiner(tag)
     check_graph(tag)
+    check_roles(tag)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()

@@ -11,6 +11,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
+| 0b | [Health monitor that repairs the server](#i6-health-monitor) | Infrastructure | Planned | Nate (2026-10-23); design in health-monitor.md |
+| 0c | [Move to napsack.io](#i7-napsackio) | Infrastructure | Planned | Nate (2026-10-23); design in domain-move.md |
+| 0d | [Staging in AWS](#i8-staging) | Infrastructure | Planned | Nate (2026-10-23); design in staging.md |
+| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Planning only | Nate (2026-10-23); options in email.md |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -61,6 +65,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
 | [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
 | [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 |
+| [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
@@ -315,6 +320,16 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Design: [friend-graph.md](friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
 - Done (0.27.0): Friends → **See your friend map**; admin → **Graph** tab. Groups found by Louvain modularity, outlined and lettered; three colors at most (validated for every pair), names on every node. Tests: Rust (scope, privacy), Node (clusters, layout, hull), smoke (`check_graph`), browser (`test_graph.py`).
 
+### Security
+
+#### S2. Roles
+- Requested (2026-10-23): proper roles. **User** (everyone invited), **Admin** (a fixed list), and **PowerUser** in between, for people interested in how the app is doing, never for more access to private data or to act on other people.
+- PowerUser sees the System pages (the admin panel renamed, with a gear) scoped: Overview without the users table (the reset-password tool is Admin only); Metrics without cost; the Graph with every feature, but people they aren't friends with are anonymous. Logs are Admin only.
+- Admins and PowerUsers can make someone a PowerUser in the UI (PowerUsers only their friends); only Admins can take it away.
+- The admin list moves out of source control into its own SSM parameter, reloadable without a deploy.
+- Design: [roles.md](roles.md).
+- Done (0.28.0). Production's admin list moved to `/fade/admins` (`scripts/set-admins.sh`, `scripts/reload-admins.sh`); `admin_usernames` in Terraform is no longer used.
+
 ### Infrastructure
 
 #### X11. Bad connections
@@ -372,6 +387,22 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
   - **See it** in the admin page, a new Metrics tab: a status tile per host (OK / Watch / Red against set thresholds: memory > 80%, disk > 80%, credits falling or surplus charged, steal > 10%, p95 > 500ms, 5xx), then line charts for 1h / 24h / 3d. Inline SVG, no libraries.
   - **Cost:** a live run-rate from a small price table (instance type per hour, gp3 per GB-month, public IPv4, surplus credits, S3 backup size), plus the real month-to-date from Cost Explorer once a day by `App=fade` (needs the tag activated in Billing). Shows the next instance size up and its price.
 - Rejected: CloudWatch agent (custom metrics ~$0.30 each per month, about as much as the server itself, and the view lives in the AWS console); Prometheus/Grafana (too heavy for a t4g.nano).
+
+#### I6. Health monitor
+- Requested (2026-10-23): an outside check that the single server is healthy, and that tries to fix it, gently first: restart the app, reboot, stop and start (new hardware), and as a last resort replace the server. Every incident is written up with its evidence and what was tried; a notification goes to an SNS topic (where it lands is decided later). No new cost if possible.
+- Design: [health-monitor.md](health-monitor.md).
+
+#### I7. napsack.io
+- Requested (2026-10-23): `napsack.io` (registered in Route 53, with its zone) becomes the production address; `napsack.getattr.com` redirects to it permanently (301).
+- Design and what people will notice: [domain-move.md](domain-move.md).
+
+#### I8. Staging
+- Requested (2026-10-23): a second, fully separate copy of napsack in AWS, in the same network, on its own address, with no backups. For running the browser tests against a real deployment and for load testing. Production and its data must not be touchable from it.
+- Design: [staging.md](staging.md).
+
+#### I9. Email on napsack.io
+- Requested (2026-10-23), planning only: the simplest, cheapest way to have a real mailbox for nate@napsack.io on desktop and phone.
+- Options and a recommendation: [email.md](email.md).
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now

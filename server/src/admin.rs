@@ -6,12 +6,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{FromRow, SqlitePool};
 
-use crate::{
-    auth::AuthUser,
-    db::now,
-    error::{AppError, AppResult},
-    version, SharedState,
-};
+use crate::{auth::AuthUser, db::now, error::AppResult, version, SharedState};
 
 const DAY: i64 = 86_400;
 const CHART_DAYS: i64 = 14;
@@ -93,15 +88,19 @@ pub async fn stats(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Value>> {
-    // 404, not 403: non-admins shouldn't learn the panel exists.
-    if !state.config.is_admin(&me.username) {
-        return Err(AppError::not_found("Not found."));
-    }
+    // PowerUsers and Admins (roles.md); 404 for anyone else, so the panel
+    // doesn't confirm it exists. PowerUsers get no users table: it names
+    // people and holds the reset tool.
+    let role = crate::roles::require(&state, &me, crate::roles::Role::Power).await?;
+    let admin = role == crate::roles::Role::Admin;
     let db = &state.db;
     let at = now();
     let (day_ago, week_ago) = (at - DAY, at - 7 * DAY);
 
-    let users = sqlx::query_as::<_, UserRow>(
+    let users = if !admin {
+        Vec::new()
+    } else {
+        sqlx::query_as::<_, UserRow>(
         "SELECT u.id, u.username, u.created_at, u.last_seen_at,
             (SELECT COUNT(*) FROM friendships f
               WHERE (f.user_lo = u.id OR f.user_hi = u.id) AND f.ended_at IS NULL) AS friends,
@@ -110,7 +109,8 @@ pub async fn stats(
          FROM users u ORDER BY u.created_at DESC LIMIT 500",
     )
     .fetch_all(db)
-    .await?;
+    .await?
+    };
 
     let (online_users, sockets) = state.hub.online();
     let (snaps_held, snap_bytes) = crate::snaps::usage(db).await?;
@@ -131,7 +131,7 @@ pub async fn stats(
             "active_7d": count(db, "SELECT COUNT(*) FROM users WHERE last_seen_at >= ?", &[week_ago]).await?,
             "online": online_users,
             "sockets": sockets,
-            "list": users,
+            "list": if admin { Some(users) } else { None },
         },
         "messages": {
             "texts": count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'text'", &[]).await?,

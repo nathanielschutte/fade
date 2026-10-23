@@ -379,9 +379,8 @@ pub async fn list(
     AuthUser(me): AuthUser,
     Query(q): Query<LogQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if !state.config.is_admin(&me.username) {
-        return Err(AppError::not_found("Not found."));
-    }
+    // Admins only (roles.md); anyone else gets 404.
+    crate::roles::require(&state, &me, crate::roles::Role::Admin).await?;
     let entries = state.logs.query(&q);
     let (held, oldest, newest) = state.logs.span();
     Ok(Json(serde_json::json!({

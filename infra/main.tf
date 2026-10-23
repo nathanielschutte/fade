@@ -31,7 +31,8 @@ locals {
   domain   = var.domain != "" ? var.domain : "${replace(aws_eip.app.public_ip, ".", "-")}.sslip.io"
   env_file = join("\n", [
     "FADE_INVITE_CODE=${var.invite_code}",
-    "FADE_ADMINS=${join(",", var.admin_usernames)}",
+    # Admins live in their own parameter, outside Terraform (docs/roles.md; scripts/set-admins.sh).
+    "FADE_ADMINS_PARAM=/${var.app_name}/admins",
     "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
     # The contact in push notification requests (VAPID); never hardcoded in the server.
@@ -194,10 +195,14 @@ resource "aws_iam_role_policy" "instance" {
       },
       {
         # Decryption uses the AWS-managed aws/ssm key, whose key policy already allows this account.
-        Sid      = "ReadConfig"
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter"]
-        Resource = aws_ssm_parameter.env.arn
+        Sid    = "ReadConfig"
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        # The settings, and the admin list (set outside Terraform; docs/roles.md).
+        Resource = [
+          aws_ssm_parameter.env.arn,
+          "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.app_name}/admins",
+        ]
       },
       {
         # Add backups only: no delete, no read, no listing. Keys are unique per

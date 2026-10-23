@@ -375,9 +375,8 @@ pub async fn issue_reset_code(
     AuthUser(me): AuthUser,
     Path(user): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    if !state.config.is_admin(&me.username) {
-        return Err(AppError::not_found("Not found."));
-    }
+    // Admins only (roles.md); anyone else gets 404.
+    crate::roles::require(&state, &me, crate::roles::Role::Admin).await?;
     let username: Option<String> = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
         .bind(user)
         .fetch_optional(&state.db)

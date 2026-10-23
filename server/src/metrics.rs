@@ -32,13 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use crate::{
-    auth::AuthUser,
-    aws::Aws,
-    db::now,
-    error::{AppError, AppResult},
-    SharedState,
-};
+use crate::{auth::AuthUser, aws::Aws, db::now, error::AppResult, SharedState};
 
 pub const INTERVAL: Duration = Duration::from_secs(10);
 /// Points per chart line, at most: longer ranges are merged into buckets.
@@ -1200,9 +1194,9 @@ pub async fn get(
     AuthUser(me): AuthUser,
     Query(q): Query<RangeQuery>,
 ) -> AppResult<Json<Value>> {
-    if !state.config.is_admin(&me.username) {
-        return Err(AppError::not_found("Not found."));
-    }
+    // PowerUsers and Admins; cost (estimate, bill, AWS problems) is Admins' only.
+    let role = crate::roles::require(&state, &me, crate::roles::Role::Power).await?;
+    let admin = role == crate::roles::Role::Admin;
     let m = &state.metrics;
     let hours = q.hours.unwrap_or(24).clamp(1, m.retention_hours);
     let t = now();
@@ -1261,18 +1255,23 @@ pub async fn get(
             "latest": recent.last().map(|p| &p.v),
             "series": series,
             "credits": host_credits,
-            "estimate": estimate(&info, host_credits, if is_local { s3.as_deref() } else { None }),
+            "estimate": if admin { estimate(&info, host_credits, if is_local { s3.as_deref() } else { None }) } else { Value::Null },
         }));
     }
 
-    let billing = m.cached("billing").await.map(|(v, _)| v);
+    let billing = if admin {
+        m.cached("billing").await.map(|(v, _)| v)
+    } else {
+        None
+    };
     Ok(Json(json!({
         "generated_at": t,
         "hours": hours,
         "retention_hours": m.retention_hours,
         "interval_secs": if hours == 1 { INTERVAL.as_secs() } else { 60 },
         "on_aws": matches!(m.aws.get(), Some(Some(_))),
-        "aws_problems": m.aws_problems.lock().unwrap().clone(),
+        "aws_problems": if admin { json!(m.aws_problems.lock().unwrap().clone()) } else { json!({}) },
+        "cost_visible": admin,
         "hosts": hosts,
         "billing": billing,
     })))

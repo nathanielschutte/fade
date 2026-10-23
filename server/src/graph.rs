@@ -39,6 +39,9 @@ pub struct Node {
     pub user_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    /// On a PowerUser's graph, what to call someone they don't know ("Someone K7Q2").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
     /// "self", "friend" or "unknown" on a person's map; "seed" or "member" on the admin graph.
     pub kind: &'static str,
 }
@@ -80,6 +83,7 @@ pub fn ego(me: i64, edges: &[(i64, i64)], shuffle: impl FnOnce(&mut Vec<BTreeSet
         key: user_key(me),
         user_id: Some(me),
         username: None,
+        alias: None,
         kind: "self",
     });
     for &f in friends {
@@ -87,6 +91,7 @@ pub fn ego(me: i64, edges: &[(i64, i64)], shuffle: impl FnOnce(&mut Vec<BTreeSet
             key: user_key(f),
             user_id: Some(f),
             username: None,
+            alias: None,
             kind: "friend",
         });
         g.edges.push([user_key(me), user_key(f)]);
@@ -117,6 +122,7 @@ pub fn ego(me: i64, edges: &[(i64, i64)], shuffle: impl FnOnce(&mut Vec<BTreeSet
             key: key.clone(),
             user_id: None,
             username: None,
+            alias: None,
             kind: "unknown",
         });
         for &f in knowers {
@@ -165,6 +171,7 @@ pub fn scoped(
             key: user_key(id),
             user_id: Some(id),
             username: names.get(&id).map(|n| n.to_string()),
+            alias: None,
             kind: if chosen.contains(&id) {
                 "seed"
             } else {
@@ -178,6 +185,34 @@ pub fn scoped(
         }
     }
     g
+}
+
+/// On a PowerUser's graph, everyone but them and their friends (`known`)
+/// becomes anonymous: an alias for a key (roles::alias, per viewer, unrelated
+/// to the id), no id, no username, and a short label. Lines follow.
+pub fn obscure(g: &mut Graph, viewer: i64, known: &BTreeSet<i64>, secret: &[u8]) {
+    let mut renamed: BTreeMap<String, String> = BTreeMap::new();
+    for n in &mut g.nodes {
+        let Some(id) = n.user_id else { continue };
+        if known.contains(&id) {
+            continue;
+        }
+        let alias = crate::roles::alias(secret, viewer, id);
+        n.alias = Some(format!(
+            "Someone {}",
+            alias[alias.len() - 4..].to_uppercase()
+        ));
+        renamed.insert(std::mem::replace(&mut n.key, alias), n.key.clone());
+        n.user_id = None;
+        n.username = None;
+    }
+    for edge in &mut g.edges {
+        for end in edge.iter_mut() {
+            if let Some(new) = renamed.get(end) {
+                *end = new.clone();
+            }
+        }
+    }
 }
 
 /// `GET /api/graph`: your own friend map.
@@ -207,9 +242,33 @@ pub async fn admin(
     AuthUser(me): AuthUser,
     Query(q): Query<AdminQuery>,
 ) -> AppResult<Json<Value>> {
-    if !state.config.is_admin(&me.username) {
-        return Err(AppError::not_found("Not found."));
-    }
+    // PowerUsers and Admins (roles.md). PowerUsers see everyone they aren't
+    // friends with as anonymous, and choose them by alias, never by id.
+    let role = crate::roles::require(&state, &me, crate::roles::Role::Power).await?;
+    let power = role == crate::roles::Role::Power;
+    let people: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, username FROM users ORDER BY lower(username)")
+            .fetch_all(&state.db)
+            .await?;
+    let (known, secret) = if power {
+        let mut known: BTreeSet<i64> = crate::roles::friend_ids(&state.db, me.id)
+            .await?
+            .into_iter()
+            .collect();
+        known.insert(me.id);
+        (known, crate::roles::alias_key(&state.db).await?)
+    } else {
+        (BTreeSet::new(), Vec::new())
+    };
+    let by_alias: BTreeMap<String, i64> = if power {
+        people
+            .iter()
+            .map(|(id, _)| (crate::roles::alias(&secret, me.id, *id), *id))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let unknown_choice = || AppError::bad("Choose people from the list, or from the graph.");
     let seeds: Option<Vec<i64>> = if q.all == Some(1) {
         None
     } else {
@@ -217,9 +276,16 @@ pub async fn admin(
             None => vec![me.id],
             Some(list) => list
                 .split(',')
-                .map(|s| s.trim().parse::<i64>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| AppError::bad("Choose people by their ids, separated by commas."))?,
+                .map(|s| {
+                    let s = s.trim();
+                    match s.parse::<i64>() {
+                        // A PowerUser names only people they know by id.
+                        Ok(id) if !power || known.contains(&id) => Ok(id),
+                        Ok(_) => Err(unknown_choice()),
+                        Err(_) => by_alias.get(s).copied().ok_or_else(unknown_choice),
+                    }
+                })
+                .collect::<Result<_, _>>()?,
         };
         if ids.len() > MAX_SEEDS {
             return Err(AppError::bad(format!(
@@ -229,12 +295,11 @@ pub async fn admin(
         Some(ids)
     };
     let depth = q.depth.unwrap_or(1).clamp(1, 2);
-    let people: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, username FROM users ORDER BY lower(username)")
-            .fetch_all(&state.db)
-            .await?;
     let edges = friendships(&state.db).await?;
-    let g = scoped(&edges, &people, seeds.as_deref(), depth);
+    let mut g = scoped(&edges, &people, seeds.as_deref(), depth);
+    if power {
+        obscure(&mut g, me.id, &known, &secret);
+    }
     tracing::debug!(
         user_id = me.id,
         nodes = g.nodes.len(),
@@ -245,7 +310,13 @@ pub async fn admin(
         "graph": g,
         "depth": depth,
         "all": seeds.is_none(),
-        "people": people.iter().map(|(id, name)| json!({ "id": id, "username": name })).collect::<Vec<_>>(),
+        // The picker: PowerUsers choose among themselves and their friends.
+        "people": people
+            .iter()
+            .filter(|(id, _)| !power || known.contains(id))
+            .map(|(id, name)| json!({ "id": id, "username": name }))
+            .collect::<Vec<_>>(),
+        "anonymous": power,
     })))
 }
 
@@ -352,6 +423,43 @@ mod tests {
             "unknown ids are ignored"
         );
         assert_eq!(both.nodes.iter().filter(|n| n.kind == "seed").count(), 2);
+    }
+
+    #[test]
+    fn a_powerusers_graph_hides_strangers() {
+        let people: Vec<(i64, String)> = (1..=4).map(|i| (i, format!("p{i}"))).collect();
+        let edges = [(1, 2), (2, 3), (3, 4)];
+        let mut g = scoped(&edges, &people, None, 1);
+        let known: BTreeSet<i64> = [1, 2].into();
+        obscure(&mut g, 1, &known, &[9u8; 32]);
+        let json = serde_json::to_string(&g).unwrap();
+        for hidden in [
+            "p3",
+            "p4",
+            "\"u3\"",
+            "\"u4\"",
+            "\"user_id\":3",
+            "\"user_id\":4",
+        ] {
+            assert!(!json.contains(hidden), "{hidden} leaked: {json}");
+        }
+        let strangers: Vec<&Node> = g.nodes.iter().filter(|n| n.alias.is_some()).collect();
+        assert_eq!(strangers.len(), 2);
+        assert!(strangers
+            .iter()
+            .all(|n| n.key.starts_with('a') && n.user_id.is_none() && n.username.is_none()));
+        assert!(strangers[0]
+            .alias
+            .as_deref()
+            .unwrap()
+            .starts_with("Someone "));
+        // Lines follow the new keys.
+        assert!(has_edge(&g, "u2", &strangers[0].key) || has_edge(&g, "u2", &strangers[1].key));
+        assert!(has_edge(&g, &strangers[0].key, &strangers[1].key));
+        assert!(
+            g.nodes.iter().any(|n| n.username.as_deref() == Some("p2")),
+            "friends keep their names"
+        );
     }
 
     #[tokio::test]

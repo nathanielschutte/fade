@@ -58,3 +58,7 @@ output "shell" {
 output "backups_bucket" {
   value = aws_s3_bucket.backups.id
 }
+
+output "app_name" {
+  value = var.app_name
+}

@@ -250,6 +250,31 @@ impl Aws {
         Ok(parse_datapoints(&xml, statistic))
     }
 
+    /// An SSM parameter's value (decrypted if it's a SecureString), from this
+    /// instance's region. Used for the admin list (roles.rs).
+    pub async fn ssm_parameter(&self, name: &str) -> anyhow::Result<String> {
+        let host = format!("ssm.{}.amazonaws.com", self.instance.region);
+        let text = self
+            .call(
+                reqwest::Method::POST,
+                &host,
+                "ssm",
+                &self.instance.region,
+                &[],
+                &[
+                    ("content-type", "application/x-amz-json-1.1"),
+                    ("x-amz-target", "AmazonSSM.GetParameter"),
+                ],
+                serde_json::to_vec(&json!({ "Name": name, "WithDecryption": true }))?,
+            )
+            .await?;
+        let res: Value = serde_json::from_str(&text)?;
+        res["Parameter"]["Value"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("parameter {name} has no value"))
+    }
+
     /// What everything tagged App=`app` cost, by service, per month from
     /// `start` (a YYYY-MM-DD) to today. Each call costs $0.01; callers cache.
     pub async fn costs(&self, app: &str, start: &str, end: &str) -> anyhow::Result<Value> {

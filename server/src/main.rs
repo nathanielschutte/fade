@@ -22,6 +22,7 @@ mod profiles;
 mod push;
 mod ratelimit;
 mod reactions;
+mod roles;
 mod snaps;
 mod streaks;
 mod sysinfo;
@@ -56,7 +57,10 @@ pub struct Config {
     pub snap_disk_bytes: usize,
     pub session_days: i64,
     /// Lowercased usernames allowed into the admin panel.
+    /// Admins from FADE_ADMINS (development, tests). Production names an SSM
+    /// parameter instead (`admins_param`); see roles.rs.
     pub admins: Vec<String>,
+    pub admins_param: Option<String>,
     /// Where group pic files live until they're opened or expire. Defaults to
     /// a `pics` folder next to the database, on the same (backed-up) volume.
     pub pic_dir: std::path::PathBuf,
@@ -102,12 +106,11 @@ impl Config {
             snap_max_bytes: env_or::<usize>("FADE_SNAP_MAX_KB", 512)? * 1024,
             snap_disk_bytes: env_or::<usize>("FADE_SNAP_DISK_MB", 256)? * 1024 * 1024,
             session_days: env_or("FADE_SESSION_DAYS", 90)?,
-            admins: std::env::var("FADE_ADMINS")
-                .unwrap_or_default()
-                .split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect(),
+            admins: roles::parse_list(&std::env::var("FADE_ADMINS").unwrap_or_default()),
+            admins_param: std::env::var("FADE_ADMINS_PARAM")
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
             pic_dir: match std::env::var("FADE_PIC_DIR") {
                 Ok(dir) if !dir.trim().is_empty() => dir.trim().into(),
                 _ => db::default_pic_dir(&env_or(
@@ -153,11 +156,6 @@ impl Config {
             metrics_retention_hours: env_or("FADE_METRICS_RETENTION_HOURS", 72)?,
         })
     }
-
-    /// Usernames are case-insensitive everywhere else, so here too.
-    pub fn is_admin(&self, username: &str) -> bool {
-        self.admins.contains(&username.to_lowercase())
-    }
 }
 
 pub struct AppState {
@@ -197,6 +195,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// Machine and server readings for the admin Metrics tab.
     pub metrics: metrics::Metrics,
+    /// Who's an Admin (roles.rs): settings, reloadable.
+    pub admins: roles::Admins,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -235,9 +235,7 @@ async fn main() -> anyhow::Result<()> {
     let vapid = push::load_vapid(&db).await?;
     let limits = config.limits.clone();
 
-    if config.admins.is_empty() {
-        tracing::info!("no FADE_ADMINS set; the admin panel is off");
-    }
+    let admins = roles::Admins::new(config.admins.clone(), config.admins_param.clone());
     let bind = config.bind;
     let metrics = metrics::Metrics::open(&config.metrics_db, config.metrics_retention_hours).await;
     let state = Arc::new(AppState {
@@ -267,8 +265,10 @@ async fn main() -> anyhow::Result<()> {
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
         metrics,
+        admins,
     });
     metrics::spawn(state.clone());
+    load_admins(state.clone()).await;
 
     snaps::spawn_sweeper(state.clone());
     group_pics::spawn_sweeper(state.clone());
@@ -419,6 +419,12 @@ fn router(state: SharedState) -> Router {
         .route("/admin/stats", get(admin::stats))
         .route("/admin/metrics", get(metrics::get))
         .route("/admin/graph", get(graph::admin))
+        .route("/admin/roles", get(roles::list))
+        .route("/admin/roles/reload", post(roles::reload))
+        .route(
+            "/admin/roles/{user_id}",
+            post(roles::grant).delete(roles::revoke),
+        )
         .route("/graph", get(graph::mine))
         .route("/admin/logs", get(logs::list))
         .route(
@@ -573,6 +579,35 @@ async fn log_request(
         _ => log!(debug),
     }
     response
+}
+
+/// Reads the admin list from its SSM parameter at start, and again on SIGHUP
+/// (`scripts/reload-admins.sh`). Without a parameter, FADE_ADMINS is the list.
+async fn load_admins(state: SharedState) {
+    if state.admins.has_param() {
+        match state.admins.reload().await {
+            Ok(count) => tracing::info!(admins = count, "admin list loaded"),
+            Err(e) => {
+                tracing::error!(error = %e, admins = state.admins.count(), "loading the admin list failed; using FADE_ADMINS only")
+            }
+        }
+    }
+    if state.admins.count() == 0 {
+        tracing::info!("no admins set; the System pages are off for everyone but PowerUsers");
+    }
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        let Ok(mut hup) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        else {
+            return;
+        };
+        while hup.recv().await.is_some() {
+            match state.admins.reload().await {
+                Ok(count) => tracing::info!(admins = count, "admin list reloaded (SIGHUP)"),
+                Err(e) => tracing::warn!(error = %e, "admin list reload failed (SIGHUP)"),
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

@@ -180,7 +180,9 @@ function render(s) {
     ["Protection", protectionText(server.protection, u.total)],
   ]);
 
-  $("#users").replaceChildren(...u.list.map((x) => el("tr", {},
+  // Admins only (roles.md): the server doesn't send the list to PowerUsers.
+  $("#users-panel").hidden = !u.list;
+  $("#users").replaceChildren(...(u.list ?? []).map((x) => el("tr", {},
     el("td", { text: x.username }),
     el("td", { text: dateLabel(x.created_at, { year: "numeric", month: "short", day: "numeric" }) }),
     el("td", { text: ago(x.last_seen_at) }),
@@ -190,7 +192,7 @@ function render(s) {
     el("td", {}, el("button", { type: "button", class: "reset-button", onclick: (e) => resetUser(e.currentTarget, x) },
       x.id === pendingReset ? "Tap again: issue a reset code" : "Reset password")),
   )));
-  if (!u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No users yet." })));
+  if (u.list && !u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No users yet." })));
 
   $("#updated").textContent = `Updated ${new Date(s.generated_at * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
@@ -662,6 +664,9 @@ function monthName(ymd) {
 }
 
 function renderCost(data) {
+  // Cost is Admins' only (roles.md); the server sends none to PowerUsers.
+  $("#m-cost").closest(".panel").hidden = data.cost_visible === false;
+  if (data.cost_visible === false) return;
   const out = [];
   const est = data.hosts.find((h) => h.host === metrics.host)?.estimate;
   if (est) {
@@ -849,7 +854,7 @@ async function loadGraph() {
     graphView.data = await res.json();
     // The first answer says who "you" are: the people it centered on.
     if (!graphView.users) {
-      graphView.users = new Set(graphView.data.graph.nodes.filter((n) => n.kind === "seed").map((n) => n.user_id));
+      graphView.users = new Set(graphView.data.graph.nodes.filter((n) => n.kind === "seed").map(personRef));
     }
     $("#message").hidden = true;
     $("#admin").hidden = false;
@@ -873,6 +878,9 @@ function renderGraphControls() {
     b.setAttribute("aria-pressed", String(Number(b.dataset.depth) === graphView.depth));
   }
   const chosen = people.filter((p) => graphView.users?.has(p.id)).map((p) => p.username);
+  // Anonymous people (chosen from a PowerUser's graph) are counted, not named.
+  const anonymous = [...(graphView.users ?? [])].filter((u) => typeof u === "string").length;
+  if (anonymous) chosen.push(`${anonymous} anonymous`);
   $("#g-people-summary").textContent = chosen.length
     ? `Showing ${chosen.length > 3 ? `${chosen.slice(0, 3).join(", ")} and ${chosen.length - 3} more` : chosen.join(", ")}`
     : "Choose people";
@@ -891,6 +899,10 @@ function renderGraphControls() {
       ` ${p.username}`))));
 }
 
+/** How to choose someone: their id, or (anonymous, on a PowerUser's graph) their alias key. */
+const personRef = (n) => n.user_id ?? n.key;
+const personLabel = (n) => n.username ?? n.alias ?? "";
+
 function drawAdminGraph() {
   const data = graphView.data;
   if (!data || currentTab() !== "graph") return;
@@ -899,6 +911,7 @@ function drawAdminGraph() {
   $("#g-note").textContent = data.all
     ? `Everyone: ${g.nodes.length} people, ${g.edges.length} friendships`
     : `${g.nodes.length} people, ${g.edges.length} friendships`;
+  if (data.anonymous) $("#g-note").textContent += ". People you aren't friends with are anonymous";
   if (!g.nodes.length) {
     $("#g-host").replaceChildren(el("p", { class: "muted", text: "Choose someone to see their friends." }));
     return;
@@ -906,14 +919,14 @@ function drawAdminGraph() {
   drawGraph($("#g-host"), g, {
     // One person: their map, with them in the middle (and out of the grouping).
     center: !data.all && seeds.length === 1 ? seeds[0].key : null,
-    label: (n) => n.username ?? "",
+    label: personLabel,
     title: `Friend graph: ${g.nodes.length} people, ${g.edges.length} friendships.`,
     describe: (n, { neighbors, group }) => [
-      el("b", { text: n.username }),
+      el("b", { text: personLabel(n) }),
       ` · ${neighbors.length} ${neighbors.length === 1 ? "friend" : "friends"} shown${group >= 0 ? ` · Group ${groupLetter(group)}` : ""}. `,
       el("button", {
         type: "button", class: "link",
-        onclick: () => { graphView.all = false; graphView.users = new Set([n.user_id]); loadGraph(); },
+        onclick: () => { graphView.all = false; graphView.users = new Set([personRef(n)]); loadGraph(); },
       }, "Show their graph"),
     ],
   });
@@ -932,25 +945,142 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
+// ---------- roles (docs/roles.md) ----------
+// Everyone for Admins; for PowerUsers, themselves and their friends. Admins
+// and PowerUsers make someone a PowerUser; only Admins take it away.
+
+const ROLE_NAMES = { user: "User", power: "PowerUser", admin: "Admin" };
+const rolesView = { data: null, confirm: null };
+
+async function api(path, method = "GET") {
+  const res = await fetch(`/api${path}`, { method, headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` }, cache: "no-store" });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) fail("Your session ended. Sign in again.");
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+
+async function loadRoles() {
+  try {
+    rolesView.data = await api("/admin/roles");
+  } catch (err) {
+    $("#r-note").textContent = `Couldn't load roles: ${err.message}`;
+    return;
+  }
+  $("#message").hidden = true;
+  $("#admin").hidden = false;
+  renderRoles();
+}
+
+function renderRoles() {
+  const data = rolesView.data;
+  if (!data) return;
+  const admin = data.role === "admin";
+  $("#r-explain").textContent = admin
+    ? "PowerUsers see how napsack is doing: the overview, metrics without cost, and the graph with people they don't know kept anonymous. They can make their friends PowerUsers; only Admins can take it away. Admins come from settings."
+    : "PowerUsers see how napsack is doing. You can make your friends PowerUsers; only an Admin can take it away.";
+  $("#r-admin").hidden = !(admin && data.admins_from_settings);
+  const q = $("#r-search").value.trim().toLowerCase();
+  const people = data.people.filter((p) => !q || p.username.toLowerCase().includes(q));
+  const counts = data.people.reduce((c, p) => ({ ...c, [p.role]: (c[p.role] || 0) + 1 }), {});
+  $("#r-note").textContent = ["admin", "power", "user"].filter((r) => counts[r]).map((r) => `${counts[r]} ${ROLE_NAMES[r]}${counts[r] === 1 ? "" : "s"}`).join(" · ");
+  $("#r-rows").replaceChildren(...people.map((p) => {
+    const me = p.id === viewer?.id;
+    let action = null;
+    if (p.role === "user" && !me) {
+      action = el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, "grant") }, "Make PowerUser");
+    } else if (p.role === "power" && admin && !me) {
+      action = el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, "revoke") },
+        rolesView.confirm === p.id ? "Tap again: remove PowerUser" : "Remove PowerUser");
+    } else if (p.role === "admin") {
+      action = el("span", { class: "muted", text: "Set in settings" });
+    }
+    const since = p.granted_at ? dateLabel(p.granted_at, { year: "numeric", month: "short", day: "numeric" }) : "";
+    return el("tr", {},
+      el("td", { text: me ? `${p.username} (you)` : p.username }),
+      el("td", {}, el("span", { class: `role-badge role-${p.role}`, text: ROLE_NAMES[p.role] })),
+      el("td", { class: "muted", text: p.granted_by ? `${since} by ${p.granted_by}` : since }),
+      el("td", {}, action));
+  }));
+  if (!people.length) $("#r-rows").append(el("tr", {}, el("td", { colspan: "4", class: "muted", text: q ? "Nobody matches." : "Nobody here yet." })));
+}
+
+async function changeRole(btn, person, how) {
+  // Taking the role away is two taps, remembered by person (the list can redraw in between).
+  if (how === "revoke" && rolesView.confirm !== person.id) {
+    rolesView.confirm = person.id;
+    btn.textContent = "Tap again: remove PowerUser";
+    return;
+  }
+  rolesView.confirm = null;
+  btn.disabled = true;
+  const out = $("#r-result");
+  try {
+    await api(`/admin/roles/${person.id}`, how === "grant" ? "POST" : "DELETE");
+    out.replaceChildren(el("p", { text: how === "grant" ? `${person.username} is a PowerUser now.` : `${person.username} is a User again.` }));
+  } catch (err) {
+    out.replaceChildren(el("p", { text: `Couldn't change ${person.username}'s role: ${err.message}` }));
+  }
+  out.hidden = false;
+  await loadRoles();
+}
+
+$("#r-search").addEventListener("input", renderRoles);
+$("#r-reload").addEventListener("click", async () => {
+  const note = $("#r-reload-note");
+  try {
+    const r = await api("/admin/roles/reload", "POST");
+    note.textContent = `Reloaded: ${r.admins} admin${r.admins === 1 ? "" : "s"}.`;
+  } catch (err) {
+    note.textContent = err.message;
+  }
+  loadRoles();
+});
+
 // ---------- tabs ----------
 
-const TABS = ["overview", "metrics", "graph", "logs"];
-const currentTab = () => TABS.find((t) => location.hash === `#${t}`) ?? "overview";
+const TABS = ["overview", "metrics", "graph", "roles", "logs"];
+// Which tabs each role gets (roles.md). The server enforces the same, endpoint by endpoint.
+const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", roles: "power", logs: "admin" };
+const RANK = { user: 0, power: 1, admin: 2 };
+let viewer = null;
+const allowed = (tab) => viewer && RANK[viewer.role] >= RANK[TAB_ROLES[tab]];
+const currentTab = () => TABS.find((t) => location.hash === `#${t}` && allowed(t)) ?? "overview";
 
 function showTab() {
+  if (!viewer) return;
   const tab = currentTab();
   for (const name of TABS) {
     $(`#view-${name}`).hidden = name !== tab;
+    $(`#tab-${name}`).hidden = !allowed(name);
     $(`#tab-${name}`).setAttribute("aria-current", name === tab ? "page" : "false");
   }
   $("#updated").hidden = tab !== "overview";
   if (tab === "logs") loadLogs(logs.loaded ? "tail" : "reset");
   else if (tab === "metrics") loadMetrics();
   else if (tab === "graph") loadGraph();
+  else if (tab === "roles") loadRoles();
   else load();
 }
+
+/** Who's looking, and so which tabs they get. */
+async function start() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return fail("Sign in first.");
+  let res;
+  try {
+    res = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  } catch {
+    return fail("Can't reach napsack right now.");
+  }
+  if (res.status === 401) return fail("Your session ended. Sign in again.");
+  const me = await res.json();
+  viewer = { id: me.id, role: me.role ?? (me.is_admin ? "admin" : "user") };
+  if (viewer.role === "user") return fail("This page isn't available.");
+  showTab();
+}
 window.addEventListener("hashchange", showTab);
-showTab();
+start();
 
 const visible = () => document.visibilityState === "visible" && !$("#admin").hidden;
 setInterval(() => { if (visible() && currentTab() === "overview") load(); }, REFRESH_MS);

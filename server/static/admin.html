@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1b2822">
   <meta name="robots" content="noindex">
-  <title>napsack admin</title>
+  <title>napsack system</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="admin-body">
 
 <header class="bar admin-bar">
-  <span class="wordmark small">napsack <span class="admin-tag">admin</span></span>
+  <span class="wordmark small">napsack <span class="admin-tag">system</span></span>
   <nav class="admin-tabs" aria-label="Admin sections">
     <a href="#overview" id="tab-overview" aria-current="page">Overview</a>
     <a href="#metrics" id="tab-metrics">Metrics</a>
     <a href="#graph" id="tab-graph">Graph</a>
-    <a href="#logs" id="tab-logs">Logs</a>
+    <a href="#roles" id="tab-roles">Roles</a>
+    <a href="#logs" id="tab-logs" hidden>Logs</a>
   </nav>
   <span class="admin-updated" id="updated"></span>
   <a class="button" href="/">Chats</a>
@@ -60,7 +61,7 @@
     </section>
   </div>
 
-  <section class="panel" aria-labelledby="users-title">
+  <section class="panel" id="users-panel" aria-labelledby="users-title" hidden>
     <header class="panel-head">
       <h2 id="users-title">Users</h2>
       <span class="panel-note">Counts only. Message content is end-to-end encrypted and never visible here.</span>
@@ -125,6 +126,28 @@
       </details>
     </div>
     <div class="graph-host" id="g-host"><p class="muted">Loading…</p></div>
+  </section>
+</div>
+
+<div class="admin-view" id="view-roles" hidden>
+  <section class="panel" aria-labelledby="r-title">
+    <header class="panel-head">
+      <h2 id="r-title">Roles</h2>
+      <span class="panel-note" id="r-note"></span>
+    </header>
+    <p class="panel-note r-explain" id="r-explain"></p>
+    <input type="search" class="r-search" id="r-search" placeholder="Search people" aria-label="Search people" autocomplete="off">
+    <div class="reset-result" id="r-result" role="status" hidden></div>
+    <div class="table-scroll">
+      <table class="roles-table">
+        <thead><tr><th>Person</th><th>Role</th><th>Since</th><th><span class="visually-hidden">Change</span></th></tr></thead>
+        <tbody id="r-rows"></tbody>
+      </table>
+    </div>
+    <div class="r-admin" id="r-admin" hidden>
+      <button type="button" class="button" id="r-reload">Reload admin list</button>
+      <span class="panel-note" id="r-reload-note">Admins come from the settings parameter; reload after changing it.</span>
+    </div>
   </section>
 </div>
 

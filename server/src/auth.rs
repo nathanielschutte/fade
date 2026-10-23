@@ -160,8 +160,11 @@ pub struct SessionResponse {
 pub struct Me {
     id: i64,
     username: String,
-    /// Shows the admin link. The admin API checks again on every request.
+    /// Kept for older clients; `role` says more.
     is_admin: bool,
+    /// "user", "power" or "admin" (roles.md): shows the System link and its
+    /// tabs. The server checks again on every request.
+    role: crate::roles::Role,
     /// What your friends see you as (people.rs).
     display_name: Option<String>,
     avatar_id: Option<i64>,
@@ -175,7 +178,8 @@ pub struct Me {
 
 impl Me {
     pub async fn load(state: &SharedState, user: UserPublic) -> AppResult<Self> {
-        let is_admin = state.config.is_admin(&user.username);
+        let role = crate::roles::role_of(state, &user).await?;
+        let is_admin = role == crate::roles::Role::Admin;
         let (display_name, avatar_id) = crate::people::own_profile(&state.db, user.id).await?;
         let (has_recovery_key, key_reset_at, share_activity): (bool, Option<i64>, bool) = sqlx::query_as(
             "SELECT recovery_hash IS NOT NULL, key_reset_at, share_activity FROM users WHERE id = ?",
@@ -187,6 +191,7 @@ impl Me {
             id: user.id,
             username: user.username,
             is_admin,
+            role,
             display_name,
             avatar_id,
             has_recovery_key,
