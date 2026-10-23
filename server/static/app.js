@@ -968,10 +968,10 @@ function preview(text) {
 /** One chat in the list. `actions` (favorite, hide, leave) sit behind the
  * row: a phone swipes it aside to reach them, a computer shows them on hover. */
 // Double-tapping a chat in the list opens it straight into the camera, to
-// answer with a pic. The first tap opens the chat as usual, without waiting
-// to see whether another follows; a second tap within DOUBLE_TAP_MS, wherever
-// lands on the same spot (on a phone the chat now covers the list), opens the
-// camera instead of doing anything else there. A tap elsewhere is just a tap.
+// answer with a pic. On a computer the first click opens the chat at once (the
+// list stays in view); a second click on the same spot within DOUBLE_TAP_MS
+// opens the camera instead of doing anything else there. A click elsewhere is
+// just a click. Phones wait briefly instead (`tapOnPhone`).
 const DOUBLE_TAP_MS = 350;
 const DOUBLE_TAP_PX = 40;
 const cameraTap = { listener: null, timer: null };
@@ -983,12 +983,43 @@ function armCameraTap(opening, first) {
     if (Math.hypot(e.clientX - first.clientX, e.clientY - first.clientY) > DOUBLE_TAP_PX) return;
     e.preventDefault();
     e.stopPropagation();
-    await opening;
-    const button = $("#camera-button");
-    if (!button.hidden && !button.disabled) button.click();
+    cameraAfter(opening);
   };
   document.addEventListener("click", cameraTap.listener, true);
   cameraTap.timer = setTimeout(disarmCameraTap, DOUBLE_TAP_MS);
+}
+
+/** Opens the camera once the chat has opened, if this chat can take a pic. */
+async function cameraAfter(opening) {
+  await opening;
+  const button = $("#camera-button");
+  if (!button.hidden && !button.disabled) button.click();
+}
+
+// On a phone the chat covers the list, so a tap there waits a moment before
+// opening it: long enough for the second tap of a quick double tap (straight
+// to the camera), short enough not to feel slow. The row lights up at once.
+const wideLayout = matchMedia("(min-width: 760px)");
+const PHONE_DOUBLE_TAP_MS = 250;
+const pendingTap = { key: null, button: null, timer: null };
+
+function tapOnPhone(button, key, onclick) {
+  const second = pendingTap.key === key;
+  clearPendingTap();
+  if (second) return cameraAfter(onclick());
+  button.classList.add("tapped");
+  pendingTap.key = key;
+  pendingTap.button = button;
+  pendingTap.timer = setTimeout(() => {
+    clearPendingTap();
+    onclick();
+  }, PHONE_DOUBLE_TAP_MS);
+}
+
+function clearPendingTap() {
+  clearTimeout(pendingTap.timer);
+  pendingTap.button?.classList.remove("tapped");
+  pendingTap.key = pendingTap.button = null;
 }
 
 function disarmCameraTap() {
@@ -1011,6 +1042,7 @@ function chatRow({ name, status, time, current, onclick, group, avatar, actions 
   // While a row is swiped open, a tap anywhere on the list just closes it.
   const open = (e) => {
     if (rowSwipe.open) return closeSwipedRow();
+    if (e.detail > 0 && !wideLayout.matches) return tapOnPhone(e.currentTarget, `${group ? "g" : "d"}:${name}`, onclick);
     const opening = onclick();
     if (e.detail > 0) armCameraTap(opening, e); // a tap or click, not the keyboard
   };
@@ -1019,6 +1051,7 @@ function chatRow({ name, status, time, current, onclick, group, avatar, actions 
       el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
       avatar,
       el("span", { class: "chat-text" },
+        group ? el("span", { class: "visually-hidden", text: "Group: " }) : null,
         el("span", { class: "chat-name", text: name }),
         el("span", { class: "chat-status", text: preview(status.text) })),
       el("span", { class: "chat-time", text: time ? relTime(time) : "" }),
@@ -1036,6 +1069,16 @@ const ROW_ICONS = {
   leave: "M14 4.5h4.5v15H14M10 8l-4 4 4 4M6 12h9",
   bell: "M6.5 16.5V11a5.5 5.5 0 0 1 9-4.25M17.5 10.5v6l1.5 1.5H8.5M10 20.5a2 2 0 0 0 4 0M4 4l16 16",
 };
+/** The little two-people badge on a group's picture in the list: groups at a glance. */
+function groupMark() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M9 4.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4zM3 20a6 6 0 0 1 12 0zM16.5 4.5a2.7 2.7 0 1 1 0 5.4 2.7 2.7 0 0 1 0-5.4zM16 20a7.5 7.5 0 0 0-2.3-5.6 5 5 0 0 1 7.8 5.6z");
+  svg.append(path);
+  return el("span", { class: "group-mark", "aria-hidden": "true" }, svg);
+}
+
 function rowIcon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -1079,7 +1122,8 @@ function renderChatList() {
       row: chatRow({
         name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
         current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
-        avatar: paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g),
+        avatar: el("span", { class: "avatar-wrap" },
+          paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g), groupMark()),
         muted: g.muted,
         actions: [favoriteAction(g, g.name, () => setFavorite("groups", g.id, !g.favorite)),
           muteAction("groups", g, g.name),

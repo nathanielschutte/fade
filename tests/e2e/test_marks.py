@@ -83,6 +83,11 @@ async def main():
         await ana.click("#new-group-submit")
         await expect(ana.locator("#chat-title")).to_have_text(GROUP)
         await expect(row(ben, GROUP)).to_be_visible(timeout=10000)
+        # Groups wear a small badge in the list; direct chats don't.
+        await expect(row(ben, GROUP).locator(".group-mark")).to_be_visible()
+        await expect(row(ben, ANA).locator(".group-mark")).to_have_count(0)
+        await expect(row(ben, GROUP).locator(".visually-hidden")).to_have_text("Group: ")
+        await shot(ben, "group-badge-phone")
 
         # Ana's laptop has a second tab open: changes there show up live.
         ana2 = await ana.context.new_page()

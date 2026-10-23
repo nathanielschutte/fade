@@ -81,6 +81,7 @@ async def main():
         await ben.click("#friends-button")
         await ben.locator("#incoming-list li", has_text=ANA).locator("button", has_text="Accept").click()
         await ana.locator(".chat-item", has_text=BEN).click()
+        await expect(ana.locator("#back-button")).to_be_visible()  # a phone opens the chat after a beat (double tap)
         assert await top_of(ana, "#back-button") >= TOP, "back button under the status bar"
         assert await top_of(ana, "#chat-title") >= TOP
         # The composer's padding fills the home-indicator area; what you tap sits above it.

@@ -809,6 +809,14 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   width: 0.7rem; height: 0.7rem; border-radius: 50%;
   background: var(--sage); border: 2px solid var(--deep);
 }
+/* Groups in the list: a small two-people badge where a friend's online dot would be. */
+.group-mark {
+  position: absolute; right: -4px; bottom: -4px;
+  width: 1.1rem; height: 1.1rem; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--fixer); border: 2px solid var(--deep);
+}
+.group-mark svg { width: 0.75rem; height: 0.75rem; fill: var(--deep); }
 .activity-check { margin-top: 0.6rem; }
 .profile-security h3 + .field-hint { margin-bottom: 0.25rem; }
 
@@ -873,7 +881,7 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .chat-row { position: relative; overflow: hidden; }
 .chat-row .chat-item { position: relative; z-index: 1; background: var(--deep); transition: transform 180ms ease; }
 .chat-row .chat-item:hover { background: linear-gradient(rgba(38, 55, 47, 0.6), rgba(38, 55, 47, 0.6)), var(--deep); }
-.chat-row .chat-item[aria-current="true"] { background: var(--wash); }
+.chat-row .chat-item[aria-current="true"], .chat-row .chat-item.tapped { background: var(--wash); }
 .chat-row.swiping .chat-item { transition: none; }
 .row-actions { position: absolute; top: 0; bottom: 0; right: 0; display: flex; }
 .row-action {

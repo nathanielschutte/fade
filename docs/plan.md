@@ -18,6 +18,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
 | 6 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
 | 7 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 8 | [Metrics: how is the infrastructure doing?](#i4-metrics-how-is-the-infrastructure-doing) | Infrastructure | Needs decision | Proposal written; waiting on Nate's OK |
 
 **Done**
 
@@ -59,6 +60,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 |
 | [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
 | [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
+| [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
@@ -323,11 +325,16 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X12. Double tap a chat to send a pic
 - Requested (2026-10-22): double-tapping a chat in the list opens it with the camera already up, to answer with a pic.
-- Done (0.25.1): the first tap opens the chat at once (no delay waiting for a second); a second tap within 350ms on the same spot (40px), wherever it lands, opens the camera instead; a quick tap somewhere else is just a tap. Works for groups too; does nothing if the camera isn't available (a changed key). Keyboard Enter doesn't count.
+- Done (0.25.1): the first tap opens the chat at once (no delay waiting for a second); a second tap within 350ms on the same spot (40px), wherever it lands, opens the camera instead; a quick tap somewhere else is just a tap.
+- Changed (0.25.2, Nate): on a phone, where the chat covers the list, a tap now waits 250ms before opening the chat (the row lights up at once), so the second tap of a double tap reliably lands on the row. Computers keep opening at once. Works for groups too; does nothing if the camera isn't available (a changed key). Keyboard Enter doesn't count.
 
 #### X13. Double tap the camera to switch it
 - Requested (2026-10-22): double-tapping the live camera view switches between front and back, like the switch button.
 - Done (0.25.1): only while the camera is live (not on a taken pic, where taps draw). Double-tap zoom is off app-wide so the browser doesn't take the gesture; pinch zoom still works.
+
+#### X14. Tell groups from direct chats in the list
+- Requested (2026-10-22): a very small indicator that a chat is a group.
+- Done (0.25.2): a small two-people badge on the group's picture, in the corner where a friend's online dot sits (groups never show that dot); screen readers hear "Group:" before the name.
 
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).
@@ -340,6 +347,17 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Add a daily consistent SQLite backup (`.backup` or `VACUUM INTO`) to a versioned S3 bucket that never deletes, longer snapshot retention, and a restore drill we actually run and write down.
 - Built (see [BACKUPS.md](BACKUPS.md)): hourly backups via a systemd timer, integrity-checked and gzipped, to a new versioned bucket with `prevent_destroy` and no expiry (cheaper storage after 30 days); the server can only add objects. Disk snapshots go from 7 to 30 days. The admin panel shows the last backup (live in 0.7.0; it says "None yet" until the timer runs). `scripts/restore-drill.sh` checks the newest backup against production, read-only. The backup script passed a dry run against a test database: the uploaded copy restored with identical row counts, and a failure was recorded in the status file.
 - Done: infrastructure applied (2026-10-20), first backup taken, restore drill passed and logged in BACKUPS.md, and the server's role proven unable to delete or list backups.
+
+#### I4. Metrics: how is the infrastructure doing?
+- Requested (2026-10-22): live machine stats (CPU, memory, disk; ready for more than one machine) and basic server process stats, kept for about 24 hours to a few days, accurate, visual enough to see whether we're in the red, with a cost estimate. No Prometheus/Grafana.
+- **Proposal (needs Nate's OK):** built into the server, no new services.
+  - **Collect** every 10s, in the server, from `/proc` and `statvfs` (extends `sysinfo.rs`): machine CPU % (busy, iowait, *steal*), memory used/available and swap, disk used/free and IOPS for the root and data volumes, network in/out; process CPU %, memory (RSS), threads, open files; app request rate, p50/p95/p99 latency, 5xx, live sockets, DB and pic sizes.
+  - **Keep** each minute as min/avg/max (so spikes aren't averaged away) in a separate `metrics.db` on the data volume, a fixed ring of 3 days × 1,440 slots per host, overwritten in place: bounded size, survives deploys, never touches user data. The last hour at 10s stays in memory for the live view. Every row carries `host` (the instance id).
+  - **More machines later:** the same code runs as `fade-server agent` on a machine without the app and posts its samples to the main server (admin-authenticated). The view already groups by host.
+  - **t4g is burstable,** so "in the red" for CPU means burning credits, not 100%: read `CPUCreditBalance` and `CPUSurplusCreditsCharged` from CloudWatch every 5 minutes (free basic metrics; GetMetricData costs cents a month; needs one IAM permission, an in-place change).
+  - **See it** in the admin page, a new Metrics tab: a status tile per host (OK / Watch / Red against set thresholds: memory > 80%, disk > 80%, credits falling or surplus charged, steal > 10%, p95 > 500ms, 5xx), then line charts for 1h / 24h / 3d. Inline SVG, no libraries.
+  - **Cost:** a live run-rate from a small price table (instance type per hour, gp3 per GB-month, public IPv4, surplus credits, S3 backup size), plus the real month-to-date from Cost Explorer once a day by `App=fade` (needs the tag activated in Billing). Shows the next instance size up and its price.
+- Rejected: CloudWatch agent (custom metrics ~$0.30 each per month, about as much as the server itself, and the view lives in the AWS console); Prometheus/Grafana (too heavy for a t4g.nano).
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
