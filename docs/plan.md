@@ -11,8 +11,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 0d | [Staging in AWS](#i8-staging) | Infrastructure | Planned | Nate (2026-10-23); design in staging.md |
-| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Planning only | Nate (2026-10-23); options in email.md |
+| 0d | [Staging in AWS](#i8-staging) | Infrastructure | In progress | Nate (2026-10-23); design in staging.md |
+| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Needs decision | Planned in email.md: iCloud+ custom domain recommended; Nate decides |
+| 0f | [Group chats on the friend map](#x16-group-chats-on-the-friend-map) | Features | Up next | Nate (2026-10-23) |
+| 0g | [A better group badge](#x17-a-better-group-badge-in-the-chat-list) | Features | Up next | Nate (2026-10-23); options for Nate to pick |
+| 0h | [Incidents on the Metrics page](#x18-incidents-on-the-metrics-page) | Features | Up next | Nate (2026-10-23); Admin only |
+| 0i | [Low CPU credits is a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm) | Features | Up next | Nate (2026-10-23) |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -364,6 +368,12 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X17. A better group badge in the chat list
 - Requested (2026-10-23), queued: the badge's position on the group picture is right, the two-people icon isn't. Try other icons, and a subtle difference in how a group's row is drawn, so groups are distinct at a glance without being loud. Show options for Nate to pick.
+
+#### X18. Incidents on the Metrics page
+- Requested (2026-10-23), queued: the health monitor's S3 incident records (`health/incidents/`, [health-monitor.md](health-monitor.md)) are the source of truth. The Metrics tab shows the last 7 days of incident events to Admins only (not PowerUsers): what failed, the evidence, each repair step, and how it ended. Incidents that resolved in the last 7 days show too, marked resolved, and an Admin can mark an open one resolved (written back to its record, never deleting it).
+
+#### X19. Low CPU credits is a warning, not an alarm
+- Requested (2026-10-23), queued: the Metrics tab shows low CPU credits in red, as urgent. It should be a warning (amber). A new or replaced instance starts with few credits and builds them up while idle, so a low balance soon after boot is expected. Red only if credits are near zero *and* the CPU is pinned at its baseline (actually throttled); check the AWS rule for launch credits on t4g standard and say "building up after a restart" when the instance is young.
 
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).
