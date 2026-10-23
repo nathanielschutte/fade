@@ -3538,6 +3538,8 @@ for (const btn of document.querySelectorAll("[data-close]")) {
 
 const camera = {
   stream: null,
+  attempt: 0,                  // bumped whenever the camera stops, so late answers are ignored
+  problem: null,               // why the camera couldn't start, if it couldn't
   facing: "user",
   mirror: true,                // selfie view: preview and photo both flipped, like a mirror
   blob: null,
@@ -3553,15 +3555,24 @@ function cameraMessage(text) {
 async function startStream() {
   stopStream();
   cameraMessage("");
+  camera.problem = null;
   if (!navigator.mediaDevices?.getUserMedia) {
-    cameraMessage("This browser can't open the camera here. Choose a photo instead.");
+    cameraProblem("This browser can't open the camera here. Choose a photo instead.");
     return;
   }
+  // The camera can take a while to answer. By then a photo may have been
+  // picked, the camera closed, or switched: then this answer is out of date.
+  const attempt = camera.attempt;
   try {
-    camera.stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: camera.facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
+    if (attempt !== camera.attempt) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    camera.stream = stream;
     // Mirror whatever the browser says is a front camera, as Snapchat does, so the
     // photo matches the preview. Laptop webcams report no facing; treat them as front.
     const facing = camera.stream.getVideoTracks()[0]?.getSettings?.().facingMode;
@@ -3569,12 +3580,22 @@ async function startStream() {
     const video = $("#camera-video");
     video.classList.toggle("mirrored", camera.mirror);
     video.srcObject = camera.stream;
-  } catch {
-    cameraMessage("Camera access is blocked. Allow it in your browser settings, or choose a photo instead.");
+  } catch (err) {
+    if (attempt !== camera.attempt) return;
+    cameraProblem(err?.name === "NotFoundError" || err?.name === "OverconstrainedError"
+      ? "No camera found. Choose a photo instead."
+      : "Camera access is blocked. Allow it in your browser settings, or choose a photo instead.");
   }
 }
 
+/** The camera won't start. Said over the camera view, never over a photo being previewed (Retake shows it). */
+function cameraProblem(text) {
+  camera.problem = text;
+  if ($("#camera-preview").hidden) cameraMessage(text);
+}
+
 function stopStream() {
+  camera.attempt = (camera.attempt ?? 0) + 1; // any answer still on its way is out of date
   camera.stream?.getTracks().forEach((t) => t.stop());
   camera.stream = null;
   $("#camera-video").srcObject = null;
@@ -3605,6 +3626,8 @@ async function finalPhoto() {
 function showCapture() {
   clearPreview();
   $("#camera-video").hidden = false;
+  // Back from a photo (Retake) to a camera that couldn't start: say why now.
+  if (!camera.stream && camera.problem) cameraMessage(camera.problem);
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
   $("#snap-caption").hidden = true;

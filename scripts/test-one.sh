@@ -23,6 +23,10 @@ fi
 TMP="$(mktemp -d)"
 export NAPSACK_URL="http://127.0.0.1:$PORT" NAPSACK_INVITE=letmein NAPSACK_ADMIN=e2e_admin
 export NAPSACK_DB="$TMP/test.db" NAPSACK_SHOTS="$TMP/shots"
+if curl -sf "$NAPSACK_URL/api/config" >/dev/null 2>&1; then
+  echo "Something is already serving on port $PORT (another test run?). Stop it, or run with PORT=<another port>."
+  exit 1
+fi
 FADE_BIND="127.0.0.1:$PORT" FADE_DATABASE_URL="sqlite://$NAPSACK_DB" FADE_INVITE_CODE=letmein \
   FADE_ADMINS="e2e_admin,smoke_admin" FADE_PUSH_ALLOW_LOCAL=true FADE_MAX_ACCOUNTS=1000 \
   RUST_LOG="${RUST_LOG:-fade_server=info}" server/target/debug/fade-server > "$TMP/server.log" 2>&1 &

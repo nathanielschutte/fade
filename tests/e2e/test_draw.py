@@ -21,6 +21,12 @@ PICK_GRAY = """async () => {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }"""
 
+# Like CI's machines: no camera, and it takes a moment to say so. Picking a
+# photo meanwhile mustn't leave the camera's error on top of the photo (it
+# did, covering the sticker, so the drag missed it).
+SLOW_NO_CAMERA = """navigator.mediaDevices.getUserMedia = () => new Promise((_, reject) =>
+  setTimeout(() => reject(new DOMException('Requested device not found', 'NotFoundError')), 1500));"""
+
 # The pixel at (fx, fy) of the image the viewer is showing, as [r, g, b].
 PIXEL = """([fx, fy]) => {
   const img = document.querySelector('#viewer-image');
@@ -68,18 +74,27 @@ async def main():
         ana = await sign_up(browser, ANA)
         ben = await sign_up(browser, BEN, **PHONE)
         await befriend(ana, ben, BEN, ANA)
+        await ana.context.add_init_script(SLOW_NO_CAMERA)
+        await ana.reload()
+        await expect(ana.locator("#app")).to_be_visible(timeout=20000)
 
-        # Ana takes a (gray) pic: the drawing tools appear with it.
+        # Ana picks a (gray) photo before the camera has answered: the drawing
+        # tools appear with it, and the camera's late "no camera" stays out of the way.
         await ana.locator(".chat-item", has_text=BEN).click()
         await ana.click("#camera-button")
         await ana.evaluate(PICK_GRAY)
         await expect(ana.locator("#camera-preview")).to_be_visible(timeout=10000)
         await expect(ana.locator("#draw-tools")).to_be_visible()
         await expect(ana.locator("#draw-undo")).to_be_disabled()
+        await asyncio.sleep(2)  # the camera has failed by now
+        await expect(ana.locator("#camera-message")).to_be_hidden()
 
         # A thick red line across the middle.
         await ana.click("#draw-pen")
         await expect(ana.locator("#draw-pen")).to_have_attribute("aria-pressed", "true")
+        # Colors are round buttons big enough to tap (0.26.0's admin styles once shrank them to dashes).
+        sw = await ana.locator("#draw-colors .swatch").first.bounding_box()
+        assert sw["width"] >= 30 and abs(sw["width"] - sw["height"]) < 1, sw
         await ana.click("#draw-colors .swatch[aria-label='Color #ff4d4d']")
         await ana.click("#draw-size")
         await expect(ana.locator("#draw-size")).to_have_text("Thick")
@@ -140,6 +155,15 @@ async def main():
         # Retake clears the drawing tools back to a fresh start.
         await ben.tap("#retake")
         await expect(ben.locator("#draw-tools")).to_be_hidden()
+
+        # No camera: said over the camera view, kept off a photo, and said again on Retake.
+        await ana.click("#camera-button")
+        await expect(ana.locator("#camera-message")).to_have_text("No camera found. Choose a photo instead.", timeout=5000)
+        await ana.evaluate(PICK_GRAY)
+        await expect(ana.locator("#camera-preview")).to_be_visible(timeout=10000)
+        await expect(ana.locator("#camera-message")).to_be_hidden()
+        await ana.click("#retake")
+        await expect(ana.locator("#camera-message")).to_have_text("No camera found. Choose a photo instead.")
         await browser.close()
     print("DRAW TEST PASSED")
 

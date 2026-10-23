@@ -47,7 +47,18 @@ async def sign_up_or_in(p, name, pw):
     await save_recovery_key(p)
 
 
-async def check_metrics(p):
+DRAWN = """() => [...document.querySelectorAll('.mchart')].map((c) =>
+  [c.querySelector('h2').textContent, c.querySelectorAll('.mline, .mdot').length])"""
+
+# What the page was given, for a failure message.
+SERIES = """async (hours) => {
+  const r = await fetch(`/api/admin/metrics?hours=${hours}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } });
+  const d = await r.json();
+  return { generated_at: d.generated_at, hosts: d.hosts.map((h) => [h.host, h.series.length, h.series.slice(-2).map((x) => x.t)]) };
+}"""
+
+
+async def check_metrics(p, phase):
     await expect(p.locator("#view-metrics")).to_be_visible()
     await expect(p.locator("#tab-metrics")).to_have_attribute("aria-current", "page")
     await expect(p.locator("#m-status .mstatus")).to_have_count(1, timeout=30000)
@@ -57,12 +68,18 @@ async def check_metrics(p):
         assert t in titles, titles
     assert "CPU credits" not in titles, "credits only on AWS"
     # Every chart drew its data: a line or, for a single reading, a dot.
+    # (Charts are drawn on the next frame and redrawn on each refresh, so give it a moment.)
     await expect(p.locator(".mchart svg")).to_have_count(len(titles))
-    drawn = await p.evaluate("""() => [...document.querySelectorAll('.mchart')].map((c) =>
-      [c.querySelector('h2').textContent, c.querySelectorAll('.mline, .mdot').length])""")
-    for title, marks in drawn:
-        if title != "Disk activity":  # needs a real block device, which a test box may not show
-            assert marks > 0, (title, drawn)
+    for _ in range(50):
+        drawn = await p.evaluate(DRAWN)
+        # Disk activity needs a real block device, which a test box may not have.
+        empty = [t for t, marks in drawn if marks == 0 and t != "Disk activity"]
+        if not empty:
+            break
+        await asyncio.sleep(0.1)
+    if empty:
+        hours = await p.locator("#m-range .segment[aria-pressed=true]").get_attribute("data-hours")
+        raise AssertionError(f"{phase}: nothing drawn in {empty}; the page has {await p.evaluate(SERIES, hours)}")
     assert "Cost shows when the server runs on AWS." in await p.locator("#m-cost").inner_text()
     rows = await p.locator("#m-table tbody tr").count()
     assert rows >= len(titles), rows
@@ -74,14 +91,14 @@ async def main():
         admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
         await sign_up_or_in(admin, ADMIN, ADMIN_PW)
         await admin.goto(f"{BASE}/admin#metrics")
-        await check_metrics(admin)
+        await check_metrics(admin, "24 hours")
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("24 hours")
 
         # The last hour, at 10-second readings.
         await admin.locator("#m-range .segment", has_text="1 hour").click()
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("1 hour")
         await expect(admin.locator("#m-note")).to_have_text("Every 10 seconds")
-        await check_metrics(admin)
+        await check_metrics(admin, "1 hour")
 
         # Hovering a chart shows the reading under the pointer.
         cpu = admin.locator(".mchart", has=admin.locator("h2", has_text="CPU")).first.locator(".mhit")
@@ -95,7 +112,7 @@ async def main():
 
         await admin.locator("#m-range .segment", has_text="3 days").click()
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("3 days")
-        await check_metrics(admin)
+        await check_metrics(admin, "3 days")
 
         # On AWS, CPU credits come back for the whole retention window whatever
         # the range. Whatever's outside the range must not be drawn past the
@@ -129,7 +146,7 @@ async def main():
         phone = await page_for(browser, "phone", viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
         await sign_up_or_in(phone, ADMIN, ADMIN_PW)
         await phone.goto(f"{BASE}/admin#metrics")
-        await check_metrics(phone)
+        await check_metrics(phone, "phone")
         overflow = await phone.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 0, f"page scrolls sideways by {overflow}px"
         await shot(phone, "metrics-phone")

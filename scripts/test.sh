@@ -64,6 +64,12 @@ export NAPSACK_DB="$TMP/test.db"
 export NAPSACK_SHOTS="${NAPSACK_SHOTS:-$TMP/shots}"
 
 start_server() {
+  # Two runs on one port would quietly test each other's server (and read the
+  # wrong database), so refuse instead.
+  if curl -sf "$NAPSACK_URL/api/config" >/dev/null 2>&1; then
+    echo "Something is already serving on port $PORT (another test run?). Stop it, or run with PORT=<another port>."
+    exit 1
+  fi
   FADE_BIND="127.0.0.1:$PORT" \
   FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
   FADE_INVITE_CODE="$NAPSACK_INVITE" \
@@ -78,7 +84,9 @@ start_server() {
     curl -sf "$NAPSACK_URL/api/config" >/dev/null && break
     sleep 0.2
   done
-  curl -sf "$NAPSACK_URL/api/config" >/dev/null || { cat "$TMP/server.log"; echo "server didn't start"; exit 1; }
+  if ! kill -0 "$SERVER_PID" 2>/dev/null || ! curl -sf "$NAPSACK_URL/api/config" >/dev/null; then
+    cat "$TMP/server.log"; echo "server didn't start"; exit 1
+  fi
 }
 trap 'kill ${SERVER_PID:-} 2>/dev/null || true' EXIT
 start_server
