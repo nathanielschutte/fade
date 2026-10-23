@@ -58,6 +58,32 @@ SERIES = """async (hours) => {
 }"""
 
 
+SERIES_FOR = """async (hours) => {
+  const r = await fetch(`/api/admin/metrics?hours=${hours}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } });
+  const d = await r.json();
+  return { generated_at: d.generated_at, series: d.hosts[0].series.map((p) => [p.t, p.s]) };
+}"""
+
+
+async def check_series(p):
+    """The data under the charts: in order, never overlapping, inside the
+    range, and the last hour shows at least as much as the 24-hour view does
+    for that same hour (it used to start at the server's last restart)."""
+    hour = await p.evaluate(SERIES_FOR, 1)
+    day = await p.evaluate(SERIES_FOR, 24)
+    for name, d, hours in (("1h", hour, 1), ("24h", day, 24)):
+        pts = d["series"]
+        assert pts, name
+        for (t, s), (t2, _) in zip(pts, pts[1:]):
+            assert s > 0 and t + s <= t2 + 1, (name, "overlap or out of order", t, s, t2)
+        assert pts[0][0] + pts[0][1] > d["generated_at"] - hours * 3600, (name, "starts before its range")
+        assert pts[-1][0] <= d["generated_at"], (name, "ends after now")
+    since = hour["generated_at"] - 3600
+    day_in_hour = [t for t, s in day["series"] if t >= since]
+    if day_in_hour:
+        assert hour["series"][0][0] <= day_in_hour[0] + 60, (hour["series"][:3], day_in_hour[:3])
+
+
 async def check_metrics(p, phase):
     await expect(p.locator("#view-metrics")).to_be_visible()
     await expect(p.locator("#tab-metrics")).to_have_attribute("aria-current", "page")
@@ -92,12 +118,13 @@ async def main():
         await sign_up_or_in(admin, ADMIN, ADMIN_PW)
         await admin.goto(f"{BASE}/admin#metrics")
         await check_metrics(admin, "24 hours")
+        await check_series(admin)
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("24 hours")
 
         # The last hour, at 10-second readings.
         await admin.locator("#m-range .segment", has_text="1 hour").click()
         await expect(admin.locator("#m-range .segment[aria-pressed=true]")).to_have_text("1 hour")
-        await expect(admin.locator("#m-note")).to_have_text("Every 10 seconds")
+        await expect(admin.locator("#m-note")).to_contain_text("Every 10 seconds")
         await check_metrics(admin, "1 hour")
 
         # Hovering a chart shows the reading under the pointer.

@@ -11,6 +11,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
+| 0 | [Friend map](#x15-friend-map) | Features | In progress | Nate asked for it (2026-10-23); design in friend-graph.md |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -309,6 +310,10 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Requested (2026-10-22): a new friend of Nate's was added to a group with four of Nate's other friends he didn't know, and needed an easy way to add them.
 - Done (0.24.1): in a group's member list, anyone who isn't your friend yet has **Add friend** (an ordinary friend request, with its usual limits), then **Requested**; if they asked you, **Accept**. The sheet updates live when the other person accepts. `test_groups.py` covers it.
 
+#### X15. Friend map
+- Requested (2026-10-23): a page graphing friend relationships that shows distinct groups clearly. Build the graph tech as a module; two views: every person's own map (themselves, their friends, and a **?** for each friend of a friend they don't know), and an admin view with a switch between chosen people (default: yourself; one or more; depth 1–2) and everyone.
+- Design: [friend-graph.md](friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
+
 ### Infrastructure
 
 #### X11. Bad connections
@@ -326,7 +331,8 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X12. Double tap a chat to send a pic
 - Requested (2026-10-22): double-tapping a chat in the list opens it with the camera already up, to answer with a pic.
 - Done (0.25.1): the first tap opens the chat at once (no delay waiting for a second); a second tap within 350ms on the same spot (40px), wherever it lands, opens the camera instead; a quick tap somewhere else is just a tap.
-- Changed (0.25.2, Nate): on a phone, where the chat covers the list, a tap now waits 250ms before opening the chat (the row lights up at once), so the second tap of a double tap reliably lands on the row. Computers keep opening at once. Works for groups too; does nothing if the camera isn't available (a changed key). Keyboard Enter doesn't count.
+- Changed (0.25.2, Nate): on a phone, where the chat covers the list, a tap now waits 250ms before opening the chat (the row lights up at once), so the second tap of a double tap reliably lands on the row. Computers keep opening at once.
+- Changed (0.26.5, Nate: the wait made the app feel laggy): the wait is 150ms, enough for a quick double tap's second tap to land on the row. A slower second tap (up to 350ms after the first) lands on the opened chat and is still caught there, on the finger lifting, without doing anything else. Nothing else waits. Works for groups too; does nothing if the camera isn't available (a changed key). Keyboard Enter doesn't count.
 
 #### X13. Double tap the camera to switch it
 - Requested (2026-10-22): double-tapping the live camera view switches between front and back, like the switch button.

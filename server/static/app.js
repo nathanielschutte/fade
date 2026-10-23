@@ -971,22 +971,41 @@ function preview(text) {
 // answer with a pic. On a computer the first click opens the chat at once (the
 // list stays in view); a second click on the same spot within DOUBLE_TAP_MS
 // opens the camera instead of doing anything else there. A click elsewhere is
-// just a click. Phones wait briefly instead (`tapOnPhone`).
+// just a click. Phones wait a moment first (`tapOnPhone`).
 const DOUBLE_TAP_MS = 350;
 const DOUBLE_TAP_PX = 40;
-const cameraTap = { listener: null, timer: null };
+const cameraTap = { up: null, click: null, timer: null };
 
-function armCameraTap(opening, first) {
+/**
+ * Watches for the second tap of a double tap after the chat has opened
+ * (`windowMs` more): on the same spot, it opens the camera and does nothing
+ * else. Caught when the finger lifts, which phones always report, and the
+ * click that follows is swallowed. Anything else passes through untouched.
+ */
+function armCameraTap(opening, first, windowMs = DOUBLE_TAP_MS) {
   disarmCameraTap();
-  cameraTap.listener = async (e) => {
-    disarmCameraTap();
-    if (Math.hypot(e.clientX - first.clientX, e.clientY - first.clientY) > DOUBLE_TAP_PX) return;
-    e.preventDefault();
-    e.stopPropagation();
+  const near = (e) => Math.hypot(e.clientX - first.clientX, e.clientY - first.clientY) <= DOUBLE_TAP_PX;
+  const swallow = (e) => { e.preventDefault(); e.stopPropagation(); };
+  let caught = false;
+  cameraTap.up = (e) => {
+    if (caught || !near(e)) return;
+    caught = true;
+    swallow(e);
     cameraAfter(opening);
   };
-  document.addEventListener("click", cameraTap.listener, true);
-  cameraTap.timer = setTimeout(disarmCameraTap, DOUBLE_TAP_MS);
+  cameraTap.click = (e) => {
+    if (!e.isTrusted) return; // our own press of the camera button
+    if (!caught && near(e)) {
+      caught = true;
+      cameraAfter(opening);
+    }
+    if (caught) swallow(e);
+    disarmCameraTap();
+  };
+  document.addEventListener("pointerup", cameraTap.up, true);
+  document.addEventListener("click", cameraTap.click, true);
+  // A little past the window, for the click that follows a caught pointerup.
+  cameraTap.timer = setTimeout(disarmCameraTap, windowMs + 150);
 }
 
 /** Opens the camera once the chat has opened, if this chat can take a pic. */
@@ -997,23 +1016,25 @@ async function cameraAfter(opening) {
 }
 
 // On a phone the chat covers the list, so a tap there waits a moment before
-// opening it: long enough for the second tap of a quick double tap (straight
-// to the camera), short enough not to feel slow. The row lights up at once.
+// opening it: just long enough for the second tap of a quick double tap to land
+// on the row (straight to the camera). A slower second tap lands on the opened
+// chat, where `armCameraTap` still catches it. The row lights up at once.
 const wideLayout = matchMedia("(min-width: 760px)");
-const PHONE_DOUBLE_TAP_MS = 250;
+const PHONE_OPEN_DELAY_MS = 150;
 const pendingTap = { key: null, button: null, timer: null };
 
-function tapOnPhone(button, key, onclick) {
+function tapOnPhone(button, key, onclick, first) {
   const second = pendingTap.key === key;
   clearPendingTap();
   if (second) return cameraAfter(onclick());
   button.classList.add("tapped");
   pendingTap.key = key;
   pendingTap.button = button;
+  const at = { clientX: first.clientX, clientY: first.clientY };
   pendingTap.timer = setTimeout(() => {
     clearPendingTap();
-    onclick();
-  }, PHONE_DOUBLE_TAP_MS);
+    armCameraTap(onclick(), at, DOUBLE_TAP_MS - PHONE_OPEN_DELAY_MS);
+  }, PHONE_OPEN_DELAY_MS);
 }
 
 function clearPendingTap() {
@@ -1024,8 +1045,9 @@ function clearPendingTap() {
 
 function disarmCameraTap() {
   clearTimeout(cameraTap.timer);
-  if (cameraTap.listener) document.removeEventListener("click", cameraTap.listener, true);
-  cameraTap.listener = null;
+  if (cameraTap.up) document.removeEventListener("pointerup", cameraTap.up, true);
+  if (cameraTap.click) document.removeEventListener("click", cameraTap.click, true);
+  cameraTap.up = cameraTap.click = null;
 }
 
 function chatRow({ name, status, time, current, onclick, group, avatar, actions = [], muted = false }) {
@@ -1042,7 +1064,7 @@ function chatRow({ name, status, time, current, onclick, group, avatar, actions 
   // While a row is swiped open, a tap anywhere on the list just closes it.
   const open = (e) => {
     if (rowSwipe.open) return closeSwipedRow();
-    if (e.detail > 0 && !wideLayout.matches) return tapOnPhone(e.currentTarget, `${group ? "g" : "d"}:${name}`, onclick);
+    if (e.detail > 0 && !wideLayout.matches) return tapOnPhone(e.currentTarget, `${group ? "g" : "d"}:${name}`, onclick, e);
     const opening = onclick();
     if (e.detail > 0) armCameraTap(opening, e); // a tap or click, not the keyboard
   };

@@ -185,7 +185,8 @@ function render(s) {
     el("td", { class: "num", text: n(x.friends) }),
     el("td", { class: "num", text: n(x.texts_sent) }),
     el("td", { class: "num", text: n(x.snaps_sent) }),
-    el("td", {}, el("button", { type: "button", class: "reset-button", onclick: (e) => resetUser(e.currentTarget, x) }, "Reset password")),
+    el("td", {}, el("button", { type: "button", class: "reset-button", onclick: (e) => resetUser(e.currentTarget, x) },
+      x.id === pendingReset ? "Tap again: issue a reset code" : "Reset password")),
   )));
   if (!u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No users yet." })));
 
@@ -193,13 +194,17 @@ function render(s) {
 }
 
 // For someone who lost their password and their recovery key. Two taps; the
-// code is shown once, here, for the admin to hand over in person.
+// code is shown once, here, for the admin to hand over in person. The first
+// tap is remembered by user, not on the button, so the list refreshing in
+// between (it does every 30 seconds) doesn't lose it.
+let pendingReset = null;
 async function resetUser(btn, user) {
-  if (!btn.dataset.confirm) {
-    btn.dataset.confirm = "1";
+  if (pendingReset !== user.id) {
+    pendingReset = user.id;
     btn.textContent = "Tap again: issue a reset code";
     return;
   }
+  pendingReset = null;
   btn.disabled = true;
   const out = $("#reset-result");
   try {
@@ -222,7 +227,6 @@ async function resetUser(btn, user) {
   } finally {
     btn.disabled = false;
     btn.textContent = "Reset password";
-    delete btn.dataset.confirm;
   }
 }
 
@@ -447,7 +451,8 @@ function chartSpecs(host) {
   if (host.credits?.points?.length) {
     specs.push({
       title: "CPU credits", unit: "", note: "Above zero, CPU over the baseline is free",
-      points: host.credits.points.map(([t, b]) => ({ t, v: { credits: [b, b, b] } })),
+      // CloudWatch's points are 5-minute averages starting at t.
+      points: host.credits.points.map(([t, b]) => ({ t, s: 300, v: { credits: [b, b, b] } })),
       series: [["Balance", fig("credits")]],
       refs: est.credit_max ? [{ y: est.credit_max, label: `Full (${est.credit_max})` }] : [],
     });
@@ -494,19 +499,36 @@ function clockLabel(t, long) {
   return long ? `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}` : time;
 }
 
-/** Splits points where readings are missing (the server was down), so lines don't bridge the gap. */
-function segments(points, get, gap) {
+/** Where a point is drawn: the middle of the time it covers (`t` to `t + s`). */
+const mid = (p) => p.t + (p.s ?? 0) / 2;
+
+/** "Thu 10:40–10:46 PM" for a span, "Thu 10:40:20 PM" for a 10-second reading (when it was taken). */
+function spanLabel(p) {
+  const d = (t, opts) => new Date(t * 1000).toLocaleTimeString(undefined, opts);
+  const day = new Date(p.t * 1000).toLocaleDateString(undefined, { weekday: "short" });
+  if ((p.s ?? 0) < 60) return `${day} ${d(p.t + (p.s ?? 0), { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+  return `${day} ${d(p.t, { hour: "numeric", minute: "2-digit" })}–${d(p.t + p.s, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/**
+ * Splits points where readings are missing (the server was down, or before
+ * metrics existed), so lines don't bridge time with no readings. A gap is a
+ * hole between one point's end and the next one's start longer than either
+ * point (with a little slack for timer jitter).
+ */
+function segments(points, get) {
   const out = [];
   let run = [];
-  let lastT = null;
+  let prev = null;
   for (const p of points) {
     const v = get(p);
-    if (!v || (lastT != null && p.t - lastT > gap)) {
+    const hole = prev ? p.t - (prev.t + (prev.s ?? 0)) : 0;
+    if (!v || hole > Math.max(prev?.s ?? 0, p.s ?? 0, 10) + 2) {
       if (run.length) out.push(run);
       run = [];
     }
-    if (v) run.push([p.t, v]);
-    lastT = v ? p.t : lastT;
+    if (v) run.push([mid(p), v]);
+    if (v) prev = p;
   }
   if (run.length) out.push(run);
   return out;
@@ -522,8 +544,6 @@ function drawChart(box, spec, points, range) {
   const yMax = spec.max ?? niceMax(peak * 1.05);
   const x = (t) => m.l + ((t - t0) / Math.max(1, t1 - t0)) * (W - m.l - m.r);
   const y = (v) => m.t + (1 - Math.min(v, yMax) / yMax) * (H - m.t - m.b);
-  const steps = points.slice(1).map((p, i) => p.t - points[i].t).sort((a, b) => a - b);
-  const gap = 3 * (steps[Math.floor(steps.length / 2)] || 60);
 
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "mchart-svg", "aria-hidden": "true" });
   for (const f of [0, 0.5, 1]) {
@@ -547,7 +567,7 @@ function drawChart(box, spec, points, range) {
     root.append(label);
   }
   for (const s of series) {
-    for (const run of segments(points, s.get, gap)) {
+    for (const run of segments(points, s.get)) {
       const top = run.map(([t, v]) => `${x(t).toFixed(1)},${y(v[2]).toFixed(1)}`);
       const bottom = run.slice().reverse().map(([t, v]) => `${x(t).toFixed(1)},${y(v[0]).toFixed(1)}`);
       root.append(svg("polygon", { points: [...top, ...bottom].join(" "), class: `mband ${s.cls}` }));
@@ -569,12 +589,12 @@ function drawChart(box, spec, points, range) {
     if (!points.length) return;
     const r = root.getBoundingClientRect();
     const t = t0 + ((e.clientX - r.left) * (W / r.width) - m.l) / (W - m.l - m.r) * (t1 - t0);
-    const p = points.reduce((best, q) => (Math.abs(q.t - t) < Math.abs(best.t - t) ? q : best));
-    cross.setAttribute("x1", x(p.t));
-    cross.setAttribute("x2", x(p.t));
+    const p = points.reduce((best, q) => (Math.abs(mid(q) - t) < Math.abs(mid(best) - t) ? q : best));
+    cross.setAttribute("x1", x(mid(p)));
+    cross.setAttribute("x2", x(mid(p)));
     cross.setAttribute("visibility", "visible");
     tip.replaceChildren(
-      el("strong", { text: clockLabel(p.t, true) }),
+      el("strong", { text: spanLabel(p) }),
       ...series.map((s) => {
         const v = s.get(p);
         const spread = v && v[2] - v[0] > 1e-9 ? ` (${fmtValue(spec.unit, v[0])}–${fmtValue(spec.unit, v[2])})` : "";
@@ -590,14 +610,19 @@ function drawChart(box, spec, points, range) {
   return root;
 }
 
-/** Latest, average and peak of a series over the range, for headers and the table. */
+/**
+ * Latest, average and peak of a series over the range, for headers and the
+ * table. The average is weighted by the time each point covers, so a
+ * 10-second reading counts a sixth as much as a stored minute.
+ */
 function summarize(points, get) {
-  const vs = points.map(get).filter(Boolean);
+  const vs = points.map((p) => [get(p), p.s || 1]).filter(([v]) => v);
   if (!vs.length) return null;
+  const secs = vs.reduce((a, [, s]) => a + s, 0);
   return {
-    now: vs.at(-1)[1],
-    avg: vs.reduce((a, v) => a + v[1], 0) / vs.length,
-    peak: Math.max(...vs.map((v) => v[2])),
+    now: vs.at(-1)[0][1],
+    avg: vs.reduce((a, [v, s]) => a + v[1] * s, 0) / secs,
+    peak: Math.max(...vs.map(([v]) => v[2])),
   };
 }
 
@@ -692,7 +717,6 @@ function renderMetrics() {
     type: "button", class: "segment", "aria-pressed": String(h === data.hours), "data-hours": h,
     onclick: () => pickRange(h),
   }, h === 1 ? "1 hour" : h % 24 ? `${h} hours` : h === 24 ? "24 hours" : `${h / 24} days`)));
-  $("#m-note").textContent = data.hours === 1 ? "Every 10 seconds" : "Each point: a minute or more (average, with its range)";
 
   renderStatus(data);
   renderCost(data);
@@ -702,13 +726,17 @@ function renderMetrics() {
     $("#m-charts").replaceChildren(el("p", { class: "muted", text: "No readings yet. The first arrive 20 seconds after the server starts." }));
     return;
   }
+  // After a restart the last hour is per-minute up to the restart, then every 10 seconds.
+  const restarted = data.hours === 1 && host.series.some((p) => p.s >= 60);
+  $("#m-note").textContent = data.hours !== 1 ? "Each point: a minute or more (average, with its range)"
+    : restarted ? "Every 10 seconds since the server restarted; each minute before that" : "Every 10 seconds";
   const range = [data.generated_at - data.hours * 3600, data.generated_at];
   const rows = [];
   $("#m-charts").replaceChildren(...chartSpecs(host).map((spec) => {
     // Only what's inside the range: CPU credits come from CloudWatch for the
     // whole retention window whatever the range, and anything outside it
     // would be drawn past the chart's edge and stretch its scale.
-    const points = (spec.points ?? host.series).filter((p) => p.t >= range[0] && p.t <= range[1]);
+    const points = (spec.points ?? host.series).filter((p) => mid(p) >= range[0] && mid(p) <= range[1]);
     const box = el("section", { class: "panel mchart" });
     const sums = spec.series.map(([name, get]) => [name, summarize(points, get)]);
     for (const [name, sum] of sums) rows.push([spec.title, name, spec.unit, sum]);

@@ -48,10 +48,14 @@ const LATENCY_CAP: usize = 20_000;
 const CREDITS_EVERY: Duration = Duration::from_secs(5 * 60);
 const BILLING_EVERY_SECS: i64 = 12 * 3600;
 
-/// One reading, or one bucket of readings: figure -> [min, avg, max].
+/// One reading, or one bucket of readings: figure -> [min, avg, max], over
+/// the `s` seconds starting at `t`. (A 10-second reading covers the 10
+/// seconds before it was taken; a stored minute, that minute.) Charts draw
+/// each point at the middle of what it covers.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Point {
     pub t: i64,
+    pub s: i64,
     pub v: BTreeMap<String, [f64; 3]>,
 }
 
@@ -542,6 +546,7 @@ impl Minute {
         self.seen = 0;
         Some(Point {
             t: self.minute * 60,
+            s: 60,
             v,
         })
     }
@@ -603,8 +608,10 @@ pub fn spawn(state: SharedState) {
             }
             minute.add(&v);
             let mut live = state.metrics.live.lock().unwrap();
+            let span = INTERVAL.as_secs() as i64;
             live.push_back(Point {
-                t,
+                t: t - span,
+                s: span,
                 v: v.into_iter().map(|(k, x)| (k, [x, x, x])).collect(),
             });
             while live.len() > 360 {
@@ -686,9 +693,11 @@ impl Metrics {
         .await?;
         for (host, minute, data) in rows {
             if let Ok(v) = serde_json::from_str(&data) {
-                out.entry(host)
-                    .or_default()
-                    .push(Point { t: minute * 60, v });
+                out.entry(host).or_default().push(Point {
+                    t: minute * 60,
+                    s: 60,
+                    v,
+                });
             }
         }
         Ok(out)
@@ -855,37 +864,76 @@ impl Metrics {
 
 // ---------- reading it back ----------
 
-/// Merges consecutive points so there are at most `max`: min of mins, mean of
-/// means, max of maxes.
+/// One point covering several: from the first's start to the last's end;
+/// min of mins, max of maxes, and the average weighted by the time each
+/// covers (so a 10-second reading counts a sixth of a minute).
+fn merge(points: &[Point]) -> Point {
+    let mut acc: BTreeMap<String, (f64, f64, f64, f64)> = BTreeMap::new();
+    for p in points {
+        for (k, [lo, avg, hi]) in &p.v {
+            let e = acc
+                .entry(k.clone())
+                .or_insert((f64::INFINITY, 0.0, f64::NEG_INFINITY, 0.0));
+            e.0 = e.0.min(*lo);
+            e.1 += avg * p.s as f64;
+            e.2 = e.2.max(*hi);
+            e.3 += p.s as f64;
+        }
+    }
+    let (first, last) = (&points[0], &points[points.len() - 1]);
+    Point {
+        t: first.t,
+        s: last.t + last.s - first.t,
+        v: acc
+            .into_iter()
+            .map(|(k, (lo, sum, hi, secs))| (k, [lo, sum / secs.max(1.0), hi]))
+            .collect(),
+    }
+}
+
+/// Merges consecutive points so there are at most `max`.
 fn downsample(points: &[Point], max: usize) -> Vec<Point> {
     if points.len() <= max {
         return points.to_vec();
     }
     let per = points.len().div_ceil(max);
-    points
-        .chunks(per)
-        .map(|chunk| {
-            let mut acc: BTreeMap<String, (f64, f64, f64, u32)> = BTreeMap::new();
-            for p in chunk {
-                for (k, [lo, avg, hi]) in &p.v {
-                    let e =
-                        acc.entry(k.clone())
-                            .or_insert((f64::INFINITY, 0.0, f64::NEG_INFINITY, 0));
-                    e.0 = e.0.min(*lo);
-                    e.1 += avg;
-                    e.2 = e.2.max(*hi);
-                    e.3 += 1;
-                }
-            }
-            Point {
-                t: chunk[0].t,
-                v: acc
-                    .into_iter()
-                    .map(|(k, (lo, sum, hi, n))| (k, [lo, sum / f64::from(n), hi]))
-                    .collect(),
-            }
-        })
-        .collect()
+    points.chunks(per).map(merge).collect()
+}
+
+/// A host's series for the range starting at `since`: stored minutes, and
+/// for this server its live 10-second readings where the minutes end.
+///
+/// For the last hour, the readings are shown as they are. They only go back
+/// to the last restart, so before that the stored minutes fill in (a deploy
+/// used to leave the hour mostly empty). For longer ranges, the readings
+/// since the last stored minute become one point for the minute in progress.
+fn series(minutes: &[Point], live: &[Point], since: i64, hours: i64) -> Vec<Point> {
+    let stored: Vec<Point> = minutes
+        .iter()
+        .filter(|p| p.t + p.s > since)
+        .cloned()
+        .collect();
+    if hours == 1 {
+        let live: Vec<&Point> = live.iter().filter(|p| p.t + p.s > since).collect();
+        let live_from = live.first().map_or(i64::MAX, |p| p.t);
+        let mut out: Vec<Point> = stored
+            .into_iter()
+            .filter(|p| p.t + p.s <= live_from)
+            .collect();
+        out.extend(live.into_iter().cloned());
+        return out;
+    }
+    let stored_to = stored.last().map_or(i64::MIN, |p| p.t + p.s);
+    let recent: Vec<Point> = live
+        .iter()
+        .filter(|p| p.t >= stored_to && p.t + p.s > since)
+        .cloned()
+        .collect();
+    let mut out = stored;
+    if !recent.is_empty() {
+        out.push(merge(&recent));
+    }
+    downsample(&out, MAX_POINTS)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -970,13 +1018,11 @@ fn assess(recent: &[Point], info: &HostInfo, credits: Option<&Credits>) -> (Leve
     flag(r, avg("p95"), 500.0, 2000.0, &|x| {
         format!("Slow responses: 95% take under {x:.0} ms")
     });
-    // "errors" is a per-minute rate; times the minutes each reading covers.
+    // "errors" is a per-minute rate; times the minutes each point covers.
     let errors: f64 = recent
         .iter()
-        .filter_map(|p| p.v.get("errors"))
-        .map(|e| e[1])
-        .sum::<f64>()
-        * minutes_per_point(recent);
+        .filter_map(|p| Some(p.v.get("errors")?[1] * p.s as f64 / 60.0))
+        .sum();
     flag(r, Some(errors), 1.0, 10.0, &|x| {
         format!("{x:.0} server errors in the last 10 minutes")
     });
@@ -984,14 +1030,6 @@ fn assess(recent: &[Point], info: &HostInfo, credits: Option<&Credits>) -> (Leve
     reasons.sort_by_key(|r| std::cmp::Reverse(r.0));
     let level = reasons.first().map_or(Level::Ok, |r| r.0);
     (level, reasons.into_iter().map(|r| r.1).collect())
-}
-
-/// How many minutes each point covers (10s readings: 1/6).
-fn minutes_per_point(points: &[Point]) -> f64 {
-    match points {
-        [a, b, ..] => ((b.t - a.t) as f64 / 60.0).max(1.0 / 6.0),
-        _ => 1.0,
-    }
 }
 
 // ---------- cost ----------
@@ -1214,20 +1252,7 @@ pub async fn get(
         }
         let host_credits = if is_local { credits.as_ref() } else { None };
         let (level, reasons) = assess(&recent, &info, host_credits);
-        let series = if hours == 1 && is_local {
-            live.iter().filter(|p| p.t >= since).cloned().collect()
-        } else {
-            let mut all: Vec<Point> = minutes.iter().filter(|p| p.t >= since).cloned().collect();
-            // The minute in progress isn't stored yet; the latest readings stand in for it.
-            if is_local {
-                if let Some(last) = live.last() {
-                    if all.last().is_none_or(|p| p.t / 60 < last.t / 60) {
-                        all.push(last.clone());
-                    }
-                }
-            }
-            downsample(&all, MAX_POINTS)
-        };
+        let series = series(minutes, if is_local { &live } else { &[] }, since, hours);
         hosts.push(json!({
             "host": host,
             "info": info,
@@ -1322,14 +1347,87 @@ mod tests {
         assert!(m.finish().is_none(), "nothing left once finished");
     }
 
+    /// A 10-second reading starting at `t`.
     fn point(t: i64, pairs: &[(&str, f64)]) -> Point {
         Point {
             t,
+            s: 10,
             v: pairs
                 .iter()
                 .map(|(k, x)| (k.to_string(), [*x, *x, *x]))
                 .collect(),
         }
+    }
+
+    fn minute(m: i64, cpu: f64) -> Point {
+        Point {
+            t: m * 60,
+            s: 60,
+            v: BTreeMap::from([("cpu".to_owned(), [cpu, cpu, cpu])]),
+        }
+    }
+
+    #[test]
+    fn the_last_hour_fills_in_from_before_a_restart() {
+        let now_min = 100_000;
+        let since = (now_min - 60) * 60;
+        // Stored minutes for the whole hour; the server restarted 10 minutes ago,
+        // so its 10-second readings only cover the last 10 minutes.
+        let minutes: Vec<Point> = (now_min - 60..now_min).map(|m| minute(m, 5.0)).collect();
+        let restart = (now_min - 10) * 60;
+        let live: Vec<Point> = (0..60)
+            .map(|i| point(restart + i * 10, &[("cpu", 9.0)]))
+            .collect();
+        let s = series(&minutes, &live, since, 1);
+        assert_eq!(
+            s.first().unwrap().t,
+            since,
+            "the hour starts at its start, not at the restart"
+        );
+        let stored = s.iter().filter(|p| p.s == 60).count();
+        assert_eq!(
+            stored, 50,
+            "minutes before the readings, none overlapping them"
+        );
+        assert!(s.iter().filter(|p| p.s == 60).all(|p| p.t + 60 <= restart));
+        assert_eq!(s.len(), 50 + 60);
+        assert!(
+            s.windows(2).all(|w| w[0].t + w[0].s <= w[1].t),
+            "in order, no overlaps"
+        );
+        // Without a restart, the readings cover the hour on their own.
+        let full: Vec<Point> = (0..360)
+            .map(|i| point(since + i * 10, &[("cpu", 1.0)]))
+            .collect();
+        assert!(series(&minutes, &full, since, 1).iter().all(|p| p.s == 10));
+    }
+
+    #[test]
+    fn longer_ranges_add_the_minute_in_progress_weighted() {
+        let minutes: Vec<Point> = (0..10).map(|m| minute(m, 10.0)).collect();
+        // 30 seconds into minute 10: three readings, at 40, 40, and 100.
+        let live = [
+            point(600, &[("cpu", 40.0)]),
+            point(610, &[("cpu", 40.0)]),
+            point(620, &[("cpu", 100.0)]),
+        ];
+        let s = series(&minutes, &live, 0, 24);
+        assert_eq!(s.len(), 11);
+        let last = s.last().unwrap();
+        assert_eq!((last.t, last.s), (600, 30));
+        assert_eq!(last.v["cpu"], [40.0, 60.0, 100.0]);
+        // Readings already inside a stored minute aren't counted twice.
+        let s = series(&minutes, &[point(590, &[("cpu", 99.0)])], 0, 24);
+        assert_eq!(s.len(), 10);
+    }
+
+    #[test]
+    fn merging_weights_by_time_covered() {
+        // A minute at 10% and a 10-second reading at 70%: (10×60 + 70×10) / 70.
+        let m = merge(&[minute(0, 10.0), point(60, &[("cpu", 70.0)])]);
+        assert_eq!((m.t, m.s), (0, 70));
+        assert!((m.v["cpu"][1] - 1300.0 / 70.0).abs() < 1e-9);
+        assert_eq!((m.v["cpu"][0], m.v["cpu"][2]), (10.0, 70.0));
     }
 
     #[test]

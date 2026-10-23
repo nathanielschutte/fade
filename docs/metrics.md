@@ -68,7 +68,10 @@ A read that fails (say, a missing permission) is shown on the page in red and lo
 
 `GET /api/admin/metrics?hours=` (admins only; [API.md](API.md)) returns one entry per host with these parts:
 
-- **Series.** For the last hour, the 10-second readings, each as `[x, x, x]`. For longer ranges, the stored minutes inside the range, plus the newest reading standing in for the minute in progress. If that's more than 720 points, consecutive points are merged into buckets: the min of their mins, the mean of their averages, the max of their maxes, labeled with the first point's time. 24 hours (1,440 minutes) becomes 720 two-minute points; three days, 720 six-minute points.
+- **Series.** Every point says what time it covers: it starts at `t` and lasts `s` seconds. A 10-second reading covers the 10 seconds before it was taken; a stored minute, that minute.
+  - **The last hour** is the 10-second readings, each as `[x, x, x]`. Readings live in memory, so they only go back to the server's last start. Before that, the stored minutes fill in, so a deploy doesn't empty the hour (it did until 0.26.5).
+  - **Longer ranges** are the stored minutes, plus one point for the minute in progress, merged from the readings since the last stored minute.
+  - **Merging** (the minute in progress, and buckets when a range has over 720 points): the min of the mins, the max of the maxes, and the average **weighted by time covered**. A bucket covers from its first point's start to its last point's end. 24 hours (1,440 minutes) becomes 720 two-minute points; three days, 720 six-minute points.
 - **Status** from the last 10 minutes (the 10-second readings for this machine; stored minutes for any other). A host with nothing for 15 minutes is left out.
 - **Credits, estimate, bill**, as below.
 
@@ -111,14 +114,14 @@ Each chart is **one measure**, never two scales on one chart:
 
 How a chart is built from the series:
 
-- **Only points inside the range** are used, for the lines, the scale, the legend, and the table. CPU credits arrive for the whole window whatever the range, so this matters there.
+- **Each point is drawn at the middle of the time it covers**, and only points whose middle is inside the range are used, for the lines, the scale, the legend, and the table. CPU credits arrive for the whole window whatever the range (as 5-minute averages), so this matters there.
 - **The line is each point's average; the faint band around it is that point's min to max.** For the last hour each point is one reading, so there's no band. For longer ranges the band is where a spike shows: a CPU line at 3% with a band reaching 40% means a short burst inside that minute or bucket.
-- **Gaps stay gaps.** Where two points are more than three times the usual spacing apart (the server was down, or before metrics existed), the line breaks rather than drawing a straight bridge across time with no readings.
+- **Gaps stay gaps.** Where the time between one point's end and the next one's start is longer than either point covers (the server was down, or before metrics existed), the line breaks rather than drawing a straight bridge across time with no readings.
 - **Scales start at zero.** Percentages run 0 to 100%. Everything else runs from 0 to a round number (1, 2, 2.5 or 5 × 10ⁿ) just above the highest max or reference line in view.
 - **Time** runs from `now − hours` to now, with labels at the start, middle and end; at a day or more they name the weekday.
 - **Two lines get a legend** with each line's newest value; one line shows its newest value by the title. Colors are fixed per position (blue first, orange second), validated for color-blind separation and contrast on the dark background.
-- **Hover** finds the point nearest the pointer and shows each line's average, with the min–max range when there is one.
-- **The table** ("Show as table") lists every line: *now* is the newest point's average, *average* the mean of the points' averages over the range, *peak* the highest max.
+- **Hover** finds the point nearest the pointer and shows the time it covers ("Thu 10:40–10:46 PM", or when a 10-second reading was taken), each line's average, and the min–max range when there is one.
+- **The table** ("Show as table") lists every line: *now* is the newest point's average, *average* the time-weighted mean over the range, *peak* the highest max.
 
 It refreshes every 10 seconds on the 1-hour view and every minute otherwise, only while the tab is on screen. A range picked while another is loading loads right after, and an answer for a range no longer picked is dropped.
 
@@ -147,7 +150,7 @@ Every stored minute and host record carries its host (the EC2 instance id), the 
 - Rates are exact over each 10-second window: counter differences divided by the measured elapsed time, not the nominal 10 seconds.
 - Minute min/avg/max come from all six readings; spikes shorter than 10 seconds are averaged within their reading.
 - Percentiles are exact per window and per minute (up to 20,000 requests per window), never averaged.
-- "Average" over a long range is the mean of minute averages, so every minute counts equally.
+- Averages, wherever points are merged or summarized, are weighted by the time each point covers, so mixing 10-second readings with minutes doesn't skew them.
 - Response times are the server's own; what a person waits also includes the network and TLS.
 - The estimate is a rate, not a bill; the billed figure is the truth, a day behind.
 

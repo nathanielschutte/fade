@@ -52,11 +52,11 @@ def row(page, name):
     return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
-async def double_tap(page, locator):
+async def double_tap(page, locator, gap=0.12):
     box = await locator.bounding_box()
     x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
     await page.touchscreen.tap(x, y)
-    await asyncio.sleep(0.12)
+    await asyncio.sleep(gap)
     await page.touchscreen.tap(x, y)
 
 
@@ -77,8 +77,12 @@ async def main():
         await befriend(ana, ben, BEN, ANA)
         await expect(row(ben, ANA)).to_be_visible(timeout=10000)
 
-        # A phone: one tap just opens the chat.
+        # A phone: one tap just opens the chat, after only a moment.
+        start = asyncio.get_running_loop().time()
         await row(ben, ANA).tap()
+        await expect(ben.locator("#back-button")).to_be_visible()
+        waited = asyncio.get_running_loop().time() - start
+        assert waited < 0.6, f"a tap took {waited:.2f}s to open the chat"
         await expect(ben.locator("#chat-title")).to_have_text(ANA)
         await asyncio.sleep(0.6)
         await expect(ben.locator("#camera-dialog")).not_to_be_visible()
@@ -106,6 +110,20 @@ async def main():
         await asyncio.sleep(0.6)
         assert await ben.evaluate("window.__facing.length") == count
         await ben.click("#camera-dialog [data-close]")
+        await expect(ben.locator("#camera-dialog")).not_to_be_visible()
+
+        # A slower double tap: the chat has already opened under the finger,
+        # and the second tap still goes to the camera (and nothing else).
+        await ben.click("#back-button")
+        await double_tap(ben, row(ben, ANA), gap=0.25)
+        await expect(ben.locator("#camera-dialog")).to_be_visible(timeout=5000)
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)
+        await ben.click("#camera-dialog [data-close]")
+        await expect(ben.locator("#camera-dialog")).not_to_be_visible()
+        # Two taps far apart are two taps: the chat opens, no camera.
+        await ben.click("#back-button")
+        await row(ben, ANA).tap()
+        await asyncio.sleep(0.6)
         await expect(ben.locator("#camera-dialog")).not_to_be_visible()
 
         # A computer: double-clicking the row does the same.
