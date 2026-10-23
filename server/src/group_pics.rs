@@ -337,6 +337,9 @@ async fn upload_e2e(
             "You're sending pics too fast. Wait a minute.".into(),
         ));
     }
+    if let Some(stored) = groups::stored_e2e(&state.db, group, me, &keys.client_id).await? {
+        return Ok(Json(stored));
+    }
     let mut members = groups::member_ids(&state.db, group).await?;
     members.sort_unstable();
     let wraps = groups::check_e2e(&members, &keys)?;
@@ -470,22 +473,21 @@ pub async fn view(
             return Err(AppError::Gone("This pic has expired.".into()));
         }
     };
+    // Fetching doesn't open it; the app confirms once it's on screen (`opened`).
     sqlx::query(
-        "INSERT OR IGNORE INTO group_pic_views (pic_id, user_id, viewed_at) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO group_pic_fetches (pic_id, user_id, fetched_at) VALUES (?, ?, ?)",
     )
     .bind(pic)
     .bind(me.id)
     .bind(now())
     .execute(&state.db)
     .await?;
-    tracing::info!(
+    tracing::debug!(
         group_id = group,
         pic_id = pic,
         user_id = me.id,
-        "group pic opened"
+        "group pic fetched"
     );
-    discard_if_everyone_opened(&state, pic).await?;
-    rebroadcast(&state, pic).await?;
     if mime == "application/octet-stream" {
         // Format 3: sealed bytes, opened by the member's app with their key.
         return Ok((
@@ -507,6 +509,55 @@ pub async fn view(
         }
     }
     Ok(response)
+}
+
+/// `POST /api/groups/{id}/pics/{pic_id}/opened`: this member's app has shown
+/// the pic, so it counts as opened for them (and is discarded once everyone
+/// has). Saying it twice is fine.
+pub async fn opened(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path((group, pic)): Path<(i64, i64)>,
+) -> AppResult<Json<Value>> {
+    let (_, visible_after) = groups::require_member(&state.db, group, me.id).await?;
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT p.sender_id, gm.id FROM group_pics p JOIN group_messages gm ON gm.pic_id = p.id
+         WHERE p.id = ? AND p.group_id = ?",
+    )
+    .bind(pic)
+    .bind(group)
+    .fetch_optional(&state.db)
+    .await?;
+    match row {
+        Some((sender, message_id)) if sender != me.id && message_id > visible_after => {}
+        _ => return Err(AppError::not_found("Pic not found.")),
+    }
+    mark_viewed(&state, group, pic, me.id).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Records a member's view (once), and discards the pic if that was the last.
+async fn mark_viewed(state: &SharedState, group: i64, pic: i64, user: i64) -> AppResult<()> {
+    let added = sqlx::query(
+        "INSERT OR IGNORE INTO group_pic_views (pic_id, user_id, viewed_at) VALUES (?, ?, ?)",
+    )
+    .bind(pic)
+    .bind(user)
+    .bind(now())
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if added > 0 {
+        tracing::info!(
+            group_id = group,
+            pic_id = pic,
+            user_id = user,
+            "group pic opened"
+        );
+        discard_if_everyone_opened(state, pic).await?;
+        rebroadcast(state, pic).await?;
+    }
+    Ok(())
 }
 
 /// Percent-encodes everything but unreserved characters (RFC 3986).
@@ -537,6 +588,18 @@ pub fn spawn_sweeper(state: SharedState) {
 }
 
 async fn sweep(state: &SharedState) -> AppResult<()> {
+    // Fetched long ago and never confirmed: that counts as opened (as for direct pics).
+    let stale: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT p.group_id, f.pic_id, f.user_id FROM group_pic_fetches f JOIN group_pics p ON p.id = f.pic_id
+         WHERE f.fetched_at <= ? AND p.discarded_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM group_pic_views v WHERE v.pic_id = f.pic_id AND v.user_id = f.user_id)",
+    )
+    .bind(now() - crate::snaps::OPEN_GRACE_SECS)
+    .fetch_all(&state.db)
+    .await?;
+    for (group, pic, user) in stale {
+        mark_viewed(state, group, pic, user).await?;
+    }
     let open: Vec<(i64, i64)> =
         sqlx::query_as("SELECT id, expires_at FROM group_pics WHERE discarded_at IS NULL")
             .fetch_all(&state.db)

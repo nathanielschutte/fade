@@ -167,8 +167,15 @@ def check_groups(tag, a, a_tok, b, b_tok):
     assert r.content.startswith(b"\xff\xd8\xff") and r.headers["Content-Type"] == "image/jpeg" and r.headers["Cache-Control"] == "no-store"
     assert not any(contains(r.content, n) for n in (b"<script", b"<html", b"Exif", b"GPS")), "hidden payload survived"
     assert "sandbox" in r.headers["Content-Security-Policy"] and r.headers["X-Content-Type-Options"] == "nosniff"
+    # Fetching doesn't open it (a dropped connection could lose it); confirming does.
+    ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", a_tok))               # again, until confirmed
+    ok(call("POST", f"/groups/{gid}/pics/{pic['id']}/opened", d_tok), 404)  # outsider
+    ok(call("POST", f"/groups/{gid}/pics/{pic['id']}/opened", b_tok), 404)  # the sender
+    ok(call("POST", f"/groups/{gid}/pics/{pic['id']}/opened", a_tok))
+    ok(call("POST", f"/groups/{gid}/pics/{pic['id']}/opened", a_tok))       # a retry is fine
     ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", a_tok), 410)          # once each
     r = ok(call("GET", f"/groups/{gid}/pics/{pic['id']}", c_tok))           # cal rejoined before it was sent
+    ok(call("POST", f"/groups/{gid}/pics/{pic['id']}/opened", c_tok))
     after_pic = [x for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["id"] == pm["id"]][0]
     assert sorted(after_pic["pic"]["viewers"]) == sorted([a["id"], c["id"]]) and after_pic["pic"]["discard_reason"] == "opened"
 
@@ -579,7 +586,8 @@ def check_group_e2e(tag, a, a_tok, b, b_tok):
     m = ok(call("POST", f"/groups/{gid}/messages", a_tok, json=first)).json()
     assert m["format"] == 3 and m["body"] == "" and m["content"] == first["content"], m
     assert m["key"] == first["wraps"][str(a["id"])] and m["recipients"] == members and m["sender_public_key"]
-    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=first), 409)                        # a replay
+    again = ok(call("POST", f"/groups/{gid}/messages", a_tok, json=first)).json()              # a resend
+    assert again["id"] == m["id"], "a resent message comes back as the one stored, not a copy"
     ok(call("POST", f"/groups/{gid}/messages", b_tok, json=sealed()))
 
     seen = ok(call("GET", f"/groups/{gid}/messages", b_tok)).json()
@@ -601,6 +609,7 @@ def check_group_e2e(tag, a, a_tok, b, b_tok):
     assert pm["format"] == 3 and pm["pic"] and pm["key"] == keys["wraps"][str(a["id"])]
     r = ok(call("GET", f"/groups/{gid}/pics/{pm['pic']['id']}", b_tok))
     assert r.content == photo and r.headers["content-type"] == "application/octet-stream"
+    ok(call("POST", f"/groups/{gid}/pics/{pm['pic']['id']}/opened", b_tok))
     ok(call("GET", f"/groups/{gid}/pics/{pm['pic']['id']}", b_tok), 410)                     # view once
 
     ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "an old client"}))         # format 0 still works
@@ -686,6 +695,40 @@ def check_marks(tag, a, a_tok, b, b_tok):
     assert view(a_tok, b)["muted"] is False
     ok(call("PUT", f"/groups/{g['id']}/mute", b_tok, json={"on": True, "hours": 168}))
     assert group_view(b_tok, g["id"])["muted"] is True and group_view(a_tok, g["id"])["muted"] is False
+
+
+async def check_resend(tag):
+    """A send retried after a dropped connection (same client_id) returns the
+    stored message instead of storing it twice. And the socket answers the
+    app's heartbeat."""
+    ra, rb = ok(register(f"rs_a_{tag}")).json(), ok(register(f"rs_b_{tag}")).json()
+    a, a_tok, b, b_tok = ra["user"], ra["token"], rb["user"], rb["token"]
+    ok(call("POST", "/friends/requests", a_tok, json={"username": b["username"]}))
+    ok(call("POST", f"/friends/requests/{a['id']}/accept", b_tok))
+
+    cid = b64(os.urandom(16))
+    body = {"ciphertext": b64(os.urandom(48)), "format": 2, "client_id": cid}
+    first = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json=body)).json()
+    again = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json=body)).json()
+    assert again["id"] == first["id"] and first["client_id"] == cid
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={**body, "client_id": "<bad id>"}), 400)
+    other = ok(call("POST", f"/chats/{a['id']}/messages", b_tok, json=body)).json()        # someone else's id space
+    assert other["id"] != first["id"]
+
+    pid = b64(os.urandom(16)).replace("+", "-").replace("/", "_")
+    url = f"/chats/{b['id']}/snaps?format=2&client_id={urllib.parse.quote(pid)}"
+    p1 = ok(call("POST", url, a_tok, data=SNAP, headers={"Content-Type": "application/octet-stream"})).json()
+    p2 = ok(call("POST", url, a_tok, data=SNAP, headers={"Content-Type": "application/octet-stream"})).json()
+    assert p1["id"] == p2["id"], "a retried pic upload isn't stored twice"
+    if DB:
+        n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM messages WHERE sender_id = ?", (a["id"],)).fetchone()[0]
+        assert n == 2, n
+
+    ws = await socket(a_tok)
+    await ws.send(json.dumps({"type": "ping"}))
+    assert (await next_event(ws, "pong"))["type"] == "pong"
+    await ws.close()
+    print("  resends: texts, pics, and group messages stored once; the socket answers pings")
 
 
 def check_guard(tag):
@@ -905,7 +948,13 @@ async def main():
     ok(call("GET", f"/snaps/{snap['id']}", a_tok), 404)          # sender can't open it
     r = ok(call("GET", f"/snaps/{snap['id']}", b_tok))
     assert r.content == SNAP and "no-store" in r.headers["Cache-Control"]
-    ok(call("GET", f"/snaps/{snap['id']}", b_tok), 410)          # second view: gone
+    # Fetching doesn't open it: a dropped download can be tried again. The app
+    # confirms once it has shown the pic; then it's gone.
+    assert ok(call("GET", f"/snaps/{snap['id']}", b_tok)).content == SNAP
+    ok(call("POST", f"/snaps/{snap['id']}/opened", a_tok), 404)  # only the recipient
+    ok(call("POST", f"/snaps/{snap['id']}/opened", b_tok))
+    ok(call("POST", f"/snaps/{snap['id']}/opened", b_tok))       # a retry is fine
+    ok(call("GET", f"/snaps/{snap['id']}", b_tok), 410)          # opened: gone
 
     # Profiles: your own has your counts and friends; a friend's has what you share.
     mine = ok(call("GET", f"/users/{a['id']}/profile", a_tok)).json()
@@ -976,6 +1025,7 @@ async def main():
     check_account(tag)
     await check_live(tag)
     check_invites(tag)
+    await check_resend(tag)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()

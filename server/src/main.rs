@@ -365,6 +365,10 @@ fn router(state: SharedState) -> Router {
         )
         .route("/groups/{group_id}/pics/{pic_id}", get(group_pics::view))
         .route(
+            "/groups/{group_id}/pics/{pic_id}/opened",
+            post(group_pics::opened),
+        )
+        .route(
             "/groups/{group_id}/avatar",
             post(group_pics::set_avatar).layer(DefaultBodyLimit::max(group_pics::AVATAR_MAX_BYTES)),
         )
@@ -391,6 +395,7 @@ fn router(state: SharedState) -> Router {
             post(snaps::upload).layer(DefaultBodyLimit::max(snap_limit)),
         )
         .route("/snaps/{id}", get(snaps::view))
+        .route("/snaps/{id}/opened", post(snaps::opened))
         .route("/admin/stats", get(admin::stats))
         .route("/admin/logs", get(logs::list))
         .route(

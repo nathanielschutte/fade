@@ -69,13 +69,41 @@ pub struct Message {
     pub snap_state: Option<String>,
     pub created_at: i64,
     pub read_at: Option<i64>,
+    /// The id the sending app picked, so a retried send isn't stored twice.
+    pub client_id: Option<String>,
     /// Current reactions, encrypted (reactions.rs). Filled in where it matters.
     #[sqlx(skip)]
     pub reactions: Vec<crate::reactions::Reaction>,
 }
 
 pub const MESSAGE_COLS: &str =
-    "id, sender_id, recipient_id, kind, ciphertext, format, snap_state, created_at, read_at";
+    "id, sender_id, recipient_id, kind, ciphertext, format, snap_state, created_at, read_at, client_id";
+
+/// A client-chosen message id: short, and only base64/base64url characters.
+pub fn valid_client_id(s: &str) -> bool {
+    (8..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+/=-_".contains(&b))
+}
+
+/// The message `sender` already stored under `client_id`, if any: a retried
+/// send gets this back instead of a duplicate.
+pub async fn sent_before(
+    db: &SqlitePool,
+    sender: i64,
+    client_id: Option<&str>,
+) -> sqlx::Result<Option<Message>> {
+    let Some(client_id) = client_id else {
+        return Ok(None);
+    };
+    sqlx::query_as::<_, Message>(&format!(
+        "SELECT {MESSAGE_COLS} FROM messages WHERE sender_id = ? AND client_id = ?"
+    ))
+    .bind(sender)
+    .bind(client_id)
+    .fetch_optional(db)
+    .await
+}
 
 pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<Option<Message>> {
     sqlx::query_as::<_, Message>(&format!("SELECT {MESSAGE_COLS} FROM messages WHERE id = ?"))

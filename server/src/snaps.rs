@@ -81,6 +81,8 @@ pub struct UploadParams {
     /// `?format=2`. Optional; clients from before formats existed wrote format 1.
     #[serde(default = "version::default_format")]
     format: i64,
+    /// `?client_id=...`: picked by the app, so a retried upload isn't stored twice.
+    client_id: Option<String>,
 }
 
 pub async fn upload(
@@ -92,6 +94,21 @@ pub async fn upload(
 ) -> AppResult<Json<Message>> {
     require_friend(&state, me.id, friend_id).await?;
     version::check_snap_format(params.format)?;
+    if params
+        .client_id
+        .as_deref()
+        .is_some_and(|c| !db::valid_client_id(c))
+    {
+        return Err(AppError::bad("That pic id isn't valid."));
+    }
+    if let Some(stored) = db::sent_before(&state.db, me.id, params.client_id.as_deref()).await? {
+        tracing::debug!(
+            message_id = stored.id,
+            from = me.id,
+            "pic resent; already stored"
+        );
+        return Ok(Json(stored));
+    }
 
     if body.len() < MIN_SNAP_BYTES {
         return Err(AppError::bad("That pic wasn't encrypted correctly."));
@@ -117,16 +134,23 @@ pub async fn upload(
     // so a crash never leaves half a pic) before the row commits.
     let mut tx = state.db.begin().await?;
     let message = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, snap_bytes, created_at)
-         VALUES (?, ?, 'snap', ?, 'pending', ?, ?) RETURNING {MESSAGE_COLS}"
+        "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, snap_bytes, created_at, client_id)
+         VALUES (?, ?, 'snap', ?, 'pending', ?, ?, ?) RETURNING {MESSAGE_COLS}"
     ))
     .bind(me.id)
     .bind(friend_id)
     .bind(params.format)
     .bind(body.len() as i64)
     .bind(now())
+    .bind(params.client_id.as_deref())
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => {
+            AppError::Conflict("That pic was already sent.".into())
+        }
+        e => e.into(),
+    })?;
     let path = snap_path(&state, message.id);
     let tmp = path.with_extension("tmp");
     tokio::fs::write(&tmp, &body)
@@ -176,7 +200,16 @@ fn notify(state: &SharedState, message: Message) {
     );
 }
 
-/// View-once: the first successful fetch by the recipient discards the pic.
+/// A pic that was fetched but never confirmed shown counts as opened after this
+/// long: long enough to retry a slow or dropped open, short enough that
+/// fetching isn't a way around view-once.
+pub const OPEN_GRACE_SECS: i64 = 15 * 60;
+
+/// `GET /api/snaps/{id}`: the recipient fetches the sealed pic. Fetching
+/// doesn't open it: the app confirms with `POST /snaps/{id}/opened` once the
+/// pic is on screen, so a dropped connection or a slow decode doesn't lose
+/// it. Until then it can be fetched again (the first fetch is recorded, and
+/// after `OPEN_GRACE_SECS` it counts as opened anyway).
 pub async fn view(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
@@ -210,17 +243,12 @@ pub async fn view(
             return Err(gone());
         }
     };
-    // Two tabs opening at once: only one gets the pic.
-    let Some(message) = finish(&state, id, "opened").await? else {
-        return Err(gone());
-    };
-    tracing::info!(
-        message_id = id,
-        from = m.sender_id,
-        to = me.id,
-        "pic opened"
-    );
-    notify(&state, message);
+    sqlx::query("UPDATE messages SET snap_fetched_at = COALESCE(snap_fetched_at, ?) WHERE id = ?")
+        .bind(now())
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+    tracing::debug!(message_id = id, user_id = me.id, "pic fetched");
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -233,6 +261,35 @@ pub async fn view(
     );
     headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
     Ok((headers, data).into_response())
+}
+
+/// `POST /api/snaps/{id}/opened`: the recipient's app has shown the pic, so
+/// now it's opened and discarded. Saying it twice is fine (a retry after a
+/// dropped response).
+pub async fn opened(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    let m = match db::get_message(&state.db, id).await? {
+        Some(m) if m.recipient_id == me.id && m.kind == "snap" => m,
+        _ => return Err(AppError::not_found("Pic not found.")),
+    };
+    match m.snap_state.as_deref() {
+        Some("opened") => return Ok(Json(serde_json::json!({ "ok": true }))),
+        Some("pending") => {}
+        _ => return Err(AppError::Gone("This pic has expired.".into())),
+    }
+    if let Some(message) = finish(&state, id, "opened").await? {
+        tracing::info!(
+            message_id = id,
+            from = m.sender_id,
+            to = me.id,
+            "pic opened"
+        );
+        notify(&state, message);
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 /// At startup: a pending pic whose file is gone can never be opened (it was
@@ -300,6 +357,21 @@ async fn sweep(state: &SharedState) -> sqlx::Result<()> {
     }
     for id in due {
         if let Some(message) = finish(state, id, "expired").await? {
+            notify(state, message);
+        }
+    }
+    // Fetched long ago and never confirmed (an older app, an abandoned open):
+    // that counts as opened.
+    let fetched: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'
+           AND snap_fetched_at IS NOT NULL AND snap_fetched_at <= ?",
+    )
+    .bind(now() - OPEN_GRACE_SECS)
+    .fetch_all(&state.db)
+    .await?;
+    for id in fetched {
+        if let Some(message) = finish(state, id, "opened").await? {
+            tracing::info!(message_id = id, "pic opened (fetched, not confirmed)");
             notify(state, message);
         }
     }

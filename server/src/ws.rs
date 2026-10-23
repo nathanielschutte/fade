@@ -206,6 +206,9 @@ enum ClientFrame {
     Visibility { visible: bool },
     /// "I'm typing" to a friend (`to`) or a group (`group`).
     Typing { to: Option<i64>, group: Option<i64> },
+    /// The app checking the connection is really alive (browsers can't see
+    /// protocol pings); answered at once with `{"type":"pong"}`.
+    Ping,
 }
 
 /// Typing is a hint; one relay per socket every so often is plenty.
@@ -311,6 +314,11 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
                         if last_typing.is_none_or(|t| t.elapsed() >= TYPING_EVERY) {
                             last_typing = Some(std::time::Instant::now());
                             crate::presence::typing(&state, user.id, to, group).await;
+                        }
+                    }
+                    Ok(ClientFrame::Ping) => {
+                        if socket.send(WsMessage::Text(r#"{"type":"pong"}"#.into())).await.is_err() {
+                            break;
                         }
                     }
                     Err(_) => tracing::debug!(user_id = user.id, conn_id, "unknown socket frame ignored"),

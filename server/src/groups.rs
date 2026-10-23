@@ -425,6 +425,35 @@ pub async fn store_wraps(
     Ok(())
 }
 
+/// What `sender` already stored in `group` under `client_id`, readied for
+/// them: a send retried after a dropped connection gets this back, not a
+/// second copy.
+pub async fn stored_e2e(
+    db: &SqlitePool,
+    group: i64,
+    sender: i64,
+    client_id: &str,
+) -> sqlx::Result<Option<GroupMessage>> {
+    let id: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM group_messages WHERE group_id = ? AND sender_id = ? AND client_id = ?",
+    )
+    .bind(group)
+    .bind(sender)
+    .bind(client_id)
+    .fetch_optional(db)
+    .await?;
+    let Some(id) = id else { return Ok(None) };
+    let mut m = get_message(db, id).await?;
+    prepare_for(db, sender, std::slice::from_mut(&mut m)).await?;
+    tracing::debug!(
+        group_id = group,
+        message_id = id,
+        from = sender,
+        "group message resent; already stored"
+    );
+    Ok(Some(m))
+}
+
 /// A replayed format 3 message hits the unique index on its message id.
 pub fn replay(e: sqlx::Error) -> AppError {
     match e {
@@ -916,6 +945,9 @@ async fn send_e2e(
     let size = STANDARD.decode(&content).map(|b| b.len()).unwrap_or(0);
     if !(12 + 16 + 1..=MAX_E2E_CONTENT_BYTES).contains(&size) {
         return Err(AppError::bad("That message is empty or too long."));
+    }
+    if let Some(stored) = stored_e2e(&state.db, group, me, &keys.client_id).await? {
+        return Ok(Json(stored));
     }
     let mut members = member_ids(&state.db, group).await?;
     members.sort_unstable();

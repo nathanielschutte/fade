@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::AuthUser,
-    db::{is_base64, now, Message, MESSAGE_COLS},
+    db::{self, is_base64, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
     friends::require_friend,
     version,
@@ -64,6 +64,9 @@ pub struct NewText {
     /// Clients from before formats existed don't send one; they wrote format 1.
     #[serde(default = "version::default_format")]
     format: i64,
+    /// Picked by the app; sending again with the same one returns the stored
+    /// message instead of a second copy (a retry after a dropped connection).
+    client_id: Option<String>,
 }
 
 pub async fn send_text(
@@ -81,18 +84,45 @@ pub async fn send_text(
     if req.ciphertext.len() < 40 || !is_base64(&req.ciphertext, MAX_CIPHERTEXT_CHARS) {
         return Err(AppError::bad("That message wasn't encrypted correctly."));
     }
+    if req
+        .client_id
+        .as_deref()
+        .is_some_and(|c| !db::valid_client_id(c))
+    {
+        return Err(AppError::bad("That message id isn't valid."));
+    }
+    if let Some(stored) = db::sent_before(&state.db, me.id, req.client_id.as_deref()).await? {
+        tracing::debug!(
+            message_id = stored.id,
+            from = me.id,
+            "text resent; already stored"
+        );
+        return Ok(Json(stored));
+    }
 
     let message = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (sender_id, recipient_id, kind, ciphertext, format, created_at)
-         VALUES (?, ?, 'text', ?, ?, ?) RETURNING {MESSAGE_COLS}"
+        "INSERT INTO messages (sender_id, recipient_id, kind, ciphertext, format, created_at, client_id)
+         VALUES (?, ?, 'text', ?, ?, ?, ?) RETURNING {MESSAGE_COLS}"
     ))
     .bind(me.id)
     .bind(friend_id)
     .bind(&req.ciphertext)
     .bind(req.format)
     .bind(now())
+    .bind(req.client_id.as_deref())
     .fetch_one(&state.db)
-    .await?;
+    .await;
+    let message = match message {
+        Ok(m) => m,
+        // Two copies of the same send raced in: the other one stored it.
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            match db::sent_before(&state.db, me.id, req.client_id.as_deref()).await? {
+                Some(stored) => return Ok(Json(stored)),
+                None => return Err(AppError::Conflict("That message was already sent.".into())),
+            }
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     tracing::debug!(
         message_id = message.id,
