@@ -77,3 +77,7 @@ How every figure is measured and drawn: [metrics.md](metrics.md). In short, `/ad
 - **What "in the red" means:** memory or a disk over 90% (80% is "watch"), the server near its 400 MB systemd limit, response times (p95) over 2 seconds (500 ms watch), server errors, or AWS holding back CPU (steal). A t4g is burstable, so for CPU what matters is the **credit balance** (from CloudWatch every 5 minutes, free): low credits mean that past zero, CPU over the free baseline (5% on a t4g.nano) is billed. The CPU chart draws that baseline.
 - **AWS permissions:** the instance role needs `cloudwatch:GetMetricStatistics` and `ce:GetCostAndUsage` (`ReadCpuCredits` and `ReadCosts` in `infra/main.tf`). Without them the tab still works; it just says AWS refused, and the credits chart and billed cost are missing.
 - **More machines later:** every reading is stored with its host (the instance id). Another machine can feed the same store; the tab shows a machine picker once there's more than one.
+
+## Health monitor
+
+A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](health-monitor.md)). Incidents (evidence and actions): `aws s3 ls s3://$(terraform -chdir=infra output -raw artifacts_bucket 2>/dev/null)/health/incidents/`. Notifications go to the SNS topic in `terraform -chdir=infra output -raw health_topic_arn`; subscribe an email to receive them. Watch-only mode: `health_act = false` in tfvars.

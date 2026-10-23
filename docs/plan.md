@@ -11,7 +11,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 0b | [Health monitor that repairs the server](#i6-health-monitor) | Infrastructure | Planned | Nate (2026-10-23); design in health-monitor.md |
 | 0c | [Move to napsack.io](#i7-napsackio) | Infrastructure | Planned | Nate (2026-10-23); design in domain-move.md |
 | 0d | [Staging in AWS](#i8-staging) | Infrastructure | Planned | Nate (2026-10-23); design in staging.md |
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Planning only | Nate (2026-10-23); options in email.md |
@@ -66,6 +65,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
 | [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 |
 | [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 |
+| [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
@@ -398,6 +398,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I6. Health monitor
 - Requested (2026-10-23): an outside check that the single server is healthy, and that tries to fix it, gently first: restart the app, reboot, stop and start (new hardware), and as a last resort replace the server. Every incident is written up with its evidence and what was tried; a notification goes to an SNS topic (where it lands is decided later). No new cost if possible.
 - Design: [health-monitor.md](health-monitor.md).
+- Done (0.29.0): running in production. Replacement (step 4) is a notification for now; automatic replacement waits for a group of one. To get notices: `aws sns subscribe --topic-arn $(terraform -chdir=infra output -raw health_topic_arn) --protocol email --notification-endpoint you@example.com`.
 
 #### I7. napsack.io
 - Requested (2026-10-23): `napsack.io` (registered in Route 53, with its zone) becomes the production address; `napsack.getattr.com` redirects to it permanently (301).
