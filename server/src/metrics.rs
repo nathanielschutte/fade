@@ -712,23 +712,8 @@ async fn aws_loop(state: SharedState) {
     let Some(Some(aws)) = m.aws.get() else { return };
     let mut tick = tokio::time::interval(CREDITS_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // A failure (say, the role lacks the permission) is logged once as a
-    // warning, then quietly until it changes; the bill is retried hourly.
-    let mut last_error: Option<String> = None;
+    // After a failed bill, try again in an hour (each call costs $0.01).
     let mut billing_retry_at = 0;
-    let mut failed = |what: &str, e: anyhow::Error| {
-        m.aws_problems
-            .lock()
-            .unwrap()
-            .insert(what.to_owned(), e.to_string());
-        let text = format!("{what}: {e}");
-        if last_error.as_deref() == Some(text.as_str()) {
-            tracing::debug!(error = %e, "{what} failed again");
-        } else {
-            tracing::warn!(error = %e, "{what} failed");
-            last_error = Some(text);
-        }
-    };
     loop {
         tick.tick().await;
         // Only burstable instances (t2/t3/t4g) have credits.
@@ -744,20 +729,23 @@ async fn aws_loop(state: SharedState) {
             match (balance, charged) {
                 (Ok(balance), Ok(charged)) => {
                     let charged: HashMap<i64, f64> = charged.into_iter().collect();
-                    let points = balance
+                    let points: Vec<(i64, f64, f64)> = balance
                         .into_iter()
                         .map(|(t, b)| (t, b, charged.get(&t).copied().unwrap_or(0.0)))
                         .collect();
-                    m.aws_problems
-                        .lock()
-                        .unwrap()
-                        .remove("reading CPU credits from CloudWatch");
-                    *m.credits.lock().unwrap() = Some(Credits {
+                    m.aws_worked(CREDITS_READ);
+                    let mut credits = m.credits.lock().unwrap();
+                    if credits.is_none() {
+                        tracing::info!(points = points.len(), "CPU credits read from CloudWatch");
+                    }
+                    *credits = Some(Credits {
                         points,
                         updated_at: end,
                     });
                 }
-                (Err(e), _) | (_, Err(e)) => failed("reading CPU credits from CloudWatch", e),
+                (Err(e), _) | (_, Err(e)) => {
+                    m.aws_failed(CREDITS_READ, &e);
+                }
             }
         }
         let fresh = m
@@ -777,17 +765,45 @@ async fn aws_loop(state: SharedState) {
                 Ok(months) => {
                     m.cache("billing", &json!({ "months": months, "fetched_at": t }))
                         .await;
-                    m.aws_problems
-                        .lock()
-                        .unwrap()
-                        .remove("reading the bill from Cost Explorer");
+                    m.aws_worked(BILLING_READ);
                     tracing::info!("billing fetched from Cost Explorer");
                 }
                 Err(e) => {
                     billing_retry_at = t + 3600;
-                    failed("reading the bill from Cost Explorer", e);
+                    m.aws_failed(BILLING_READ, &e);
                 }
             }
+        }
+    }
+}
+
+const CREDITS_READ: &str = "reading CPU credits from CloudWatch";
+const BILLING_READ: &str = "reading the bill from Cost Explorer";
+
+impl Metrics {
+    /// Notes a failed AWS read for the page. Logged as a warning the first
+    /// time (or when the error changes), then quietly while it repeats.
+    /// Each read is tracked on its own. Returns whether it warned.
+    fn aws_failed(&self, what: &str, e: &anyhow::Error) -> bool {
+        let text = e.to_string();
+        let before = self
+            .aws_problems
+            .lock()
+            .unwrap()
+            .insert(what.to_owned(), text.clone());
+        let repeat = before.as_deref() == Some(text.as_str());
+        if repeat {
+            tracing::debug!(error = %e, "{what} failed again");
+        } else {
+            tracing::warn!(error = %e, "{what} failed");
+        }
+        !repeat
+    }
+
+    /// A read worked: clear its problem, and say so if it had been failing.
+    fn aws_worked(&self, what: &str) {
+        if self.aws_problems.lock().unwrap().remove(what).is_some() {
+            tracing::info!("{what} works again");
         }
     }
 }
@@ -1363,6 +1379,30 @@ mod tests {
         assert!(
             estimate(&HostInfo::default(), None).is_null(),
             "no estimate off AWS"
+        );
+    }
+
+    #[tokio::test]
+    async fn aws_failures_warn_once_each() {
+        let m = Metrics::open(std::path::Path::new("/nonexistent/dir/metrics.db"), 1).await;
+        let denied = anyhow::anyhow!("AccessDenied");
+        assert!(m.aws_failed(CREDITS_READ, &denied));
+        assert!(m.aws_failed(BILLING_READ, &denied));
+        // The other read failing in between doesn't make this one new again.
+        assert!(!m.aws_failed(CREDITS_READ, &denied));
+        assert!(!m.aws_failed(BILLING_READ, &denied));
+        assert!(
+            m.aws_failed(CREDITS_READ, &anyhow::anyhow!("Throttling")),
+            "a new error warns"
+        );
+        m.aws_worked(CREDITS_READ);
+        assert_eq!(
+            m.aws_problems.lock().unwrap().keys().collect::<Vec<_>>(),
+            vec![BILLING_READ]
+        );
+        assert!(
+            m.aws_failed(CREDITS_READ, &denied),
+            "failing after working warns again"
         );
     }
 
