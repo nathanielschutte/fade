@@ -11,7 +11,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 0 | [Friend map](#x15-friend-map) | Features | In progress | Nate asked for it (2026-10-23); design in friend-graph.md |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -61,6 +60,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
 | [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
 | [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
+| [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
@@ -313,6 +313,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### X15. Friend map
 - Requested (2026-10-23): a page graphing friend relationships that shows distinct groups clearly. Build the graph tech as a module; two views: every person's own map (themselves, their friends, and a **?** for each friend of a friend they don't know), and an admin view with a switch between chosen people (default: yourself; one or more; depth 1–2) and everyone.
 - Design: [friend-graph.md](friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
+- Done (0.27.0): Friends → **See your friend map**; admin → **Graph** tab. Groups found by Louvain modularity, outlined and lettered; three colors at most (validated for every pair), names on every node. Tests: Rust (scope, privacy), Node (clusters, layout, hull), smoke (`check_graph`), browser (`test_graph.py`).
 
 ### Infrastructure
 

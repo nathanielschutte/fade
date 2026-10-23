@@ -16,6 +16,7 @@
   <nav class="admin-tabs" aria-label="Admin sections">
     <a href="#overview" id="tab-overview" aria-current="page">Overview</a>
     <a href="#metrics" id="tab-metrics">Metrics</a>
+    <a href="#graph" id="tab-graph">Graph</a>
     <a href="#logs" id="tab-logs">Logs</a>
   </nav>
   <span class="admin-updated" id="updated"></span>
@@ -96,6 +97,34 @@
       <summary>Show as table</summary>
       <div class="table-scroll"><table id="m-table"></table></div>
     </details>
+  </section>
+</div>
+
+<div class="admin-view" id="view-graph" hidden>
+  <section class="panel" aria-labelledby="g-title">
+    <header class="panel-head">
+      <h2 id="g-title">Friend graph</h2>
+      <span class="panel-note" id="g-note"></span>
+    </header>
+    <div class="graph-controls">
+      <label class="switch">
+        <input type="checkbox" id="g-all" role="switch">
+        <span class="switch-track" aria-hidden="true"></span>
+        Everyone
+      </label>
+      <div class="segmented" id="g-depth" role="group" aria-label="How far from them">
+        <button type="button" class="segment" data-depth="1" aria-pressed="true">Their friends</button>
+        <button type="button" class="segment" data-depth="2" aria-pressed="false">Friends of friends</button>
+      </div>
+      <details class="g-people" id="g-people">
+        <summary id="g-people-summary">Choose people</summary>
+        <div class="g-people-pop">
+          <input type="search" id="g-search" placeholder="Search people" aria-label="Search people" autocomplete="off">
+          <ul id="g-people-list"></ul>
+        </div>
+      </details>
+    </div>
+    <div class="graph-host" id="g-host"><p class="muted">Loading…</p></div>
   </section>
 </div>
 

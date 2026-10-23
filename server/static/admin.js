@@ -1,3 +1,5 @@
+import { drawGraph, groupLetter, widthChanged } from "/graph-view.js";
+
 // napsack admin panel. Reads /api/admin/stats with the normal session token;
 // the server decides who's an admin. Shows counts only, never content.
 
@@ -812,14 +814,127 @@ function pickRange(hours) {
 
 $("#m-host").addEventListener("change", (e) => { metrics.host = e.target.value; renderMetrics(); });
 let resizeTimer = null;
+
+// ---------- friend graph (docs/friend-graph.md) ----------
+// Everyone, or chosen people (you by default) with their friends or friends
+// of friends. Real usernames: this is what the server holds. The drawing is
+// the same module as the app's own friend map.
+
+const graphView = { all: false, depth: 1, users: null, data: null, busy: false, again: false };
+
+async function loadGraph() {
+  if (graphView.busy) {
+    graphView.again = true;
+    return;
+  }
+  graphView.busy = true;
+  try {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return fail("Sign in first.");
+    const qs = new URLSearchParams();
+    if (graphView.all) qs.set("all", "1");
+    else {
+      if (graphView.users?.size) qs.set("users", [...graphView.users].join(","));
+      qs.set("depth", String(graphView.depth));
+    }
+    let res;
+    try {
+      res = await fetch(`/api/admin/graph?${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    } catch {
+      $("#g-note").textContent = "Offline. Try again in a moment.";
+      return;
+    }
+    if (res.status === 401) return fail("Your session ended. Sign in again.");
+    if (!res.ok) return fail("This page isn't available.");
+    graphView.data = await res.json();
+    // The first answer says who "you" are: the people it centered on.
+    if (!graphView.users) {
+      graphView.users = new Set(graphView.data.graph.nodes.filter((n) => n.kind === "seed").map((n) => n.user_id));
+    }
+    $("#message").hidden = true;
+    $("#admin").hidden = false;
+    renderGraphControls();
+    drawAdminGraph();
+  } finally {
+    graphView.busy = false;
+    if (graphView.again) {
+      graphView.again = false;
+      loadGraph();
+    }
+  }
+}
+
+function renderGraphControls() {
+  const people = graphView.data?.people ?? [];
+  $("#g-all").checked = graphView.all;
+  $("#g-depth").hidden = graphView.all;
+  $("#g-people").hidden = graphView.all;
+  for (const b of document.querySelectorAll("#g-depth .segment")) {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.depth) === graphView.depth));
+  }
+  const chosen = people.filter((p) => graphView.users?.has(p.id)).map((p) => p.username);
+  $("#g-people-summary").textContent = chosen.length
+    ? `Showing ${chosen.length > 3 ? `${chosen.slice(0, 3).join(", ")} and ${chosen.length - 3} more` : chosen.join(", ")}`
+    : "Choose people";
+  const q = $("#g-search").value.trim().toLowerCase();
+  $("#g-people-list").replaceChildren(...people
+    .filter((p) => !q || p.username.toLowerCase().includes(q))
+    .map((p) => el("li", {}, el("label", {},
+      el("input", {
+        type: "checkbox", value: String(p.id), checked: graphView.users?.has(p.id) ? "" : null,
+        onchange: (e) => {
+          if (e.target.checked) graphView.users.add(p.id);
+          else graphView.users.delete(p.id);
+          loadGraph();
+        },
+      }),
+      ` ${p.username}`))));
+}
+
+function drawAdminGraph() {
+  const data = graphView.data;
+  if (!data || currentTab() !== "graph") return;
+  const g = data.graph;
+  const seeds = g.nodes.filter((n) => n.kind === "seed");
+  $("#g-note").textContent = data.all
+    ? `Everyone: ${g.nodes.length} people, ${g.edges.length} friendships`
+    : `${g.nodes.length} people, ${g.edges.length} friendships`;
+  if (!g.nodes.length) {
+    $("#g-host").replaceChildren(el("p", { class: "muted", text: "Choose someone to see their friends." }));
+    return;
+  }
+  drawGraph($("#g-host"), g, {
+    // One person: their map, with them in the middle (and out of the grouping).
+    center: !data.all && seeds.length === 1 ? seeds[0].key : null,
+    label: (n) => n.username ?? "",
+    title: `Friend graph: ${g.nodes.length} people, ${g.edges.length} friendships.`,
+    describe: (n, { neighbors, group }) => [
+      el("b", { text: n.username }),
+      ` · ${neighbors.length} ${neighbors.length === 1 ? "friend" : "friends"} shown${group >= 0 ? ` · Group ${groupLetter(group)}` : ""}. `,
+      el("button", {
+        type: "button", class: "link",
+        onclick: () => { graphView.all = false; graphView.users = new Set([n.user_id]); loadGraph(); },
+      }, "Show their graph"),
+    ],
+  });
+}
+
+$("#g-all").addEventListener("change", (e) => { graphView.all = e.target.checked; loadGraph(); });
+for (const b of document.querySelectorAll("#g-depth .segment")) {
+  b.addEventListener("click", () => { graphView.depth = Number(b.dataset.depth); loadGraph(); });
+}
+$("#g-search").addEventListener("input", renderGraphControls);
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (currentTab() === "metrics") renderMetrics(); }, 150);
+  resizeTimer = setTimeout(() => {
+    if (currentTab() === "metrics") renderMetrics();
+    if (currentTab() === "graph" && widthChanged($("#g-host"))) drawAdminGraph();
+  }, 150);
 });
 
 // ---------- tabs ----------
 
-const TABS = ["overview", "metrics", "logs"];
+const TABS = ["overview", "metrics", "graph", "logs"];
 const currentTab = () => TABS.find((t) => location.hash === `#${t}`) ?? "overview";
 
 function showTab() {
@@ -831,6 +946,7 @@ function showTab() {
   $("#updated").hidden = tab !== "overview";
   if (tab === "logs") loadLogs(logs.loaded ? "tail" : "reset");
   else if (tab === "metrics") loadMetrics();
+  else if (tab === "graph") loadGraph();
   else load();
 }
 window.addEventListener("hashchange", showTab);

@@ -732,6 +732,48 @@ async def check_resend(tag):
 
 
 
+def check_graph(tag):
+    """The friend map: your own map only, with an anonymous ? for each person
+    a friend knows that you don't; the admin graph for admins only."""
+    r = {n: ok(register(f"gr_{n}_{tag}")).json() for n in "abcdef"}
+    tok = {n: r[n]["token"] for n in r}
+    uid = {n: r[n]["user"]["id"] for n in r}
+    # a-b, a-c, b-c (b and c know each other), c-d, d-e, a-f (then ended)
+    for x, y in ("ab", "ac", "bc", "cd", "de", "af"):
+        befriend(tok[x], r[y]["user"], tok[y], uid[x])
+    ok(call("DELETE", f"/friends/{uid['f']}", tok["a"]))
+
+    ok(call("GET", "/graph"), 401)
+    g = ok(call("GET", "/graph", tok["a"])).json()
+    kinds = {n["key"]: n["kind"] for n in g["nodes"]}
+    k = lambda n: f"u{uid[n]}"
+    assert kinds == {k("a"): "self", k("b"): "friend", k("c"): "friend", "?1": "unknown"}, kinds
+    edges = {frozenset(e) for e in g["edges"]}
+    assert edges == {frozenset({k("a"), k("b")}), frozenset({k("a"), k("c")}), frozenset({k("b"), k("c")}), frozenset({k("c"), "?1"})}, edges
+    unknown = next(n for n in g["nodes"] if n["kind"] == "unknown")
+    assert set(unknown) == {"key", "kind"}, unknown
+    text = json.dumps(g)
+    for hidden in "def":
+        assert f"\"u{uid[hidden]}\"" not in text and r[hidden]["user"]["username"] not in text, hidden
+    assert all("username" not in n for n in g["nodes"]), "the app names your friends itself"
+
+    ok(call("GET", "/admin/graph", tok["a"]), 404)
+    adm = admin_token()
+    one = ok(call("GET", f"/admin/graph?users={uid['a']}&depth=1", adm)).json()
+    names = {n["username"] for n in one["graph"]["nodes"]}
+    assert names == {r[n]["user"]["username"] for n in "abc"}, names
+    assert [n["kind"] for n in one["graph"]["nodes"] if n["user_id"] == uid["a"]] == ["seed"]
+    two = ok(call("GET", f"/admin/graph?users={uid['a']}&depth=2", adm)).json()
+    assert r["d"]["user"]["username"] in {n["username"] for n in two["graph"]["nodes"]}
+    assert r["e"]["user"]["username"] not in {n["username"] for n in two["graph"]["nodes"]}
+    everyone = ok(call("GET", "/admin/graph?all=1", adm)).json()
+    assert everyone["all"] is True
+    assert {uid[n] for n in "abcdef"} <= {n["user_id"] for n in everyone["graph"]["nodes"]}
+    assert len(everyone["people"]) >= 6 and all(set(p) == {"id", "username"} for p in everyone["people"])
+    ok(call("GET", "/admin/graph?users=1,x", adm), 400)
+    ok(call("GET", "/admin/graph?users=" + ",".join(["1"] * 51), adm), 400)
+    print("  friend map: your own map, anonymous ?s, admin graph for admins only")
+
 async def check_late_joiner(tag):
     """Someone added to a group doesn't get messages from before they joined,
     even as updates. (A reaction or an "opened by" re-sent old messages to
@@ -1089,6 +1131,7 @@ async def main():
     check_invites(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
+    check_graph(tag)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()

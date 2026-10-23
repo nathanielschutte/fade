@@ -1108,3 +1108,103 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .mcost-billed strong { color: var(--paper); }
 #m-cost .panel-note { margin: 0.5rem 0 0; }
 #m-cost .mcost-problem { color: var(--danger); }
+
+/* ---------- friend map (graph-view.js; docs/friend-graph.md) ----------
+   Group colors: the first three validated slots on this dark surface (all
+   pairs); further groups are neutral and told apart by outline and letter.
+   Every node carries its name, so color is never the only cue. */
+.graph-sheet { width: min(52rem, 100vw); max-height: min(52rem, calc(100dvh - 1rem)); }
+.graph-open { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+.graph-open svg { width: 1.2rem; height: 1.2rem; }
+.graph-host { min-height: 12rem; }
+.graph { display: grid; gap: 0.6rem; }
+.graph-svg {
+  --gc0: #3987e5; --gc1: #d95926; --gc2: #199e70; --gcx: #6f8579;
+  width: 100%; height: auto; display: block; overflow: visible;
+  stroke: none; fill: none; user-select: none; -webkit-user-select: none;
+  background: var(--deep); border-radius: var(--radius-m);
+}
+.gc0 { --c: var(--gc0); }
+.gc1 { --c: var(--gc1); }
+.gc2 { --c: var(--gc2); }
+.gcx { --c: var(--gcx); }
+.ghull { fill: var(--c); stroke: var(--c); stroke-width: 32px; stroke-linejoin: round; stroke-linecap: round; opacity: 0.14; }
+.glabel { fill: var(--c); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+.gcx.glabel { fill: var(--fixer); }
+.gedge { stroke: rgba(228, 236, 230, 0.28); stroke-width: 1.2px; transition: opacity 0.15s, stroke 0.15s; }
+.gedge.from-center { stroke: rgba(228, 236, 230, 0.12); }
+.gedge.to-unknown { stroke-dasharray: 3 3; }
+.gedge.lit { stroke: rgba(228, 236, 230, 0.75); }
+.gnode { cursor: pointer; outline: none; transition: transform 0.65s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.15s; }
+.gnode.enter { opacity: 0; }
+.gnode circle { fill: var(--c); stroke: var(--deep); stroke-width: 2px; }
+.gnode circle.ghit { fill: transparent; stroke: none; }
+.gnode.center circle.gdot { fill: var(--paper); stroke: var(--sage); stroke-width: 3px; }
+.gnode.seed circle.gdot { stroke: var(--paper); stroke-width: 2.5px; }
+.gnode.unknown { cursor: default; }
+.gnode.unknown circle.gdot { fill: #2a3832; stroke: var(--fixer); stroke-width: 1px; stroke-dasharray: 2 2; }
+.gq { fill: var(--fixer); font-size: 9px; font-weight: 700; }
+.gname {
+  fill: var(--paper); font-size: 12px;
+  paint-order: stroke; stroke: var(--deep); stroke-width: 3px; stroke-linejoin: round;
+}
+.gnode:focus-visible circle.gdot { stroke: var(--paper); stroke-width: 3px; }
+.gname { pointer-events: none; }
+/* Names that didn't fit show when their person (or a neighbor) is highlighted. */
+.gname.quiet { display: none; }
+.gnode.lit .gname.quiet, .gnode:hover .gname.quiet, .gnode:focus-visible .gname.quiet { display: inline; }
+.gnode.lit, .gnode:hover { position: relative; }
+.has-focus .gnode:not(.lit) { opacity: 0.22; }
+.has-focus .gedge:not(.lit) { opacity: 0.15; }
+.gfade { opacity: 0; transition: opacity 0.45s 0.35s; }
+.gfade.shown { opacity: 1; }
+.graph-caption { min-height: 1.5em; margin: 0; font-size: var(--step--1); }
+.graph-caption .link { padding: 0; }
+.graph-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; font-size: var(--step--1); color: var(--fixer); }
+.graph-legend b { color: var(--paper); font-weight: 600; }
+.legend-row { display: flex; align-items: baseline; gap: 0.5rem; }
+.legend-key {
+  flex: none; display: inline-grid; place-items: center; width: 1.3rem; height: 1.3rem; border-radius: 50%;
+  background: var(--c, var(--gcx)); color: var(--ink); font-size: 0.7rem; font-weight: 700;
+  --gc0: #3987e5; --gc1: #d95926; --gc2: #199e70; --gcx: #6f8579;
+}
+.legend-key.unknown { background: #2a3832; color: var(--fixer); border: 1px dashed var(--fixer); }
+.graph-list { font-size: var(--step--1); color: var(--fixer); }
+.graph-list summary { cursor: pointer; }
+.graph-list ul { margin: 0.5rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.3rem; }
+.graph-list b { color: var(--paper); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .gnode, .gfade, .gedge { transition: none; }
+}
+.graph-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.9rem; margin-bottom: 0.9rem; }
+.graph-controls [hidden] { display: none; }
+.switch { display: inline-flex; align-items: center; gap: 0.5rem; font-size: var(--step--1); cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-track {
+  position: relative; width: 2.4rem; height: 1.4rem; border-radius: 999px;
+  background: var(--wash); border: 1px solid var(--rule); transition: background 0.15s;
+}
+.switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.4rem - 6px); height: calc(1.4rem - 6px);
+  border-radius: 50%; background: var(--fixer); transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--sage); }
+.switch input:checked + .switch-track::after { transform: translateX(1rem); background: var(--ink); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--paper); outline-offset: 2px; }
+.g-people { position: relative; font-size: var(--step--1); }
+.g-people summary {
+  cursor: pointer; list-style: none; min-height: 2.1rem; display: inline-flex; align-items: center;
+  padding: 0 0.85rem; border: 1px solid var(--rule); border-radius: 999px; background: var(--deep);
+}
+.g-people summary::-webkit-details-marker { display: none; }
+.g-people-pop {
+  position: absolute; z-index: 4; top: calc(100% + 0.35rem); left: 0; width: min(18rem, 80vw);
+  padding: 0.6rem; background: var(--wash); border: 1px solid var(--rule); border-radius: var(--radius-s);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.g-people-pop input[type="search"] {
+  width: 100%; min-height: 2.2rem; padding: 0 0.6rem; margin-bottom: 0.4rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--deep); color: var(--paper); font: inherit;
+}
+.g-people-pop ul { list-style: none; margin: 0; padding: 0; max-height: 16rem; overflow-y: auto; }
+.g-people-pop label { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.2rem; cursor: pointer; }

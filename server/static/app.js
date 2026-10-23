@@ -6,6 +6,7 @@ import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
 import { qrSvg } from "/qr.js";
 import { createDrawing } from "/draw.js";
+import { drawGraph, groupLetter, widthChanged } from "/graph-view.js";
 
 const APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
@@ -3532,6 +3533,73 @@ $("#invite-share").addEventListener("click", () => {
 });
 $("#friends-button").addEventListener("click", openFriends);
 $("#empty-add").addEventListener("click", openFriends);
+
+// ---------- friend map (docs/friend-graph.md) ----------
+// You in the middle, your friends around you, lines between friends who know
+// each other, and a ? for each person a friend knows that you don't. The
+// server decides what's on it (graph.rs); the groups and layout come from
+// /graph.js and the drawing from /graph-view.js.
+let friendMap = null;
+
+async function openFriendMap() {
+  $("#friends-dialog").close();
+  $("#graph-dialog").showModal();
+  $("#graph-host").replaceChildren(el("p", { class: "muted", text: "Drawing your map…" }));
+  try {
+    friendMap = await getJSON("/graph");
+    drawFriendMap();
+  } catch (err) {
+    friendMap = null;
+    $("#graph-host").replaceChildren(el("p", { class: "form-note", text: `Couldn't load your map. ${err.message}` }));
+    report("warn", "friend map failed", errorFields(err));
+  }
+}
+
+function drawFriendMap() {
+  const g = friendMap;
+  if (!g || !$("#graph-dialog").open) return;
+  const friends = g.nodes.filter((n) => n.kind === "friend").length;
+  if (!friends) {
+    $("#graph-host").replaceChildren(el("p", { class: "muted", text: "No friends yet, so no map. Add someone by their username, or send an invite link." }));
+    return;
+  }
+  const unknown = g.nodes.filter((n) => n.kind === "unknown").length;
+  const name = (n) => (n.kind === "self" ? "You" : n.kind === "friend" ? personName(n.user_id, "") : "");
+  const { groups } = drawGraph($("#graph-host"), g, {
+    center: `u${state.me.id}`,
+    label: name,
+    title: `Your friend map: ${friends} ${friends === 1 ? "friend" : "friends"}${unknown ? ` and ${unknown} people they know that you don't` : ""}.`,
+    unknownNote: (count) => `${count} ${count === 1 ? "person" : "people"} your friends know that you don't`,
+    describe: (n, { neighbors, group }) => {
+      const known = neighbors.filter((m) => m.kind === "friend");
+      const strangers = neighbors.filter((m) => m.kind === "unknown").length;
+      if (n.kind === "self") {
+        const count = groups.groups.length;
+        return `You · ${friends} ${friends === 1 ? "friend" : "friends"}${count ? `, in ${count} ${count === 1 ? "group" : "groups"}` : ""}.`;
+      }
+      if (n.kind === "unknown") {
+        const by = known.map(name);
+        return `Someone you don't know yet: a friend of ${by.length > 1 ? `${by.slice(0, -1).join(", ")} and ${by.at(-1)}` : by[0]}.`;
+      }
+      const parts = [
+        known.length ? `knows ${known.length} of your friends` : "doesn't know your other friends",
+        strangers ? `and ${strangers} ${strangers === 1 ? "person" : "people"} you don't` : null,
+      ].filter(Boolean).join(" ");
+      return [
+        el("b", { text: name(n) }),
+        `${group >= 0 ? ` · Group ${groupLetter(group)}` : ""} · ${parts}. `,
+        el("button", { type: "button", class: "link", onclick: () => { $("#graph-dialog").close(); openChat(n.user_id); } }, "Message"),
+      ];
+    },
+  });
+}
+
+$("#graph-open").addEventListener("click", openFriendMap);
+let graphResize = null;
+window.addEventListener("resize", () => {
+  clearTimeout(graphResize);
+  graphResize = setTimeout(() => { if (widthChanged($("#graph-host"))) drawFriendMap(); }, 200);
+});
 
 $("#add-friend-form").addEventListener("submit", async (e) => {
   e.preventDefault();

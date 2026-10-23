@@ -56,6 +56,9 @@ const ADMIN_JS: Asset = asset!("../static/admin.js");
 const SW_JS: Asset = asset!("../static/sw.js");
 const QR_JS: Asset = asset!("../static/qr.js");
 const DRAW_JS: Asset = asset!("../static/draw.js");
+// The friend map: the math is shared with the iOS app (shared/graph/graph.js); the drawing is the web app's.
+const GRAPH_JS: Asset = asset!("../../shared/graph/graph.js");
+const GRAPH_VIEW_JS: Asset = asset!("../static/graph-view.js");
 const MANIFEST: Asset = asset!("../static/manifest.webmanifest");
 const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
@@ -100,6 +103,11 @@ pub fn routes() -> Router<SharedState> {
         .route("/sw.js", get(|| async { script(SW_JS.text()) }))
         .route("/qr.js", get(|| async { script(QR_JS.text()) }))
         .route("/draw.js", get(|| async { script(DRAW_JS.text()) }))
+        .route("/graph.js", get(|| async { script(GRAPH_JS.text()) }))
+        .route(
+            "/graph-view.js",
+            get(|| async { script(GRAPH_VIEW_JS.text()) }),
+        )
         .route(
             "/manifest.webmanifest",
             get(|| async {
@@ -244,6 +252,8 @@ mod dev {
             &ADMIN_JS,
             &QR_JS,
             &DRAW_JS,
+            &GRAPH_JS,
+            &GRAPH_VIEW_JS,
         ];
         Json(json!({
             "css": modified_ms(&STYLE_CSS),
@@ -283,7 +293,15 @@ mod tests {
     /// Debug builds read the real files; what's compiled in is the same file.
     #[test]
     fn assets_point_at_their_source_files() {
-        for asset in [&INDEX_HTML, &APP_JS, &STYLE_CSS, &CRYPTO_JS, &ADMIN_HTML] {
+        for asset in [
+            &INDEX_HTML,
+            &APP_JS,
+            &STYLE_CSS,
+            &CRYPTO_JS,
+            &ADMIN_HTML,
+            &GRAPH_JS,
+            &GRAPH_VIEW_JS,
+        ] {
             assert!(std::path::Path::new(asset.path).is_file(), "{}", asset.path);
             assert_eq!(asset.text(), std::fs::read_to_string(asset.path).unwrap());
         }

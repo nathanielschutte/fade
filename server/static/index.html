@@ -180,6 +180,10 @@
     <button type="submit" class="button primary">Send request</button>
     <p class="form-note" id="add-friend-note" role="status"></p>
   </form>
+  <button type="button" class="button graph-open" id="graph-open">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M10.2 10.6 6.6 7.3M13.9 11 17.2 8.1M10.3 13.6l-3 3M13.8 13.6l2.7 3"/></svg>
+    See your friend map
+  </button>
   <section class="invite-section">
     <h3>Invite someone</h3>
     <p class="sheet-text small">A link that signs a friend up and makes you friends, no invite code needed. Each link works for 10 people for 7 days.</p>
@@ -203,6 +207,18 @@
     <h3>Waiting on them</h3>
     <ul class="people" id="outgoing-list"></ul>
   </section>
+</dialog>
+
+<!-- Friend map (docs/friend-graph.md) -->
+<dialog id="graph-dialog" class="sheet graph-sheet" aria-labelledby="graph-title">
+  <header class="sheet-head">
+    <h2 id="graph-title">Friend map</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="sheet-text small">You, your friends, and who knows who. Friends who know each other gather into groups. A <b>?</b> is someone a friend knows that you don't. Tap anyone to see more.</p>
+  <div class="graph-host" id="graph-host"><p class="muted">Drawing your map…</p></div>
 </dialog>
 
 <!-- New group -->

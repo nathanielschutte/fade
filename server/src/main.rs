@@ -7,6 +7,7 @@ mod chats;
 mod db;
 mod error;
 mod friends;
+mod graph;
 mod group_pics;
 mod groups;
 mod guard;
@@ -417,6 +418,8 @@ fn router(state: SharedState) -> Router {
         .route("/snaps/{id}/opened", post(snaps::opened))
         .route("/admin/stats", get(admin::stats))
         .route("/admin/metrics", get(metrics::get))
+        .route("/admin/graph", get(graph::admin))
+        .route("/graph", get(graph::mine))
         .route("/admin/logs", get(logs::list))
         .route(
             "/logs",
