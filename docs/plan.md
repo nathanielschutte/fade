@@ -16,7 +16,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
 | 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 6 | [Scale out: two servers across zones](scaling.md) | Infrastructure | Needs decision | Design and cost in scaling.md; Nate reviews before anything is built |
+| 6 | [Scale out: two servers across zones](horizontal-scaling.md) | Infrastructure | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 7 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
@@ -348,6 +348,11 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Built (see [BACKUPS.md](BACKUPS.md)): hourly backups via a systemd timer, integrity-checked and gzipped, to a new versioned bucket with `prevent_destroy` and no expiry (cheaper storage after 30 days); the server can only add objects. Disk snapshots go from 7 to 30 days. The admin panel shows the last backup (live in 0.7.0; it says "None yet" until the timer runs). `scripts/restore-drill.sh` checks the newest backup against production, read-only. The backup script passed a dry run against a test database: the uploaded copy restored with identical row counts, and a failure was recorded in the status file.
 - Done: infrastructure applied (2026-10-20), first backup taken, restore drill passed and logged in BACKUPS.md, and the server's role proven unable to delete or list backups.
 
+#### I5. Growing the single server
+- Requested (2026-10-23): if napsack stays one server (today's stack), what runs out first and how do we grow it? Plan in [mono-scaling.md](mono-scaling.md), measured against production.
+- In order: the 100-account cap (ours), memory (0.5 GB: the first real upgrade, nano → micro), hourly full backups growing with database size forever (move to Litestream incremental before ~50 MB), CPU credits (the server is in **standard** credit mode: throttled, not billed), the 1 GB data disk (grow online), admin-panel queries. Step 0 is a local load test to replace estimates with measurements. CloudFront in front of the one server is a free improvement (no Elastic IP, no Caddy).
+- Nothing built; Nate decides when.
+
 #### I4. Metrics: how is the infrastructure doing?
 - Requested (2026-10-22): live machine stats (CPU, memory, disk; ready for more than one machine) and basic server process stats, kept for about 24 hours to a few days, accurate, visual enough to see whether we're in the red, with a cost estimate. No Prometheus/Grafana.
 - Approved (2026-10-22): build it in; 3 days, configurable (`FADE_METRICS_RETENTION_HOURS`); CloudWatch and Cost Explorer are fine at cents a month. Nate turned on the `App` cost tag.
@@ -370,4 +375,4 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
   - **ASG of 1 keeping SQLite:** the instance attaches the existing EBS data volume at boot (same AZ). Gets self-healing replacement without changing the database.
   - **More than one instance:** move to Postgres (RDS), and the live-message hub needs a shared channel between servers.
 - **Decided:** an ASG of one that keeps SQLite on the reattached EBS volume. Revisit only if one server isn't enough.
-- **Superseded (2026-10-23):** Nate wants at least two servers, across availability zones, with low cost, private networking, and one deploy path for laptop and CI. Proposal in [scaling.md](scaling.md): RDS PostgreSQL (also carrying live events between servers via `LISTEN/NOTIFY`), pics in S3, an Auto Scaling group of two behind an internal ALB with CloudFront as the only public entry point, IPv6-only outbound (no NAT), and deploys by instance refresh from `scripts/release.sh`. About $40 a month (about $54 with a Multi-AZ database) against $7.50 today; a group-of-one with Litestream (about $8) is the cheaper alternative. **Waiting on Nate's review**; nothing built.
+- **Superseded (2026-10-23):** Nate wants at least two servers, across availability zones, with low cost, private networking, and one deploy path for laptop and CI. Proposal in [horizontal-scaling.md](horizontal-scaling.md): RDS PostgreSQL (also carrying live events between servers via `LISTEN/NOTIFY`), pics in S3, an Auto Scaling group of two behind an internal ALB with CloudFront as the only public entry point, IPv6-only outbound (no NAT), and deploys by instance refresh from `scripts/release.sh`. About $40 a month (about $54 with a Multi-AZ database) against $7.50 today; a group-of-one with Litestream (about $8) is the cheaper alternative. **Waiting on Nate's review**; nothing built.

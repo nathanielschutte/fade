@@ -1,6 +1,6 @@
 # Scaling out: two or more servers, across zones (design)
 
-Status: **proposal, for Nate's review.** Nothing here is built, and no infrastructure changes until the design and cost are approved. Written 2026-10-23 for I3 in [plan.md](plan.md). It replaces I3's earlier decision (an ASG of one keeping SQLite), because the goal is now at least two servers in different availability zones.
+Status: **proposal, for Nate's review.** Nothing here is built, and no infrastructure changes until the design and cost are approved. Written 2026-10-23 for I3 in [plan.md](plan.md). It replaces I3's earlier decision (an ASG of one keeping SQLite), because the goal is now at least two servers in different availability zones. For growing the single server as it is today, see [mono-scaling.md](mono-scaling.md).
 
 ## Goals
 
