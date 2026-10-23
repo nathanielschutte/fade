@@ -13,6 +13,7 @@ Same for pictures: people see **pic** ("Tap to view pic", "Pics sent"); the code
 - `shared/crypto/crypto.js`: the whole encryption scheme, used by every client. The server serves it to the web as `/crypto.js`; the iOS app bundles it. Nothing platform-specific goes in it (key storage lives with each client).
 - `mobile/`: the iOS app (Expo, React Native, TypeScript). Plan and setup: [mobile.md](docs/mobile.md).
 - `infra/`: Terraform for AWS (one EC2 instance, Caddy, a separate EBS data volume).
+- `infra/staging/`: a separate copy at staging.napsack.io with its own state and no user data, for browser and load tests against a real deployment ([staging.md](docs/staging.md)).
 - `tests/`: API smoke test, browser tests, pinned crypto vectors. `scripts/`: test, deploy, rollback, ssh.
 - `docs/`: [ONBOARDING.md](docs/ONBOARDING.md) (start here), [plan.md](docs/plan.md) (task tracker), [API.md](docs/API.md) (every endpoint and socket event; update it with any API change), [OPERATIONS.md](docs/OPERATIONS.md) (AWS, settings, shell), [SECURITY.md](docs/SECURITY.md) (protections, limits, what to do when attacked), [RELEASING.md](docs/RELEASING.md) (versioning and compatibility rules), [how-napsack-works.md](docs/how-napsack-works.md) (encryption), [group-encryption.md](docs/group-encryption.md) (how group chats are encrypted), [metrics.md](docs/metrics.md) (the admin Metrics tab: what's measured and how it's drawn), [friend-graph.md](docs/friend-graph.md) (the friend map), [roles.md](docs/roles.md) (User, PowerUser, Admin), [horizontal-scaling.md](docs/horizontal-scaling.md) (proposal: two or more servers across zones), [mono-scaling.md](docs/mono-scaling.md) (growing the single server: what runs out first), [mobile.md](docs/mobile.md) (iOS plan).
 
@@ -63,6 +64,7 @@ Every account, friendship, message, and the data volume that holds them must sur
 Deploying to production yourself is encouraged for now, as long as you verify afterwards.
 
 - **Server:** the normal path is a `server-v*` tag through GitHub Actions ([RELEASING.md](docs/RELEASING.md)). `scripts/deploy.sh` (run from WSL) is the hotfix path, and builds from uncommitted code show as `<sha>-dirty`. Commit soon after so history matches what's live.
+- **Staging:** `FADE_STACK=staging scripts/deploy.sh` deploys there; `scripts/test-staging.sh` runs the smoke and browser tests against it, and `scripts/load-staging.sh` load tests it. Staging must never be able to reach production's settings, data, backups, or releases ([staging.md](docs/staging.md) lists how); after a staging apply, `terraform plan` in `infra/` still says "No changes". `FADE_EXEMPT_ADDRESSES` is for staging only; never set it in production.
 - **Infrastructure:** `terraform plan -out tf.plan`, read it (Rule 1), `terraform apply tf.plan`, `rm tf.plan`. Prefer `-target` when only one resource needs to change. Saved plans hold secrets in plain text; never commit them.
 - **After every deploy, check production** without changing data:
   - `curl -s <url>/api/config` reports the new `build`.

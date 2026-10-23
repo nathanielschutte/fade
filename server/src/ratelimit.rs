@@ -63,8 +63,26 @@ impl RateLimit {
 pub struct ClientInfo {
     pub ip: String,
     pub user_agent: String,
-    /// Local, un-proxied connection (development and tests). Per-IP limits don't apply.
+    /// Local, un-proxied connection (development and tests), or an address in
+    /// FADE_EXEMPT_ADDRESSES (staging's test and load-test machines). Per-IP
+    /// limits don't apply.
     pub local: bool,
+}
+
+/// FADE_EXEMPT_ADDRESSES: client addresses treated like local requests, so
+/// tests and load tests against staging aren't throttled (docs/staging.md).
+/// Never set in production. Unparseable entries are ignored.
+fn exempt_addresses() -> &'static [IpAddr] {
+    static LIST: std::sync::OnceLock<Vec<IpAddr>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        parse_addresses(&std::env::var("FADE_EXEMPT_ADDRESSES").unwrap_or_default())
+    })
+}
+
+fn parse_addresses(text: &str) -> Vec<IpAddr> {
+    text.split(|c: char| c == ',' || c.is_whitespace())
+        .filter_map(|s| s.trim().parse().ok())
+        .collect()
 }
 
 impl ClientInfo {
@@ -80,6 +98,7 @@ impl ClientInfo {
             (Some(p), None) => (Some(p), p.is_loopback()),
             (p, _) => (p, false),
         };
+        let local = local || ip.is_some_and(|ip| exempt_addresses().contains(&ip));
         let user_agent: String = headers
             .get(axum::http::header::USER_AGENT)
             .and_then(|v| v.to_str().ok())
@@ -98,6 +117,16 @@ impl ClientInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exempt_address_lists() {
+        let list = parse_addresses(" 203.0.113.7, 2001:db8::1 nonsense,,10.0.0.1");
+        assert_eq!(list.len(), 3);
+        assert!(list.contains(&"203.0.113.7".parse().unwrap()));
+        assert!(parse_addresses("").is_empty());
+        // Unset (as in production and these tests): nobody is exempt.
+        assert!(exempt_addresses().is_empty());
+    }
 
     #[test]
     fn windows_cap_each_key() {

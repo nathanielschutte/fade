@@ -63,6 +63,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_SESSION_DAYS` | `90` | |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
+| `FADE_EXEMPT_ADDRESSES` | unset | **Staging only.** Comma-separated client addresses treated like local requests: no per-address limits or scanner bans, so test machines can run the suites and load tests ([staging.md](staging.md)). Never set in production |
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
 | `FADE_LOG_BUFFER` | `fade_server=debug` | What the admin log viewer keeps (last 20,000 entries, in memory) |
 | `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([RELEASING.md](RELEASING.md)) |
@@ -81,3 +82,7 @@ How every figure is measured and drawn: [metrics.md](metrics.md). In short, `/ad
 ## Health monitor
 
 A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](health-monitor.md)). Incidents (evidence and actions): `aws s3 ls s3://$(terraform -chdir=infra output -raw artifacts_bucket 2>/dev/null)/health/incidents/`. Notifications go to the SNS topic in `terraform -chdir=infra output -raw health_topic_arn`; subscribe an email to receive them. Watch-only mode: `health_act = false` in tfvars.
+
+## Staging
+
+A separate napsack at staging.napsack.io (`infra/staging/`, its own Terraform state), for the browser tests and load tests against a real deployment. No backups, no user data, and no access to production's settings, data, or releases. How to deploy, test, and load test it, and why it can't touch production: [staging.md](staging.md). Set `FADE_STACK=staging` for `scripts/deploy.sh` and `scripts/ssh.sh`.

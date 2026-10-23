@@ -8,11 +8,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TARGET=aarch64-unknown-linux-musl
-out() { terraform -chdir=infra output -raw "$1"; }
+# FADE_STACK=staging deploys to staging (infra/staging; docs/staging.md) instead.
+TF="infra${FADE_STACK:+/$FADE_STACK}"
+out() { terraform -chdir="$TF" output -raw "$1"; }
 BUCKET=$(out artifacts_bucket)
 REGION=$(out region)
 HOST=$(out ssh_host)
-CONF=infra/.ssh_config
+# Production's releases live in releases/; staging's in releases/staging/, never production's.
+PREFIX=$(out release_prefix 2>/dev/null || echo releases)
+CONF="$TF/.ssh_config"
 out ssh_config > "$CONF"
 
 # The build id shows in /api/config and the admin panel, so you can always tell what's live.
@@ -37,11 +41,11 @@ scp -F "$CONF" -q "$BIN" "$HOST:fade-server.new"
 echo "==> installing and restarting"
 ssh -F "$CONF" "$HOST" sudo /usr/local/bin/fade-update '~/fade-server.new'
 
-# A replaced instance boots from releases/fade-server, so keep it current.
+# A replaced instance boots from <prefix>/fade-server, so keep it current.
 # The versioned copy is for rollbacks: scripts/rollback.sh <version>-<build>.
-echo "==> saving release to s3://$BUCKET/releases/"
-aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server-$VERSION-$BUILD" --region "$REGION" --only-show-errors
-aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server" --region "$REGION" --only-show-errors
+echo "==> saving release to s3://$BUCKET/$PREFIX/"
+aws s3 cp "$BIN" "s3://$BUCKET/$PREFIX/fade-server-$VERSION-$BUILD" --region "$REGION" --only-show-errors
+aws s3 cp "$BIN" "s3://$BUCKET/$PREFIX/fade-server" --region "$REGION" --only-show-errors
 
 URL=$(out url)
 LIVE=$(curl -sf "$URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
@@ -49,4 +53,4 @@ echo "==> $URL is running build ${LIVE:-unknown}"
 [ "$LIVE" = "$BUILD" ] || { echo "error: expected build $BUILD"; exit 1; }
 # Development live reload is compiled out of release builds (server/src/web.rs).
 DEV=$(curl -s -o /dev/null -w '%{http_code}' "$URL/dev/changes")
-[ "$DEV" = 404 ] || { echo "error: production answers /dev/changes ($DEV): a debug build is live"; exit 1; }
+[ "$DEV" = 404 ] || { echo "error: $URL answers /dev/changes ($DEV): a debug build is live"; exit 1; }

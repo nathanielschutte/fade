@@ -70,7 +70,7 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | All writes stop when the data disk has less than | 40 MB free (so the database can't fill the disk) | |
 | Client diagnostics | 300 entries per person per minute | |
 
-Per-address limits don't apply to the server's own machine (development and tests). In-memory limits and bans reset when the server restarts.
+Per-address limits don't apply to the server's own machine (development and tests), or on staging to the test machines listed in `FADE_EXEMPT_ADDRESSES` (never set in production). In-memory limits and bans reset when the server restarts.
 
 ## What we don't protect against (yet)
 

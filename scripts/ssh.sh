@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CONF=infra/.ssh_config
-terraform -chdir=infra output -raw ssh_config > "$CONF"
-exec ssh -F "$CONF" "$(terraform -chdir=infra output -raw ssh_host)" "$@"
+# FADE_STACK=staging: staging's server (infra/staging; docs/staging.md).
+TF="infra${FADE_STACK:+/$FADE_STACK}"
+CONF="$TF/.ssh_config"
+terraform -chdir="$TF" output -raw ssh_config > "$CONF"
+exec ssh -F "$CONF" "$(terraform -chdir="$TF" output -raw ssh_host)" "$@"

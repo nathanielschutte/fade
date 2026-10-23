@@ -12,6 +12,9 @@ import requests, websockets
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
 # The test server's database, when local: some checks look at what was stored.
 DB = os.environ.get("NAPSACK_DB") or None
+# NAPSACK_REMOTE=1: testing a deployed server (staging; docs/staging.md), not a
+# local one. Skips what needs the local machine: the push receiver.
+REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
 
 b64 = lambda raw: base64.b64encode(raw).decode()
@@ -925,7 +928,8 @@ def check_metrics(not_admin):
     assert host["status"] in ("ok", "watch", "red") and isinstance(host["reasons"], list)
     assert host["info"]["vcpus"] >= 1 and host["info"]["mem_total"] > 0
     assert host["series"] and all(p["t"] >= data["generated_at"] - 3600 for p in host["series"])
-    assert data["on_aws"] is False and host["estimate"] is None and host["credits"] is None
+    if not REMOTE:  # (a deployed server is on AWS)
+        assert data["on_aws"] is False and host["estimate"] is None and host["credits"] is None
     assert ok(call("GET", "/admin/metrics?hours=100000", adm)).json()["hours"] == 72
     assert ok(call("GET", "/admin/metrics?hours=0", adm)).json()["hours"] == 1
     print("  metrics: admins only, live readings of this machine, ranges clamped")
@@ -1223,7 +1227,10 @@ async def main():
     ok(call("GET", "/me", a_tok), 401)
 
     check_account(tag)
-    await check_live(tag)
+    if REMOTE:
+        print("  live: skipped (needs a local push receiver)")
+    else:
+        await check_live(tag)
     check_invites(tag)
     await check_resend(tag)
     await check_late_joiner(tag)

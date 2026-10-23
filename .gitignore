@@ -13,3 +13,13 @@ server/pics/
 
 # Built by Terraform (the health monitor zip).
 infra/.build/
+
+# Staging (infra/staging; docs/staging.md): its state, settings, and plans.
+infra/staging/.terraform/
+infra/staging/*.tfstate*
+infra/staging/terraform.tfvars
+infra/staging/tf.plan*
+infra/staging/.ssh_config
+
+# Load test accounts and results (tests/load_test.py).
+tests/.loadtest-*

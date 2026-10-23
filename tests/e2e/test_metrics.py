@@ -5,7 +5,7 @@ environment; see common.py."""
 import asyncio
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
 
 ADMIN_PW = "correct horse battery"
 errors = []
@@ -106,7 +106,8 @@ async def check_metrics(p, phase):
     if empty:
         hours = await p.locator("#m-range .segment[aria-pressed=true]").get_attribute("data-hours")
         raise AssertionError(f"{phase}: nothing drawn in {empty}; the page has {await p.evaluate(SERIES, hours)}")
-    assert "Cost shows when the server runs on AWS." in await p.locator("#m-cost").inner_text()
+    if not REMOTE:  # a deployed server is on AWS, with a real estimate
+        assert "Cost shows when the server runs on AWS." in await p.locator("#m-cost").inner_text()
     rows = await p.locator("#m-table tbody tr").count()
     assert rows >= len(titles), rows
 

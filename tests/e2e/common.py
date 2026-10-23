@@ -15,6 +15,8 @@ INVITE = os.environ.get("NAPSACK_INVITE", "letmein")
 ADMIN = os.environ.get("NAPSACK_ADMIN", "e2e_admin")
 DB = os.environ.get("NAPSACK_DB") or None
 SHOTS = os.environ.get("NAPSACK_SHOTS") or None
+# Testing a deployed server (staging), not a local debug build.
+REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 _CHANNEL = os.environ.get("E2E_CHROME", "chrome")
 
 
