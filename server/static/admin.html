@@ -15,6 +15,7 @@
   <span class="wordmark small">napsack <span class="admin-tag">admin</span></span>
   <nav class="admin-tabs" aria-label="Admin sections">
     <a href="#overview" id="tab-overview" aria-current="page">Overview</a>
+    <a href="#metrics" id="tab-metrics">Metrics</a>
     <a href="#logs" id="tab-logs">Logs</a>
   </nav>
   <span class="admin-updated" id="updated"></span>
@@ -70,6 +71,31 @@
         <tbody id="users"></tbody>
       </table>
     </div>
+  </section>
+</div>
+
+<div class="admin-view" id="view-metrics" hidden>
+  <div class="metrics-controls">
+    <div class="segmented" id="m-range" role="group" aria-label="Time range"></div>
+    <select id="m-host" aria-label="Machine" hidden></select>
+    <span class="panel-note" id="m-note"></span>
+  </div>
+  <div class="panel-row">
+    <section class="panel" aria-labelledby="m-status-title">
+      <header class="panel-head"><h2 id="m-status-title">How it's doing</h2></header>
+      <div id="m-status"></div>
+    </section>
+    <section class="panel" aria-labelledby="m-cost-title">
+      <header class="panel-head"><h2 id="m-cost-title">Cost</h2></header>
+      <div id="m-cost"></div>
+    </section>
+  </div>
+  <div class="metrics-grid" id="m-charts"></div>
+  <section class="panel" aria-label="All figures as a table">
+    <details class="chart-table">
+      <summary>Show as table</summary>
+      <div class="table-scroll"><table id="m-table"></table></div>
+    </details>
   </section>
 </div>
 

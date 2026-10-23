@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "fade-server"
-version = "0.25.2"
+version = "0.26.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -509,6 +509,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "hkdf",
+ "hmac",
  "image",
  "libc",
  "p256",

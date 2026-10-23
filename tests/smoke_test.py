@@ -731,6 +731,37 @@ async def check_resend(tag):
     print("  resends: texts, pics, and group messages stored once; the socket answers pings")
 
 
+
+def check_metrics(not_admin):
+    """The admin Metrics tab's data: admins only; real readings of this
+    machine within ~20 seconds of starting; ranges clamped to what's kept."""
+    ok(call("GET", "/admin/metrics", not_admin), 404)
+    ok(call("GET", "/admin/metrics"), 401)
+    adm = admin_token()
+    data = None
+    for _ in range(40):
+        data = ok(call("GET", "/admin/metrics?hours=1", adm)).json()
+        host = data["hosts"][0] if data["hosts"] else None
+        if host and host["latest"] and "requests" in host["latest"]:
+            break
+        time.sleep(1)
+    assert data["retention_hours"] == 72 and data["hours"] == 1 and data["interval_secs"] == 10, data
+    assert len(data["hosts"]) == 1, data["hosts"]
+    host = data["hosts"][0]
+    latest = host["latest"]
+    assert latest, "readings arrive within 20 seconds"
+    for key in ("cpu", "mem", "app_mem", "requests", "disk_data", "sockets"):
+        assert key in latest and len(latest[key]) == 3, (key, latest)
+    assert 0 <= latest["cpu"][1] <= 100 and 0 < latest["mem"][1] < 100
+    assert latest["requests"][1] > 0, "this test's own requests are counted"
+    assert host["status"] in ("ok", "watch", "red") and isinstance(host["reasons"], list)
+    assert host["info"]["vcpus"] >= 1 and host["info"]["mem_total"] > 0
+    assert host["series"] and all(p["t"] >= data["generated_at"] - 3600 for p in host["series"])
+    assert data["on_aws"] is False and host["estimate"] is None and host["credits"] is None
+    assert ok(call("GET", "/admin/metrics?hours=100000", adm)).json()["hours"] == 72
+    assert ok(call("GET", "/admin/metrics?hours=0", adm)).json()["hours"] == 1
+    print("  metrics: admins only, live readings of this machine, ranges clamped")
+
 def check_guard(tag):
     """Abuse protection (guard.rs). A forwarded address stands in for real
     traffic through Caddy; local requests skip the per-address rules."""
@@ -883,6 +914,7 @@ async def main():
     check_versions(b_tok)
     ok(call("GET", "/admin/logs", b_tok), 404)   # not an admin
     ok(call("GET", "/admin/logs"), 401)
+    check_metrics(b_tok)
     # Client diagnostics: accepted signed in or not, size-capped, rate-limited per user.
     entry = {"level": "info", "message": "smoke", "fields": {"status": 1}}
     assert call("POST", "/logs", json={"entries": [entry]}).status_code == 204

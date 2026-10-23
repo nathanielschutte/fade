@@ -816,7 +816,7 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   display: grid; place-items: center;
   background: var(--fixer); border: 2px solid var(--deep);
 }
-.group-mark svg { width: 0.75rem; height: 0.75rem; fill: var(--deep); }
+.group-mark svg { width: 0.75rem; height: 0.75rem; fill: var(--deep); stroke: none; }
 .activity-check { margin-top: 0.6rem; }
 .profile-security h3 + .field-hint { margin-bottom: 0.25rem; }
 
@@ -1041,3 +1041,69 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 /* Double taps open the camera (chat list) and switch it (camera), so the
    browser mustn't zoom on them. Pinch zoom still works. */
 * { touch-action: manipulation; }
+
+/* ---------- admin: metrics ----------
+   Series colors are the validated pair for this dark surface (dataviz
+   palette, dark slots 1 and 2); status colors are reserved for status and
+   always come with an icon and a label. On the body, so the tooltip (outside
+   .admin) gets them too. */
+.admin-body {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --status-ok: #0ca30c;
+  --status-watch: #fab219;
+  --status-red: #d03b3b;
+}
+.metrics-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.segmented { display: inline-flex; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--deep); }
+.segment {
+  min-height: 2.1rem; padding: 0 0.85rem; border: 0; border-radius: 999px;
+  background: none; color: var(--fixer); font: inherit; font-size: var(--step--1); cursor: pointer;
+}
+.segment[aria-pressed="true"] { background: var(--wash); color: var(--paper); }
+#m-host {
+  min-height: 2.4rem; padding: 0 0.75rem; max-width: 100%;
+  border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--deep); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 1rem; }
+.mchart .panel-head { justify-content: space-between; margin-bottom: 0.15rem; }
+.mchart-note { margin: 0 0 0.4rem; }
+.mnow { font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.mlegend { display: flex; flex-wrap: wrap; gap: 0.15rem 0.75rem; font-size: var(--step--1); color: var(--fixer); }
+.mlegend b { color: var(--paper); font-weight: 600; font-variant-numeric: tabular-nums; }
+.swatch { display: inline-block; width: 0.7rem; height: 0.18rem; margin-right: 0.35rem; vertical-align: middle; border-radius: 2px; background: currentColor; }
+.swatch.series-1 { color: var(--series-1); }
+.swatch.series-2 { color: var(--series-2); }
+.mplot { min-height: 170px; }
+/* Not an icon: none of the global svg stroke. */
+.mchart-svg { display: block; width: 100%; height: auto; overflow: visible; stroke: none; }
+.mgrid { stroke: var(--rule); stroke-width: 1; }
+.maxis { fill: var(--fixer); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mline { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.mline.series-1, .mdot.series-1 { stroke: var(--series-1); fill: var(--series-1); }
+.mline.series-2, .mdot.series-2 { stroke: var(--series-2); fill: var(--series-2); }
+.mline.series-1, .mline.series-2 { fill: none; }
+.mband { stroke: none; opacity: 0.2; }
+.mband.series-1 { fill: var(--series-1); }
+.mband.series-2 { fill: var(--series-2); }
+.mref { stroke: var(--fixer); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+.mref-label { fill: var(--fixer); font-size: 11px; }
+.mcross { stroke: var(--paper); stroke-width: 1; opacity: 0.5; }
+.mhit { fill: transparent; cursor: crosshair; touch-action: pan-y; }
+.mstatus { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.mstatus svg { width: 1.25rem; height: 1.25rem; }
+.mstatus svg path { fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.mstatus-ok svg circle { fill: var(--status-ok); }
+.mstatus-watch svg circle { fill: var(--status-watch); }
+.mstatus-red svg circle { fill: var(--status-red); }
+.mhost + .mhost { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+.mhost-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
+.mreasons { margin: 0.6rem 0 0; padding-left: 1.2rem; font-size: var(--step--1); display: grid; gap: 0.3rem; }
+.mhost .muted { margin: 0.6rem 0 0; font-size: var(--step--1); }
+.mcost-total { margin: 0 0 0.75rem; color: var(--fixer); font-size: var(--step--1); }
+.mcost-total strong { font-size: 1.6rem; color: var(--paper); font-variant-numeric: tabular-nums; margin-right: 0.25rem; }
+.mcost-billed { margin: 0.9rem 0 0.2rem; font-size: var(--step--1); color: var(--fixer); }
+.mcost-billed strong { color: var(--paper); }
+#m-cost .panel-note { margin: 0.5rem 0 0; }
+#m-cost .mcost-problem { color: var(--danger); }

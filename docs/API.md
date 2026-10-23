@@ -61,6 +61,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the admin panel; 404 unless you're in `FADE_ADMINS` |
 | `GET  /admin/logs?level=&q=&source=&before=&after=&limit=` | Recent log entries, newest first; same access rule. `source`: `server` or `client` |
+| `GET  /admin/metrics?hours=` | The Metrics tab; same access rule. `hours` 1 (10-second readings) up to the retention window (minutes, merged to at most 720 points). `{generated_at, hours, retention_hours, interval_secs, on_aws, aws_problems, billing, hosts: [{host, info, status: ok\|watch\|red, reasons, latest, series: [{t, v: {figure: [min, avg, max]}}], credits, estimate}]}`. Figures: `cpu`, `steal`, `iowait`, `mem` (%), `mem_used`, `swap_used`, `load1`, `disk_<name>` (%), `disk_<name>_used`, `reads_/writes_/read_bytes_/write_bytes_<name>` (per second), `net_in`/`net_out` (bytes/s), `app_cpu` (% of the machine), `app_mem`, `app_threads`, `app_files`, `requests`/`errors` (per minute), `p50`/`p95`/`p99` (ms), `online`, `sockets`, `db_bytes` |
 | `POST /logs` | Client diagnostics: `{entries: [{level, message, fields}]}`, up to 50 per request, rate-limited. Never send content; content-like fields are redacted |
 | `GET  /ws` | WebSocket. First frame: `{"type":"auth","token":"..."}` |
 

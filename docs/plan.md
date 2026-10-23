@@ -18,7 +18,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
 | 6 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
 | 7 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
-| 8 | [Metrics: how is the infrastructure doing?](#i4-metrics-how-is-the-infrastructure-doing) | Infrastructure | Needs decision | Proposal written; waiting on Nate's OK |
 
 **Done**
 
@@ -61,6 +60,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
 | [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
 | [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
+| [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
@@ -350,7 +350,9 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### I4. Metrics: how is the infrastructure doing?
 - Requested (2026-10-22): live machine stats (CPU, memory, disk; ready for more than one machine) and basic server process stats, kept for about 24 hours to a few days, accurate, visual enough to see whether we're in the red, with a cost estimate. No Prometheus/Grafana.
-- **Proposal (needs Nate's OK):** built into the server, no new services.
+- Approved (2026-10-22): build it in; 3 days, configurable (`FADE_METRICS_RETENTION_HOURS`); CloudWatch and Cost Explorer are fine at cents a month. Nate turned on the `App` cost tag.
+- Done (0.26.0), as proposed below; how to read it is in [OPERATIONS.md](OPERATIONS.md#metrics). Not yet: the `agent` mode for a second machine (the store and the tab already handle several hosts).
+- **Proposal:** built into the server, no new services.
   - **Collect** every 10s, in the server, from `/proc` and `statvfs` (extends `sysinfo.rs`): machine CPU % (busy, iowait, *steal*), memory used/available and swap, disk used/free and IOPS for the root and data volumes, network in/out; process CPU %, memory (RSS), threads, open files; app request rate, p50/p95/p99 latency, 5xx, live sockets, DB and pic sizes.
   - **Keep** each minute as min/avg/max (so spikes aren't averaged away) in a separate `metrics.db` on the data volume, a fixed ring of 3 days × 1,440 slots per host, overwritten in place: bounded size, survives deploys, never touches user data. The last hour at 10s stays in memory for the live view. Every row carries `host` (the instance id).
   - **More machines later:** the same code runs as `fade-server agent` on a machine without the app and posts its samples to the main server (admin-authenticated). The view already groups by host.

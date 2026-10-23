@@ -207,6 +207,23 @@ resource "aws_iam_role_policy" "instance" {
         Action   = ["s3:PutObject"]
         Resource = "${aws_s3_bucket.backups.arn}/db/*"
       },
+      {
+        # The admin Metrics tab (server/src/metrics.rs): this instance's CPU
+        # credits, every 5 minutes. Read-only, and inside the free tier.
+        # GetMetricStatistics has no resource-level permissions, hence "*".
+        Sid      = "ReadCpuCredits"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
+      },
+      {
+        # The admin Metrics tab's billed cost, twice a day ($0.01 a call).
+        # Read-only; Cost Explorer has no resource-level permissions.
+        Sid      = "ReadCosts"
+        Effect   = "Allow"
+        Action   = ["ce:GetCostAndUsage"]
+        Resource = "*"
+      },
     ]
   })
 }

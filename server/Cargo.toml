@@ -1,6 +1,6 @@
 [package]
 name = "fade-server"
-version = "0.25.2"
+version = "0.26.0"
 edition = "2021"
 
 [dependencies]
@@ -22,6 +22,8 @@ tower-http = { version = "0.6", features = ["set-header"] }
 # Web Push (src/push.rs): VAPID signing and RFC 8291 payload encryption, all pure Rust.
 p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 hkdf = "0.12"
+# Signs the few AWS calls the Metrics tab makes (src/aws.rs), instead of the AWS SDK.
+hmac = "0.12"
 aes-gcm = "0.10"
 # Sends pushes to the browsers' push services over HTTPS (rustls, no OpenSSL).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

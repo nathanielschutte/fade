@@ -36,6 +36,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Known scanning tools (sqlmap, Nuclei, masscan, and the like) are refused outright.
 - An address that probes for things napsack doesn't have (`/.env`, `/wp-login.php`, `/.git`, `.php` pages, ...) is **banned for an hour** after three probes, or after 30 missing pages in 10 minutes. Real people never do either.
 - Push notifications only ever go to the browser companies' push services; the server won't call any other address, whatever a request says.
+- The only other calls the server makes are to AWS, for the admin Metrics tab (`aws.rs`): the instance metadata service, CloudWatch, and Cost Explorer, at addresses fixed in the code. Its permissions there are read-only (CPU credit numbers, the bill), and the instance credentials it uses are never logged.
 
 ### The server itself
 - The only open ports are 80 and 443. There's no SSH port: admin access goes through AWS Systems Manager.

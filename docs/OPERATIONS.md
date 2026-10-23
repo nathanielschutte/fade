@@ -41,6 +41,8 @@ Changing config: edit tfvars, run `terraform apply` (which updates the SSM param
 | Snapshots, S3, SSM parameter | cents |
 | **Total** | **~$7.50** |
 
+The admin panel's **Metrics** tab shows a live version of this estimate, what AWS has actually billed for everything tagged `App=fade` (from Cost Explorer, checked twice a day, $0.01 a check), and the price of the next instance size up.
+
 The first 100 GB/month of outbound data is free. Check current prices before relying on these numbers. The IPv4 charge is the biggest line after compute. Putting CloudFront in front could eventually remove it, but that's not worth the complexity yet.
 
 ## Settings
@@ -63,3 +65,14 @@ The server reads these environment variables. In production they come from an AW
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
 | `FADE_LOG_BUFFER` | `fade_server=debug` | What the admin log viewer keeps (last 20,000 entries, in memory) |
 | `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([RELEASING.md](RELEASING.md)) |
+| `FADE_METRICS_RETENTION_HOURS` | `72` | How much history the admin Metrics tab keeps (up to 31 days). Changing it takes effect on restart |
+| `FADE_METRICS_DB` | `metrics.db` beside the database | The metrics store. Not user data: a fixed-size ring that overwrites itself |
+
+## Metrics
+
+`/admin#metrics` shows how the machine and the server are doing: a status per machine (All good, Worth watching, In the red, with the reasons), cost, and charts for the last hour (10-second readings), 24 hours, or the whole retention window (3 days by default; each minute kept as min/avg/max, so spikes stay visible).
+
+- **Where it comes from:** the server reads `/proc` every 10 seconds (machine CPU including steal and iowait, memory, both disks' space and activity, network; its own CPU, memory, threads, open files) and times every request (exact p50/p95/p99 per minute). History is in `metrics.db` on the data volume, so it survives deploys.
+- **What "in the red" means:** memory or a disk over 90% (80% is "watch"), the server near its 400 MB systemd limit, response times (p95) over 2 seconds (500 ms watch), server errors, or AWS holding back CPU (steal). A t4g is burstable, so for CPU what matters is the **credit balance** (from CloudWatch every 5 minutes, free): low credits mean that past zero, CPU over the free baseline (5% on a t4g.nano) is billed. The CPU chart draws that baseline.
+- **AWS permissions:** the instance role needs `cloudwatch:GetMetricStatistics` and `ce:GetCostAndUsage` (`ReadCpuCredits` and `ReadCosts` in `infra/main.tf`). Without them the tab still works; it just says AWS refused, and the credits chart and billed cost are missing.
+- **More machines later:** every reading is stored with its host (the instance id). Another machine can feed the same store; the tab shows a machine picker once there's more than one.

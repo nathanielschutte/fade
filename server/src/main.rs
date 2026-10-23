@@ -1,6 +1,7 @@
 mod account;
 mod admin;
 mod auth;
+mod aws;
 mod birthdays;
 mod chats;
 mod db;
@@ -13,6 +14,7 @@ mod images;
 mod invites;
 mod logs;
 mod marks;
+mod metrics;
 mod people;
 mod presence;
 mod profiles;
@@ -71,6 +73,9 @@ pub struct Config {
     pub backup_status_path: String,
     /// Oldest native client version still allowed, per platform. See version.rs.
     pub min_client_versions: Vec<(String, version::Semver)>,
+    /// The metrics store (metrics.rs), next to the database by default.
+    pub metrics_db: std::path::PathBuf,
+    pub metrics_retention_hours: i64,
 }
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> {
@@ -136,6 +141,15 @@ impl Config {
                 &std::env::var("FADE_MIN_CLIENT_VERSIONS").unwrap_or_default(),
             )
             .map_err(|e| anyhow::anyhow!("FADE_MIN_CLIENT_VERSIONS: {e}"))?,
+            metrics_db: match std::env::var("FADE_METRICS_DB") {
+                Ok(path) if !path.trim().is_empty() => path.trim().into(),
+                _ => db::default_pic_dir(&env_or(
+                    "FADE_DATABASE_URL",
+                    "sqlite://fade.db".to_string(),
+                )?)
+                .with_file_name("metrics.db"),
+            },
+            metrics_retention_hours: env_or("FADE_METRICS_RETENTION_HOURS", 72)?,
         })
     }
 
@@ -180,6 +194,8 @@ pub struct AppState {
     pub invite_create_limit: ratelimit::RateLimit,
     /// Talks to browsers' push services.
     pub http: reqwest::Client,
+    /// Machine and server readings for the admin Metrics tab.
+    pub metrics: metrics::Metrics,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -222,6 +238,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("no FADE_ADMINS set; the admin panel is off");
     }
     let bind = config.bind;
+    let metrics = metrics::Metrics::open(&config.metrics_db, config.metrics_retention_hours).await;
     let state = Arc::new(AppState {
         db,
         hub: ws::Hub::default(),
@@ -248,7 +265,9 @@ async fn main() -> anyhow::Result<()> {
             .timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
+        metrics,
     });
+    metrics::spawn(state.clone());
 
     snaps::spawn_sweeper(state.clone());
     group_pics::spawn_sweeper(state.clone());
@@ -397,6 +416,7 @@ fn router(state: SharedState) -> Router {
         .route("/snaps/{id}", get(snaps::view))
         .route("/snaps/{id}/opened", post(snaps::opened))
         .route("/admin/stats", get(admin::stats))
+        .route("/admin/metrics", get(metrics::get))
         .route("/admin/logs", get(logs::list))
         .route(
             "/logs",
@@ -447,7 +467,7 @@ fn router(state: SharedState) -> Router {
         ))
         .layer(middleware::from_fn(guard::noindex))
         .layer(middleware::from_fn_with_state(state.clone(), guard::guard))
-        .layer(middleware::from_fn(log_request))
+        .layer(middleware::from_fn_with_state(state.clone(), log_request))
         .with_state(state)
 }
 
@@ -492,6 +512,7 @@ async fn limit_writes(
 /// template, real path), and the outcome. Never the query string, other
 /// headers, or the body. Also hands the caller's address to handlers.
 async fn log_request(
+    axum::extract::State(state): axum::extract::State<SharedState>,
     mut req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
@@ -525,6 +546,9 @@ async fn log_request(
         .to_owned();
     let response = next.run(req).await;
     let status = response.status().as_u16();
+    if !path.starts_with("/dev/") {
+        state.metrics.record(status, started.elapsed());
+    }
     // The log viewer polls every few seconds, and in development the page polls
     // /dev/changes; logging those would bury everything else.
     if (route == "/api/admin/logs" || path.starts_with("/dev/")) && status < 500 {
