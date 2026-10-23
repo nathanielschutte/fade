@@ -17,7 +17,7 @@ Status: **proposal, for Nate's review.** Nothing here is built, and no infrastru
                  people (IPv4 and IPv6)
                           │  HTTPS, WebSockets
                           ▼
-         CloudFront  (napsack.getattr.com; free TLS certificate; free tier)
+         CloudFront  (napsack.io; free TLS certificate; free tier)   
                           │  private: "VPC origin", no public address on anything below
   ┌───────────────────────┼─────────────────────────────────────────────────┐
   │ VPC, two zones        ▼                                                 │
@@ -97,7 +97,7 @@ Sessions, keys, accounts, VAPID keys, and everything else are already in the dat
 
 Two servers need something in front that sends each request to a healthy one and keeps WebSockets working.
 
-- **CloudFront** becomes the public face: it holds `napsack.getattr.com` (an alias in the existing Route 53 zone), the TLS certificate (free from ACM), HTTP-to-HTTPS redirects, and HSTS. Its free tier covers 1 TB and 10 million requests a month, far above our use. Caching stays off: everything is dynamic or already versioned.
+- **CloudFront** becomes the public face: it holds `napsack.io` (an alias in its Route 53 zone), the TLS certificate (free from ACM), HTTP-to-HTTPS redirects, and HSTS. Its free tier covers 1 TB and 10 million requests a month, far above our use. Caching stays off: everything is dynamic or already versioned.
 - Since May 2026, **CloudFront reaches private origins** ("VPC origins"), including an **internal load balancer**, WebSockets included, at no extra charge. So the load balancer gets no public address. That saves the $7.30 a month AWS charges for a load balancer's public IPv4 addresses, and nothing behind CloudFront can be reached from the internet.
 - The **Application Load Balancer** (internal, two zones) health-checks each server on `/api/config` and spreads requests. It's the biggest new cost: about $16.40 a month plus a dollar or two of usage. There's no cheaper managed option for active-active servers (a Network Load Balancer costs the same). The only cheaper path is DNS round-robin, under [Cheaper alternatives](#cheaper-alternatives).
 

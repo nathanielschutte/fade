@@ -68,7 +68,7 @@ pub struct Config {
     pub group_pic_ttl: Duration,
     /// Cap on group pic bytes held on disk.
     pub group_pic_disk_bytes: usize,
-    /// The site's address, e.g. https://napsack.getattr.com: the contact in
+    /// The site's address, e.g. https://napsack.io: the contact in
     /// push requests (VAPID `sub`). Set by Terraform; never hardcoded.
     pub public_url: String,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.

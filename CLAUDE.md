@@ -16,7 +16,7 @@ Same for pictures: people see **pic** ("Tap to view pic", "Pics sent"); the code
 - `tests/`: API smoke test, browser tests, pinned crypto vectors. `scripts/`: test, deploy, rollback, ssh.
 - `docs/`: [ONBOARDING.md](docs/ONBOARDING.md) (start here), [plan.md](docs/plan.md) (task tracker), [API.md](docs/API.md) (every endpoint and socket event; update it with any API change), [OPERATIONS.md](docs/OPERATIONS.md) (AWS, settings, shell), [SECURITY.md](docs/SECURITY.md) (protections, limits, what to do when attacked), [RELEASING.md](docs/RELEASING.md) (versioning and compatibility rules), [how-napsack-works.md](docs/how-napsack-works.md) (encryption), [group-encryption.md](docs/group-encryption.md) (how group chats are encrypted), [metrics.md](docs/metrics.md) (the admin Metrics tab: what's measured and how it's drawn), [friend-graph.md](docs/friend-graph.md) (the friend map), [roles.md](docs/roles.md) (User, PowerUser, Admin), [horizontal-scaling.md](docs/horizontal-scaling.md) (proposal: two or more servers across zones), [mono-scaling.md](docs/mono-scaling.md) (growing the single server: what runs out first), [mobile.md](docs/mobile.md) (iOS plan).
 
-The live site is <https://napsack.getattr.com>. The domain will change again: never hardcode it. Scripts read it from `terraform output url`.
+The live site is <https://napsack.io> (the old napsack.getattr.com redirects; docs/domain-move.md). The domain may change again: never hardcode it. Scripts read it from `terraform output url`.
 
 ## Rule 1: user data is never deleted
 

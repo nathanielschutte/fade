@@ -11,7 +11,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
-| 0c | [Move to napsack.io](#i7-napsackio) | Infrastructure | Planned | Nate (2026-10-23); design in domain-move.md |
 | 0d | [Staging in AWS](#i8-staging) | Infrastructure | Planned | Nate (2026-10-23); design in staging.md |
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Planning only | Nate (2026-10-23); options in email.md |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
@@ -66,6 +65,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 |
 | [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 |
 | [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
+| [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
@@ -403,6 +403,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I7. napsack.io
 - Requested (2026-10-23): `napsack.io` (registered in Route 53, with its zone) becomes the production address; `napsack.getattr.com` redirects to it permanently (301).
 - Design and what people will notice: [domain-move.md](domain-move.md).
+- Done (2026-10-23): server replaced with the Rule 1 checklist (snapshot snap-0ffc391a688a0f6b8 first; every row count equal after; the volume remounted). Left for Nate: set GitHub's `APP_URL` repository variable to https://napsack.io, and tell friends to sign in again at napsack.io.
 
 #### I8. Staging
 - Requested (2026-10-23): a second, fully separate copy of napsack in AWS, in the same network, on its own address, with no backups. For running the browser tests against a real deployment and for load testing. Production and its data must not be touchable from it.
