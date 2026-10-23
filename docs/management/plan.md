@@ -16,7 +16,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | In progress | Built; first tagged release once the staging variables are set |
 | 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 7 | [Move the repo into WSL](#p3-testing-in-wsl-and-moving-the-repo-there) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
@@ -66,6 +65,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
 | [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see operations.md) | 0.26.0 |
+| [The release pipeline](#p2-turn-on-cicd): main → release candidate on staging, `server-v*` tag → the same binary on production; releases kept forever, the newest ten candidates ([releasing.md](../operations/releasing.md)) | 0.31.1 |
 | [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](../operations/staging.md#results)) | infra, 0.30.1 |
 | [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
@@ -110,7 +110,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - [x] Get CI green. The first run (`6f0519f`) failed with exit 126: scripts weren't executable in git. Fixed (mode bits, `bash scripts/test.sh`); confirm on the next push.
 - [ ] Bump to 0.2.0 and ship `server-v0.2.0` through the release workflow. Production is running the same code today as build `6f0519f-dirty`.
 - [x] The release pipeline (2026-10-23, [releasing.md](../operations/releasing.md#releasing-the-server)): every push to `main` is tested, built once as a release candidate (`releases/main/fade-server-<sha>`, newest ten kept) and put on staging; a `server-v*` tag promotes that same binary to `releases/tags/fade-server-<version>` (kept forever) and production, after a backup. One AWS role per GitHub environment (`infra/github.tf`); the old tag workflow's file was invalid YAML (a stray line), which is why it "failed" on every push.
-- [ ] Set the `STAGING_DEPLOY_ROLE_ARN` and `STAGING_URL` repository variables, then ship the first release through the tag workflow.
+- [x] Staging variables set; the first release through the pipeline, `server-v0.31.1` (2026-10-23): main → candidate `548ec6a` on staging → tag → the same binary on production, backed up first. The deploy roles had to accept GitHub's id-based OIDC subject (`repo:owner@id/name@id:...`). The bucket was then cleaned to the new layout: 46 older builds moved to `releases/tags/` with their commit as metadata.
 
 ### Features
 
