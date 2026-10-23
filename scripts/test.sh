@@ -47,6 +47,9 @@ if ! command -v node >/dev/null && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nv
 command -v node >/dev/null || { echo "Node.js is required (see CLAUDE.md, Environment notes)"; exit 1; }
 node --test "shared/**/*.test.js"
 
+echo "==> health monitor (decisions, with AWS faked)"
+"$PY" tests/health_monitor_test.py
+
 echo "==> building server"
 (cd server && cargo build --quiet)
 BIN=server/target/debug/fade-server

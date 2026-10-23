@@ -732,6 +732,17 @@ async def check_resend(tag):
 
 
 
+def check_health():
+    """/api/health, for the outside monitor (docs/health-monitor.md): public,
+    says whether the database and disk are fine, and nothing private."""
+    r = ok(call("GET", "/health"))
+    h = r.json()
+    assert set(h) == {"ok", "checks", "version", "build", "time", "uptime_secs"}, h
+    assert h["ok"] is True and h["checks"] == {"database": "ok", "disk": "ok"}, h
+    assert h["build"] and abs(h["time"] - time.time()) < 60
+    assert "no-store" in r.headers["Cache-Control"]
+    print("  health: public, database and disk OK, nothing private")
+
 def check_roles(tag):
     """Roles (docs/roles.md): what a User, a PowerUser, and an Admin can reach.
     PowerUsers see how the app is doing, never more private data: no users
@@ -1218,6 +1229,7 @@ async def main():
     await check_late_joiner(tag)
     check_graph(tag)
     check_roles(tag)
+    check_health()
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()

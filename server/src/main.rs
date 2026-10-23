@@ -11,6 +11,7 @@ mod graph;
 mod group_pics;
 mod groups;
 mod guard;
+mod health;
 mod images;
 mod invites;
 mod logs;
@@ -438,6 +439,7 @@ fn router(state: SharedState) -> Router {
         ))
         .route_layer(middleware::from_fn_with_state(state.clone(), limit_writes))
         .route("/config", get(web::config))
+        .route("/health", get(health::get))
         // Nothing from the API belongs in a cache: it's private, or it changes.
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,

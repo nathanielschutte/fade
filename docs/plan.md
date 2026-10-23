@@ -358,6 +358,13 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Requested (2026-10-22): a very small indicator that a chat is a group.
 - Done (0.25.2): a small two-people badge on the group's picture, in the corner where a friend's online dot sits (groups never show that dot); screen readers hear "Group:" before the name.
 
+#### X16. Group chats on the friend map
+- Requested (2026-10-23), queued after the current projects: show the group chats around friends on the friend map, as a toggle. Off, the map is exactly as now; on, groups are drawn over it (for example a tinted outline per group chat linking its members you know) without changing how friends are clustered.
+- Privacy to settle in the design: a person should only see group chats they're in, and members they don't know stay anonymous, as ?s do.
+
+#### X17. A better group badge in the chat list
+- Requested (2026-10-23), queued: the badge's position on the group picture is right, the two-people icon isn't. Try other icons, and a subtle difference in how a group's row is drawn, so groups are distinct at a glance without being loud. Show options for Nate to pick.
+
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).
 - Serve napsack.getattr.com and redirect fade.getattr.com to it, so old links keep working.
