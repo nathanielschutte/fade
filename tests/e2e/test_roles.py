@@ -6,7 +6,7 @@ it away. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
 
 tag = uuid.uuid4().hex[:5]
 PWR, FRIEND, STRANGER = (f"{n}_{tag}" for n in ("pwr", "fri", "str"))
@@ -100,6 +100,7 @@ async def main():
         await pwr.goto(f"{BASE}/admin#metrics")
         await expect(pwr.locator(".mchart").first).to_be_visible(timeout=30000)
         await expect(pwr.locator("#m-cost")).to_be_hidden()
+        await expect(pwr.locator("#m-incidents-panel")).to_be_hidden()  # incidents: Admins only
         # The graph: the friend by name, the stranger anonymous.
         await pwr.goto(f"{BASE}/admin#graph")
         await pwr.locator("#g-depth .segment", has_text="Friends of friends").click()
@@ -118,6 +119,12 @@ async def main():
         assert await pwr.locator("#r-rows button", has_text="Remove PowerUser").count() == 0
         await expect(pwr.locator("#r-admin")).to_be_hidden()
         await shot(pwr, "roles-poweruser-roles", full_page=False)
+
+        # Incidents on Metrics: Admins only. Locally there's no monitor to read.
+        await admin.goto(f"{BASE}/admin#metrics")
+        await expect(admin.locator("#m-incidents-panel")).to_be_visible(timeout=30000)
+        await expect(admin.locator("#m-incidents")).to_contain_text("no health monitor here" if not REMOTE else "")
+        await admin.goto(f"{BASE}/admin#roles")
 
         # Only an Admin takes it away: two taps.
         await admin.reload()  # (already on #roles: fetch the list afresh)

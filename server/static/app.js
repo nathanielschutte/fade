@@ -6,7 +6,7 @@ import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
 import { qrSvg } from "/qr.js";
 import { createDrawing } from "/draw.js";
-import { drawGraph, groupLetter, widthChanged } from "/graph-view.js";
+import { chatName as mapChatName, chatSummary, drawGraph, groupLetter, isChat, widthChanged } from "/graph-view.js";
 
 const APP_NAME = "napsack";
 const VIEW_MS = 10_000;        // how long a snap stays on screen
@@ -1093,16 +1093,6 @@ const ROW_ICONS = {
   leave: "M14 4.5h4.5v15H14M10 8l-4 4 4 4M6 12h9",
   bell: "M6.5 16.5V11a5.5 5.5 0 0 1 9-4.25M17.5 10.5v6l1.5 1.5H8.5M10 20.5a2 2 0 0 0 4 0M4 4l16 16",
 };
-/** The little two-people badge on a group's picture in the list: groups at a glance. */
-function groupMark() {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M9 4.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4zM3 20a6 6 0 0 1 12 0zM16.5 4.5a2.7 2.7 0 1 1 0 5.4 2.7 2.7 0 0 1 0-5.4zM16 20a7.5 7.5 0 0 0-2.3-5.6 5 5 0 0 1 7.8 5.6z");
-  svg.append(path);
-  return el("span", { class: "group-mark", "aria-hidden": "true" }, svg);
-}
-
 function rowIcon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -1147,7 +1137,7 @@ function renderChatList() {
         name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
         current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
         avatar: el("span", { class: "avatar-wrap" },
-          paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g), groupMark()),
+          paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g)),
         muted: g.muted,
         actions: [favoriteAction(g, g.name, () => setFavorite("groups", g.id, !g.favorite)),
           muteAction("groups", g, g.name),
@@ -3541,13 +3531,23 @@ $("#empty-add").addEventListener("click", openFriends);
 // server decides what's on it (graph.rs); the groups and layout come from
 // /graph.js and the drawing from /graph-view.js.
 let friendMap = null;
+// Whether to add your group chats (off by default: then it's just friends).
+const MAP_CHATS_KEY = "napsack.mapChats";
+function mapChats() {
+  try { return localStorage.getItem(MAP_CHATS_KEY) === "1"; } catch { return false; }
+}
 
 async function openFriendMap() {
   $("#friends-dialog").close();
   $("#graph-dialog").showModal();
+  $("#graph-chats").checked = mapChats();
+  await loadFriendMap();
+}
+
+async function loadFriendMap() {
   $("#graph-host").replaceChildren(el("p", { class: "muted", text: "Drawing your map…" }));
   try {
-    friendMap = await getJSON("/graph");
+    friendMap = await getJSON($("#graph-chats").checked ? "/graph?chats=1" : "/graph");
     drawFriendMap();
   } catch (err) {
     friendMap = null;
@@ -3572,6 +3572,14 @@ function drawFriendMap() {
     title: `Your friend map: ${friends} ${friends === 1 ? "friend" : "friends"}${unknown ? ` and ${unknown} people they know that you don't` : ""}.`,
     unknownNote: (count) => `${count} ${count === 1 ? "person" : "people"} your friends know that you don't`,
     describe: (n, { neighbors, group }) => {
+      if (isChat(n)) {
+        const who = [...neighbors].sort((a, b) => (b.kind === "self") - (a.kind === "self")).map(name).filter(Boolean);
+        return [
+          el("b", { text: mapChatName(n) }),
+          ` · group chat · ${chatSummary(n)}: ${who.join(", ")}${n.others ? ` and ${n.others} ${n.others === 1 ? "person" : "people"} you aren't friends with` : ""}. `,
+          n.group_id ? el("button", { type: "button", class: "link", onclick: () => { $("#graph-dialog").close(); openGroup(n.group_id); } }, "Open chat") : null,
+        ];
+      }
       const known = neighbors.filter((m) => m.kind === "friend");
       const strangers = neighbors.filter((m) => m.kind === "unknown").length;
       if (n.kind === "self") {
@@ -3596,6 +3604,10 @@ function drawFriendMap() {
 }
 
 $("#graph-open").addEventListener("click", openFriendMap);
+$("#graph-chats").addEventListener("change", (e) => {
+  try { localStorage.setItem(MAP_CHATS_KEY, e.target.checked ? "1" : "0"); } catch { /* just this time, then */ }
+  loadFriendMap();
+});
 let graphResize = null;
 window.addEventListener("resize", () => {
   clearTimeout(graphResize);
@@ -3721,8 +3733,7 @@ function showCapture() {
   if (!camera.stream && camera.problem) cameraMessage(camera.problem);
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
-  $("#snap-caption").hidden = true;
-  $("#snap-caption").value = "";
+  clearCaption();
 }
 
 function clearPreview() {
@@ -3752,7 +3763,8 @@ function showPreview(blob) {
   const chat = chatById(state.activeId);
   const name = state.activeGroupId ? groupById(state.activeGroupId)?.name : chat && chatName(chat);
   $("#send-snap").textContent = name ? `Send to ${name}` : "Send";
-  $("#snap-caption").hidden = false;
+  $("#snap-caption-box").hidden = false;
+  fitCaption();
 }
 
 // Redrawing through a canvas downsizes the photo and strips EXIF (including GPS).
@@ -3805,8 +3817,7 @@ $("#camera-button").addEventListener("click", () => {
 $("#camera-dialog").addEventListener("close", () => {
   stopStream();
   clearPreview();
-  $("#snap-caption").value = ""; // sent or abandoned, it shouldn't linger in the page
-  $("#snap-caption").hidden = true;
+  clearCaption(); // sent or abandoned, it shouldn't linger in the page
 });
 
 $("#flip-camera").addEventListener("click", () => {
@@ -3862,8 +3873,30 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
+// The caption box grows with what's typed (style.css caps it at four lines),
+// and says how much room is left once there's little.
+const CAPTION_MAX = 200;
+function fitCaption() {
+  const input = $("#snap-caption");
+  // Enter sends, so a caption is one paragraph: pasted line breaks become spaces.
+  if (/[\r\n]/.test(input.value)) input.value = input.value.replace(/[\r\n]+/g, " ");
+  input.style.height = "auto";
+  input.style.height = `${input.scrollHeight + 2}px`; // + the borders (border-box)
+  const used = [...input.value].length;
+  const count = $("#snap-caption-count");
+  count.hidden = used < CAPTION_MAX - 40;
+  count.textContent = `${used}/${CAPTION_MAX}`;
+  count.classList.toggle("full", used >= CAPTION_MAX);
+}
+function clearCaption() {
+  $("#snap-caption").value = "";
+  $("#snap-caption-box").hidden = true;
+  fitCaption();
+}
+$("#snap-caption").addEventListener("input", fitCaption);
+
 $("#snap-caption").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
+  if (e.key === "Enter" && !e.isComposing) {
     e.preventDefault();
     $("#send-snap").click();
   }

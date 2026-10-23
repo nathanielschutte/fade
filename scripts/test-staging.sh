@@ -33,11 +33,18 @@ echo "==> API smoke test"
 "$PY" tests/smoke_test.py
 
 [ "${1:-}" = "--no-browser" ] && exit 0
+failed=()
 for t in tests/e2e/test_*.py; do
   case "$t" in
     */test_dev_reload.py) echo "==> $t: skipped (staging runs a release build)"; continue ;;
   esac
   echo "==> $t"
-  (cd tests/e2e && "$PY" "$(basename "$t")")
+  (cd tests/e2e && "$PY" "$(basename "$t")") || failed+=("$t")
 done
 echo "screenshots: $NAPSACK_SHOTS"
+# Every test runs, so one failure (or a browser crash) doesn't hide the rest.
+if [ ${#failed[@]} -gt 0 ]; then
+  echo "FAILED: ${failed[*]}"
+  exit 1
+fi
+echo "all staging tests passed"

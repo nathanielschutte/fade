@@ -71,6 +71,14 @@ An Auto Scaling group of one would make step 4 automatic: terminate the server a
 
 `health/state.json` holds the failures in a row, the open incident's id, and the last step taken.
 
+## On the Metrics tab (Admins)
+
+The System → Metrics tab shows the last 7 days of incidents to Admins (not PowerUsers): open ones first, each with how long it lasted, its repair steps, and a "What happened" timeline (the serial console is left out). These records are the source of truth; the server only reads them (`server/src/incidents.rs`, cached a minute).
+
+**Mark resolved** (two taps) writes `health/resolutions/<id>.json` with who and when. The monitor's own record isn't touched, and nothing is deleted. It's a note for people: if the server is still unhealthy, the monitor keeps going. An incident the monitor closed itself shows as Recovered.
+
+The server's role can read `health/incidents/*` and `health/resolutions/*`, and write only `health/resolutions/*` (`ReadIncidents`, `MarkIncidentsResolved` in `infra/main.tf`). Staging reads its own `staging/health/` instead (`FADE_HEALTH_PREFIX`), never production's.
+
 ## Notifications
 
 SNS topic **fade-health**. Messages: incident opened (with the evidence), each action, recovered, and "needs a human". The topic has no subscriptions yet. Adding an email or a phone later is one command, and no code changes.

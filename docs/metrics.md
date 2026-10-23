@@ -87,13 +87,13 @@ Each host gets **All good**, **Worth watching**, or **In the red**: the worst of
 | Each disk | newest `disk_*` | 80% | 90% |
 | Server memory | average `app_mem` against its cap | 75% of 400 MB | 90% |
 | Steal | average `steal` | 10% | 25% |
-| CPU credits (burstable, when CloudWatch answers) | newest balance against a full bank (144 on a t4g.nano: vCPUs × baseline × 60 × 24) | under a third | under a tenth |
+| CPU credits (burstable, when CloudWatch answers) | newest balance against a full bank (144 on a t4g.nano: vCPUs × baseline × 60 × 24) | under a third ("building up" when it rose over the last hour, as after a restart) | under a tenth **and** the CPU averaging at least 90% of its baseline: actually throttled |
 | Paid-for CPU | surplus credits charged, last 24 h | any | |
 | CPU (only without credit data) | average `cpu` | 70% | 90% |
 | Response time | average `p95` | 500 ms | 2 s |
 | Server errors | 5xx in the last 10 minutes | 1 | 10 |
 
-Why credits and not CPU %: a t4g may use its baseline (5% of each vCPU on a nano) for free and banks credits when below it. Running above the baseline is fine while credits last; once they're gone, the server is held to its baseline (standard mode, which napsack's server uses: requests slow down and steal rises) or CPU over the baseline is billed (unlimited mode, where the "Extra CPU" cost line counts it). So 30% CPU can be all good, and the credit balance is what says when it isn't.
+Why credits and not CPU %: a t4g may use its baseline (5% of each vCPU on a nano) for free and banks credits when below it. Running above the baseline is fine while credits last; once they're gone, the server is held to its baseline (standard mode, which napsack's server uses: requests slow down and steal rises) or CPU over the baseline is billed (unlimited mode, where the "Extra CPU" cost line counts it). So 30% CPU can be all good, and the credit balance is what says when it isn't. A low balance by itself is only a warning: a new or replaced instance starts with few credits and fills up while idle, so it's red only when it's nearly out and held at the baseline.
 
 ### Charts
 

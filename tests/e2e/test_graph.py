@@ -15,7 +15,16 @@ errors = []
 
 # SVG nodes inside the friend map, by kind.
 NODES = """(sel) => [...document.querySelectorAll(sel + ' .gnode')].map((g) =>
-  [g.classList.contains('unknown') ? '?' : g.classList.contains('center') ? 'center' : 'person', g.getAttribute('aria-label')])"""
+  [g.classList.contains('unknown') ? '?' : g.classList.contains('center') ? 'center' : g.classList.contains('chat') ? 'chat' : 'person', g.getAttribute('aria-label')])"""
+
+# Cal makes a group chat with their friends (by username), straight through the API.
+MAKE_GROUP = """async ([name, usernames]) => {
+  const headers = { Authorization: `Bearer ${localStorage.getItem('fade.token')}`, 'Content-Type': 'application/json' };
+  const friends = await (await fetch('/api/friends', { headers })).json();
+  const member_ids = friends.filter((f) => usernames.includes(f.username)).map((f) => f.id);
+  const r = await fetch('/api/groups', { method: 'POST', headers, body: JSON.stringify({ name, member_ids }) });
+  return (await r.json()).id;
+}"""
 
 
 async def page_for(browser, label, **ctx):
@@ -106,6 +115,38 @@ async def main():
         await expect(ana.locator("#graph-dialog")).not_to_be_visible()
         await expect(ana.locator("#chat-title")).to_have_text(BEN)
 
+        # Group chats, with the switch: Cal's "Road trip" has Ana, Ben, and Dee.
+        # On Ana's map it's lined to her, Ben, and Cal, never to the ? (Dee).
+        trip = f"Road trip {ANA[-4:]}"
+        await cal.evaluate(MAKE_GROUP, [trip, [ANA, BEN, DEE]])
+        await ana.click("#friends-button")
+        await ana.click("#graph-open")
+        await expect(ana.locator("#graph-host .gnode")).to_have_count(4, timeout=10000)
+        await expect(ana.locator("#graph-chats")).not_to_be_checked()  # off by default
+        await ana.locator(".graph-chats-switch").click()
+        await expect(ana.locator("#graph-host .gnode.chat")).to_have_count(1, timeout=10000)
+        await expect(ana.locator("#graph-host .gnode.chat")).to_have_attribute("aria-label", f"Group chat: {trip}")
+        await expect(ana.locator("#graph-host .gedge.to-chat")).to_have_count(3)
+        await expect(ana.locator("#graph-host .ghull")).to_have_count(1)  # chats don't change the groups
+        await expect(ana.locator("#graph-host .graph-legend")).to_contain_text(f"Group chat · {trip}")
+        await ana.locator("#graph-host .gnode.chat .ghit").click()
+        await expect(ana.locator(".graph-caption")).to_contain_text(f"{trip} · group chat · 4 people: ")
+        await expect(ana.locator(".graph-caption")).to_contain_text("and 1 person you aren't friends with")
+        assert DEE not in await ana.locator("#graph-dialog").inner_text()
+        await asyncio.sleep(0.9)
+        await shot(ana, "graph-chats-desktop", full_page=False)
+        await ana.locator(".graph-caption button", has_text="Open chat").click()
+        await expect(ana.locator("#graph-dialog")).not_to_be_visible()
+        await expect(ana.locator("#chat-title")).to_contain_text(trip)
+        # Remembered on this device; off again takes the chats away.
+        await ana.click("#friends-button")
+        await ana.click("#graph-open")
+        await expect(ana.locator("#graph-host .gnode.chat")).to_have_count(1, timeout=10000)
+        await ana.locator(".graph-chats-switch").click()
+        await expect(ana.locator("#graph-host .gnode")).to_have_count(4, timeout=10000)
+        await expect(ana.locator("#graph-host .gnode.chat")).to_have_count(0)
+        await ana.keyboard.press("Escape")
+
         # Dee knows only Cal: one friend, and Cal's other friends as ?s.
         await dee.click("#friends-button")
         await dee.click("#graph-open")
@@ -123,6 +164,10 @@ async def main():
         assert box["width"] <= 390, box
         await asyncio.sleep(0.9)
         await shot(ben, "graph-phone", full_page=False)
+        await ben.locator(".graph-chats-switch").click()
+        await expect(ben.locator("#graph-host .gnode.chat")).to_have_count(1, timeout=10000)
+        await asyncio.sleep(0.9)
+        await shot(ben, "graph-chats-phone", full_page=False)
 
         # Admin: you by default; everyone with the switch; chosen people; depth.
         admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
@@ -130,12 +175,12 @@ async def main():
         await admin.goto(f"{BASE}/admin#graph")
         await expect(admin.locator("#tab-graph")).to_have_attribute("aria-current", "page")
         await expect(admin.locator("#g-host .gnode, #g-host p")).not_to_have_count(0, timeout=10000)
-        await admin.locator(".switch").click()
+        await admin.locator(".switch:has(#g-all)").click()
         await expect(admin.locator("#g-note")).to_contain_text("Everyone", timeout=10000)
         everyone = await admin.locator("#g-host .gnode").count()
         assert everyone >= 5, everyone
         await expect(admin.locator("#g-people")).to_be_hidden()
-        await admin.locator(".switch").click()
+        await admin.locator(".switch:has(#g-all)").click()
         await expect(admin.locator("#g-people")).to_be_visible()
         await admin.locator("#g-people summary").click()
         await admin.fill("#g-search", ANA)
@@ -157,6 +202,14 @@ async def main():
         await expect(admin.locator(f"#g-host .gnode[aria-label='{DEE}']")).to_have_count(1, timeout=10000)
         await asyncio.sleep(0.9)
         await shot(admin, "graph-admin", full_page=False)
+        # Group chats on the System graph: the admin isn't in Road trip, so no name.
+        await admin.locator(".switch:has(#g-chats)").click()
+        await expect(admin.locator("#g-host .gnode.chat")).to_have_count(1, timeout=10000)
+        await expect(admin.locator("#g-host .gnode.chat")).to_have_attribute("aria-label", "Group chat: A group chat")
+        assert trip not in await admin.locator("#view-graph").inner_text()
+        await expect(admin.locator("#g-note")).to_contain_text("1 group chat")
+        await admin.locator(".switch:has(#g-chats)").click()
+        await expect(admin.locator("#g-host .gnode.chat")).to_have_count(0, timeout=10000)
         # "Show their graph" from a picked person.
         await admin.locator(f"#g-host .gnode[aria-label='{DEE}'] .ghit").click()
         await admin.locator(".graph-caption button", has_text="Show their graph").click()

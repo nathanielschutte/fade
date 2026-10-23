@@ -63,6 +63,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_SESSION_DAYS` | `90` | |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
+| `FADE_HEALTH_PREFIX` | `health/` | Where the Metrics tab reads incident records in the artifacts bucket. Staging sets `staging/health/` so it never reads production's |
 | `FADE_EXEMPT_ADDRESSES` | unset | **Staging only.** Comma-separated client addresses treated like local requests: no per-address limits or scanner bans, so test machines can run the suites and load tests ([staging.md](staging.md)). Never set in production |
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
 | `FADE_LOG_BUFFER` | `fade_server=debug` | What the admin log viewer keeps (last 20,000 entries, in memory) |

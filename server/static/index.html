@@ -221,6 +221,11 @@
     </button>
   </header>
   <p class="sheet-text small">You, your friends, and who knows who. Friends who know each other gather into groups. A <b>?</b> is someone a friend knows that you don't. Tap anyone to see more.</p>
+  <label class="switch graph-chats-switch">
+    <input type="checkbox" id="graph-chats" role="switch">
+    <span class="switch-track" aria-hidden="true"></span>
+    Group chats
+  </label>
   <div class="graph-host" id="graph-host"><p class="muted">Drawing your map…</p></div>
 </dialog>
 
@@ -468,7 +473,10 @@
       </button>
     </div>
     <div class="sticker-tray" id="sticker-tray" role="group" aria-label="Stickers" hidden></div>
-    <input id="snap-caption" class="snap-caption" type="text" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" hidden>
+    <div class="snap-caption-box" id="snap-caption-box" hidden>
+      <span class="caption-count" id="snap-caption-count" aria-live="polite" hidden></span>
+      <textarea id="snap-caption" class="snap-caption" rows="1" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" aria-describedby="snap-caption-count"></textarea>
+    </div>
     <p class="camera-message" id="camera-message" hidden></p>
   </div>
   <div class="camera-controls" id="capture-controls">

@@ -138,7 +138,19 @@ async def main():
         await wait_js(a, "document.querySelector('#camera-video').videoWidth > 100")
         await a.click("#shutter")
         await expect(a.locator("#send-snap")).to_be_visible()
+        # A long caption wraps and grows (it used to scroll sideways, looking cut
+        # off), shows how much room is left, and stops at 200 characters.
+        one_line = (await a.locator("#snap-caption").bounding_box())["height"]
+        await expect(a.locator("#snap-caption-count")).to_be_hidden()
+        await a.locator("#snap-caption").press_sequentially("so many words about this lake " * 8)  # 240 characters
+        assert await a.locator("#snap-caption").evaluate("e => [...e.value].length") == 200
+        await expect(a.locator("#snap-caption-count")).to_have_text("200/200")
+        tall = (await a.locator("#snap-caption").bounding_box())["height"]
+        assert tall > one_line + 15, ("grows a line or more", one_line, tall)
+        assert await a.locator("#snap-caption").evaluate("e => e.scrollWidth <= e.clientWidth && e.scrollHeight <= e.clientHeight + 2"), "nothing hidden"
+        await shot(a, "caption-long")
         await a.fill("#snap-caption", "first light over the lake")
+        await expect(a.locator("#snap-caption-count")).to_be_hidden()
         await shot(a, "caption-compose")
         await a.press("#snap-caption", "Enter")  # Enter sends
         await expect(a.locator("#camera-dialog")).not_to_be_visible(timeout=10000)

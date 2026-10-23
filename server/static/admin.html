@@ -92,6 +92,13 @@
       <div id="m-cost"></div>
     </section>
   </div>
+  <section class="panel" id="m-incidents-panel" aria-labelledby="m-incidents-title" hidden>
+    <header class="panel-head">
+      <h2 id="m-incidents-title">Incidents</h2>
+      <span class="panel-note" id="m-incidents-note">Last 7 days, from the health monitor</span>
+    </header>
+    <div id="m-incidents"></div>
+  </section>
   <div class="metrics-grid" id="m-charts"></div>
   <section class="panel" aria-label="All figures as a table">
     <details class="chart-table">
@@ -112,6 +119,11 @@
         <input type="checkbox" id="g-all" role="switch">
         <span class="switch-track" aria-hidden="true"></span>
         Everyone
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="g-chats" role="switch">
+        <span class="switch-track" aria-hidden="true"></span>
+        Group chats
       </label>
       <div class="segmented" id="g-depth" role="group" aria-label="How far from them">
         <button type="button" class="segment" data-depth="1" aria-pressed="true">Their friends</button>

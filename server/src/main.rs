@@ -13,6 +13,7 @@ mod groups;
 mod guard;
 mod health;
 mod images;
+mod incidents;
 mod invites;
 mod logs;
 mod marks;
@@ -420,6 +421,8 @@ fn router(state: SharedState) -> Router {
         .route("/admin/stats", get(admin::stats))
         .route("/admin/metrics", get(metrics::get))
         .route("/admin/graph", get(graph::admin))
+        .route("/admin/incidents", get(incidents::list))
+        .route("/admin/incidents/{id}/resolve", post(incidents::resolve))
         .route("/admin/roles", get(roles::list))
         .route("/admin/roles/reload", post(roles::reload))
         .route(

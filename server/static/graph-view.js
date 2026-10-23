@@ -32,6 +32,22 @@ function el(tag, props = {}, ...children) {
 }
 
 export const groupLetter = (i) => (i < LETTERS.length ? LETTERS[i] : `${i + 1}`);
+
+/** Group chats (`?chats=1`) are nodes too: a chat's name only reaches its members. */
+export const isChat = (n) => n.kind === "chat";
+export const chatName = (n) => n.name || "A group chat";
+/** "3 people" */
+export const chatSummary = (n) => `${n.size} ${n.size === 1 ? "person" : "people"}`;
+
+/** The people and friendships in a graph, leaving out group chats and their lines. */
+export function counts(graph) {
+  const chats = new Set(graph.nodes.filter(isChat).map((n) => n.key));
+  return {
+    people: graph.nodes.length - chats.size,
+    friendships: graph.edges.filter(([a, b]) => !chats.has(a) && !chats.has(b)).length,
+    chats: chats.size,
+  };
+}
 const groupClass = (i) => (i >= 0 && i < COLORED ? `gc${i}` : "gcx");
 
 /** "ana, ben, cal and 4 more" */
@@ -57,10 +73,13 @@ export function widthChanged(host) {
  *   `info` has `neighbors` (nodes) and `group` (index, -1 alone).
  * - `title`: what the picture is, for screen readers.
  * - `unknownNote`: legend text for "?" nodes, if any.
+ * Group chats (kind "chat") are drawn as small squares lined to their
+ * members, and left out of grouping: groups are about who knows who.
  * Returns { select(key) }.
  */
 export function drawGraph(host, graph, { center = null, label = () => "", describe = null, title = "Friend graph", unknownNote = null } = {}) {
-  const groups = clusters(graph, { ignore: center ? [center] : [] });
+  const chatKeys = graph.nodes.filter(isChat).map((n) => n.key);
+  const groups = clusters(graph, { ignore: [...(center ? [center] : []), ...chatKeys] });
   const pos = layout(graph, { groups, pin: center });
   const byKey = new Map(graph.nodes.map((n) => [n.key, n]));
   const neighbors = new Map(graph.nodes.map((n) => [n.key, new Set()]));
@@ -111,7 +130,9 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
     if (!byKey.has(a) || !byKey.has(b)) continue;
     const p = at(a);
     const q = at(b);
-    const kind = a === center || b === center ? " from-center" : byKey.get(a).kind === "unknown" || byKey.get(b).kind === "unknown" ? " to-unknown" : "";
+    const kind = isChat(byKey.get(a)) || isChat(byKey.get(b)) ? " to-chat"
+      : a === center || b === center ? " from-center"
+      : byKey.get(a).kind === "unknown" || byKey.get(b).kind === "unknown" ? " to-unknown" : "";
     const line = svg("line", { x1: p.x.toFixed(1), y1: p.y.toFixed(1), x2: q.x.toFixed(1), y2: q.y.toFixed(1), class: `gedge${kind}` });
     lines.append(line);
     lineFor.get(a).push(line);
@@ -125,14 +146,17 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
   const showName = new Set();
   // Dots shrink a little with the picture (phones), never below 60%.
   const shrink = Math.min(1, Math.max(0.6, scale / 1.6));
-  const radius = (n) => shrink * (n.key === center ? 13 : n.kind === "unknown" ? 6 : 7 + Math.min(5, (neighbors.get(n.key).size - 1) * 0.6));
-  const priority = (n) => (n.key === center ? 3 : n.kind === "seed" ? 2 : 1) * 1000 + neighbors.get(n.key).size;
-  const named = graph.nodes.filter((n) => n.kind !== "unknown" && label(n)).sort((a, b) => priority(b) - priority(a));
+  const radius = (n) => shrink * (n.key === center ? 13 : n.kind === "unknown" ? 6 : isChat(n) ? 7 : 7 + Math.min(5, (neighbors.get(n.key).size - 1) * 0.6));
+  // People's names before chats' names.
+  const priority = (n) => (n.key === center ? 3 : n.kind === "seed" ? 2 : isChat(n) ? 0 : 1) * 1000 + neighbors.get(n.key).size;
+  // Only chats you're in have a name to show.
+  const nameOf = (n) => (isChat(n) ? n.name || "" : label(n));
+  const named = graph.nodes.filter((n) => n.kind !== "unknown" && nameOf(n)).sort((a, b) => priority(b) - priority(a));
   const dotsAt = graph.nodes.map((n) => ({ ...at(n.key), r: radius(n), key: n.key }));
   for (const n of named) {
     const p = at(n.key);
     const r = radius(n);
-    const w = label(n).length * 6.6 + 4;
+    const w = nameOf(n).length * 6.6 + 4;
     const right = p.x >= W / 2 || n.key === center;
     const box = { x0: right ? p.x + r + 3 : p.x - r - 3 - w, x1: right ? p.x + r + 3 + w : p.x - r - 3, y0: p.y - 8, y1: p.y + 8 };
     const hits = (b) => !(b.x1 < box.x0 || b.x0 > box.x1 || b.y1 < box.y0 || b.y0 > box.y1);
@@ -147,16 +171,20 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
     const p = at(n.key);
     const g = groups.of.get(n.key) ?? -1;
     const unknown = n.kind === "unknown";
+    const chat = isChat(n);
     const isCenter = n.key === center;
     const r = radius(n);
-    const name = unknown ? "" : label(n);
+    const name = unknown ? "" : nameOf(n);
     const node = svg("g", {
-      class: `gnode ${unknown ? "unknown" : isCenter ? "center" : n.kind === "seed" ? "seed" : ""} ${groupClass(g)} enter`,
+      class: `gnode ${unknown ? "unknown" : chat ? "chat" : isCenter ? "center" : n.kind === "seed" ? "seed" : ""} ${groupClass(g)} enter`,
       tabindex: unknown ? null : "0",
       role: unknown ? null : "button",
-      "aria-label": unknown ? null : name,
+      "aria-label": unknown ? null : chat ? `Group chat: ${chatName(n)}` : name,
     });
-    node.append(svg("circle", { r, class: "gdot" }));
+    // A chat is a rounded square, so it never reads as a person.
+    node.append(chat
+      ? svg("rect", { x: -r, y: -r, width: 2 * r, height: 2 * r, rx: 2.5, class: "gdot" })
+      : svg("circle", { r, class: "gdot" }));
     // A bigger, invisible circle on top to tap: dots are small for fingers.
     if (!unknown) node.append(svg("circle", { r: Math.max(r + 6, 14), class: "ghit" }));
     if (unknown) {
@@ -225,6 +253,14 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
   if (alone.length) legend.append(el("li", { class: "legend-row" }, el("span", { class: "legend-key gcx", "aria-hidden": "true", text: "·" }), el("span", {}, el("b", { text: "On their own" }), ` · ${names(alone)}`)));
   const unknownCount = graph.nodes.filter((n) => n.kind === "unknown").length;
   if (unknownCount && unknownNote) legend.append(el("li", { class: "legend-row" }, el("span", { class: "legend-key unknown", "aria-hidden": "true", text: "?" }), el("span", { text: unknownNote(unknownCount) })));
+  const chats = graph.nodes.filter(isChat);
+  const chatNames = chats.filter((n) => n.name).map((n) => n.name);
+  const unnamed = chats.length - chatNames.length;
+  if (chats.length) {
+    const what = [chatNames.length ? names(chatNames) : null, unnamed ? `${unnamed} you're not in` : null].filter(Boolean).join(", plus ");
+    legend.append(el("li", { class: "legend-row" }, el("span", { class: "legend-key chat", "aria-hidden": "true" }), el("span", {}, el("b", { text: chats.length === 1 ? "Group chat" : "Group chats" }), ` · ${what}`)));
+  }
+  const membersOf = (n) => [...neighbors.get(n.key)].map((k) => byKey.get(k)).map(label).filter(Boolean);
 
   // The same, in full, as a list.
   const list = el("details", { class: "graph-list" },
@@ -233,7 +269,9 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
       groups.groups.map((keys, i) => el("li", {}, el("b", { text: `Group ${groupLetter(i)}: ` }),
         [shown(keys).join(", "), strangers(keys) ? `${shown(keys).length ? " and " : ""}${strangers(keys)} you don't know` : ""].join(""))),
       alone.length ? el("li", {}, el("b", { text: "On their own: " }), alone.join(", ")) : null,
-      el("li", { class: "muted", text: `${graph.nodes.length} people, ${graph.edges.length} friendships` })));
+      chats.map((n) => el("li", {}, el("b", { text: `${chatName(n)} (group chat): ` }),
+        [membersOf(n).join(", "), n.others ? `${membersOf(n).length ? " and " : ""}${n.others} more` : ""].join(""))),
+      el("li", { class: "muted", text: (({ people, friendships, chats: c }) => `${people} people, ${friendships} friendships${c ? `, ${c} group ${c === 1 ? "chat" : "chats"}` : ""}`)(counts(graph)) })));
 
   host.replaceChildren(el("div", { class: "graph" }, root, caption, legend, list));
   host.dataset.width = String(W);

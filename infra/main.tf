@@ -213,6 +213,24 @@ resource "aws_iam_role_policy" "instance" {
         Resource = "${aws_s3_bucket.backups.arn}/db/*"
       },
       {
+        # The Metrics tab's incidents (server/src/incidents.rs, Admins only):
+        # read the health monitor's records, and add a resolution beside one.
+        # Never the monitor's state, never a delete.
+        Sid    = "ReadIncidents"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.artifacts.arn}/health/incidents/*",
+          "${aws_s3_bucket.artifacts.arn}/health/resolutions/*",
+        ]
+      },
+      {
+        Sid      = "MarkIncidentsResolved"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.artifacts.arn}/health/resolutions/*"
+      },
+      {
         # The admin Metrics tab (server/src/metrics.rs): this instance's CPU
         # credits, every 5 minutes. Read-only, and inside the free tier.
         # GetMetricStatistics has no resource-level permissions, hence "*".

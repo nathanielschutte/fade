@@ -10,7 +10,11 @@
 //! the people chosen and their friends (depth 1) or friends of friends
 //! (depth 2).
 //!
-//! Only current friendships count: ended ones, requests, and groups never do.
+//! Only current friendships count: ended ones and requests never do.
+//!
+//! Group chats are added only when asked for (`?chats=1`): a node per chat,
+//! lined to its members who are on the map (`add_chats`). A chat's name is
+//! shown only to its members.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,8 +46,40 @@ pub struct Node {
     /// On a PowerUser's graph, what to call someone they don't know ("Someone K7Q2").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// "self", "friend" or "unknown" on a person's map; "seed" or "member" on the admin graph.
+    /// "self", "friend" or "unknown" on a person's map; "seed" or "member" on
+    /// the admin graph; "chat" for a group chat on either.
     pub kind: &'static str,
+    /// A group chat's name and id: only when the viewer is in it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<i64>,
+    /// A group chat's members, and how many of them aren't on the map.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub others: Option<usize>,
+}
+
+impl Node {
+    fn person(
+        key: String,
+        user_id: Option<i64>,
+        username: Option<String>,
+        kind: &'static str,
+    ) -> Self {
+        Node {
+            key,
+            user_id,
+            username,
+            alias: None,
+            kind,
+            name: None,
+            group_id: None,
+            size: None,
+            others: None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -63,6 +99,25 @@ async fn friendships(db: &SqlitePool) -> sqlx::Result<Vec<(i64, i64)>> {
         .await
 }
 
+/// Every current group membership, as (group id, user id).
+async fn memberships(db: &SqlitePool) -> sqlx::Result<Vec<(i64, i64)>> {
+    sqlx::query_as("SELECT group_id, user_id FROM group_members WHERE left_at IS NULL")
+        .fetch_all(db)
+        .await
+}
+
+/// The group chats `user` is in now, by id, with their names.
+async fn chats_of(db: &SqlitePool, user: i64) -> sqlx::Result<BTreeMap<i64, String>> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id = g.id
+         WHERE m.user_id = ? AND m.left_at IS NULL",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
 fn adjacency(edges: &[(i64, i64)]) -> BTreeMap<i64, BTreeSet<i64>> {
     let mut adj: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
     for &(a, b) in edges {
@@ -79,21 +134,11 @@ pub fn ego(me: i64, edges: &[(i64, i64)], shuffle: impl FnOnce(&mut Vec<BTreeSet
     let none = BTreeSet::new();
     let friends = adj.get(&me).unwrap_or(&none);
     let mut g = Graph::default();
-    g.nodes.push(Node {
-        key: user_key(me),
-        user_id: Some(me),
-        username: None,
-        alias: None,
-        kind: "self",
-    });
+    g.nodes
+        .push(Node::person(user_key(me), Some(me), None, "self"));
     for &f in friends {
-        g.nodes.push(Node {
-            key: user_key(f),
-            user_id: Some(f),
-            username: None,
-            alias: None,
-            kind: "friend",
-        });
+        g.nodes
+            .push(Node::person(user_key(f), Some(f), None, "friend"));
         g.edges.push([user_key(me), user_key(f)]);
     }
     // Friends who are friends with each other, and who each friend knows that `me` doesn't.
@@ -118,13 +163,8 @@ pub fn ego(me: i64, edges: &[(i64, i64)], shuffle: impl FnOnce(&mut Vec<BTreeSet
     unknown.sort(); // stable: equal sets keep their shuffled order
     for (i, knowers) in unknown.iter().enumerate() {
         let key = format!("?{}", i + 1);
-        g.nodes.push(Node {
-            key: key.clone(),
-            user_id: None,
-            username: None,
-            alias: None,
-            kind: "unknown",
-        });
+        g.nodes
+            .push(Node::person(key.clone(), None, None, "unknown"));
         for &f in knowers {
             g.edges.push([user_key(f), key.clone()]);
         }
@@ -167,17 +207,16 @@ pub fn scoped(
     };
     let mut g = Graph::default();
     for &id in &included {
-        g.nodes.push(Node {
-            key: user_key(id),
-            user_id: Some(id),
-            username: names.get(&id).map(|n| n.to_string()),
-            alias: None,
-            kind: if chosen.contains(&id) {
+        g.nodes.push(Node::person(
+            user_key(id),
+            Some(id),
+            names.get(&id).map(|n| n.to_string()),
+            if chosen.contains(&id) {
                 "seed"
             } else {
                 "member"
             },
-        });
+        ));
     }
     for &(a, b) in edges {
         if included.contains(&a) && included.contains(&b) {
@@ -185,6 +224,61 @@ pub fn scoped(
         }
     }
     g
+}
+
+/// Adds group chats: a node for each one with at least `min` people on the
+/// map, lined to them (`only_mine`: just the viewer's own chats). Members
+/// who aren't on the map are only counted, so a "?" is never tied to a chat,
+/// which could say who it is. The name and id go only to members (`mine`).
+/// `hide` (a PowerUser's secret and id) gives the chats they aren't in an
+/// alias for a key, like the people they don't know. Call before `obscure`.
+pub fn add_chats(
+    g: &mut Graph,
+    members: &[(i64, i64)],
+    mine: &BTreeMap<i64, String>,
+    only_mine: bool,
+    min: usize,
+    hide: Option<(&[u8], i64)>,
+) {
+    let on_map: BTreeMap<i64, String> = g
+        .nodes
+        .iter()
+        .filter_map(|n| Some((n.user_id?, n.key.clone())))
+        .collect();
+    let mut chats: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+    for &(chat, user) in members {
+        chats.entry(chat).or_default().push(user);
+    }
+    for (chat, people) in chats {
+        let name = mine.get(&chat);
+        if only_mine && name.is_none() {
+            continue;
+        }
+        let here: Vec<String> = people
+            .iter()
+            .filter_map(|u| on_map.get(u).cloned())
+            .collect();
+        if here.len() < min {
+            continue;
+        }
+        let key = match (name, hide) {
+            // (Negated: a chat's alias is never a person's.)
+            (None, Some((secret, viewer))) => {
+                format!("x{}", &crate::roles::alias(secret, viewer, -chat)[1..])
+            }
+            _ => format!("c{chat}"),
+        };
+        for person in &here {
+            g.edges.push([key.clone(), person.clone()]);
+        }
+        g.nodes.push(Node {
+            name: name.cloned(),
+            group_id: name.map(|_| chat),
+            size: Some(people.len()),
+            others: Some(people.len() - here.len()),
+            ..Node::person(key, None, None, "chat")
+        });
+    }
 }
 
 /// On a PowerUser's graph, everyone but them and their friends (`known`)
@@ -215,13 +309,25 @@ pub fn obscure(g: &mut Graph, viewer: i64, known: &BTreeSet<i64>, secret: &[u8])
     }
 }
 
-/// `GET /api/graph`: your own friend map.
+#[derive(Deserialize)]
+pub struct MapQuery {
+    /// `chats=1`: add your group chats.
+    chats: Option<u8>,
+}
+
+/// `GET /api/graph` (`?chats=1`): your own friend map.
 pub async fn mine(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
+    Query(q): Query<MapQuery>,
 ) -> AppResult<Json<Graph>> {
     let edges = friendships(&state.db).await?;
-    let g = ego(me.id, &edges, |v| v.shuffle(&mut rand::thread_rng()));
+    let mut g = ego(me.id, &edges, |v| v.shuffle(&mut rand::thread_rng()));
+    if q.chats == Some(1) {
+        let members = memberships(&state.db).await?;
+        let mine = chats_of(&state.db, me.id).await?;
+        add_chats(&mut g, &members, &mine, true, 1, None);
+    }
     tracing::debug!(user_id = me.id, nodes = g.nodes.len(), "friend map viewed");
     Ok(Json(g))
 }
@@ -234,6 +340,8 @@ pub struct AdminQuery {
     users: Option<String>,
     /// 1 (their friends) or 2 (friends of friends).
     depth: Option<u8>,
+    /// `chats=1`: add group chats with two or more people on the graph.
+    chats: Option<u8>,
 }
 
 /// `GET /api/admin/graph?all=1` or `?users=3,7&depth=1`: admins only.
@@ -297,6 +405,12 @@ pub async fn admin(
     let depth = q.depth.unwrap_or(1).clamp(1, 2);
     let edges = friendships(&state.db).await?;
     let mut g = scoped(&edges, &people, seeds.as_deref(), depth);
+    if q.chats == Some(1) {
+        let members = memberships(&state.db).await?;
+        let mine = chats_of(&state.db, me.id).await?;
+        let hide = power.then_some((secret.as_slice(), me.id));
+        add_chats(&mut g, &members, &mine, false, 2, hide);
+    }
     if power {
         obscure(&mut g, me.id, &known, &secret);
     }
@@ -460,6 +574,132 @@ mod tests {
             g.nodes.iter().any(|n| n.username.as_deref() == Some("p2")),
             "friends keep their names"
         );
+    }
+
+    #[test]
+    fn group_chats_on_a_persons_map() {
+        // 1 knows 2 and 3; 2 knows 5 (a ? on 1's map).
+        // Chat 10: 1, 2, 5. Chat 11: 2, 3 (1 isn't in it). Chat 12: 1 alone with 6.
+        let edges = [(1, 2), (1, 3), (2, 5)];
+        let members = [
+            (10, 1),
+            (10, 2),
+            (10, 5),
+            (11, 2),
+            (11, 3),
+            (12, 1),
+            (12, 6),
+        ];
+        let mine: BTreeMap<i64, String> = [(10, "trip".to_owned()), (12, "us".to_owned())].into();
+        let mut g = ego(1, &edges, |_| {});
+        let before = g.edges.len();
+        add_chats(&mut g, &members, &mine, true, 1, None);
+        let chats: Vec<&Node> = g.nodes.iter().filter(|n| n.kind == "chat").collect();
+        assert_eq!(chats.len(), 2, "only my own chats");
+        assert_eq!(
+            (
+                chats[0].key.as_str(),
+                chats[0].name.as_deref(),
+                chats[0].group_id,
+                chats[0].size,
+                chats[0].others
+            ),
+            ("c10", Some("trip"), Some(10), Some(3), Some(1))
+        );
+        assert!(has_edge(&g, "c10", "u1") && has_edge(&g, "c10", "u2"));
+        // 5 is in the chat and is the ?: never lined to it, only counted.
+        assert!(
+            !g.edges
+                .iter()
+                .any(|[a, b]| (a == "c10" && b.starts_with('?'))
+                    || (b == "c10" && a.starts_with('?')))
+        );
+        assert_eq!((chats[1].key.as_str(), chats[1].others), ("c12", Some(1)));
+        assert_eq!(g.edges.len(), before + 3);
+        let json = serde_json::to_string(&g).unwrap();
+        assert!(!json.contains("\"c11\""), "a chat I'm not in: {json}");
+    }
+
+    #[test]
+    fn group_chats_on_the_admin_graph() {
+        let people: Vec<(i64, String)> = (1..=4).map(|i| (i, format!("p{i}"))).collect();
+        let edges = [(1, 2), (2, 3), (3, 4)];
+        // Chat 20: 3, 4 (viewer 1 isn't in it). Chat 21: 1, 2. Chat 22: 4 and someone off the graph.
+        let members = [(20, 3), (20, 4), (21, 1), (21, 2), (22, 4), (22, 9)];
+        let mine: BTreeMap<i64, String> = [(21, "ours".to_owned())].into();
+
+        // An Admin: chats with two people on the graph; names only of their own.
+        let mut g = scoped(&edges, &people, None, 1);
+        add_chats(&mut g, &members, &mine, false, 2, None);
+        let chats: Vec<&Node> = g.nodes.iter().filter(|n| n.kind == "chat").collect();
+        assert_eq!(chats.len(), 2);
+        assert_eq!(
+            (
+                chats[0].key.as_str(),
+                chats[0].name.as_deref(),
+                chats[0].group_id
+            ),
+            ("c20", None, None)
+        );
+        assert_eq!(
+            (chats[1].key.as_str(), chats[1].name.as_deref()),
+            ("c21", Some("ours"))
+        );
+        assert!(has_edge(&g, "c20", "u3") && has_edge(&g, "c20", "u4"));
+
+        // A PowerUser (1, friends with 2): chats they aren't in are aliased, and so are the people.
+        let mut g = scoped(&edges, &people, None, 1);
+        add_chats(&mut g, &members, &mine, false, 2, Some((&[9u8; 32], 1)));
+        obscure(&mut g, 1, &[1, 2].into(), &[9u8; 32]);
+        let json = serde_json::to_string(&g).unwrap();
+        for hidden in ["\"c20\"", "\"u3\"", "\"u4\"", "p3", "p4"] {
+            assert!(!json.contains(hidden), "{hidden} leaked: {json}");
+        }
+        let theirs = g
+            .nodes
+            .iter()
+            .find(|n| n.kind == "chat" && n.name.is_none())
+            .unwrap();
+        assert!(theirs.key.starts_with('x') && theirs.group_id.is_none());
+        let strangers: Vec<&str> = g
+            .nodes
+            .iter()
+            .filter(|n| n.alias.is_some())
+            .map(|n| n.key.as_str())
+            .collect();
+        assert!(
+            strangers.iter().all(|k| has_edge(&g, &theirs.key, k)),
+            "lines follow the aliases"
+        );
+        assert!(g
+            .nodes
+            .iter()
+            .any(|n| n.key == "c21" && n.name.as_deref() == Some("ours")));
+    }
+
+    #[tokio::test]
+    async fn only_current_memberships_count() {
+        let db = temp_db().await;
+        for (id, name) in [(1, "ana"), (2, "ben")] {
+            sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (?, ?, 'h', 'k', 'w', 0)")
+                .bind(id).bind(name).execute(&db).await.unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO groups (id, name, created_by, created_at) VALUES (7, 'trip', 1, 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO group_members (group_id, user_id, role, joined_at, left_at) VALUES (7, 1, 'owner', 0, NULL), (7, 2, 'member', 0, 5)")
+            .execute(&db)
+            .await
+            .unwrap();
+        assert_eq!(memberships(&db).await.unwrap(), vec![(7, 1)]);
+        assert_eq!(
+            chats_of(&db, 1).await.unwrap(),
+            BTreeMap::from([(7, "trip".to_owned())])
+        );
+        assert!(chats_of(&db, 2).await.unwrap().is_empty(), "left");
     }
 
     #[tokio::test]

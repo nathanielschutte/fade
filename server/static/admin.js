@@ -1,4 +1,4 @@
-import { drawGraph, groupLetter, widthChanged } from "/graph-view.js";
+import { chatName, chatSummary, counts, drawGraph, groupLetter, isChat, widthChanged } from "/graph-view.js";
 
 // napsack admin panel. Reads /api/admin/stats with the normal session token;
 // the server decides who's an admin. Shows counts only, never content.
@@ -636,11 +636,11 @@ const STATUS = {
   red: { label: "In the red", icon: "M8.5 8.5l7 7M15.5 8.5l-7 7" },
 };
 
-function statusBadge(level) {
+function statusBadge(level, label = null) {
   const s = STATUS[level] || STATUS.ok;
   const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
   icon.append(svg("circle", { cx: 12, cy: 12, r: 10 }), svg("path", { d: s.icon }));
-  return el("span", { class: `mstatus mstatus-${level}` }, icon, s.label);
+  return el("span", { class: `mstatus mstatus-${level}` }, icon, label ?? s.label);
 }
 
 function hostLabel(h) {
@@ -799,6 +799,7 @@ async function loadMetrics() {
     $("#message").hidden = true;
     $("#admin").hidden = false;
     renderMetrics();
+    loadIncidents();
   } finally {
     metrics.busy = false;
     if (metrics.again) {
@@ -820,12 +821,126 @@ function pickRange(hours) {
 $("#m-host").addEventListener("change", (e) => { metrics.host = e.target.value; renderMetrics(); });
 let resizeTimer = null;
 
+// ---------- incidents (Admins only; plan X18, docs/health-monitor.md) ----------
+// What the health monitor found and did, from its records in S3: the last
+// 7 days, open ones first. An Admin can mark one resolved; the monitor's own
+// record is never changed.
+
+const incidents = { data: null, confirm: null, loadedAt: 0 };
+// state → [badge level, words]
+const INCIDENT_STATES = {
+  open: ["red", "Open"],
+  needs_human: ["red", "Needs a person"],
+  recovered: ["ok", "Recovered"],
+  resolved: ["ok", "Marked resolved"],
+};
+const agoIso = (iso) => (iso ? ago(Date.parse(iso) / 1000) : "");
+const clock = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+
+function lasted(a, b) {
+  const s = Math.max(0, (Date.parse(b) - Date.parse(a)) / 1000);
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 86400) return `${Math.round(s / 360) / 10} h`;
+  return `${Math.round(s / 8640) / 10} days`;
+}
+
+async function loadIncidents(force = false) {
+  const panel = $("#m-incidents-panel");
+  panel.hidden = viewer?.role !== "admin";
+  if (panel.hidden) return;
+  // The Metrics tab refreshes often; the records change at most every 5 minutes.
+  if (!force && incidents.data && Date.now() - incidents.loadedAt < 60_000) return;
+  try {
+    incidents.data = await api("/admin/incidents");
+    incidents.loadedAt = Date.now();
+  } catch (err) {
+    $("#m-incidents").replaceChildren(el("p", { class: "muted", text: `Couldn't load incidents: ${err.message}` }));
+    return;
+  }
+  renderIncidents();
+}
+
+function renderIncidents() {
+  const data = incidents.data;
+  if (!data) return;
+  const host = $("#m-incidents");
+  if (!data.available) {
+    host.replaceChildren(el("p", { class: "muted", text: "There's no health monitor here: it watches the server on AWS." }));
+    return;
+  }
+  if (data.error) {
+    host.replaceChildren(el("p", { class: "muted", text: data.error }));
+    return;
+  }
+  const list = [...data.incidents].sort((a, b) =>
+    Number(["open", "needs_human"].includes(b.state)) - Number(["open", "needs_human"].includes(a.state)) || (a.id < b.id ? 1 : -1));
+  if (!list.length) {
+    host.replaceChildren(el("p", { class: "muted", text: "No incidents in the last 7 days. The monitor checks every 5 minutes." }));
+    return;
+  }
+  host.replaceChildren(el("ul", { class: "incidents" }, list.map(incidentRow)));
+}
+
+function incidentRow(inc) {
+  const [level, words] = INCIDENT_STATES[inc.state] ?? INCIDENT_STATES.open;
+  const end = inc.closed_at || inc.resolved?.at;
+  const facts = [
+    `Opened ${clock(inc.opened_at)}`,
+    end ? `lasted ${lasted(inc.opened_at, end)}` : `${agoIso(inc.opened_at)}, still open`,
+    `${inc.steps} ${inc.steps === 1 ? "repair step" : "repair steps"}`,
+  ];
+  if (inc.resolved) facts.push(`marked resolved by ${inc.resolved.by} ${agoIso(inc.resolved.at)}`);
+  const unresolved = ["open", "needs_human"].includes(inc.state);
+  const action = unresolved
+    ? el("button", { type: "button", class: "reset-button", onclick: (e) => resolveIncident(e.currentTarget, inc) },
+      incidents.confirm === inc.id ? "Tap again: mark resolved" : "Mark resolved")
+    : null;
+  return el("li", { class: `incident incident-${inc.state}` },
+    el("div", { class: "incident-head" }, statusBadge(level, words), el("span", { class: "panel-note", text: facts.join(" · ") }), action),
+    el("details", { class: "incident-detail" },
+      el("summary", { text: "What happened" }),
+      el("ol", { class: "incident-timeline" }, inc.timeline.map((e) => el("li", {},
+        el("span", { class: "incident-time", text: clock(e.at) }),
+        el("span", { text: timelineText(e) }))))));
+}
+
+/** One run of the monitor, in words. */
+function timelineText(e) {
+  const parts = [];
+  if (e.healthy === true) parts.push("Healthy again");
+  else if (e.error) parts.push(`Unhealthy: ${e.error}`);
+  if (e.instance) {
+    const i = e.instance;
+    parts.push(`server ${i.state}${i.instance_status ? `, checks ${i.system_status}/${i.instance_status}` : ""}${i.ssm ? `, SSM ${i.ssm}` : ""}`);
+  }
+  if (e.action) parts.push(`tried to ${e.action.name}: ${e.action.result ?? "no answer"}`);
+  if (e.note && !e.action) parts.push(e.note);
+  return parts.join(". ");
+}
+
+async function resolveIncident(btn, inc) {
+  // Two taps, like taking away a role.
+  if (incidents.confirm !== inc.id) {
+    incidents.confirm = inc.id;
+    btn.textContent = "Tap again: mark resolved";
+    return;
+  }
+  incidents.confirm = null;
+  btn.disabled = true;
+  try {
+    await api(`/admin/incidents/${encodeURIComponent(inc.id)}/resolve`, "POST");
+  } catch (err) {
+    $("#m-incidents-note").textContent = `Couldn't mark it resolved: ${err.message}`;
+  }
+  await loadIncidents(true);
+}
+
 // ---------- friend graph (docs/friend-graph.md) ----------
 // Everyone, or chosen people (you by default) with their friends or friends
 // of friends. Real usernames: this is what the server holds. The drawing is
 // the same module as the app's own friend map.
 
-const graphView = { all: false, depth: 1, users: null, data: null, busy: false, again: false };
+const graphView = { all: false, depth: 1, chats: false, users: null, data: null, busy: false, again: false };
 
 async function loadGraph() {
   if (graphView.busy) {
@@ -837,6 +952,7 @@ async function loadGraph() {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) return fail("Sign in first.");
     const qs = new URLSearchParams();
+    if (graphView.chats) qs.set("chats", "1");
     if (graphView.all) qs.set("all", "1");
     else {
       if (graphView.users?.size) qs.set("users", [...graphView.users].join(","));
@@ -872,6 +988,7 @@ async function loadGraph() {
 function renderGraphControls() {
   const people = graphView.data?.people ?? [];
   $("#g-all").checked = graphView.all;
+  $("#g-chats").checked = graphView.chats;
   $("#g-depth").hidden = graphView.all;
   $("#g-people").hidden = graphView.all;
   for (const b of document.querySelectorAll("#g-depth .segment")) {
@@ -908,9 +1025,9 @@ function drawAdminGraph() {
   if (!data || currentTab() !== "graph") return;
   const g = data.graph;
   const seeds = g.nodes.filter((n) => n.kind === "seed");
-  $("#g-note").textContent = data.all
-    ? `Everyone: ${g.nodes.length} people, ${g.edges.length} friendships`
-    : `${g.nodes.length} people, ${g.edges.length} friendships`;
+  const { people, friendships, chats } = counts(g);
+  const sum = `${people} people, ${friendships} friendships${chats ? `, ${chats} group ${chats === 1 ? "chat" : "chats"}` : ""}`;
+  $("#g-note").textContent = data.all ? `Everyone: ${sum}` : sum;
   if (data.anonymous) $("#g-note").textContent += ". People you aren't friends with are anonymous";
   if (!g.nodes.length) {
     $("#g-host").replaceChildren(el("p", { class: "muted", text: "Choose someone to see their friends." }));
@@ -920,8 +1037,11 @@ function drawAdminGraph() {
     // One person: their map, with them in the middle (and out of the grouping).
     center: !data.all && seeds.length === 1 ? seeds[0].key : null,
     label: personLabel,
-    title: `Friend graph: ${g.nodes.length} people, ${g.edges.length} friendships.`,
-    describe: (n, { neighbors, group }) => [
+    title: `Friend graph: ${sum}.`,
+    describe: (n, { neighbors, group }) => isChat(n) ? [
+      el("b", { text: chatName(n) }),
+      ` · group chat · ${chatSummary(n)}: ${neighbors.map(personLabel).filter(Boolean).join(", ")}${n.others ? ` and ${n.others} more` : ""}.`,
+    ] : [
       el("b", { text: personLabel(n) }),
       ` · ${neighbors.length} ${neighbors.length === 1 ? "friend" : "friends"} shown${group >= 0 ? ` · Group ${groupLetter(group)}` : ""}. `,
       el("button", {
@@ -933,6 +1053,7 @@ function drawAdminGraph() {
 }
 
 $("#g-all").addEventListener("change", (e) => { graphView.all = e.target.checked; loadGraph(); });
+$("#g-chats").addEventListener("change", (e) => { graphView.chats = e.target.checked; loadGraph(); });
 for (const b of document.querySelectorAll("#g-depth .segment")) {
   b.addEventListener("click", () => { graphView.depth = Number(b.dataset.depth); loadGraph(); });
 }

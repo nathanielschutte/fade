@@ -12,11 +12,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 0d | [Staging in AWS](#i8-staging) | Infrastructure | In progress | Nate (2026-10-23); design in staging.md |
-| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | Needs decision | Planned in email.md: iCloud+ custom domain recommended; Nate decides |
-| 0f | [Group chats on the friend map](#x16-group-chats-on-the-friend-map) | Features | Up next | Nate (2026-10-23) |
-| 0g | [A better group badge](#x17-a-better-group-badge-in-the-chat-list) | Features | Up next | Nate (2026-10-23); options for Nate to pick |
-| 0h | [Incidents on the Metrics page](#x18-incidents-on-the-metrics-page) | Features | Up next | Nate (2026-10-23); Admin only |
-| 0i | [Low CPU credits is a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm) | Features | Up next | Nate (2026-10-23) |
+| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -71,6 +67,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
 | [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
+| [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
@@ -368,12 +365,17 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X17. A better group badge in the chat list
 - Requested (2026-10-23), queued: the badge's position on the group picture is right, the two-people icon isn't. Try other icons, and a subtle difference in how a group's row is drawn, so groups are distinct at a glance without being loud. Show options for Nate to pick.
+- Options shown (seven, on the real list at phone width): badges with two people, speech bubbles, three dots, or the member count; rounded-square pictures with or without a badge; the count by the name. **Nate picked F**: a group's picture is a rounded square (everywhere, not just the list), and there's no badge. The green online dot stays the only mark on a friend's picture.
 
 #### X18. Incidents on the Metrics page
 - Requested (2026-10-23), queued: the health monitor's S3 incident records (`health/incidents/`, [health-monitor.md](health-monitor.md)) are the source of truth. The Metrics tab shows the last 7 days of incident events to Admins only (not PowerUsers): what failed, the evidence, each repair step, and how it ended. Incidents that resolved in the last 7 days show too, marked resolved, and an Admin can mark an open one resolved (written back to its record, never deleting it).
 
 #### X19. Low CPU credits is a warning, not an alarm
 - Requested (2026-10-23), queued: the Metrics tab shows low CPU credits in red, as urgent. It should be a warning (amber). A new or replaced instance starts with few credits and builds them up while idle, so a low balance soon after boot is expected. Red only if credits are near zero *and* the CPU is pinned at its baseline (actually throttled); check the AWS rule for launch credits on t4g standard and say "building up after a restart" when the instance is young.
+
+#### X20. Long pic captions are cut off
+- Bug report from a friend (2026-10-23), queued: a caption longer than one line doesn't wrap; the rest is cut off. There's no visible character limit either. Check the caption box while writing (on the pic editor) and where it's shown (opening a pic, direct and group): wrap it, and either show a limit as you near it or make sure the server's limit is generous and enforced with a plain error. Test at phone width (390px).
+- Cause: the caption box was a one-line input, so longer text scrolled sideways inside it, and its 200-character limit (the server's for old group pics, and the sealed format's) was silent. Fix: a box that wraps and grows to four lines, then scrolls; a `153/200` count from 160 characters; Enter still sends, and pasted line breaks become spaces. The viewer already wrapped.
 
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).

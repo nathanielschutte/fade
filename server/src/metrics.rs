@@ -126,6 +126,11 @@ pub struct S3Stored {
 }
 
 impl Metrics {
+    /// The AWS client, once the sampler has found it (None off EC2).
+    pub fn aws(&self) -> Option<&Aws> {
+        self.aws.get().and_then(Option::as_ref)
+    }
+
     /// Opens (or creates) the metrics store. If it can't, metrics still work,
     /// just without history across restarts.
     pub async fn open(path: &std::path::Path, retention_hours: i64) -> Self {
@@ -980,16 +985,32 @@ fn assess(recent: &[Point], info: &HostInfo, credits: Option<&Credits>) -> (Leve
     });
     match credits.and_then(|c| c.points.last()) {
         // Burstable: what matters is the credit balance, not CPU %.
-        Some(&(_, balance, _)) => {
-            // Lower is worse, so compare the negative: watch under a third of
-            // a full bank (50 of a t4g.nano's 144), red under a tenth.
+        Some(&(at, balance, _)) => {
+            // A low balance alone is a warning, not an alarm: a new or
+            // replaced instance starts near zero and builds up while idle.
+            // It's red only when it's nearly out and the CPU is held at the
+            // baseline, which is when people feel it.
             let full = credit_max(info);
-            flag(r, Some(-balance), -full / 3.0, -full / 10.0, &|x| {
-                format!(
-                    "CPU credits are low ({:.0} left); at zero the server slows to its baseline (or, in unlimited mode, pays for extra CPU)",
-                    -x
-                )
-            });
+            let baseline = size_of(info).map_or(5.0, |s| s.baseline_pct);
+            let hour_ago = credits
+                .and_then(|c| c.points.iter().rev().find(|p| p.0 <= at - 3600))
+                .map(|p| p.1);
+            let rising = hour_ago.is_some_and(|before| balance > before + 1.0);
+            if balance < full / 10.0 && avg("cpu").is_some_and(|cpu| cpu >= baseline * 0.9) {
+                r.push((
+                    Level::Red,
+                    format!("Out of CPU credits ({balance:.0} left): the CPU is held to its {baseline:.0}% baseline, so the server is slow"),
+                ));
+            } else if balance < full / 3.0 {
+                r.push((
+                    Level::Watch,
+                    if rising {
+                        format!("CPU credits are building up ({balance:.0} of {full:.0}), as after a restart")
+                    } else {
+                        format!("CPU credits are low ({balance:.0} left); at zero the server slows to its baseline (or, in unlimited mode, pays for extra CPU)")
+                    },
+                ));
+            }
             let day_ago = now() - 86_400;
             let charged: f64 = credits
                 .map(|c| {
@@ -1497,12 +1518,29 @@ mod tests {
             updated_at: now(),
         };
         assert_eq!(assess(&busy, &info, Some(&low)).0, Level::Watch);
+        // Nearly out but idle (just booted): a warning that says it's filling.
+        let filling = Credits {
+            points: vec![(now() - 3600, 2.0, 0.0), (now(), 10.0, 0.0)],
+            updated_at: now(),
+        };
+        assert_eq!(
+            assess(&calm, &info, Some(&filling)),
+            (
+                Level::Watch,
+                vec!["CPU credits are building up (10 of 144), as after a restart".to_owned()]
+            )
+        );
+        // Nearly out and held at the baseline: that's slow for people, so red.
+        let at_baseline: Vec<Point> = (0..60).map(|i| point(i * 10, &[("cpu", 5.0)])).collect();
+        let (level, reasons) = assess(&at_baseline, &info, Some(&filling));
+        assert_eq!(level, Level::Red);
+        assert!(reasons[0].starts_with("Out of CPU credits"), "{reasons:?}");
         let paying = Credits {
             points: vec![(now() - 600, 0.0, 12.0), (now(), 0.0, 3.0)],
             updated_at: now(),
         };
         let (level, reasons) = assess(&calm, &info, Some(&paying));
-        assert_eq!(level, Level::Red);
+        assert_eq!(level, Level::Watch);
         assert!(
             reasons.contains(&"Paid for 15 extra CPU credits in the last day".to_owned()),
             "{reasons:?}"

@@ -766,7 +766,8 @@ def check_roles(tag):
     # A User: none of it exists.
     for method, path in (("GET", "/admin/stats"), ("GET", "/admin/metrics"), ("GET", "/admin/graph"), ("GET", "/admin/roles"),
                          ("GET", "/admin/logs"), ("POST", f"/admin/roles/{uid['friend']}"), ("DELETE", f"/admin/roles/{uid['friend']}"),
-                         ("POST", "/admin/roles/reload"), ("POST", f"/admin/users/{uid['friend']}/reset-code")):
+                         ("POST", "/admin/roles/reload"), ("POST", f"/admin/users/{uid['friend']}/reset-code"),
+                         ("GET", "/admin/incidents"), ("POST", "/admin/incidents/20261023T171000Z/resolve")):
         ok(call(method, path, tok["user"]), 404)
 
     # An Admin makes someone a PowerUser (once).
@@ -790,6 +791,9 @@ def check_roles(tag):
     ok(call("GET", "/admin/logs", P), 404)
     ok(call("POST", f"/admin/users/{uid['friend']}/reset-code", P), 404)
     ok(call("POST", "/admin/roles/reload", P), 404)
+    # No incidents either (Admins only, X18).
+    ok(call("GET", "/admin/incidents", P), 404)
+    ok(call("POST", "/admin/incidents/20261023T171000Z/resolve", P), 404)
 
     # The graph: friends by name; everyone else anonymous, in every form.
     for query in ("?all=1", f"?users={uid['power']}&depth=2", f"?users={uid['friend']}&depth=2"):
@@ -826,6 +830,12 @@ def check_roles(tag):
     ok(call("DELETE", f"/admin/roles/{uid['power']}", adm))
     ok(call("GET", "/admin/stats", P), 404)                                       # back to User
     ok(call("POST", "/admin/roles/reload", adm), 400)                             # no settings parameter here
+    # Incidents: Admins only. Locally there's no monitor; ids are checked before anything else.
+    inc = ok(call("GET", "/admin/incidents", adm)).json()
+    if not REMOTE:
+        assert inc == {"available": False, "incidents": []}, inc
+    ok(call("POST", "/admin/incidents/..%2F..%2Fstate/resolve", adm), 400)
+    ok(call("POST", "/admin/incidents/not-an-id/resolve", adm), 400)
     if DB:
         n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_roles WHERE user_id IN (?, ?, ?)", (uid["power"], uid["friend"], uid["user"])).fetchone()[0]
         assert n == 3, f"grants are marked ended, never deleted: {n}"
@@ -871,7 +881,26 @@ def check_graph(tag):
     assert len(everyone["people"]) >= 6 and all(set(p) == {"id", "username"} for p in everyone["people"])
     ok(call("GET", "/admin/graph?users=1,x", adm), 400)
     ok(call("GET", "/admin/graph?users=" + ",".join(["1"] * 51), adm), 400)
-    print("  friend map: your own map, anonymous ?s, admin graph for admins only")
+
+    # Group chats, only when asked for. c's chat has a, b, and d (d is a's "?").
+    assert "chat" not in json.dumps(g), "off by default"
+    trip = ok(call("POST", "/groups", tok["c"], json={"name": f"trip {tag}", "member_ids": [uid["a"], uid["b"], uid["d"]]})).json()
+    side = ok(call("POST", "/groups", tok["c"], json={"name": f"side {tag}", "member_ids": [uid["d"]]})).json()
+    mine = ok(call("GET", "/graph?chats=1", tok["a"])).json()
+    chats = [n for n in mine["nodes"] if n["kind"] == "chat"]
+    assert len(chats) == 1, chats  # not the chat a isn't in
+    chat = chats[0]
+    assert (chat["name"], chat["group_id"], chat["size"], chat["others"]) == (f"trip {tag}", trip["id"], 4, 1), chat
+    lined = {e[0] if e[1] == chat["key"] else e[1] for e in mine["edges"] if chat["key"] in e}
+    assert lined == {k("a"), k("b"), k("c")}, lined  # never the ? (d)
+    assert f"side {tag}" not in json.dumps(mine)
+    # The System graph: chats with two people on it; names only for members (the admin isn't in these).
+    sys = ok(call("GET", f"/admin/graph?users={uid['c']}&depth=1&chats=1", adm)).json()
+    found = {n["key"]: n for n in sys["graph"]["nodes"] if n["kind"] == "chat"}
+    assert f"c{trip['id']}" in found and f"c{side['id']}" in found, found
+    assert all("name" not in n and "group_id" not in n for n in found.values()), found
+    assert f"trip {tag}" not in json.dumps(sys) and f"side {tag}" not in json.dumps(sys)
+    print("  friend map: your own map, anonymous ?s, group chats (never tied to a ?), admin graph for admins only")
 
 async def check_late_joiner(tag):
     """Someone added to a group doesn't get messages from before they joined,
@@ -913,7 +942,8 @@ def check_metrics(not_admin):
     for _ in range(40):
         data = ok(call("GET", "/admin/metrics?hours=1", adm)).json()
         host = data["hosts"][0] if data["hosts"] else None
-        if host and host["latest"] and "requests" in host["latest"]:
+        # (A reading taken just after a restart can come before any request.)
+        if host and host["latest"] and host["latest"].get("requests", [0, 0, 0])[1] > 0:
             break
         time.sleep(1)
     assert data["retention_hours"] == 72 and data["hours"] == 1 and data["interval_secs"] == 10, data
@@ -946,14 +976,15 @@ def check_guard(tag):
     assert requests.get(BASE + "/", headers={"User-Agent": "Mozilla/5.0 Nuclei - Open-source project"}).status_code == 403
 
     # Probing for files napsack never has: three strikes, banned for an hour, that address only.
+    # (Not remotely: Caddy sets the real address, and staging exempts the tester's.)
     prober = {"X-Forwarded-For": f"203.0.113.{int(tag, 16) % 200 + 1}"}
     bystander = {"X-Forwarded-For": f"198.51.100.{int(tag, 16) % 200 + 1}"}
-    assert requests.get(BASE + "/api/config", headers=prober).status_code == 200
     for path in ("/.env", "/wp-login.php", "/.git/config"):
         assert requests.get(BASE + path, headers=prober).status_code == 404, path
-    assert requests.get(BASE + "/api/config", headers=prober).status_code == 403, "banned"
-    assert requests.get(BASE + "/", headers=prober).status_code == 403
-    assert requests.get(BASE + "/api/config", headers=bystander).status_code == 200, "others unaffected"
+    if not REMOTE:
+        assert requests.get(BASE + "/api/config", headers=prober).status_code == 403, "banned"
+        assert requests.get(BASE + "/", headers=prober).status_code == 403
+        assert requests.get(BASE + "/api/config", headers=bystander).status_code == 200, "others unaffected"
 
     # Sessions per person: a fifth sign-in quietly ends the oldest.
     rs = ok(register(f"sess_{tag}")).json()
@@ -964,7 +995,7 @@ def check_guard(tag):
     for t in tokens[1:]:
         ok(call("GET", "/me", t))
     assert ok(call("GET", "/me/security", tokens[-1])).json()["active_sessions"] == 4
-    print("  guard: robots, scanners refused, probers banned, 4 sessions per person")
+    print(f"  guard: robots, scanners refused, {'probers banned (local only)' if REMOTE else 'probers banned'}, 4 sessions per person")
 
 
 def check_invites(tag):
@@ -1023,6 +1054,10 @@ def check_rate_limits(tag):
     assert r.status_code == 429, ("even the right password waits out the lock", r.status_code)
     # Behind Caddy the address comes from X-Forwarded-For; a local test can
     # stand in for a remote one by sending it (production ignores spoofed ones).
+    # (Not remotely: Caddy sets the real address, and staging exempts the tester's.)
+    if REMOTE:
+        print("  rate limits: 10 failed sign-ins lock the account (per-address limit: local only)")
+        return
     remote = {"X-Forwarded-For": f"203.0.113.{int(tag[:2], 16) % 250 + 1}"}
     # A different username each time, so only the per-address limit applies.
     codes = [call("POST", "/auth/login", headers=remote, json={"username": f"nobody{i}_{tag}", "auth_key": AUTH_KEY}).status_code

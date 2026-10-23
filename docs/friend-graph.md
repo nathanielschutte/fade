@@ -6,6 +6,8 @@ Status: **built (0.27.0).** Requested by Nate on 2026-10-23: a page that graphs 
 
 **Friend map** (in the app, from the Friends sheet): you in the middle, your friends around you, a line between two friends who are friends with each other, and **?** for people your friends know that you don't. One ? per such person, joined to each of your friends who knows them. Friends who know each other settle into clusters, and each cluster gets an outlined region and a letter ("Group A"), so your circles of friends (school, work, family) show as separate islands. Tapping a friend says who they are, how many of your friends they know, and how many people they know that you don't.
 
+**Group chats** (X16; a "Group chats" switch on both, off by default, remembered on that device): each group chat becomes a small hollow square on dotted lines to its members on the map. Chats are left out of the clusters (those are about who knows who) but do pull their members together in the layout. With the switch off, the map is exactly as before.
+
 **Admin graph** (`/admin#graph`, admins only):
 - A switch between **everyone** (every account and every friendship) and **chosen people** (one or more; you by default).
 - For chosen people, a depth: their friends (1) or friends of friends too (2).
@@ -17,7 +19,9 @@ The server already knows the friendship graph (it's metadata, like who's in whic
 
 - **Your map shows only what you already know, plus anonymous structure.** You see your friends (you can already see them in your chat list) and which of them are friends with each other. A ? carries no id, username, display name, or picture: in the response it's just `?1`, `?2`, ... with the order shuffled, so nothing hints at who it is or when they joined. What it does reveal is that a friend has friends you don't know, and when two of your friends share the same one. Nate asked for exactly this.
 - **Only your own map.** `GET /api/graph` takes no parameters; there's no way to ask for someone else's.
-- **Only current friendships**, and ? only for people at distance two through a current friend: ended friendships, pending requests, group co-membership, and blocked people never appear.
+- **Only current friendships**, and ? only for people at distance two through a current friend: ended friendships, pending requests, and blocked people never appear. Group chats appear only with the switch on (above), and only current memberships.
+- **Group chats on your map are only yours**: the chats you're in now, lined to you and the friends in them. Members who aren't your friends are only a count, never a line: a chat lined to a ? would tell you who that ? is (you can see a chat's members). Leaving a chat takes it off.
+- **A chat's name goes only to its members**, Admins included: on the System graph a chat you're not in is "A group chat" with a member count. It shows only when two or more people in it are on the graph. For a PowerUser it also gets an alias key, like the people they don't know.
 - **The admin graph is admins-only** (404 otherwise, like the rest of the panel) and shows what the server holds: usernames and friendships. No message content, nothing decrypted. The panel's "counts only, never content" rule still holds.
 
 ## The module
@@ -79,12 +83,12 @@ Each cluster's region is its nodes' **convex hull** (smallest enclosing polygon)
 
 ## API
 
-- `GET /api/graph`: your friend map. Signed in; no parameters.
-- `GET /api/admin/graph?all=1` or `?users=3,7&depth=1|2`: the admin graph. Plus `people` (every account's id and username) for the picker. Admins only; at most 50 people per request.
+- `GET /api/graph`: your friend map. Signed in. `?chats=1` adds your group chats.
+- `GET /api/admin/graph?all=1` or `?users=3,7&depth=1|2`: the admin graph. Plus `people` (every account's id and username) for the picker. Admins only; at most 50 people per request. `&chats=1` adds group chats.
 
 ## Tests
 
-- **Rust** (`graph.rs`): a person's map has exactly their friends, the edges among them, and one ? per distinct friend of a friend; no ? carries an id or name; ended friendships don't count; admin scopes at depth 1 and 2, and everyone.
+- **Rust** (`graph.rs`): a person's map has exactly their friends, the edges among them, and one ? per distinct friend of a friend; no ? carries an id or name; ended friendships don't count; admin scopes at depth 1 and 2, and everyone. Group chats: only your own on your map, never lined to a ?; names only for members; aliased for PowerUsers; only current memberships.
 - **Node** (`shared/graph/graph.test.js`, run by `scripts/test.sh`): two cliques joined by one edge make two clusters; leaving the center out of clustering; determinism; the layout is finite, keeps the pinned node fixed, and puts separate clusters apart; hulls.
 - **Smoke test**: both endpoints, access rules, and that ?s carry no identifying fields.
 - **Browser** (`tests/e2e/test_graph.py`): a person's map with mutual friends and a ?, tapping a friend, the list view, the admin switch and people picker, phone layout.

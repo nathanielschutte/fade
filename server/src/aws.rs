@@ -1,6 +1,7 @@
-//! The few AWS calls the server makes, all for the admin panel's Metrics tab:
-//! which instance this is (instance metadata), its CPU credits (CloudWatch),
-//! and what the app has cost (Cost Explorer). Requests are signed here with
+//! The few AWS calls the server makes, all for the System pages: which
+//! instance this is (instance metadata), its CPU credits (CloudWatch), what
+//! the app has cost (Cost Explorer), the admin list (SSM), and the health
+//! monitor's incident records (S3, incidents.rs). Requests are signed here with
 //! Signature Version 4 rather than pulling in the AWS SDK.
 //!
 //! Every address is fixed in this file; nothing from a request ever chooses
@@ -122,7 +123,26 @@ impl Aws {
         headers: &[(&str, &str)],
         body: Vec<u8>,
     ) -> anyhow::Result<String> {
+        self.call_at(method, host, "/", service, region, query, headers, body)
+            .await
+    }
+
+    /// `call`, for a path other than "/" (S3 object keys). `path` must
+    /// already be URI-encoded segment by segment (`s3_path`).
+    #[allow(clippy::too_many_arguments)]
+    async fn call_at(
+        &self,
+        method: reqwest::Method,
+        host: &str,
+        path: &str,
+        service: &str,
+        region: &str,
+        query: &[(String, String)],
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> anyhow::Result<String> {
         let creds = self.creds().await?;
+        let payload_hash = hex(&Sha256::digest(&body));
         let (amz_date, _) = amz_dates(crate::db::now());
         let mut signed: Vec<(String, String)> = headers
             .iter()
@@ -130,16 +150,20 @@ impl Aws {
             .collect();
         signed.push(("host".into(), host.into()));
         signed.push(("x-amz-date".into(), amz_date.clone()));
+        if service == "s3" {
+            // S3 wants the payload's hash as a header too.
+            signed.push(("x-amz-content-sha256".into(), payload_hash.clone()));
+        }
         if let Some(t) = &creds.token {
             signed.push(("x-amz-security-token".into(), t.clone()));
         }
         let query = canonical_query(query);
         let auth = authorization(
             method.as_str(),
-            "/",
+            path,
             &query,
             &signed,
-            &hex(&Sha256::digest(&body)),
+            &payload_hash,
             &creds.key,
             &creds.secret,
             region,
@@ -147,9 +171,9 @@ impl Aws {
             &amz_date,
         );
         let url = if query.is_empty() {
-            format!("https://{host}/")
+            format!("https://{host}{path}")
         } else {
-            format!("https://{host}/?{query}")
+            format!("https://{host}{path}?{query}")
         };
         let mut req = self.http.request(method, url).body(body);
         for (k, v) in &signed {
@@ -275,6 +299,68 @@ impl Aws {
             .ok_or_else(|| anyhow::anyhow!("parameter {name} has no value"))
     }
 
+    /// An S3 object's text, or None if there's no such object.
+    pub async fn s3_get(&self, bucket: &str, key: &str) -> anyhow::Result<Option<String>> {
+        let host = self.s3_host(bucket);
+        match self
+            .call_at(
+                reqwest::Method::GET,
+                &host,
+                &s3_path(key),
+                "s3",
+                &self.instance.region,
+                &[],
+                &[],
+                Vec::new(),
+            )
+            .await
+        {
+            Ok(text) => Ok(Some(text)),
+            Err(e) if e.to_string().contains("NoSuchKey") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Writes an S3 object (JSON).
+    pub async fn s3_put_json(&self, bucket: &str, key: &str, value: &Value) -> anyhow::Result<()> {
+        let host = self.s3_host(bucket);
+        self.call_at(
+            reqwest::Method::PUT,
+            &host,
+            &s3_path(key),
+            "s3",
+            &self.instance.region,
+            &[],
+            &[("content-type", "application/json")],
+            serde_json::to_vec_pretty(value)?,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// The keys under `prefix`, with when each was last written (unix time).
+    /// At most 1,000: plenty for a week of incidents.
+    pub async fn s3_list(&self, bucket: &str, prefix: &str) -> anyhow::Result<Vec<(String, i64)>> {
+        let host = self.s3_host(bucket);
+        let q = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        let xml = self
+            .call(
+                reqwest::Method::GET,
+                &host,
+                "s3",
+                &self.instance.region,
+                &[q("list-type", "2"), q("prefix", prefix)],
+                &[],
+                Vec::new(),
+            )
+            .await?;
+        Ok(parse_listing(&xml))
+    }
+
+    fn s3_host(&self, bucket: &str) -> String {
+        format!("{bucket}.s3.{}.amazonaws.com", self.instance.region)
+    }
+
     /// What everything tagged App=`app` cost, by service, per month from
     /// `start` (a YYYY-MM-DD) to today. Each call costs $0.01; callers cache.
     pub async fn costs(&self, app: &str, start: &str, end: &str) -> anyhow::Result<Value> {
@@ -376,6 +462,35 @@ fn uri_encode(s: &str) -> String {
                 (b as char).to_string()
             }
             _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// An S3 key as a URL path: each segment encoded, the slashes kept.
+fn s3_path(key: &str) -> String {
+    format!(
+        "/{}",
+        key.split('/').map(uri_encode).collect::<Vec<_>>().join("/")
+    )
+}
+
+/// (key, last modified) for each object in a ListObjectsV2 answer.
+fn parse_listing(xml: &str) -> Vec<(String, i64)> {
+    let tag = |chunk: &str, name: &str| -> Option<String> {
+        let open = format!("<{name}>");
+        let start = chunk.find(&open)? + open.len();
+        let end = chunk[start..].find(&format!("</{name}>"))? + start;
+        Some(chunk[start..end].to_owned())
+    };
+    xml.split("<Contents>")
+        .skip(1)
+        .filter_map(|chunk| {
+            let key = tag(chunk, "Key")?;
+            // "2026-10-23T17:10:02.000Z": the fraction isn't needed.
+            let at = tag(chunk, "LastModified")
+                .and_then(|t| parse_iso(&format!("{}Z", t.split('.').next()?)))
+                .unwrap_or(0);
+            Some((key, at))
         })
         .collect()
 }
@@ -543,6 +658,28 @@ mod tests {
     use super::*;
 
     /// AWS's published SigV4 example (IAM ListUsers, 2015-08-30 12:36:00 UTC).
+    #[test]
+    fn s3_keys_and_listings() {
+        assert_eq!(
+            s3_path("health/incidents/20261023T171000Z.json"),
+            "/health/incidents/20261023T171000Z.json"
+        );
+        assert_eq!(s3_path("a b/c+d"), "/a%20b/c%2Bd");
+        let xml = "<ListBucketResult><Name>b</Name><Contents><Key>health/incidents/20261023T171000Z.json</Key>\
+            <LastModified>2026-10-23T17:15:02.000Z</LastModified><Size>9</Size></Contents>\
+            <Contents><Key>health/incidents/x.json</Key><LastModified>bad</LastModified></Contents></ListBucketResult>";
+        assert_eq!(
+            parse_listing(xml),
+            vec![
+                (
+                    "health/incidents/20261023T171000Z.json".to_owned(),
+                    parse_iso("2026-10-23T17:15:02Z").unwrap()
+                ),
+                ("health/incidents/x.json".to_owned(), 0),
+            ]
+        );
+    }
+
     #[test]
     fn signs_like_the_aws_example() {
         let headers = vec![

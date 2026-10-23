@@ -65,14 +65,16 @@ locals {
     "FADE_INVITE_CODE=${var.invite_code}",
     "FADE_ADMINS=${join(",", var.admins)}",
     "FADE_PUBLIC_URL=https://${local.domain}",
-    # Room to load test: well past production's safety caps.
+    # Room to load test: well past production's safety caps. (Sessions per
+    # person stay at production's 4, which the smoke test checks.)
     "FADE_MAX_ACCOUNTS=100000",
-    "FADE_MAX_SESSIONS=10",
     "FADE_REQUESTS_PER_ADDRESS=1000000",
     "FADE_MAX_SOCKETS=20000",
     "FADE_MAX_IN_FLIGHT=2000",
     # The test and load-test machines aren't rate limited per address (staging only).
     "FADE_EXEMPT_ADDRESSES=${join(",", var.exempt_addresses)}",
+    # Staging's own incident records (never production's health/), for trying the Metrics tab's incidents.
+    "FADE_HEALTH_PREFIX=staging/health/",
     "",
   ])
   release_key = "releases/staging/fade-server"
@@ -189,7 +191,20 @@ resource "aws_iam_role_policy" "instance" {
         Effect    = "Allow"
         Action    = ["s3:ListBucket"]
         Resource  = data.aws_s3_bucket.artifacts.arn
-        Condition = { StringLike = { "s3:prefix" = ["releases/staging/*"] } }
+        Condition = { StringLike = { "s3:prefix" = ["releases/staging/*", "staging/health/*"] } }
+      },
+      {
+        # Staging's own incident records (FADE_HEALTH_PREFIX), never production's health/.
+        Sid      = "StagingIncidents"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${data.aws_s3_bucket.artifacts.arn}/staging/health/*"
+      },
+      {
+        Sid      = "MarkStagingIncidentsResolved"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${data.aws_s3_bucket.artifacts.arn}/staging/health/resolutions/*"
       },
       {
         Sid      = "ReadStagingConfig"
