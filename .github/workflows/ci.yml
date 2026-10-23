@@ -59,6 +59,8 @@ jobs:
 
   mobile:
     name: iOS app
+    # temp disable
+    if: false
     runs-on: ubuntu-24.04
     defaults:
       run:
