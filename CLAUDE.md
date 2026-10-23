@@ -130,6 +130,7 @@ Deploying to production yourself is encouraged for now, as long as you verify af
 - From Git Bash, call WSL as `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -lc '...'`. Without the env var, Git Bash rewrites `/mnt/...` paths, and without `-l`, cargo isn't on PATH. For anything with nested quotes, write a script file and run that.
 - `server/target` is shared between Windows and WSL builds: the Windows binary is `fade-server.exe`, the Linux one has no extension.
 - `scripts/deploy.sh` needs zig, which lives in the WSL venv: `source server/.venv/bin/activate` first.
+- WSL's AWS CLI is Ubuntu's own build (Python 3.14), and some commands fail with "badly formed help string" (`aws s3api`, `aws ssm`); `aws s3 cp` works. Run anything else, like `scripts/release.sh` steps, from Git Bash with the Windows CLI. GitHub's runners use AWS's official CLI.
 - **Node lives in WSL too** (nvm, Node 24 LTS), for the shared crypto test and the iOS app. Non-interactive shells need `. ~/.nvm/nvm.sh`. Expo docs change every SDK: check the versioned docs for the SDK in `mobile/package.json` before writing Expo or EAS code (`mobile/AGENTS.md`).
 - `wsl.exe` swallows `$VARIABLES` in commands passed from Git Bash. Put anything with variables in a script file and run `wsl.exe -d Ubuntu -- bash /mnt/c/.../script.sh`.
 - Production shell: `scripts/ssh.sh` (SSH tunneled through SSM; port 22 is closed).

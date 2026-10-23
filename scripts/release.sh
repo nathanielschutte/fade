@@ -65,8 +65,11 @@ case "${1:-}" in
     # What staging runs (its server pulls this key; infra/staging/main.tf).
     s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server"
     # Keep the newest $KEEP candidates; releases (releases/tags/) are kept forever.
-    old=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix releases/main/fade-server- --region "$AWS_REGION" \
-      --query 'sort_by(Contents, &LastModified)[].Key' --output text | tr '\t' '\n' | grep -v '^None$' | head -n "-$KEEP" || true)
+    # (The listing must work: an error stops the job rather than skipping the cleanup.)
+    keys=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix releases/main/fade-server- --region "$AWS_REGION" \
+      --query 'sort_by(Contents, &LastModified)[].Key' --output text)
+    # shellcheck disable=SC2086
+    old=$(printf '%s\n' $keys | grep -v '^None$' | head -n "-$KEEP" || true)
     for key in $old; do
       echo "    removing old candidate $key"
       aws s3 rm "s3://$BUCKET/$key" --region "$AWS_REGION" --only-show-errors

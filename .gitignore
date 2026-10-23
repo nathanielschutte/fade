@@ -24,3 +24,6 @@ infra/staging/.ssh_config
 
 # Load test accounts and results (tests/load_test.py).
 tests/.loadtest-*
+
+# Release builds (scripts/release.sh).
+dist/
