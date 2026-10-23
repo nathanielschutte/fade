@@ -10,6 +10,7 @@ infra/.ssh_config
 infra/terraform.tfvars
 __pycache__/
 server/pics/
+docs/dev/
 
 # Built by Terraform (the health monitor zip).
 infra/.build/
