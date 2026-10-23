@@ -19,7 +19,7 @@ scripts/ssh.sh             # shell on the box; extra args run a command
 scripts/rollback.sh        # list kept builds, or roll back to one
 ```
 
-The normal way to ship the server is a `server-v*` tag, which GitHub Actions tests, builds, and deploys. `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [releasing.md](releasing.md).
+The normal way to ship the server is the release pipeline: a push to `main` is tested, built once, and put on staging; a `server-v*` tag puts that same build on production (after a backup). `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [releasing.md](releasing.md).
 
 SSH uses `~/.ssh/id_ed25519` by default (`ssh_public_key_path`). With `ssh_allowed_cidrs` empty, port 22 stays closed and SSH is tunneled through SSM, which needs the AWS CLI and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html). Set it to e.g. `["203.0.113.7/32"]` to connect directly instead. To use plain `ssh fade`, scp, or VS Code Remote-SSH, run `terraform -chdir=infra output -raw ssh_config >> ~/.ssh/config`.
 

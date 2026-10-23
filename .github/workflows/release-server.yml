@@ -1,7 +1,8 @@
 name: Release server
 
-# Push a tag like server-v0.2.0 (matching server/Cargo.toml) to ship it.
-# See docs/operations/releasing.md for the checklist and the compatibility rules.
+# Push a tag like server-v0.32.0 (matching server/Cargo.toml) on a commit that
+# went through main, and so through staging. The checklist and the
+# compatibility rules: docs/operations/releasing.md.
 on:
   push:
     tags: ["server-v*"]
@@ -24,74 +25,49 @@ jobs:
       BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
       APP_NAME: ${{ vars.APP_NAME }}
       APP_URL: ${{ vars.APP_URL }}
-      TARGET: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # to check the tag is on main
 
-      - name: Check the tag matches Cargo.toml
+      - name: Check the tag
         run: |
-          TAG="${GITHUB_REF_NAME#server-v}"
+          VERSION="${GITHUB_REF_NAME#server-v}"
           CARGO=$(sed -n 's/^version = "\(.*\)"/\1/p' server/Cargo.toml | head -1)
-          [ "$TAG" = "$CARGO" ] || { echo "tag $TAG != Cargo.toml $CARGO"; exit 1; }
-          echo "VERSION=$CARGO" >> "$GITHUB_ENV"
-          echo "BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ env.TARGET }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: server
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Test
-        run: |
-          pip install -r tests/requirements.txt
-          bash scripts/test.sh --no-browser
-
-      - name: Build
-        run: |
-          pip install ziglang==0.13.0.post1
-          cargo install cargo-zigbuild --locked
-          touch server/src/db.rs   # fresh copy of the migrations; see deploy.sh
-          cd server && FADE_BUILD="$BUILD" cargo zigbuild --release --target "$TARGET"
+          [ "$VERSION" = "$CARGO" ] || { echo "tag $VERSION != server/Cargo.toml $CARGO"; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo "tag a commit on main: it went through CI and staging first"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Upload
+      # The exact binary staging ran for this commit. Only if it's no longer
+      # kept (more than ten pushes ago) is it built again, tests first.
+      - name: The candidate staging ran
+        id: candidate
+        run: bash scripts/release.sh fetch-candidate "$BUILD" || echo "rebuild=true" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.candidate.outputs.rebuild == 'true'
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: actions/setup-python@v6
+        if: steps.candidate.outputs.rebuild == 'true'
+        with:
+          python-version: "3.12"
+      - name: Test and build again
+        if: steps.candidate.outputs.rebuild == 'true'
         run: |
-          BIN="server/target/$TARGET/release/fade-server"
-          aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server-$VERSION-$BUILD" --only-show-errors
-          aws s3 cp "$BIN" "s3://$BUCKET/releases/fade-server" --only-show-errors
+          pip install -r tests/requirements.txt ziglang==0.13.0.post1
+          bash scripts/test.sh --no-browser
+          cargo install cargo-zigbuild --locked
+          bash scripts/release.sh build "$BUILD"
 
-      - name: Deploy
-        run: |
-          # Looked up by tag, so a replaced instance needs no config change here.
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:App,Values=$APP_NAME" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].InstanceId' --output text)
-          [ "$(echo "$INSTANCE_ID" | wc -w)" = 1 ] || { echo "expected one running instance, got: $INSTANCE_ID"; exit 1; }
-          CMD=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --parameters 'commands=["/usr/local/bin/fade-update"]' \
-            --query Command.CommandId --output text)
-          aws ssm wait command-executed --command-id "$CMD" --instance-id "$INSTANCE_ID" || true
-          aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE_ID" \
-            --query '[Status, StandardOutputContent, StandardErrorContent]' --output text
-          STATUS=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE_ID" --query Status --output text)
-          [ "$STATUS" = "Success" ]
-
-      - name: Verify
-        run: |
-          for _ in $(seq 1 15); do
-            LIVE=$(curl -sf "$APP_URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
-            [ "$LIVE" = "$BUILD" ] && { echo "$APP_URL is running $VERSION ($BUILD)"; exit 0; }
-            sleep 2
-          done
-          echo "expected build $BUILD, live is ${LIVE:-unreachable}"; exit 1
-1
+      - name: Publish the release
+        run: bash scripts/release.sh publish "$VERSION"
+      - name: Back up production
+        run: bash scripts/release.sh backup "$APP_NAME"
+      - name: Update production
+        run: bash scripts/release.sh update "$APP_NAME" "$APP_URL" "$BUILD"

@@ -24,7 +24,7 @@ variable "invite_code" {
 variable "admins" {
   description = "Staging Admins. The browser and smoke tests use e2e_admin and smoke_admin."
   type        = list(string)
-  default     = ["e2e_admin", "smoke_admin"]
+  default     = ["e2e_admin", "smoke_admin", "nate"]
 }
 
 variable "exempt_addresses" {

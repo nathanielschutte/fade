@@ -47,6 +47,9 @@ output "github_actions_variables" {
     ARTIFACTS_BUCKET    = aws_s3_bucket.artifacts.id
     APP_NAME            = var.app_name
     APP_URL             = "https://${local.domain}"
+    # Release candidates on every push to main (ci.yml), deployed to staging.
+    STAGING_DEPLOY_ROLE_ARN = aws_iam_role.github_staging[0].arn
+    STAGING_URL             = "https://staging.${var.dns_zone}"
   }
 }
 

@@ -16,9 +16,10 @@ output "artifacts_bucket" {
   value = data.aws_s3_bucket.artifacts.id
 }
 
-# Where scripts/deploy.sh saves staging's builds: never production's releases/fade-server.
+# Where scripts/deploy.sh saves staging's builds: with the release candidates
+# (releases/main/), never production's releases/fade-server.
 output "release_prefix" {
-  value = "releases/staging"
+  value = "releases/main"
 }
 
 output "instance_id" {

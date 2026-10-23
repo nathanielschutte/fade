@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push replaces a pull request's run; main's runs all finish, so
+  # every commit on main gets its release candidate (docs/operations/releasing.md).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   server:
@@ -56,6 +58,71 @@ jobs:
           name: screenshots
           path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
+
+  # Every push to main that passes becomes a release candidate: built once,
+  # kept in S3 as releases/main/fade-server-<sha> (the newest ten), and put on
+  # staging. A server-v* tag later promotes that same binary to production
+  # (release-server.yml).
+  candidate:
+    name: Release candidate on staging
+    needs: [server, infra]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: staging
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC -> the fade-github-staging role; no stored keys
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+      STAGING_APP: ${{ vars.APP_NAME }}-staging
+      STAGING_URL: ${{ vars.STAGING_URL }}
+      ROLE: ${{ vars.STAGING_DEPLOY_ROLE_ARN }}
+    steps:
+      - name: Settings
+        run: |
+          if [ -z "$ROLE" ] || [ -z "$STAGING_URL" ]; then
+            echo "::warning::Not deployed: set the STAGING_DEPLOY_ROLE_ARN and STAGING_URL repository variables (terraform output github_actions_variables)."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          case "$STAGING_URL" in https://staging.*) ;; *) echo "STAGING_URL isn't staging's address: $STAGING_URL"; exit 1;; esac
+
+      - uses: actions/checkout@v5
+        if: env.SKIP != '1'
+      - name: Build id
+        if: env.SKIP != '1'
+        run: echo "BUILD=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.SKIP != '1'
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        if: env.SKIP != '1'
+        with:
+          workspaces: server
+          key: aarch64
+      - name: Build
+        if: env.SKIP != '1'
+        run: |
+          pip install ziglang==0.13.0.post1
+          cargo install cargo-zigbuild --locked
+          bash scripts/release.sh build "$BUILD"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: env.SKIP != '1'
+        with:
+          role-to-assume: ${{ env.ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload the candidate (keep the newest ten)
+        if: env.SKIP != '1'
+        run: bash scripts/release.sh candidate "$BUILD"
+      - name: Update staging
+        if: env.SKIP != '1'
+        run: bash scripts/release.sh update "$STAGING_APP" "$STAGING_URL" "$BUILD"
 
   mobile:
     name: iOS app

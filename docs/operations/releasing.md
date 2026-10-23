@@ -6,7 +6,7 @@ How napsack's pieces are versioned, how each one ships, and the rules that keep 
 
 | Piece | Version lives in | Ships by | Tag |
 |---|---|---|---|
-| Server (with the web client inside) | `server/Cargo.toml` | GitHub Actions on tag, or `scripts/deploy.sh` | `server-v1.4.0` |
+| Server (with the web client inside) | `server/Cargo.toml` | GitHub Actions: every push to `main` goes to staging, a tag goes to production. `scripts/deploy.sh` for hotfixes | `server-v1.4.0` |
 | iOS app, native build | `mobile/app.config.ts` `version`; build number managed by EAS | EAS Build → TestFlight → App Store | `ios-v1.2.0` |
 | iOS app, JavaScript-only fix | same version, new update ID | EAS Update (over the air) | none |
 | Infrastructure | git history | `terraform apply` by hand | none |
@@ -44,25 +44,79 @@ While the web app is the only client, steps 1 to 4 collapse into one release: it
 
 ## Releasing the server
 
-1. Merge to `main` with CI green (format, lints, unit tests, API smoke test, browser tests, Terraform validation).
-2. Bump `version` in `server/Cargo.toml`: patch for fixes, minor for features, major only alongside an `/api/v2`. Commit it as `server 1.4.0`.
-3. Tag and push: `git tag server-v1.4.0 && git push origin server-v1.4.0`.
-4. The **Release server** workflow checks the tag matches `Cargo.toml`, runs the tests, builds the ARM binary, uploads it to S3 (as `fade-server-1.4.0-<sha>` and as the current release), installs it through SSM, and confirms `/api/config` reports the new build. If you've added reviewers to the `production` environment, it waits for approval first.
+Every release goes through staging first, as the exact binary that will reach production.
 
-Test locally any time with `scripts/test.sh` (or `scripts/test.sh --no-browser`).
+```
+develop and test locally ──▶ push to main ──▶ CI: tests ──▶ release candidate ──▶ staging
+                                                            releases/main/fade-server-<sha>
+                                                                                    │ looks good
+                     production ◀── backup, fade-update ◀── release ◀── tag server-v<version>
+                                                            releases/tags/fade-server-<version>
+```
+
+### 1. Develop and test locally
+
+Build the change, with its tests, on a branch or on `main` locally. Before pushing, run the whole suite in WSL: `bash scripts/test.sh` (unit tests, crypto vectors, the API smoke test, every browser test), plus `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` in `server/`. Look at anything a person sees at desktop and phone width (CLAUDE.md, "How every change is tested").
+
+### 2. Push to main: a release candidate on staging
+
+`git push origin main`. The **CI** workflow (`.github/workflows/ci.yml`) runs everything again (format, lints, all the tests, Terraform validation). If it passes, its **Release candidate on staging** job:
+1. builds the ARM server binary once, stamped with the commit (`build` = the short sha);
+2. uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
+3. deletes all but the newest ten candidates (releases are kept forever; see below);
+4. runs `fade-update` on staging through SSM, and checks `https://staging.napsack.io/api/config` reports that commit.
+
+Pushes to `main` never cancel each other, so every commit gets its candidate. A pull request runs the tests only.
+
+### 3. Check staging
+
+<https://staging.napsack.io> now runs the commit: the corner of every page shows `staging · v<version> · <sha> · up …`. Try the change there, on a phone too. For a bigger change, run the browser tests and a load test against it (`scripts/test-staging.sh`, `scripts/load-staging.sh`; [staging.md](staging.md)).
+
+### 4. Tag: the release on production
+
+When staging looks good:
+1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), commit it (`server 1.4.0`), and push it to `main`. That's a candidate too; it's the one you'll release, so let it reach staging.
+2. Tag that commit and push the tag: `git tag server-v1.4.0 && git push origin server-v1.4.0`.
+
+The **Release server** workflow (`.github/workflows/release-server.yml`):
+1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
+2. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte. Only if it's no longer kept (more than ten pushes ago) does it run the tests and build again;
+3. publishes it as `releases/tags/fade-server-<version>`, refusing if that version already exists (a fix is a new version), and as `releases/fade-server`, which is what production runs;
+4. backs up production's database (`fade-backup`, the hourly job, run now), so there's a fresh copy before any migration;
+5. runs `fade-update` on every production server through SSM, and checks `https://napsack.io/api/config` reports the commit.
+
+If you've added required reviewers to the `production` environment in GitHub, it waits for approval first. Then check production as CLAUDE.md's Shipping section says: the new `build` in `/api/config`, the pages you changed, and a clean start in the log.
+
+The release's `build` is the commit's sha, the same as on staging: it's the same binary. The version is in `server_version`.
+
+### Where builds live
+
+In the artifacts bucket (`terraform output artifacts_bucket`):
+
+| Key | What | Kept |
+|---|---|---|
+| `releases/main/fade-server-<sha>` | Release candidates, one per push to `main` | The newest ten |
+| `releases/main/fade-server` | What staging runs (its server pulls it at boot and on `fade-update`) | Replaced each push |
+| `releases/tags/fade-server-<version>` | Releases, one per tag | Forever, never replaced |
+| `releases/fade-server` | What production runs | Replaced each release |
+| `releases/hotfix/fade-server-<version>-<sha>` | Hotfixes from `scripts/deploy.sh` | Forever |
+| `releases/fade-server-<version>-<sha>` | Builds from before this pipeline (up to 0.31.0) | Forever |
+
+Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)), assumed through GitHub's OIDC, so no AWS keys are stored in GitHub. The staging job's role can write only `releases/main/` and reach only staging's server; the release job's role can't delete anything and reaches only production's servers.
 
 ### Hotfix without CI
 
-`scripts/deploy.sh` (from WSL) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Commit and tag it afterwards so the history matches what's running.
+`scripts/deploy.sh` (from WSL) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. On production it saves `releases/hotfix/fade-server-<version>-<sha>`; with `FADE_STACK=staging`, a candidate in `releases/main/`. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Afterwards, commit, push, and release a tag the normal way so production runs a tagged release again.
 
 ### Rollback
 
 ```sh
-scripts/rollback.sh                 # list kept builds
-scripts/rollback.sh 1.3.2-a1b2c3d   # make that build current and restart
+scripts/rollback.sh                   # list releases, hotfixes, and older builds
+scripts/rollback.sh 1.3.2             # a release (releases/tags/)
+scripts/rollback.sh 1.3.2-a1b2c3d     # a hotfix, or a build from before the pipeline
 ```
 
-Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release.
+It makes that build what production runs and installs it. Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).
 
 ## Releasing the iOS app
 
@@ -72,13 +126,9 @@ The details live in [mobile.md](../design/mobile.md). The short version:
 
 ## One-time setup
 
-1. **Let GitHub deploy.** Review and apply the IAM role in `infra/github.tf`:
-   ```sh
-   cd infra
-   terraform plan -target=aws_iam_role_policy.github_deploy -out tf.plan   # 3 new IAM resources
-   terraform apply tf.plan && rm tf.plan
-   terraform output github_actions_variables
-   ```
-2. **Set the repository variables** that output lists, in GitHub under Settings → Secrets and variables → Actions → Variables.
-3. **Create the `production` environment** under Settings → Environments. Add yourself as a required reviewer if you want to approve each deploy.
-4. **Protect `main`**: require pull requests and the CI checks to pass.
+Done for napsack.io; for a new copy:
+
+1. **Let GitHub deploy.** Apply `infra/github.tf` (part of `terraform apply` in `infra/`), then `terraform output github_actions_variables`.
+2. **Set the repository variables** that output lists, in GitHub under Settings → Secrets and variables → Actions → Variables: `AWS_REGION`, `ARTIFACTS_BUCKET`, `APP_NAME`, `APP_URL`, `AWS_DEPLOY_ROLE_ARN`, `STAGING_DEPLOY_ROLE_ARN`, `STAGING_URL`. Without the two `STAGING_` ones, CI still tests every push but skips the staging deploy, with a warning.
+3. **Environments** (Settings → Environments): `staging` and `production` are created the first time a job uses them. Add yourself as a required reviewer on `production` if you want to approve each release.
+4. **Protect `main`**: require the CI checks to pass.

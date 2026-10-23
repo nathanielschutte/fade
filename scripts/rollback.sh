@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Put an earlier server build back into service.
+# Put an earlier production build back into service.
 #
-#   scripts/rollback.sh             list the builds kept in S3
-#   scripts/rollback.sh 0.2.0-3f9c1a2   roll back to that build
+#   scripts/rollback.sh              list the builds kept in S3
+#   scripts/rollback.sh 0.31.0       roll back to a release (releases/tags/)
+#   scripts/rollback.sh 0.31.0-6b3c483   or to a hotfix (releases/hotfix/), or an older build
 #
 # Works because migrations are additive and the server ignores ones it
-# doesn't know (docs/operations/releasing.md). Needs: AWS CLI, terraform, ssh.
+# doesn't know (docs/operations/releasing.md). Afterwards, a new release tag
+# is the way forward again. Needs: AWS CLI, terraform, ssh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,17 +18,24 @@ HOST=$(out ssh_host)
 CONF=infra/.ssh_config
 out ssh_config > "$CONF"
 
-if [ $# -eq 0 ]; then
-  echo "Builds in s3://$BUCKET/releases/ (newest last):"
-  aws s3 ls "s3://$BUCKET/releases/" --region "$REGION" \
+list() {
+  aws s3 ls "s3://$BUCKET/$1" --region "$REGION" \
     | awk '$4 ~ /^fade-server-/ { sub("fade-server-", "", $4); print "  " $1 " " $2 "  " $4 }'
+}
+if [ $# -eq 0 ]; then
+  echo "Releases (releases/tags/, newest last):"; list releases/tags/
+  echo "Hotfixes (releases/hotfix/):"; list releases/hotfix/
+  echo "Older builds (releases/):"; list releases/
   exit 0
 fi
 
-KEY="releases/fade-server-$1"
-aws s3 ls "s3://$BUCKET/$KEY" --region "$REGION" >/dev/null || { echo "no build $1 in S3"; exit 1; }
+KEY=""
+for k in "releases/tags/fade-server-$1" "releases/hotfix/fade-server-$1" "releases/fade-server-$1"; do
+  if aws s3 ls "s3://$BUCKET/$k" --region "$REGION" >/dev/null 2>&1; then KEY=$k; break; fi
+done
+[ -n "$KEY" ] || { echo "no build $1 in S3 (run without arguments to list them)"; exit 1; }
 
-echo "==> making $1 the current release"
+echo "==> making $KEY what production runs"
 aws s3 cp "s3://$BUCKET/$KEY" "s3://$BUCKET/releases/fade-server" --region "$REGION" --only-show-errors
 
 echo "==> installing on $HOST"

@@ -8,12 +8,13 @@
 #   instance role, tagged App=fade-staging. Production's health monitor
 #   watches App=fade only, and the cost tag stays production's.
 # - Its role can read only staging's settings and staging's releases
-#   (releases/staging/); it can't read production's settings or data, or
-#   write to the backups bucket.
+#   (release candidates, releases/main/); it can't read production's
+#   settings or data, or write to the backups bucket.
 # - No backups: the backup timer isn't enabled, and it couldn't write anyway.
 #
 # The boot script is production's (../user_data.sh.tftpl), rendered here with
-# two exact substitutions (backups off; staging's release file), each checked
+# two exact substitutions (backups off; the newest release candidate,
+# releases/main/fade-server, instead of production's release), each checked
 # so a change to the template fails loudly rather than silently.
 
 terraform {
@@ -79,7 +80,8 @@ locals {
     "FADE_HEALTH_PREFIX=staging/health/",
     "",
   ])
-  release_key = "releases/staging/fade-server"
+  # The newest build of main (docs/operations/releasing.md), which CI keeps here.
+  release_key = "releases/main/fade-server"
   rendered = templatefile("${path.module}/../user_data.sh.tftpl", {
     app_name      = "fade" # the machine's own names (user, paths, units), as in production
     region        = var.region
@@ -183,17 +185,17 @@ resource "aws_iam_role_policy" "instance" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ReadStagingReleases"
+        Sid      = "ReadReleaseCandidates"
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
-        Resource = "${data.aws_s3_bucket.artifacts.arn}/releases/staging/*"
+        Resource = "${data.aws_s3_bucket.artifacts.arn}/releases/main/*"
       },
       {
-        Sid       = "ListStagingReleases"
+        Sid       = "ListReleaseCandidates"
         Effect    = "Allow"
         Action    = ["s3:ListBucket"]
         Resource  = data.aws_s3_bucket.artifacts.arn
-        Condition = { StringLike = { "s3:prefix" = ["releases/staging/*", "staging/health/*"] } }
+        Condition = { StringLike = { "s3:prefix" = ["releases/main/*", "staging/health/*"] } }
       },
       {
         # Staging's own incident records (FADE_HEALTH_PREFIX), never production's health/.

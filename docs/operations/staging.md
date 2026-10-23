@@ -6,7 +6,7 @@ A second, separate napsack at <https://staging.napsack.io>, for running the brow
 
 - **Its own Terraform root**, `infra/staging/`, with its own state file. It never manages a production resource. It only *looks up* production's VPC and subnet (by their `Name` tags), the artifacts bucket, and the Route 53 zone.
 - **Its own resources**, all tagged `App=fade-staging`: a t4g.nano (same size as production, so load numbers mean something), an Elastic IP, a security group, a 1 GB data volume, the settings parameter `/fade-staging/env`, an instance role, and the DNS record `staging.napsack.io`.
-- **The same boot script as production** (`infra/user_data.sh.tftpl`), with two exact substitutions: the backup timer isn't enabled, and the server comes from `releases/staging/fade-server`. Preconditions on the instance fail the plan if the template changes so that either substitution would miss.
+- **The same boot script as production** (`infra/user_data.sh.tftpl`), with two exact substitutions: the backup timer isn't enabled, and the server comes from `releases/main/fade-server`, the newest release candidate, instead of production's release. Preconditions on the instance fail the plan if the template changes so that either substitution would miss.
 - **Its own accounts.** Its own invite code (in `infra/staging/terraform.tfvars`, gitignored) and admin list (`e2e_admin`, `smoke_admin`, the test accounts). Nobody's real data is on it.
 - Cost: about $7.40 a month (instance $3.07, Elastic IP $3.65, volumes $0.72). `terraform -chdir=infra/staging destroy` removes it all (allowed for staging only; it holds no user data). Never run destroy in `infra/`.
 
@@ -22,7 +22,7 @@ It's all added on top of the design (`server/static/env.js`, and the "non-produc
 |---|---|
 | Production's settings (`/fade/env`, `/fade/admins`) | Staging's role explicitly denies `ssm:GetParameter*` on `/fade` and `/fade/*`, and denies `GetParametersByPath` everywhere. An explicit Deny beats `AmazonSSMManagedInstanceCore`, which would otherwise allow it. Checked from the staging machine: both are AccessDenied. |
 | Production's backups and data | Staging's role has no access to the backups bucket and no backup timer. Production's database is on production's volume, which staging can't attach (different Terraform state; `prevent_destroy` in production). |
-| Production's releases | Staging can read only `releases/staging/*`. `scripts/deploy.sh` with `FADE_STACK=staging` writes only there (the `release_prefix` output). |
+| Production's releases | Staging's server can read only the release candidates (`releases/main/*`). CI deploys them with its own role (`fade-github-staging`), which can write only `releases/main/` and reach only staging's server. `scripts/deploy.sh` with `FADE_STACK=staging` writes there too (the `release_prefix` output). |
 | Production's bill | Staging's role has no Cost Explorer access, and a non-production server doesn't ask (its Metrics tab says billing is read in production only). Staging's own resources are tagged `App=fade-staging` in AWS Billing. |
 | Production's health monitor | It watches instances tagged `App=fade` only, so it never restarts staging, and staging failures never page anyone. |
 | Production's Terraform | Separate state. After every staging apply, `terraform plan` in `infra/` should still say "No changes". |
@@ -33,7 +33,8 @@ It's all added on top of the design (`server/static/env.js`, and the "non-produc
 Every script picks the stack from `FADE_STACK` (empty means production):
 
 ```sh
-FADE_STACK=staging scripts/deploy.sh      # WSL; builds and deploys to staging only
+git push origin main                      # CI: tests, then builds and deploys the commit to staging
+FADE_STACK=staging scripts/deploy.sh      # WSL; a local build instead, to staging only
 FADE_STACK=staging scripts/ssh.sh "sudo journalctl -u fade -n 30"
 scripts/test-staging.sh                   # smoke test + all browser tests against staging
 scripts/test-staging.sh --no-browser      # smoke test only

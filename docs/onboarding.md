@@ -140,7 +140,7 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 
 - **The server.** One EC2 instance (t4g.nano: 2 ARM vCPUs, 0.5 GB), with Caddy in front for HTTPS and the old addresses redirecting. The boot script (`infra/user_data.sh.tftpl`) sets everything up and pulls the newest release from S3. Settings live in SSM Parameter Store (`/fade/env`), fetched into memory on every start. You get a shell with `scripts/ssh.sh`, tunneled through SSM (port 22 is closed).
 - **The data.** A separate encrypted disk (`aws_ebs_volume.data`, with `prevent_destroy`) holds the database and unopened pics. It survives the instance being replaced. The database is backed up to S3 every hour, kept forever; the disk is snapshotted daily, kept 30 days ([backups.md](operations/backups.md)).
-- **Releases.** A release is one binary. The normal path is a `server-v*` tag through GitHub Actions; `scripts/deploy.sh` (from WSL) is the hotfix path. Both keep a copy in S3, so `scripts/rollback.sh` can go back ([releasing.md](operations/releasing.md)).
+- **Releases.** A release is one binary, built by GitHub Actions. Every push to `main` that passes CI becomes a release candidate in S3 and goes to staging; when staging looks good, a `server-v<version>` tag sends that same binary to production, after a backup. Releases are kept forever (the newest ten candidates too), so `scripts/rollback.sh` can go back. `scripts/deploy.sh` (from WSL) is the hotfix path ([releasing.md](operations/releasing.md)).
 - **The health monitor.** A Lambda (`infra/health/monitor.py`) checks `https://napsack.io/api/health` every 5 minutes ([health-monitor.md](implementation/health-monitor.md)):
   - One failure is noted; two in a row open an **incident**.
   - It then tries one repair step per run, gently first: restart the app (through SSM), reboot, then stop and start (which moves it to new hardware). If none of that works, it stops and calls for a person.
@@ -172,7 +172,7 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 7. **Run it**: `bash scripts/test-one.sh test_yours.py` while working; `bash scripts/test.sh` before you're done (also checks formatting: run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in `server/`).
 8. **Look at it**: open it yourself, at phone width (390 px) too. Tests print where their screenshots went.
 9. **Docs**: [api.md](spec/api.md) for any API change, the feature's doc if it has one, and mark it done in [plan.md](management/plan.md).
-10. **Ship**: [releasing.md](operations/releasing.md) and the Shipping section of [CLAUDE.md](../CLAUDE.md): a backup first when there's a migration, and after the deploy, check that `/api/config` reports the new build and the server's log starts clean. Staging is there when you want a real deployment to try it on first.
+10. **Ship** ([releasing.md](operations/releasing.md)): push to `main`, and CI puts your commit on staging; check it there (the corner shows the build). Then bump the version, push, and tag `server-v<version>`: the same binary goes to production, after a backup. Check that `/api/config` reports the new build and the server's log starts clean.
 
 ## When it doesn't work
 
