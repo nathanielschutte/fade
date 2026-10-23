@@ -16,7 +16,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
 | 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 6 | [Auto Scaling group of one](#i3-auto-scaling-group) | Infrastructure | Planned | Keeps SQLite on its EBS volume |
+| 6 | [Scale out: two servers across zones](scaling.md) | Infrastructure | Needs decision | Design and cost in scaling.md; Nate reviews before anything is built |
 | 7 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
@@ -370,3 +370,4 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
   - **ASG of 1 keeping SQLite:** the instance attaches the existing EBS data volume at boot (same AZ). Gets self-healing replacement without changing the database.
   - **More than one instance:** move to Postgres (RDS), and the live-message hub needs a shared channel between servers.
 - **Decided:** an ASG of one that keeps SQLite on the reattached EBS volume. Revisit only if one server isn't enough.
+- **Superseded (2026-10-23):** Nate wants at least two servers, across availability zones, with low cost, private networking, and one deploy path for laptop and CI. Proposal in [scaling.md](scaling.md): RDS PostgreSQL (also carrying live events between servers via `LISTEN/NOTIFY`), pics in S3, an Auto Scaling group of two behind an internal ALB with CloudFront as the only public entry point, IPv6-only outbound (no NAT), and deploys by instance refresh from `scripts/release.sh`. About $40 a month (about $54 with a Multi-AZ database) against $7.50 today; a group-of-one with Litestream (about $8) is the cheaper alternative. **Waiting on Nate's review**; nothing built.
