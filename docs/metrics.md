@@ -90,7 +90,7 @@ Each host gets **All good**, **Worth watching**, or **In the red**: the worst of
 | Response time | average `p95` | 500 ms | 2 s |
 | Server errors | 5xx in the last 10 minutes | 1 | 10 |
 
-Why credits and not CPU %: a t4g may use its baseline (5% of each vCPU on a nano) for free and banks credits when below it. Running above the baseline is fine while credits last; once they're gone, CPU over the baseline is billed (unlimited mode). So 30% CPU can be all good, and the credit balance is what says when it isn't.
+Why credits and not CPU %: a t4g may use its baseline (5% of each vCPU on a nano) for free and banks credits when below it. Running above the baseline is fine while credits last; once they're gone, the server is held to its baseline (standard mode, which napsack's server uses: requests slow down and steal rises) or CPU over the baseline is billed (unlimited mode, where the "Extra CPU" cost line counts it). So 30% CPU can be all good, and the credit balance is what says when it isn't.
 
 ### Charts
 

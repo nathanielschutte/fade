@@ -255,10 +255,25 @@ async fn username(db: &SqlitePool, id: i64) -> sqlx::Result<String> {
         .await
 }
 
-/// Sends a new group message to everyone currently in the group. A format 3
-/// message goes to each member with their own key.
+/// Current members whose history includes `message_id`: everyone who was in
+/// the group when it was sent. Someone added later must not get it, even as
+/// an update (a reaction, "opened by"), or they'd see what came before they
+/// joined (for older plaintext messages, the text itself).
+pub async fn audience(db: &SqlitePool, group: i64, message_id: i64) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT user_id FROM group_members
+         WHERE group_id = ? AND left_at IS NULL AND visible_after_id < ?",
+    )
+    .bind(group)
+    .bind(message_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Sends a group message, new or updated, to the members whose history
+/// includes it (`audience`). A format 3 message goes to each with their own key.
 pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
-    let ids = member_ids(&state.db, message.group_id).await?;
+    let ids = audience(&state.db, message.group_id, message.id).await?;
     if message.format != FORMAT_E2E {
         state.hub.send_many(
             &ids,
@@ -1087,6 +1102,31 @@ mod tests {
         assert!(clean_name("tab\tname").is_err());
         assert!(clean_name(&"x".repeat(41)).is_err());
         assert_eq!(clean_name(&"é".repeat(40)).unwrap().chars().count(), 40);
+    }
+
+    #[tokio::test]
+    async fn updates_reach_only_members_who_had_the_message() {
+        let db = temp_db().await;
+        for (id, name) in [(1, "ana"), (2, "ben"), (3, "cal")] {
+            sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (?, ?, 'h', 'k', 'w', 0)")
+                .bind(id).bind(name).execute(&db).await.unwrap();
+        }
+        sqlx::query("INSERT INTO groups (id, name, created_by, created_at) VALUES (9, 'g', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        // Ana and Ben from the start; Cal added once message 50 had been sent; Ben left.
+        sqlx::query("INSERT INTO group_members (group_id, user_id, role, joined_at, visible_after_id, left_at) VALUES (9, 1, 'owner', 10, 0, NULL), (9, 2, 'member', 10, 0, 60), (9, 3, 'member', 70, 50, NULL)")
+            .execute(&db).await.unwrap();
+        assert_eq!(
+            audience(&db, 9, 50).await.unwrap(),
+            vec![1],
+            "Cal wasn't there for message 50"
+        );
+        let mut later = audience(&db, 9, 51).await.unwrap();
+        later.sort_unstable();
+        assert_eq!(later, vec![1, 3]);
+        assert!(audience(&db, 8, 51).await.unwrap().is_empty());
     }
 
     #[tokio::test]

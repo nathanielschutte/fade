@@ -732,6 +732,36 @@ async def check_resend(tag):
 
 
 
+async def check_late_joiner(tag):
+    """Someone added to a group doesn't get messages from before they joined,
+    even as updates. (A reaction or an "opened by" re-sent old messages to
+    every current member: pics the newcomer couldn't open, and for older
+    plaintext messages, the text itself.)"""
+    ra, rb, rc = (ok(register(f"lj_{n}_{tag}")).json() for n in "abc")
+    a_tok, b_tok, c_tok = ra["token"], rb["token"], rc["token"]
+    befriend(a_tok, rb["user"], b_tok, ra["user"]["id"])
+    befriend(a_tok, rc["user"], c_tok, ra["user"]["id"])
+    gid = ok(call("POST", "/groups", a_tok, json={"name": f"before {tag}", "member_ids": [rb["user"]["id"]]})).json()["id"]
+    old = ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "said before cal joined"})).json()
+    ok(call("POST", f"/groups/{gid}/members", a_tok, json={"user_id": rc["user"]["id"]}))
+    cal = await socket(c_tok)
+    ben = await socket(b_tok)
+    ok(call("PUT", f"/groups/{gid}/messages/{old['id']}/reaction", b_tok, json={"emoji": "👍"}))
+    assert (await next_event(ben, "group_message"))["message"]["id"] == old["id"]   # ben was there
+    while True:  # cal gets nothing about it (the join notice came before)
+        try:
+            ev = await next_event(cal, "group_message", 1.0)
+        except (AssertionError, asyncio.TimeoutError):
+            break
+        assert ev["message"]["id"] > old["id"], "a message from before cal joined reached cal"
+        assert "said before cal joined" not in json.dumps(ev)
+    new = ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "after"})).json()
+    assert (await next_event(cal, "group_message"))["message"]["id"] == new["id"]   # new ones do
+    await cal.close()
+    await ben.close()
+    print("  groups: newcomers never get messages from before they joined, even as updates")
+
+
 def check_metrics(not_admin):
     """The admin Metrics tab's data: admins only; real readings of this
     machine within ~20 seconds of starting; ranges clamped to what's kept."""
@@ -1058,6 +1088,7 @@ async def main():
     await check_live(tag)
     check_invites(tag)
     await check_resend(tag)
+    await check_late_joiner(tag)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()

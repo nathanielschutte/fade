@@ -944,7 +944,7 @@ fn assess(recent: &[Point], info: &HostInfo, credits: Option<&Credits>) -> (Leve
             let full = credit_max(info);
             flag(r, Some(-balance), -full / 3.0, -full / 10.0, &|x| {
                 format!(
-                    "CPU credits are low ({:.0} left); past zero, extra CPU costs money",
+                    "CPU credits are low ({:.0} left); at zero the server slows to its baseline (or, in unlimited mode, pays for extra CPU)",
                     -x
                 )
             });
