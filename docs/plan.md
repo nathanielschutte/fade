@@ -58,6 +58,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 |
 | [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 |
 | [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
+| [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
 
@@ -319,6 +320,14 @@ Asked for after pics "opened" without showing up. The cause: the server counted 
 - Tests: `tests/e2e/test_resilience.py` (lost responses, offline, failing downloads), `check_resend` in the smoke test.
 
 Not yet: the iOS app needs the same (it will share the approach when it's built).
+
+#### X12. Double tap a chat to send a pic
+- Requested (2026-10-22): double-tapping a chat in the list opens it with the camera already up, to answer with a pic.
+- Done (0.25.1): the first tap opens the chat at once (no delay waiting for a second); a second tap within 350ms on the same spot (40px), wherever it lands, opens the camera instead; a quick tap somewhere else is just a tap. Works for groups too; does nothing if the camera isn't available (a changed key). Keyboard Enter doesn't count.
+
+#### X13. Double tap the camera to switch it
+- Requested (2026-10-22): double-tapping the live camera view switches between front and back, like the switch button.
+- Done (0.25.1): only while the camera is live (not on a taken pic, where taps draw). Double-tap zoom is off app-wide so the browser doesn't take the gesture; pinch zoom still works.
 
 #### I1. Move to napsack.getattr.com
 - Done: napsack.getattr.com is live, and fade.getattr.com redirects to it (`redirect_domains`). Data verified intact across the instance replacement (snapshot `snap-09aa617c083942ca9` taken first).

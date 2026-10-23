@@ -967,6 +967,36 @@ function preview(text) {
 
 /** One chat in the list. `actions` (favorite, hide, leave) sit behind the
  * row: a phone swipes it aside to reach them, a computer shows them on hover. */
+// Double-tapping a chat in the list opens it straight into the camera, to
+// answer with a pic. The first tap opens the chat as usual, without waiting
+// to see whether another follows; a second tap within DOUBLE_TAP_MS, wherever
+// lands on the same spot (on a phone the chat now covers the list), opens the
+// camera instead of doing anything else there. A tap elsewhere is just a tap.
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_PX = 40;
+const cameraTap = { listener: null, timer: null };
+
+function armCameraTap(opening, first) {
+  disarmCameraTap();
+  cameraTap.listener = async (e) => {
+    disarmCameraTap();
+    if (Math.hypot(e.clientX - first.clientX, e.clientY - first.clientY) > DOUBLE_TAP_PX) return;
+    e.preventDefault();
+    e.stopPropagation();
+    await opening;
+    const button = $("#camera-button");
+    if (!button.hidden && !button.disabled) button.click();
+  };
+  document.addEventListener("click", cameraTap.listener, true);
+  cameraTap.timer = setTimeout(disarmCameraTap, DOUBLE_TAP_MS);
+}
+
+function disarmCameraTap() {
+  clearTimeout(cameraTap.timer);
+  if (cameraTap.listener) document.removeEventListener("click", cameraTap.listener, true);
+  cameraTap.listener = null;
+}
+
 function chatRow({ name, status, time, current, onclick, group, avatar, actions = [], muted = false }) {
   const cls = ["chat-item"];
   // Muted: no unread dot or bold, and a 🔕 by the name.
@@ -979,7 +1009,11 @@ function chatRow({ name, status, time, current, onclick, group, avatar, actions 
   else if (status.marker === "text") cls.push("has-unread");
   if (group) cls.push("is-group");
   // While a row is swiped open, a tap anywhere on the list just closes it.
-  const open = () => (rowSwipe.open ? closeSwipedRow() : onclick());
+  const open = (e) => {
+    if (rowSwipe.open) return closeSwipedRow();
+    const opening = onclick();
+    if (e.detail > 0) armCameraTap(opening, e); // a tap or click, not the keyboard
+  };
   return el("li", { class: "chat-row" },
     el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick: open },
       el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
@@ -3620,6 +3654,20 @@ $("#camera-dialog").addEventListener("close", () => {
 $("#flip-camera").addEventListener("click", () => {
   camera.facing = camera.facing === "user" ? "environment" : "user";
   startStream();
+});
+
+// Double-tapping the live camera switches it, like the button. Counted from
+// clicks rather than `dblclick`, which phones don't reliably send.
+let lastStageTap = { at: 0, x: 0, y: 0 };
+$(".camera-stage").addEventListener("click", (e) => {
+  if ($("#camera-video").hidden || !camera.stream || e.target.closest("button, input, label")) return;
+  const last = lastStageTap;
+  if (e.timeStamp - last.at < DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) <= DOUBLE_TAP_PX) {
+    lastStageTap = { at: 0, x: 0, y: 0 };
+    $("#flip-camera").click();
+  } else {
+    lastStageTap = { at: e.timeStamp, x: e.clientX, y: e.clientY };
+  }
 });
 
 $("#shutter").addEventListener("click", async () => {

@@ -1029,3 +1029,7 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   text-align: center; color: var(--paper);
 }
 .viewer-error[hidden] { display: none; }
+
+/* Double taps open the camera (chat list) and switch it (camera), so the
+   browser mustn't zoom on them. Pinch zoom still works. */
+* { touch-action: manipulation; }
