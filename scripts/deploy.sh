@@ -52,8 +52,8 @@ else
   KEEP="$PREFIX/fade-server-$BUILD"
 fi
 echo "==> saving to s3://$BUCKET/$KEEP"
-aws s3 cp "$BIN" "s3://$BUCKET/$KEEP" --region "$REGION" --only-show-errors
-aws s3 cp "$BIN" "s3://$BUCKET/$PREFIX/fade-server" --region "$REGION" --only-show-errors
+aws s3 cp "$BIN" "s3://$BUCKET/$KEEP" --metadata "build=$BUILD" --region "$REGION" --only-show-errors
+aws s3 cp "$BIN" "s3://$BUCKET/$PREFIX/fade-server" --metadata "build=$BUILD,version=$VERSION" --region "$REGION" --only-show-errors
 
 URL=$(out url)
 LIVE=$(curl -sf "$URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')

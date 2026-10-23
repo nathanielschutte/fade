@@ -64,7 +64,7 @@ case "${1:-}" in
     echo "==> release candidate $BUILD"
     s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server-$BUILD" --metadata "build=$BUILD"
     # What staging runs (its server pulls this key; infra/staging/main.tf).
-    s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server"
+    s3 cp dist/fade-server "s3://$BUCKET/releases/main/fade-server" --metadata "build=$BUILD"
     # Keep the newest $KEEP candidates; releases (releases/tags/) are kept forever.
     # (The listing must work: an error stops the job rather than skipping the cleanup.)
     keys=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix releases/main/fade-server- --region "$AWS_REGION" \
@@ -98,7 +98,7 @@ case "${1:-}" in
     # The commit it was built from rides along as metadata ($BUILD, from the workflow).
     s3 cp dist/fade-server "s3://$BUCKET/$KEY" --metadata "build=${BUILD:-unknown}"
     # What production runs (its servers pull this key, at boot and on fade-update).
-    s3 cp dist/fade-server "s3://$BUCKET/releases/fade-server"
+    s3 cp dist/fade-server "s3://$BUCKET/releases/fade-server" --metadata "build=${BUILD:-unknown},version=$VERSION"
     ;;
 
   backup)

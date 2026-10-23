@@ -18,12 +18,13 @@ HOST=$(out ssh_host)
 CONF=infra/.ssh_config
 out ssh_config > "$CONF"
 
+# By version, oldest first (the dates in S3 are when a build was stored, not released).
 list() {
   aws s3 ls "s3://$BUCKET/$1" --region "$REGION" \
-    | awk '$4 ~ /^fade-server-/ { sub("fade-server-", "", $4); print "  " $1 " " $2 "  " $4 }'
+    | awk '$4 ~ /^fade-server-/ { sub("fade-server-", "", $4); print "  " $4 }' | sort -V
 }
 if [ $# -eq 0 ]; then
-  echo "Releases (releases/tags/, newest last):"; list releases/tags/
+  echo "Releases (releases/tags/):"; list releases/tags/
   echo "Hotfixes (releases/hotfix/):"; list releases/hotfix/
   exit 0
 fi
