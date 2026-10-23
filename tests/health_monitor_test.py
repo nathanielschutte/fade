@@ -1,4 +1,4 @@
-"""The health monitor's decisions (infra/health/monitor.py; docs/health-monitor.md),
+"""The health monitor's decisions (infra/health/monitor.py; docs/implementation/health-monitor.md),
 with AWS and the network faked. Run by scripts/test.sh: python3 tests/health_monitor_test.py"""
 import json, os, sys, unittest
 

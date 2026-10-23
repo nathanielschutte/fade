@@ -66,7 +66,7 @@ A read that fails (say, a missing permission) is shown on the page in red and lo
 
 ## From readings to the API
 
-`GET /api/admin/metrics?hours=` (admins only; [API.md](API.md)) returns one entry per host with these parts:
+`GET /api/admin/metrics?hours=` (admins only; [api.md](../spec/api.md)) returns one entry per host with these parts:
 
 - **Series.** Every point says what time it covers: it starts at `t` and lasts `s` seconds. A 10-second reading covers the 10 seconds before it was taken; a stored minute, that minute.
   - **The last hour** is the 10-second readings, each as `[x, x, x]`. Readings live in memory, so they only go back to the server's last start. Before that, the stored minutes fill in, so a deploy doesn't empty the hour (it did until 0.26.5).
@@ -143,7 +143,7 @@ Not in the estimate: EBS snapshots (a few cents), S3 requests (fractions of a ce
 
 ## More than one machine
 
-Every stored minute and host record carries its host (the EC2 instance id), the endpoint returns one entry per host, and the page shows a machine picker when there's more than one. What isn't built yet is the way in for another machine's readings: the plan is the same sampler running as a small `fade-server agent` mode that posts to the main server ([plan.md](plan.md), I4).
+Every stored minute and host record carries its host (the EC2 instance id), the endpoint returns one entry per host, and the page shows a machine picker when there's more than one. What isn't built yet is the way in for another machine's readings: the plan is the same sampler running as a small `fade-server agent` mode that posts to the main server ([plan.md](../management/plan.md), I4).
 
 ## Accuracy, in brief
 

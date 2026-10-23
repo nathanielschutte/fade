@@ -1,4 +1,4 @@
-"""Roles (docs/roles.md) in the browser: an Admin makes someone a PowerUser on
+"""Roles (docs/implementation/roles.md) in the browser: an Admin makes someone a PowerUser on
 the Roles page; the PowerUser gets the System link and the tabs for their role
 (no Logs), the overview without the users table, metrics without cost, the
 graph with strangers anonymous, and can make a friend a PowerUser but not take

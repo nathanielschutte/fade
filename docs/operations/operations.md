@@ -1,6 +1,6 @@
 # Operations
 
-Running napsack in production: the AWS setup, settings, getting a shell, domains, and what it costs. Releasing is in [RELEASING.md](RELEASING.md), backups in [BACKUPS.md](BACKUPS.md), limits and what to do under attack in [SECURITY.md](SECURITY.md). The rules for touching production (above all: data is never deleted) are in [CLAUDE.md](../CLAUDE.md).
+Running napsack in production: the AWS setup, settings, getting a shell, domains, and what it costs. Releasing is in [releasing.md](releasing.md), backups in [backups.md](backups.md), limits and what to do under attack in [security.md](../security.md). The rules for touching production (above all: data is never deleted) are in [CLAUDE.md](../../CLAUDE.md).
 
 ## Deploy to AWS
 
@@ -19,7 +19,7 @@ scripts/ssh.sh             # shell on the box; extra args run a command
 scripts/rollback.sh        # list kept builds, or roll back to one
 ```
 
-The normal way to ship the server is a `server-v*` tag, which GitHub Actions tests, builds, and deploys. `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [RELEASING.md](RELEASING.md).
+The normal way to ship the server is a `server-v*` tag, which GitHub Actions tests, builds, and deploys. `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [releasing.md](releasing.md).
 
 SSH uses `~/.ssh/id_ed25519` by default (`ssh_public_key_path`). With `ssh_allowed_cidrs` empty, port 22 stays closed and SSH is tunneled through SSM, which needs the AWS CLI and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html). Set it to e.g. `["203.0.113.7/32"]` to connect directly instead. To use plain `ssh fade`, scp, or VS Code Remote-SSH, run `terraform -chdir=infra output -raw ssh_config >> ~/.ssh/config`.
 
@@ -57,23 +57,23 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_SNAP_TTL_HOURS` | `720` | Unopened direct pics expire after this (30 days) |
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted pic. The client compresses every photo to 200 KB or less |
 | `FADE_SNAP_DISK_MB` | `256` | Disk ceiling for all unopened direct pics |
-| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([SECURITY.md](SECURITY.md)) |
+| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
 | `FADE_SESSION_DAYS` | `90` | |
-| `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](roles.md)) |
+| `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](../implementation/roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
 | `FADE_HEALTH_PREFIX` | `health/` | Where the Metrics tab reads incident records in the artifacts bucket. Staging sets `staging/health/` so it never reads production's |
 | `FADE_EXEMPT_ADDRESSES` | unset | **Staging only.** Comma-separated client addresses treated like local requests: no per-address limits or scanner bans, so test machines can run the suites and load tests ([staging.md](staging.md)). Never set in production |
 | `RUST_LOG` | `fade_server=info` | What goes to stdout (the system journal on the server) |
 | `FADE_LOG_BUFFER` | `fade_server=debug` | What the admin log viewer keeps (last 20,000 entries, in memory) |
-| `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([RELEASING.md](RELEASING.md)) |
+| `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([releasing.md](releasing.md)) |
 | `FADE_METRICS_RETENTION_HOURS` | `72` | How much history the admin Metrics tab keeps (up to 31 days). Changing it takes effect on restart |
 | `FADE_METRICS_DB` | `metrics.db` beside the database | The metrics store. Not user data: a fixed-size ring that overwrites itself |
 
 ## Metrics
 
-How every figure is measured and drawn: [metrics.md](metrics.md). In short, `/admin#metrics` shows how the machine and the server are doing: a status per machine (All good, Worth watching, In the red, with the reasons), cost, and charts for the last hour (10-second readings), 24 hours, or the whole retention window (3 days by default; each minute kept as min/avg/max, so spikes stay visible).
+How every figure is measured and drawn: [metrics.md](../implementation/metrics.md). In short, `/admin#metrics` shows how the machine and the server are doing: a status per machine (All good, Worth watching, In the red, with the reasons), cost, and charts for the last hour (10-second readings), 24 hours, or the whole retention window (3 days by default; each minute kept as min/avg/max, so spikes stay visible).
 
 - **Where it comes from:** the server reads `/proc` every 10 seconds (machine CPU including steal and iowait, memory, both disks' space and activity, network; its own CPU, memory, threads, open files) and times every request (exact p50/p95/p99 per minute). History is in `metrics.db` on the data volume, so it survives deploys.
 - **What "in the red" means:** memory or a disk over 90% (80% is "watch"), the server near its 400 MB systemd limit, response times (p95) over 2 seconds (500 ms watch), server errors, or AWS holding back CPU (steal). A t4g is burstable, so for CPU what matters is the **credit balance** (from CloudWatch every 5 minutes, free): low credits mean that past zero, CPU over the free baseline (5% on a t4g.nano) is billed. The CPU chart draws that baseline.
@@ -82,7 +82,7 @@ How every figure is measured and drawn: [metrics.md](metrics.md). In short, `/ad
 
 ## Health monitor
 
-A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](health-monitor.md)). Incidents (evidence and actions): `aws s3 ls s3://$(terraform -chdir=infra output -raw artifacts_bucket 2>/dev/null)/health/incidents/`. Notifications go to the SNS topic in `terraform -chdir=infra output -raw health_topic_arn`; subscribe an email to receive them. Watch-only mode: `health_act = false` in tfvars.
+A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](../implementation/health-monitor.md)). Incidents (evidence and actions): `aws s3 ls s3://$(terraform -chdir=infra output -raw artifacts_bucket 2>/dev/null)/health/incidents/`. Notifications go to the SNS topic in `terraform -chdir=infra output -raw health_topic_arn`; subscribe an email to receive them. Watch-only mode: `health_act = false` in tfvars.
 
 ## Staging
 

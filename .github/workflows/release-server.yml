@@ -1,7 +1,7 @@
 name: Release server
 
 # Push a tag like server-v0.2.0 (matching server/Cargo.toml) to ship it.
-# See docs/RELEASING.md for the checklist and the compatibility rules.
+# See docs/operations/releasing.md for the checklist and the compatibility rules.
 on:
   push:
     tags: ["server-v*"]

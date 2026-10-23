@@ -1,4 +1,4 @@
-"""Load test (docs/staging.md): how many people and how much traffic napsack
+"""Load test (docs/operations/staging.md): how many people and how much traffic napsack
 handles. Staging only, never production.
 
     python tests/load_test.py --stages 50,100,200 --rate 6 --duration 60

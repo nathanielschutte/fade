@@ -5,7 +5,7 @@
 #   scripts/rollback.sh 0.2.0-3f9c1a2   roll back to that build
 #
 # Works because migrations are additive and the server ignores ones it
-# doesn't know (docs/RELEASING.md). Needs: AWS CLI, terraform, ssh.
+# doesn't know (docs/operations/releasing.md). Needs: AWS CLI, terraform, ssh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

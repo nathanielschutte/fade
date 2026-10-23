@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set who's an Admin (docs/roles.md): usernames, comma-separated.
+# Set who's an Admin (docs/implementation/roles.md): usernames, comma-separated.
 #   scripts/set-admins.sh nate,liana
 # Stored as the SSM parameter /<app>/admins (SecureString), outside Terraform,
 # so the list isn't in source control or Terraform state. Then reload it on

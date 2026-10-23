@@ -70,7 +70,7 @@ pub struct ClientInfo {
 }
 
 /// FADE_EXEMPT_ADDRESSES: client addresses treated like local requests, so
-/// tests and load tests against staging aren't throttled (docs/staging.md).
+/// tests and load tests against staging aren't throttled (docs/operations/staging.md).
 /// Never set in production. Unparseable entries are ignored.
 fn exempt_addresses() -> &'static [IpAddr] {
     static LIST: std::sync::OnceLock<Vec<IpAddr>> = std::sync::OnceLock::new();

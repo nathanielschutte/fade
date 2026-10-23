@@ -14,11 +14,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 3 | [Group chats: encrypt reactions; refuse plain text](group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
 | 5 | [Finish the release pipeline](#p2-turn-on-cicd) | Process | Planned | Releases use `scripts/deploy.sh` until then |
-| 6 | [Scale out: two servers across zones](horizontal-scaling.md) | Infrastructure | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 7 | [Move the repo into WSL](#p3-testing-in-wsl) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 7 | [Move the repo into WSL](#p3-testing-in-wsl-and-moving-the-repo-there) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
 
 **Done**
 
@@ -45,15 +45,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Install as an app, with notifications](#f10-install-as-an-app-with-notifications) | 0.15.0 |
 | [Reactions and replies](#f11-reactions-and-replies): text format 2, encrypted reactions | 0.15.0 |
 | [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 |
-| Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([SECURITY.md](SECURITY.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
+| Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([security.md](../security.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
 | [Invite links and QR codes](#f14-invite-links-and-qr-codes) | 0.17.0 |
 | Push refusals log the push service's reason; an unchanged subscription no longer adds a row | 0.17.3 |
 | [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 |
 | [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 |
 | iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
-| [Favorites](stories/favorites.md) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
+| [Favorites](plan.md#x3-chat-list-tools-pin-mute-search) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
 | [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 |
-| **[End-to-end encrypted group chats](group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 |
+| **[End-to-end encrypted group chats](../implementation/group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 |
 | [Draw on pics](#f13-draw-on-pics): a pen, stickers, and undo, flattened into the photo before it's encrypted | 0.22.0 |
 | [Streaks](#f15-streaks): 🔥 and a count when you've both sent pics every day, ⌛ when it's about to end | 0.23.0 |
 | [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 |
@@ -65,11 +65,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 |
 | [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
 | [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
-| [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see OPERATIONS.md) | 0.26.0 |
-| [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](staging.md#results)) | infra, 0.30.1 |
+| [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see operations.md) | 0.26.0 |
+| [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](../operations/staging.md#results)) | infra, 0.30.1 |
 | [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
-| Development standard ([CLAUDE.md](../CLAUDE.md)), CI green on GitHub | process |
+| Development standard ([CLAUDE.md](../../CLAUDE.md)), CI green on GitHub | process |
 
 Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
 
@@ -80,7 +80,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 ### Process
 
 #### P1. Development standard
-- [CLAUDE.md](../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
+- [CLAUDE.md](../../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
 
 #### P3. Testing in WSL (and moving the repo there)
 - **Recommendation: move the repo into WSL** (`~/code/fade`), after moving Terraform state into an encrypted, versioned S3 bucket.
@@ -104,7 +104,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - [x] Commit the admin panel, versioning, tests, and docs (`6f0519f`).
 - [ ] Commit this round: CLAUDE.md, plan, unit tests, crypto vectors, domain redirect, SSH keys, CI fixes.
 - [x] Apply the GitHub deploy role (`infra/github.tf`). Done with the domain apply.
-- [ ] Set the repo variables (`terraform output github_actions_variables`), create the `production` environment, protect `main` ([RELEASING.md](RELEASING.md#one-time-setup)).
+- [ ] Set the repo variables (`terraform output github_actions_variables`), create the `production` environment, protect `main` ([releasing.md](../operations/releasing.md#one-time-setup)).
 - [x] Repo variables set. CI green on GitHub.
 - [ ] Create the `production` environment, then ship a tagged release through the workflow. Until then, releases use `scripts/deploy.sh` with the version bumped in `server/Cargo.toml`.
 - [x] Get CI green. The first run (`6f0519f`) failed with exit 126: scripts weren't executable in git. Fixed (mode bits, `bash scripts/test.sh`); confirm on the next push.
@@ -114,10 +114,10 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### F1. iOS app
 - iOS app. This is the big one.
-- Plan and milestones: [mobile.md](mobile.md). Push notifications are part of it.
+- Plan and milestones: [mobile.md](../design/mobile.md). Push notifications are part of it.
 - Needs: Apple Developer Program (approved 2026-10-21), Expo account (done).
 - Getting it to early users: TestFlight (internal testers first, then an external group by public link, which needs a short Beta App Review).
-- Started (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` is an Expo SDK 58 app whose one screen runs every vector check on the phone. Next: `eas init`, register the iPhone, first development build, read the results. Status in [mobile.md](mobile.md#first-milestones).
+- Started (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` is an Expo SDK 58 app whose one screen runs every vector check on the phone. Next: `eas init`, register the iPhone, first development build, read the results. Status in [mobile.md](../design/mobile.md#first-milestones).
 
 #### F2. Password reset and recovery
 - Password reset flow - email?  Admin recovery key for support.
@@ -144,7 +144,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### F6. Captions on pictures
 - Write text caption on a picture before you send it.
-- The encrypted picture is just JPEG bytes today, so a caption needs a new message format (an envelope holding picture + caption). That follows the readers-before-writers order in [RELEASING.md](RELEASING.md#compatibility-rules). If the iOS app can already read format 2 when it launches, this gets simpler.
+- The encrypted picture is just JPEG bytes today, so a caption needs a new message format (an envelope holding picture + caption). That follows the readers-before-writers order in [releasing.md](../operations/releasing.md#compatibility-rules). If the iOS app can already read format 2 when it launches, this gets simpler.
 - Done (0.13.0): format 2 seals the caption in with the photo (pinned vectors in `tests/vectors/format2.json`). Every direct pic is format 2 now; format 1 pics still open. Group pics carry a plain caption (they aren't end-to-end encrypted), revealed when opened. Captions show across the photo in the viewer.
 
 #### F9. Pics last 30 days
@@ -182,7 +182,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F11. Reactions and replies
 - Tap-and-hold a message to react (a small fixed set: ❤️ 😂 😮 😢 👍 👎, like iMessage), or swipe/tap to reply to it with a quote.
 - **Design:** both are end-to-end encrypted in direct chats. This introduces **text format 2**: the encrypted plaintext becomes a small JSON envelope (`{"t": "hi", "re": <message id>}`) instead of bare text, so future fields (replies, mentions, edits) don't each need a new format. Reactions are their own message kind (`reaction`), encrypted, pointing at the message they react to (the server sees which message got a reaction and when, not which emoji).
-- Readers before writers ([RELEASING.md](RELEASING.md#compatibility-rules)): the web app ships both at once; the iOS app should read text format 2 from its first release. New pinned vectors (`tests/vectors/format2_text.json` or similar).
+- Readers before writers ([releasing.md](../operations/releasing.md#compatibility-rules)): the web app ships both at once; the iOS app should read text format 2 from its first release. New pinned vectors (`tests/vectors/format2_text.json` or similar).
 - Group chats get the same (plaintext for now, like the rest of group messages).
 - A reaction can be changed or removed: a new row that supersedes the old (Rule 1), never an update that loses history.
 - Done (0.15.0) as designed. Tap a message for the reaction row and Reply; quotes link back to the original.
@@ -221,8 +221,8 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F17. Group chats: "seen by", then end-to-end
 - **"Seen by":** under the latest group message, "Seen by Ana, Ben" (read positions are already stored per member). Done (0.18.0): `GET /groups/{id}/reads` and a live `group_read` event; "Seen by everyone" once all of 3+ others have read it.
 - **End-to-end encryption for groups:** the one part of napsack the server can read. Nate (2026-10-21): "a key point of interest... design it thoroughly and document the approach in the repo."
-- **Decided (2026-10-21), Nate:** build Approach D from the design; existing groups switch automatically, no one asked; group names and pictures stay server-visible, but the app must say clearly that group pictures (and names) aren't encrypted; Phase 2 (authenticated member list) later, and never at the cost of easy invites (growing the app and keeping it approachable comes first while sign-up is invite-only); forward secrecy out of scope. Status: Phase 1 built and shipped (0.21.0): see [group-encryption.md, Built](group-encryption.md#built). Still to do: encrypt group reactions; refuse new plain-text group messages; Phase 2 later.
-- **Design written (2026-10-21): [group-encryption.md](group-encryption.md).** Recommends a fresh key per message, wrapped for each member with the pair key they already share with the sender (rather than a shared group key): sender authenticity among members, no key rotation when someone leaves, only primitives we already use. Format 3, readers before writers, then Phase 2 (an authenticated member list). Five open decisions listed at the end of the doc; nothing gets built until Nate answers them.
+- **Decided (2026-10-21), Nate:** build Approach D from the design; existing groups switch automatically, no one asked; group names and pictures stay server-visible, but the app must say clearly that group pictures (and names) aren't encrypted; Phase 2 (authenticated member list) later, and never at the cost of easy invites (growing the app and keeping it approachable comes first while sign-up is invite-only); forward secrecy out of scope. Status: Phase 1 built and shipped (0.21.0): see [group-encryption.md, Built](../implementation/group-encryption.md#built). Still to do: encrypt group reactions; refuse new plain-text group messages; Phase 2 later.
+- **Design written (2026-10-21): [group-encryption.md](../implementation/group-encryption.md).** Recommends a fresh key per message, wrapped for each member with the pair key they already share with the sender (rather than a shared group key): sender authenticity among members, no key rotation when someone leaves, only primitives we already use. Format 3, readers before writers, then Phase 2 (an authenticated member list). Five open decisions listed at the end of the doc; nothing gets built until Nate answers them.
 
 #### F19. Birthday and more profile fields
 - Requested (2026-10-21): "more profile field entries like a birthday (optional)."
@@ -265,7 +265,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Proposal: an account bar at the bottom of the chat list, with your avatar and name (opens your profile), an Admin link for admins, and Sign out. It's visible on phones too, since the chat list is the home screen there. The Friends sheet goes back to just friends and requests.
 
 #### X3. Chat list tools: pin, mute, search
-- **Favorites** first: [stories/favorites.md](stories/favorites.md). Taken over from Nate's story on 2026-10-21 and shipped with hiding (below), since both are marks on a chat row.
+- **Favorites** first, from Nate's story (since folded into this entry). Taken over on 2026-10-21 and shipped with hiding (below), since both are marks on a chat row.
 - **Decided (2026-10-21), favorites:** direct chats and groups both; up to 10; they sit in a "Favorites" section at the top, newest message first (choosing the order by hand can come later); kept on the server so they follow you, private to you. Unfriending or leaving keeps the mark but frees the slot, and it's a favorite again if the chat comes back.
 - **Decided (2026-10-21), hiding** (Nate: "swipe and clear a convo... just hide it and remove any local client data... group chats you would just leave"): a direct chat can be hidden from your list; its messages stay on the server, and the browser drops what it had loaded (the friend's pinned key stays, so a changed safety code is still caught). A new message from either side brings it back, as does opening it from "Hidden chats". Groups get Leave instead (two taps).
 - Done (0.19.0): one append-only table, `chat_marks` (newest row per user, chat, and kind wins, like nicknames). `PUT /chats/{id}/favorite`, `PUT /groups/{id}/favorite`, `PUT /chats/{id}/hidden`; `favorite`/`hidden` on the lists; other devices update through `friends_changed`/`groups_changed`. A phone swipes a row left for its actions; a computer shows them on hover. "Hid your chat with Maya. Undo". Tests: `marks.rs`, `check_marks` in the smoke test, `tests/e2e/test_marks.py`.
@@ -318,7 +318,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### X15. Friend map
 - Requested (2026-10-23): a page graphing friend relationships that shows distinct groups clearly. Build the graph tech as a module; two views: every person's own map (themselves, their friends, and a **?** for each friend of a friend they don't know), and an admin view with a switch between chosen people (default: yourself; one or more; depth 1–2) and everyone.
-- Design: [friend-graph.md](friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
+- Design: [friend-graph.md](../implementation/friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
 - Done (0.27.0): Friends → **See your friend map**; admin → **Graph** tab. Groups found by Louvain modularity, outlined and lettered; three colors at most (validated for every pair), names on every node. Tests: Rust (scope, privacy), Node (clusters, layout, hull), smoke (`check_graph`), browser (`test_graph.py`).
 
 ### Security
@@ -328,10 +328,12 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - PowerUser sees the System pages (the admin panel renamed, with a gear) scoped: Overview without the users table (the reset-password tool is Admin only); Metrics without cost; the Graph with every feature, but people they aren't friends with are anonymous. Logs are Admin only.
 - Admins and PowerUsers can make someone a PowerUser in the UI (PowerUsers only their friends); only Admins can take it away.
 - The admin list moves out of source control into its own SSM parameter, reloadable without a deploy.
-- Design: [roles.md](roles.md).
+- Design: [roles.md](../implementation/roles.md).
 - Done (0.28.0). Production's admin list moved to `/fade/admins` (`scripts/set-admins.sh`, `scripts/reload-admins.sh`); `admin_usernames` in Terraform is no longer used.
 
 ### Infrastructure
+
+- **Next boot script change:** its comment still says `docs/BACKUPS.md`; make it `docs/operations/backups.md`. (Left alone in the docs move on 2026-10-23: any edit to `infra/user_data.sh.tftpl` replaces the production instance, which a comment isn't worth.)
 
 #### X11. Bad connections
 
@@ -368,7 +370,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Options shown (seven, on the real list at phone width): badges with two people, speech bubbles, three dots, or the member count; rounded-square pictures with or without a badge; the count by the name. **Nate picked F**: a group's picture is a rounded square (everywhere, not just the list), and there's no badge. The green online dot stays the only mark on a friend's picture.
 
 #### X18. Incidents on the Metrics page
-- Requested (2026-10-23), queued: the health monitor's S3 incident records (`health/incidents/`, [health-monitor.md](health-monitor.md)) are the source of truth. The Metrics tab shows the last 7 days of incident events to Admins only (not PowerUsers): what failed, the evidence, each repair step, and how it ended. Incidents that resolved in the last 7 days show too, marked resolved, and an Admin can mark an open one resolved (written back to its record, never deleting it).
+- Requested (2026-10-23), queued: the health monitor's S3 incident records (`health/incidents/`, [health-monitor.md](../implementation/health-monitor.md)) are the source of truth. The Metrics tab shows the last 7 days of incident events to Admins only (not PowerUsers): what failed, the evidence, each repair step, and how it ended. Incidents that resolved in the last 7 days show too, marked resolved, and an Admin can mark an open one resolved (written back to its record, never deleting it).
 
 #### X19. Low CPU credits is a warning, not an alarm
 - Requested (2026-10-23), queued: the Metrics tab shows low CPU credits in red, as urgent. It should be a warning (amber). A new or replaced instance starts with few credits and builds them up while idle, so a low balance soon after boot is expected. Red only if credits are near zero *and* the CPU is pinned at its baseline (actually throttled); check the AWS rule for launch credits on t4g standard and say "building up after a restart" when the instance is young.
@@ -386,18 +388,18 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I2. Backups you can restore
 - DB backup system. We're moving this ahead of the ASG work: data must never be lost, and today's only backups are daily disk snapshots kept for 7 days.
 - Add a daily consistent SQLite backup (`.backup` or `VACUUM INTO`) to a versioned S3 bucket that never deletes, longer snapshot retention, and a restore drill we actually run and write down.
-- Built (see [BACKUPS.md](BACKUPS.md)): hourly backups via a systemd timer, integrity-checked and gzipped, to a new versioned bucket with `prevent_destroy` and no expiry (cheaper storage after 30 days); the server can only add objects. Disk snapshots go from 7 to 30 days. The admin panel shows the last backup (live in 0.7.0; it says "None yet" until the timer runs). `scripts/restore-drill.sh` checks the newest backup against production, read-only. The backup script passed a dry run against a test database: the uploaded copy restored with identical row counts, and a failure was recorded in the status file.
-- Done: infrastructure applied (2026-10-20), first backup taken, restore drill passed and logged in BACKUPS.md, and the server's role proven unable to delete or list backups.
+- Built (see [backups.md](../operations/backups.md)): hourly backups via a systemd timer, integrity-checked and gzipped, to a new versioned bucket with `prevent_destroy` and no expiry (cheaper storage after 30 days); the server can only add objects. Disk snapshots go from 7 to 30 days. The admin panel shows the last backup (live in 0.7.0; it says "None yet" until the timer runs). `scripts/restore-drill.sh` checks the newest backup against production, read-only. The backup script passed a dry run against a test database: the uploaded copy restored with identical row counts, and a failure was recorded in the status file.
+- Done: infrastructure applied (2026-10-20), first backup taken, restore drill passed and logged in backups.md, and the server's role proven unable to delete or list backups.
 
 #### I5. Growing the single server
-- Requested (2026-10-23): if napsack stays one server (today's stack), what runs out first and how do we grow it? Plan in [mono-scaling.md](mono-scaling.md), measured against production.
+- Requested (2026-10-23): if napsack stays one server (today's stack), what runs out first and how do we grow it? Plan in [mono-scaling.md](../design/mono-scaling.md), measured against production.
 - In order: the 100-account cap (ours), memory (0.5 GB: the first real upgrade, nano → micro), hourly full backups growing with database size forever (move to Litestream incremental before ~50 MB), CPU credits (the server is in **standard** credit mode: throttled, not billed), the 1 GB data disk (grow online), admin-panel queries. Step 0 is a local load test to replace estimates with measurements. CloudFront in front of the one server is a free improvement (no Elastic IP, no Caddy).
 - Nothing built; Nate decides when.
 
 #### I4. Metrics: how is the infrastructure doing?
 - Requested (2026-10-22): live machine stats (CPU, memory, disk; ready for more than one machine) and basic server process stats, kept for about 24 hours to a few days, accurate, visual enough to see whether we're in the red, with a cost estimate. No Prometheus/Grafana.
 - Approved (2026-10-22): build it in; 3 days, configurable (`FADE_METRICS_RETENTION_HOURS`); CloudWatch and Cost Explorer are fine at cents a month. Nate turned on the `App` cost tag.
-- Done (0.26.0), as proposed below; how to read it is in [OPERATIONS.md](OPERATIONS.md#metrics). Not yet: the `agent` mode for a second machine (the store and the tab already handle several hosts).
+- Done (0.26.0), as proposed below; how to read it is in [operations.md](../operations/operations.md#metrics). Not yet: the `agent` mode for a second machine (the store and the tab already handle several hosts).
 - **Proposal:** built into the server, no new services.
   - **Collect** every 10s, in the server, from `/proc` and `statvfs` (extends `sysinfo.rs`): machine CPU % (busy, iowait, *steal*), memory used/available and swap, disk used/free and IOPS for the root and data volumes, network in/out; process CPU %, memory (RSS), threads, open files; app request rate, p50/p95/p99 latency, 5xx, live sockets, DB and pic sizes.
   - **Keep** each minute as min/avg/max (so spikes aren't averaged away) in a separate `metrics.db` on the data volume, a fixed ring of 3 days × 1,440 slots per host, overwritten in place: bounded size, survives deploys, never touches user data. The last hour at 10s stays in memory for the live view. Every row carries `host` (the instance id).
@@ -409,21 +411,21 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### I6. Health monitor
 - Requested (2026-10-23): an outside check that the single server is healthy, and that tries to fix it, gently first: restart the app, reboot, stop and start (new hardware), and as a last resort replace the server. Every incident is written up with its evidence and what was tried; a notification goes to an SNS topic (where it lands is decided later). No new cost if possible.
-- Design: [health-monitor.md](health-monitor.md).
+- Design: [health-monitor.md](../implementation/health-monitor.md).
 - Done (0.29.0): running in production. Replacement (step 4) is a notification for now; automatic replacement waits for a group of one. To get notices: `aws sns subscribe --topic-arn $(terraform -chdir=infra output -raw health_topic_arn) --protocol email --notification-endpoint you@example.com`.
 
 #### I7. napsack.io
 - Requested (2026-10-23): `napsack.io` (registered in Route 53, with its zone) becomes the production address; `napsack.getattr.com` redirects to it permanently (301).
-- Design and what people will notice: [domain-move.md](domain-move.md).
+- Design and what people will notice: [domain-move.md](../operations/domain-move.md).
 - Done (2026-10-23): server replaced with the Rule 1 checklist (snapshot snap-0ffc391a688a0f6b8 first; every row count equal after; the volume remounted). Left for Nate: set GitHub's `APP_URL` repository variable to https://napsack.io, and tell friends to sign in again at napsack.io.
 
 #### I8. Staging
 - Requested (2026-10-23): a second, fully separate copy of napsack in AWS, in the same network, on its own address, with no backups. For running the browser tests against a real deployment and for load testing. Production and its data must not be touchable from it.
-- Design and results: [staging.md](staging.md). Done 2026-10-23: `scripts/test-staging.sh` passes everything that can run remotely (push needs a local receiver; live reload needs a debug build). Load test: 400 online at 718 texts/s with no errors; memory per connection is the first limit.
+- Design and results: [staging.md](../operations/staging.md). Done 2026-10-23: `scripts/test-staging.sh` passes everything that can run remotely (push needs a local receiver; live reload needs a debug build). Load test: 400 online at 718 texts/s with no errors; memory per connection is the first limit.
 
 #### I9. Email on napsack.io
 - Requested (2026-10-23), planning only: the simplest, cheapest way to have a real mailbox for nate@napsack.io on desktop and phone.
-- Options and a recommendation: [email.md](email.md).
+- Options and a recommendation: [email.md](../design/email.md).
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
@@ -434,4 +436,4 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
   - **ASG of 1 keeping SQLite:** the instance attaches the existing EBS data volume at boot (same AZ). Gets self-healing replacement without changing the database.
   - **More than one instance:** move to Postgres (RDS), and the live-message hub needs a shared channel between servers.
 - **Decided:** an ASG of one that keeps SQLite on the reattached EBS volume. Revisit only if one server isn't enough.
-- **Superseded (2026-10-23):** Nate wants at least two servers, across availability zones, with low cost, private networking, and one deploy path for laptop and CI. Proposal in [horizontal-scaling.md](horizontal-scaling.md): RDS PostgreSQL (also carrying live events between servers via `LISTEN/NOTIFY`), pics in S3, an Auto Scaling group of two behind an internal ALB with CloudFront as the only public entry point, IPv6-only outbound (no NAT), and deploys by instance refresh from `scripts/release.sh`. About $40 a month (about $54 with a Multi-AZ database) against $7.50 today; a group-of-one with Litestream (about $8) is the cheaper alternative. **Waiting on Nate's review**; nothing built.
+- **Superseded (2026-10-23):** Nate wants at least two servers, across availability zones, with low cost, private networking, and one deploy path for laptop and CI. Proposal in [horizontal-scaling.md](../design/horizontal-scaling.md): RDS PostgreSQL (also carrying live events between servers via `LISTEN/NOTIFY`), pics in S3, an Auto Scaling group of two behind an internal ALB with CloudFront as the only public entry point, IPv6-only outbound (no NAT), and deploys by instance refresh from `scripts/release.sh`. About $40 a month (about $54 with a Multi-AZ database) against $7.50 today; a group-of-one with Litestream (about $8) is the cheaper alternative. **Waiting on Nate's review**; nothing built.

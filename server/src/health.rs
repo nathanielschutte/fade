@@ -1,4 +1,4 @@
-//! `GET /api/health` (docs/health-monitor.md): whether this server can do its
+//! `GET /api/health` (docs/implementation/health-monitor.md): whether this server can do its
 //! job, for the outside monitor. Public, and says nothing private: whether
 //! the database answers and the data disk has room, plus what's running and
 //! the server's clock (the monitor checks it's current, so a stale cache or

@@ -1,6 +1,6 @@
 # The iOS app
 
-The plan for napsack's native app: what it's built with, how it shares the encryption with the web client, and how it's developed, versioned, and released. Release rules that apply to every client are in [RELEASING.md](RELEASING.md).
+The plan for napsack's native app: what it's built with, how it shares the encryption with the web client, and how it's developed, versioned, and released. Release rules that apply to every client are in [releasing.md](../operations/releasing.md).
 
 ## Stack: Expo (React Native, TypeScript)
 
@@ -10,7 +10,7 @@ Why this over the alternatives:
 
 - **It works from Windows.** EAS builds and signs iOS apps on Apple hardware in the cloud, so day-to-day work happens in Windows and WSL, and the phone runs real builds. The MacBook stays optional: useful for the iOS Simulator and for debugging native crashes, but not required to ship. A Swift app would need the Mac for everything, and Flutter's iOS builds also need a Mac or a separate cloud builder.
 - **It can share the encryption with the web client.** The message formats are defined by `shared/crypto/crypto.js`, which uses the WebCrypto API. React Native gets the same API (`crypto.subtle`: ECDH P-256, HKDF, PBKDF2, AES-GCM) from `react-native-quick-crypto`, which runs it natively. One JavaScript implementation then serves both clients, so they can't drift apart. Getting this wrong would make messages unreadable across clients, which is the most expensive bug this project can have.
-- **It's a real native app.** React Native renders native iOS views. It isn't a web page in a wrapper. That's what matters for the camera, the Keychain, and push notifications, and it's also what closes the "server delivers the JavaScript" gap from [how-napsack-works.md](how-napsack-works.md#limits), because the app's code is signed and reviewed before install.
+- **It's a real native app.** React Native renders native iOS views. It isn't a web page in a wrapper. That's what matters for the camera, the Keychain, and push notifications, and it's also what closes the "server delivers the JavaScript" gap from [how-napsack-works.md](../how-napsack-works.md#limits), because the app's code is signed and reviewed before install.
 - **It covers Android later** from the same code, if that ever matters.
 
 The trade-off: a dependency on Expo's tooling and cloud. The free tier's build queue is slow, and there's a paid plan if that ever hurts. The app stays a standard React Native project, so it could leave EAS later.
@@ -27,7 +27,7 @@ tests/vectors/     format1.json, format2.json: fixed inputs and the exact bytes 
 ```
 
 - **Shared crypto, no build step for the web.** The crypto lives in `shared/crypto/crypto.js` as a plain ES module. The server compiles it into the binary and serves it as `/crypto.js` for the web client; the app imports the same file through Metro (`mobile/metro.config.js` watches `shared/`). Key storage is the only platform-specific part, so it isn't in that file: IndexedDB on the web (`server/static/keystore.js`), the iOS Keychain on the phone.
-- **Test vectors keep the clients in lockstep.** [`tests/vectors/format1.json`](../tests/vectors/format1.json) and [`format2.json`](../tests/vectors/format2.json) pin a password, two key pairs, a wrapped key, a text, pics with and without captions, and a safety code, generated once from the web implementation. `shared/crypto/vector-checks.js` runs every check against them; Node runs it in CI (`node --test`), and the app runs it on the phone. The browser runs the same checks in `tests/e2e/test_crypto_vectors.py`, and Python checks the documented layouts independently.
+- **Test vectors keep the clients in lockstep.** [`tests/vectors/format1.json`](../../tests/vectors/format1.json) and [`format2.json`](../../tests/vectors/format2.json) pin a password, two key pairs, a wrapped key, a text, pics with and without captions, and a safety code, generated once from the web implementation. `shared/crypto/vector-checks.js` runs every check against them; Node runs it in CI (`node --test`), and the app runs it on the phone. The browser runs the same checks in `tests/e2e/test_crypto_vectors.py`, and Python checks the documented layouts independently.
 - **Keys on the phone.** The unwrapped private key goes in the iOS Keychain (via `expo-secure-store`), readable only while the phone is unlocked and never synced to iCloud or other devices. The password-derived sign-in works exactly as on the web, so history works on the phone from day one.
 - **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this".
 
@@ -75,7 +75,7 @@ Shipping:
 1. **Native change.** Bump `version`, commit, and tag `ios-v1.2.0`. A workflow (added with the app) runs `eas build --profile production --auto-submit`, which builds in the cloud and uploads to TestFlight. Test it there, then submit for review in App Store Connect.
 2. **JavaScript-only fix.** `eas update --channel production` publishes it. Only installed apps with the same native fingerprint receive it, so a fix can't reach an app whose native side it doesn't match. It's bound by the same compatibility rules as everything else.
 
-Release order always follows [RELEASING.md](RELEASING.md): server first, then the app. Raise `min_client_versions.ios` only after the newer app is out and installed.
+Release order always follows [releasing.md](../operations/releasing.md): server first, then the app. Raise `min_client_versions.ios` only after the newer app is out and installed.
 
 ## TestFlight
 

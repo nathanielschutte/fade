@@ -1,6 +1,6 @@
 # Scaling out: two or more servers, across zones (design)
 
-Status: **proposal, for Nate's review.** Nothing here is built, and no infrastructure changes until the design and cost are approved. Written 2026-10-23 for I3 in [plan.md](plan.md). It replaces I3's earlier decision (an ASG of one keeping SQLite), because the goal is now at least two servers in different availability zones. For growing the single server as it is today, see [mono-scaling.md](mono-scaling.md).
+Status: **proposal, for Nate's review.** Nothing here is built, and no infrastructure changes until the design and cost are approved. Written 2026-10-23 for I3 in [plan.md](../management/plan.md). It replaces I3's earlier decision (an ASG of one keeping SQLite), because the goal is now at least two servers in different availability zones. For growing the single server as it is today, see [mono-scaling.md](mono-scaling.md).
 
 ## Goals
 
@@ -131,7 +131,7 @@ Today `scripts/deploy.sh` copies the binary over SSH to one server, and the CI r
 2. **Upload** it to S3 as `releases/fade-server-<version>-<build>`.
 3. **Point** the SSM parameter `/fade/release` at it. Parameter history doubles as a free deploy log.
 4. **Roll:** `aws autoscaling start-instance-refresh`, with minimum healthy 100% and maximum 200%. That launches each new server first, waits until the load balancer calls it healthy, then retires an old one. Auto-rollback is on: if new servers don't become healthy, the group goes back.
-5. Each new server **boots** (launch template user data): fetch `/fade/release` and the settings, download the binary from S3, start. The first one to start runs pending migrations; Postgres locks make that happen once. Old servers keep running meanwhile, which the existing [RELEASING.md](RELEASING.md) rule (additive migrations only) already allows.
+5. Each new server **boots** (launch template user data): fetch `/fade/release` and the settings, download the binary from S3, start. The first one to start runs pending migrations; Postgres locks make that happen once. Old servers keep running meanwhile, which the existing [releasing.md](../operations/releasing.md) rule (additive migrations only) already allows.
 6. **Verify:** wait for the refresh to finish, then check `/api/config` reports the new build from every server. A new `X-Napsack-Instance` header says which server answered.
 
 All of that is one script, **`scripts/release.sh`**. Locally it runs with your AWS profile; the CI release workflow (tag `server-v*`) runs the same script with its existing OIDC role, plus the new permissions it needs: `ssm:PutParameter` on `/fade/release`, and starting and reading instance refreshes on this group. Rollback is the same script given an older version. A deploy takes about 3–5 minutes. Connections move to the new servers as old ones go, which the app's reconnect logic (0.25.0) already handles.
@@ -177,7 +177,7 @@ Each phase ships on its own, keeps napsack running, and is tested before the nex
 3. **Many servers, correctly** (medium). Events, presence and typing over `NOTIFY`; global sign-in limits in Postgres; one-at-a-time background jobs; a log fan-out; metrics in Postgres. Tested locally by running **two servers against one Postgres** in `scripts/test.sh`: a message sent through one arrives on a socket held by the other, sign-in limits are shared, and sweeps run once.
 4. **Network, group, and deploys** (medium). Terraform for the dual-stack VPC, private subnets, egress-only gateway, S3 endpoint, security groups, internal ALB, CloudFront with its VPC origin and certificate, RDS subnet group, launch template, Auto Scaling group, and Instance Connect endpoint. Plus `scripts/release.sh`, the CI release update, and new `ssh.sh`, `rollback.sh` and `check-migrations.sh`. **Built beside the current server**: test it through CloudFront's own address first, then switch the Route 53 record. Keep the old server stopped, not deleted, until the new setup has run cleanly for a week.
 
-CLAUDE.md's Rule 1 infrastructure checklist, the "Shipping" section, OPERATIONS.md and SECURITY.md get rewritten in the same phases that change them.
+CLAUDE.md's Rule 1 infrastructure checklist, the "Shipping" section, operations.md and security.md get rewritten in the same phases that change them.
 
 ## Decisions for Nate
 

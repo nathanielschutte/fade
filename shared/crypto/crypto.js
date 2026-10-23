@@ -5,7 +5,7 @@
 // react-native-quick-crypto) all provide. Nothing platform-specific belongs
 // here; key storage lives with each client.
 //
-// Changing bytes on the wire means a new message format (docs/RELEASING.md).
+// Changing bytes on the wire means a new message format (docs/operations/releasing.md).
 // tests/vectors/format1.json and format2.json pin the exact output, and every
 // client is tested against them.
 //
@@ -313,7 +313,7 @@ export async function decryptReaction(key, b64, senderId, recipientId, messageId
   return dec.decode(await open(key, fromB64(b64), reactionAad(senderId, recipientId, messageId)));
 }
 
-// ---------- format 3: group messages (docs/group-encryption.md) ----------
+// ---------- format 3: group messages (docs/implementation/group-encryption.md) ----------
 // Each message is sealed once with a fresh key K, and K is wrapped for every
 // member (the sender too, for their other devices) with the key that sender
 // and member share: the pair key's ECDH secret under its own HKDF label. A

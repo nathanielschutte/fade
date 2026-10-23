@@ -32,7 +32,7 @@ Memory is the tightest resource on a t4g.nano, and it fails abruptly: the kernel
 - **Spikes:**
   - Re-encoding an uploaded profile or group picture can allocate up to 96 MB (`images.rs`; one at a time). End-to-end encrypted pics are never decoded on the server, so only pictures count.
   - Each password check (Argon2, default settings) takes about 19 MB. Several sign-ins at once stack up, because nothing limits how many run together.
-- **Open connections:** each WebSocket holds its buffers: measured on staging at about 175 KB per connected person in napsack (47 MB at 50 sockets, 108 MB at 400; [staging.md](staging.md#results)), mostly a read buffer far larger than our 16 KB message limit, plus Caddy's share for each TLS connection. At 400 the nano's memory was 86% used.
+- **Open connections:** each WebSocket holds its buffers: measured on staging at about 175 KB per connected person in napsack (47 MB at 50 sockets, 108 MB at 400; [staging.md](../operations/staging.md#results)), mostly a read buffer far larger than our 16 KB message limit, plus Caddy's share for each TLS connection. At 400 the nano's memory was 86% used.
 
 On a nano, after setting aside room for one picture and a couple of sign-ins, roughly 60–70 MB is left for connections: on the order of a few hundred open connections. That's about where the 500-connection cap sits. So the nano is fine up to the 100-account cap, and going well past it means more memory.
 
@@ -57,7 +57,7 @@ Every hour the backup job copies the whole database to S3 (compressed), and copi
 
 Copying and compressing a large database every hour also costs CPU and memory on a small machine.
 
-**What to do, before the database passes about 50 MB:** switch to **incremental** backups with **Litestream**, which copies each change to S3 within a second. That's point-in-time restore with seconds of loss instead of an hour, and storage grows with changes rather than size × hours. Keep a daily full copy forever, so the "kept forever" promise still holds. This changes the backup policy in [BACKUPS.md](BACKUPS.md), so it's Nate's decision. It's also the first step of the "group of one" option in [horizontal-scaling.md](horizontal-scaling.md#cheaper-alternatives).
+**What to do, before the database passes about 50 MB:** switch to **incremental** backups with **Litestream**, which copies each change to S3 within a second. That's point-in-time restore with seconds of loss instead of an hour, and storage grows with changes rather than size × hours. Keep a daily full copy forever, so the "kept forever" promise still holds. This changes the backup policy in [backups.md](../operations/backups.md), so it's Nate's decision. It's also the first step of the "group of one" option in [horizontal-scaling.md](horizontal-scaling.md#cheaper-alternatives).
 
 ### 4. CPU credits
 

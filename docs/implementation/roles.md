@@ -1,6 +1,6 @@
 # Roles (design)
 
-Status: **built (0.28.0).** Requested by Nate on 2026-10-23 (S2 in [plan.md](plan.md)).
+Status: **built (0.28.0).** Requested by Nate on 2026-10-23 (S2 in [plan.md](../management/plan.md)).
 
 ## The three roles
 

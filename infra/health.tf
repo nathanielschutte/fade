@@ -1,4 +1,4 @@
-# The health monitor (docs/health-monitor.md): a Lambda every 5 minutes checks
+# The health monitor (docs/implementation/health-monitor.md): a Lambda every 5 minutes checks
 # /api/health from outside, gathers evidence when it fails, tries to fix the
 # server (restart the app, reboot, stop/start), records each incident in the
 # artifacts bucket under health/, and notifies the SNS topic. Free-tier sized.
@@ -97,7 +97,7 @@ resource "aws_iam_role_policy" "health" {
 
 resource "aws_lambda_function" "health" {
   function_name    = "${var.app_name}-health"
-  description      = "napsack health monitor (docs/health-monitor.md)"
+  description      = "napsack health monitor (docs/implementation/health-monitor.md)"
   role             = aws_iam_role.health.arn
   runtime          = "python3.13"
   architectures    = ["arm64"]

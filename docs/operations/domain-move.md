@@ -1,6 +1,6 @@
 # Moving to napsack.io
 
-Status: **done (2026-10-23).** Requested by Nate (I7 in [plan.md](plan.md)). `napsack.io` (registered in Route 53, with its own zone) is the production address. Every old address redirects to it permanently.
+Status: **done (2026-10-23).** Requested by Nate (I7 in [plan.md](../management/plan.md)). `napsack.io` (registered in Route 53, with its own zone) is the production address. Every old address redirects to it permanently.
 
 ## What changes
 

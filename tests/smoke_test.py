@@ -12,7 +12,7 @@ import requests, websockets
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
 # The test server's database, when local: some checks look at what was stored.
 DB = os.environ.get("NAPSACK_DB") or None
-# NAPSACK_REMOTE=1: testing a deployed server (staging; docs/staging.md), not a
+# NAPSACK_REMOTE=1: testing a deployed server (staging; docs/operations/staging.md), not a
 # local one. Skips what needs the local machine: the push receiver.
 REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
@@ -561,7 +561,7 @@ async def check_live(tag):
 
 
 def check_group_e2e(tag, a, a_tok, b, b_tok):
-    """End-to-end encrypted group messages (format 3, docs/group-encryption.md):
+    """End-to-end encrypted group messages (format 3, docs/implementation/group-encryption.md):
     the server checks the member list and the keys' shapes, stores the sealed
     content once, and hands each member only their own key. The crypto itself
     is checked by the vectors and the browser tests."""
@@ -736,7 +736,7 @@ async def check_resend(tag):
 
 
 def check_health():
-    """/api/health, for the outside monitor (docs/health-monitor.md): public,
+    """/api/health, for the outside monitor (docs/implementation/health-monitor.md): public,
     says whether the database and disk are fine, and nothing private."""
     r = ok(call("GET", "/health"))
     h = r.json()
@@ -747,7 +747,7 @@ def check_health():
     print("  health: public, database and disk OK, nothing private")
 
 def check_roles(tag):
-    """Roles (docs/roles.md): what a User, a PowerUser, and an Admin can reach.
+    """Roles (docs/implementation/roles.md): what a User, a PowerUser, and an Admin can reach.
     PowerUsers see how the app is doing, never more private data: no users
     table, no cost, no logs, no reset codes, and on the graph everyone they
     aren't friends with is anonymous (no username, no id, anywhere)."""

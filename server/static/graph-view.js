@@ -1,4 +1,4 @@
-// Draws a friend graph (docs/friend-graph.md) as SVG, with its groups
+// Draws a friend graph (docs/implementation/friend-graph.md) as SVG, with its groups
 // outlined, a legend, and a list view. The app's own friend map and the
 // admin graph both use it; the math is in /graph.js (shared/graph/graph.js).
 // No inline styles or scripts (the CSP forbids them): classes, attributes,

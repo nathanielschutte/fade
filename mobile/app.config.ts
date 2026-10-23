@@ -1,7 +1,7 @@
 import type { ExpoConfig } from "expo/config";
 
 // The app's version, per release (SemVer, like the server). EAS sets the build
-// number on its own. See docs/mobile.md and docs/RELEASING.md.
+// number on its own. See docs/design/mobile.md and docs/operations/releasing.md.
 const VERSION = "0.1.0";
 
 const config: ExpoConfig = {

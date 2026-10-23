@@ -19,7 +19,7 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .await?;
     // A rolled-back binary must start against a database a newer release already
     // migrated, so don't fail on migrations this build doesn't know. That's only
-    // safe because migrations are additive (docs/RELEASING.md).
+    // safe because migrations are additive (docs/operations/releasing.md).
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
     migrator.run(&pool).await?;

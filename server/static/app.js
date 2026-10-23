@@ -2374,7 +2374,7 @@ async function handleEvent(ev) {
 
 // ---------- groups ----------
 // Group messages and pics are end-to-end encrypted (format 3,
-// docs/group-encryption.md): each is sealed once with a fresh key, wrapped
+// docs/implementation/group-encryption.md): each is sealed once with a fresh key, wrapped
 // for every member with the key the sender shares with them. The group's name
 // and picture aren't encrypted, and every group says so. Messages from before
 // a group switched stay plain text (format 0).
@@ -3525,7 +3525,7 @@ $("#invite-share").addEventListener("click", () => {
 $("#friends-button").addEventListener("click", openFriends);
 $("#empty-add").addEventListener("click", openFriends);
 
-// ---------- friend map (docs/friend-graph.md) ----------
+// ---------- friend map (docs/implementation/friend-graph.md) ----------
 // You in the middle, your friends around you, lines between friends who know
 // each other, and a ? for each person a friend knows that you don't. The
 // server decides what's on it (graph.rs); the groups and layout come from

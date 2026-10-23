@@ -1,6 +1,6 @@
 # Group chats, end-to-end encrypted (design)
 
-Status: **Phase 1 built (0.21.0).** Written 2026-10-21 for F17 in [plan.md](plan.md); Nate's decisions are at the end, and what's built (and what isn't yet) is under [Built](#built). Read [how-napsack-works.md](how-napsack-works.md) first: this builds directly on the direct-chat scheme.
+Status: **Phase 1 built (0.21.0).** Written 2026-10-21 for F17 in [plan.md](../management/plan.md); Nate's decisions are at the end, and what's built (and what isn't yet) is under [Built](#built). Read [how-napsack-works.md](../how-napsack-works.md) first: this builds directly on the direct-chat scheme.
 
 Today group chats are the one part of napsack the server can read (`format` 0). This document is how they stop being that, and how we'll know it's done right.
 
@@ -111,7 +111,7 @@ All additive (Rule 1, and the API only grows):
 
 ## Rollout: readers before writers
 
-Following [RELEASING.md](RELEASING.md#compatibility-rules):
+Following [releasing.md](../operations/releasing.md#compatibility-rules):
 
 1. **Readers.** Ship reading format 3 in the web app and in the first iOS build. Nothing sends it yet. Test vectors pass on both.
 2. **Writers.** Once every client in use can read it (the web app updates on reload; iOS requires a minimum version through `min_client_versions` before step 2), the web app starts sending format 3. Each group shows one event, "Messages are end-to-end encrypted from here on", and its old messages are labeled "sent before end-to-end encryption".

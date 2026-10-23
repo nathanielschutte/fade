@@ -69,7 +69,7 @@ variable "github_repo" {
 }
 
 variable "admin_usernames" {
-  description = "No longer used: Admins are the SSM parameter /<app_name>/admins, set with scripts/set-admins.sh, so the list stays out of source control (docs/roles.md)."
+  description = "No longer used: Admins are the SSM parameter /<app_name>/admins, set with scripts/set-admins.sh, so the list stays out of source control (docs/implementation/roles.md)."
   type        = list(string)
   default     = []
 }

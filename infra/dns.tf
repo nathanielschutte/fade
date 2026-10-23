@@ -1,4 +1,4 @@
-# DNS for the app's address (docs/domain-move.md), when its Route 53 zone is
+# DNS for the app's address (docs/operations/domain-move.md), when its Route 53 zone is
 # in this account: the domain itself and www point at the Elastic IP. (Old
 # addresses that redirect keep their own records, made by hand.)
 

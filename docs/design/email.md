@@ -1,6 +1,6 @@
 # Email on napsack.io
 
-Planning only ([I9](plan.md#i9-email-on-napsackio)). Goal: a real mailbox for `nate@napsack.io` that works on a computer and a phone, for as little money and upkeep as possible. Nothing here is built yet.
+Planning only ([I9](../management/plan.md#i9-email-on-napsackio)). Goal: a real mailbox for `nate@napsack.io` that works on a computer and a phone, for as little money and upkeep as possible. Nothing here is built yet.
 
 ## Recommendation: iCloud+ custom domain
 

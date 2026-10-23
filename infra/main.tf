@@ -31,7 +31,7 @@ locals {
   domain   = var.domain != "" ? var.domain : "${replace(aws_eip.app.public_ip, ".", "-")}.sslip.io"
   env_file = join("\n", [
     "FADE_INVITE_CODE=${var.invite_code}",
-    # Admins live in their own parameter, outside Terraform (docs/roles.md; scripts/set-admins.sh).
+    # Admins live in their own parameter, outside Terraform (docs/implementation/roles.md; scripts/set-admins.sh).
     "FADE_ADMINS_PARAM=/${var.app_name}/admins",
     "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
@@ -198,7 +198,7 @@ resource "aws_iam_role_policy" "instance" {
         Sid    = "ReadConfig"
         Effect = "Allow"
         Action = ["ssm:GetParameter"]
-        # The settings, and the admin list (set outside Terraform; docs/roles.md).
+        # The settings, and the admin list (set outside Terraform; docs/implementation/roles.md).
         Resource = [
           aws_ssm_parameter.env.arn,
           "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.app_name}/admins",

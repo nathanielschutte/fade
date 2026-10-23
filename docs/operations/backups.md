@@ -1,6 +1,6 @@
 # Backups and restores
 
-User data is never deleted ([CLAUDE.md](../CLAUDE.md)), and it lives in one SQLite file on one disk. This is how it's protected, and how to get it back.
+User data is never deleted ([CLAUDE.md](../../CLAUDE.md)), and it lives in one SQLite file on one disk. This is how it's protected, and how to get it back.
 
 ## What runs
 

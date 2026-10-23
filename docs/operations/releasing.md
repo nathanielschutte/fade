@@ -1,6 +1,6 @@
 # Versioning and releases
 
-How napsack's pieces are versioned, how each one ships, and the rules that keep old clients working while new ones roll out. The iOS app's specifics are in [mobile.md](mobile.md).
+How napsack's pieces are versioned, how each one ships, and the rules that keep old clients working while new ones roll out. The iOS app's specifics are in [mobile.md](../design/mobile.md).
 
 ## The pieces
 
@@ -26,7 +26,7 @@ Phones update on their own schedule, and App Store review adds days. So the serv
 
 A change that can't follow these rules is a new API version: new routes under `/api/v2/...` next to the old ones, with `API_VERSION` bumped in `server/src/version.rs`. The old routes stay until no supported client uses them (rule 4).
 
-**3. Encryption changes get a new message format.** Every message stores a `format` (1 today, described in [how-napsack-works.md](how-napsack-works.md)). A new scheme is format 2, and old messages stay format 1 forever, so clients keep the old decryption code. Readers have to exist before writers:
+**3. Encryption changes get a new message format.** Every message stores a `format` (1 today, described in [how-napsack-works.md](../how-napsack-works.md)). A new scheme is format 2, and old messages stay format 1 forever, so clients keep the old decryption code. Readers have to exist before writers:
 1. Release clients that can read format 2 but still send format 1.
 2. Once those are installed widely, raise the minimum client version (rule 4) to them.
 3. Add 2 to `MESSAGE_FORMATS` in `server/src/version.rs` and release the server.
@@ -66,7 +66,7 @@ Rule 5 is what makes this safe. A rollback can't undo a migration, so a migratio
 
 ## Releasing the iOS app
 
-The details live in [mobile.md](mobile.md). The short version:
+The details live in [mobile.md](../design/mobile.md). The short version:
 - **Native changes** (new native modules, permissions, Expo SDK upgrades): bump `version`, tag `ios-v1.2.0`, and EAS builds it in the cloud, uploads it to TestFlight, and after you test it, you submit it for App Store review.
 - **JavaScript-only fixes** go out with EAS Update to installed apps whose native code matches. No review wait, but it's still bound by rules 1-3.
 

@@ -1,6 +1,6 @@
 # Staging
 
-A second, separate napsack at <https://staging.napsack.io>, for running the browser tests against a real deployment (Caddy, TLS, AWS) and for load testing. It shares production's network and nothing else. Plan entry: [I8](plan.md#i8-staging).
+A second, separate napsack at <https://staging.napsack.io>, for running the browser tests against a real deployment (Caddy, TLS, AWS) and for load testing. It shares production's network and nothing else. Plan entry: [I8](../management/plan.md#i8-staging).
 
 ## What it is
 
@@ -66,7 +66,7 @@ Results are saved next to the accounts file. Watch staging's own Metrics tab (si
 Every text arrived (delivered = sent at every stage), and `/api/health` stayed under 160 ms throughout.
 
 What it means:
-- **Memory runs out first, not CPU.** Each connected person costs about 175 KB in napsack (47 MB at 50 sockets, 108 MB at 400), plus Caddy's share for the TLS connection. At 400 the machine was at 86%. Production's cap of 500 live connections (`FADE_MAX_SOCKETS`) is about right for a nano; [mono-scaling.md](mono-scaling.md) step 2 has the fixes (cap journald, a smaller WebSocket read buffer) and the upgrade (t4g.micro).
+- **Memory runs out first, not CPU.** Each connected person costs about 175 KB in napsack (47 MB at 50 sockets, 108 MB at 400), plus Caddy's share for the TLS connection. At 400 the machine was at 86%. Production's cap of 500 live connections (`FADE_MAX_SOCKETS`) is about right for a nano; [mono-scaling.md](../design/mono-scaling.md) step 2 has the fixes (cap journald, a smaller WebSocket read buffer) and the upgrade (t4g.micro).
 - **Throughput is far past what napsack needs.** 718 texts a second used about half the machine (napsack itself 36%). Today's production traffic is a few texts a minute. The load generator, on one home machine, was near its own limit at that stage, so the server's real ceiling is higher.
 - **CPU credits:** a busy minute like the last stage spends credits (a nano's free baseline is 5% of the machine); at that rate a full bank lasts about six hours, then texts would slow to the baseline. Normal traffic never gets near it.
 - Not measured yet: pics (encryption happens on phones, but uploads and disk writes don't), group fan-out to 32 members, and many sign-ins at once (each is a deliberately slow password hash: registering 390 accounts four at a time took a few minutes).

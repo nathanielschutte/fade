@@ -1,5 +1,5 @@
-//! Admin stats for usernames listed in FADE_ADMINS. Counts and timestamps
-//! only: nothing here reads message ciphertext, keys, or anything a user wrote.
+//! The System page's overview (docs/implementation/roles.md): PowerUsers and
+//! Admins; the users table for Admins only. Counts and timestamps only: nothing here reads message ciphertext, keys, or anything a user wrote.
 
 use axum::{extract::State, Json};
 use serde::Serialize;

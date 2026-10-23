@@ -1,6 +1,6 @@
 """Generates tests/vectors/group3.json from the shared crypto (shared/crypto/crypto.js).
 
-Format 3 group messages (docs/group-encryption.md): a text with a reply and a
+Format 3 group messages (docs/implementation/group-encryption.md): a text with a reply and a
 pic with a caption, sent by alice (7) to a group with bob (3), each sealed once
 and its key wrapped for both members. Keys are format1.json's. Run once; the
 output is pinned, so this refuses to overwrite the file. Every client must

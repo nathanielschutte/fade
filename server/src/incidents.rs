@@ -1,5 +1,5 @@
 //! Health monitor incidents on the Metrics tab (plan X18, Admins only;
-//! docs/health-monitor.md).
+//! docs/implementation/health-monitor.md).
 //!
 //! The monitor (infra/health) writes one JSON record per incident to the
 //! artifacts bucket. Those records are the source of truth and are only read

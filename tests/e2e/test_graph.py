@@ -1,4 +1,4 @@
-"""The friend map (docs/friend-graph.md): a person's own map, with their
+"""The friend map (docs/implementation/friend-graph.md): a person's own map, with their
 friends, who knows who, and a ? for a friend of a friend; tapping someone;
 the list view; the admin graph's switch, people picker, and depth; and the
 phone layout. Settings come from the environment; see common.py."""

@@ -1,5 +1,5 @@
 """Opens the pinned format 3 group vectors with an independent implementation
-of docs/group-encryption.md (Python's `cryptography`, not crypto.js): ECDH
+of docs/implementation/group-encryption.md (Python's `cryptography`, not crypto.js): ECDH
 P-256, HKDF-SHA-256 with the documented salt and info, AES-256-GCM with the
 documented associated data. Both members' wraps must open to the same key,
 the content must open to the documented envelopes, and changing any piece of

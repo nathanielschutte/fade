@@ -1,4 +1,4 @@
-"""The health monitor (docs/health-monitor.md): every 5 minutes, is napsack's
+"""The health monitor (docs/implementation/health-monitor.md): every 5 minutes, is napsack's
 server healthy? If not, gather evidence, try to fix it (one step per run,
 gently first), write the incident down in S3, and notify an SNS topic.
 

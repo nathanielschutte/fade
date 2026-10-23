@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build an ARM64 static binary, push it to the box over SSH, and restart.
-# The normal path is a tagged release through GitHub Actions (docs/RELEASING.md);
+# The normal path is a tagged release through GitHub Actions (docs/operations/releasing.md);
 # this script is for hotfixes and for when CI is unavailable.
 # Needs: cargo-zigbuild (cargo install cargo-zigbuild; pip install ziglang),
 #        rustup target add aarch64-unknown-linux-musl, AWS CLI, terraform, ssh.
@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TARGET=aarch64-unknown-linux-musl
-# FADE_STACK=staging deploys to staging (infra/staging; docs/staging.md) instead.
+# FADE_STACK=staging deploys to staging (infra/staging; docs/operations/staging.md) instead.
 TF="infra${FADE_STACK:+/$FADE_STACK}"
 out() { terraform -chdir="$TF" output -raw "$1"; }
 BUCKET=$(out artifacts_bucket)

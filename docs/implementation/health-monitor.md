@@ -1,6 +1,6 @@
 # Health monitor (design)
 
-Status: **built (0.29.0).** Requested by Nate on 2026-10-23 (I6 in [plan.md](plan.md)). napsack runs on one server; this notices from outside when it's unwell, tries to fix it, gently first, and writes down what happened.
+Status: **built (0.29.0).** Requested by Nate on 2026-10-23 (I6 in [plan.md](../management/plan.md)). napsack runs on one server; this notices from outside when it's unwell, tries to fix it, gently first, and writes down what happened.
 
 ## The pieces
 
@@ -54,7 +54,7 @@ state between runs: S3 health/state.json (failures in a row, open incident, last
 
 ### Why not an Auto Scaling group (yet)
 
-An Auto Scaling group of one would make step 4 automatic: terminate the server and the group launches a fresh one. But the data volume lives in one zone and must be attached by the new server's boot script, and the Elastic IP must be reassociated by it, rather than by Terraform as now. That's the "group of one" in [horizontal-scaling.md](horizontal-scaling.md#cheaper-alternatives), and a change to the boot script that Rule 1 says must be tested against a volume that already has data. Steps 1–3, plus EC2's own automatic recovery (on by default for this instance type), cover the likely failures. Step 4 waits for a human until that's built.
+An Auto Scaling group of one would make step 4 automatic: terminate the server and the group launches a fresh one. But the data volume lives in one zone and must be attached by the new server's boot script, and the Elastic IP must be reassociated by it, rather than by Terraform as now. That's the "group of one" in [horizontal-scaling.md](../design/horizontal-scaling.md#cheaper-alternatives), and a change to the boot script that Rule 1 says must be tested against a volume that already has data. Steps 1–3, plus EC2's own automatic recovery (on by default for this instance type), cover the likely failures. Step 4 waits for a human until that's built.
 
 ## Incident records
 

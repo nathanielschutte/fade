@@ -1,6 +1,9 @@
-//! Group chats. Version 1 is NOT end-to-end encrypted (messages are stored as
-//! plain text, `format` 0), and clients say so in every group; direct chats
-//! stay end-to-end encrypted. Nothing is deleted: leaving or removal sets
+//! Group chats. Messages are end-to-end encrypted (format 3,
+//! docs/implementation/group-encryption.md): the server checks a sealed
+//! message's member list and hands each member only their own key. Messages
+//! from before a group switched stay plain text (`format` 0), and the group's
+//! name and picture, and reactions, are visible to the server; clients say
+//! so in every group. Nothing is deleted: leaving or removal sets
 //! `left_at`, and membership and name changes are posted into the group as
 //! `event` messages, which doubles as its history.
 //!
@@ -31,7 +34,7 @@ pub const MAX_MEMBERS: i64 = 32;
 const MAX_TEXT_CHARS: usize = 2000;
 /// `format` of an unencrypted group message.
 pub const FORMAT_PLAINTEXT: i64 = 0;
-/// `format` of an end-to-end encrypted group message (docs/group-encryption.md).
+/// `format` of an end-to-end encrypted group message (docs/implementation/group-encryption.md).
 pub const FORMAT_E2E: i64 = 3;
 /// A format 3 text's sealed content, decoded: the 2,000-character envelope
 /// with room for escapes, plus IV and tag.

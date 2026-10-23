@@ -1,6 +1,6 @@
 # Friend map (design)
 
-Status: **built (0.27.0).** Requested by Nate on 2026-10-23: a page that graphs friend relationships so distinct groups of friends stand out, built as a reusable module with two views: one every person can see, and an admin view with selectable scope. Plan entry: X15 in [plan.md](plan.md).
+Status: **built (0.27.0).** Requested by Nate on 2026-10-23: a page that graphs friend relationships so distinct groups of friends stand out, built as a reusable module with two views: one every person can see, and an admin view with selectable scope. Plan entry: X15 in [plan.md](../management/plan.md).
 
 ## What people see
 

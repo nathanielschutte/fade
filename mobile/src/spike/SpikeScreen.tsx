@@ -1,4 +1,4 @@
-// Milestone 1 (docs/mobile.md): prove the shared crypto runs on a real iPhone
+// Milestone 1 (docs/design/mobile.md): prove the shared crypto runs on a real iPhone
 // and produces exactly the pinned bytes, and that 600,000-round PBKDF2 is fast
 // enough to sign in with. Runs every check in shared/crypto/vector-checks.js.
 import { useCallback, useEffect, useState } from "react";

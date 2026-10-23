@@ -140,7 +140,7 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
     return (await e2e.decryptReaction(ctx.kb, ct, v.alice.id, v.bob.id, 42)) === e2e.REACTIONS[1];
   });
 
-  // Format 3 group messages (docs/group-encryption.md)
+  // Format 3 group messages (docs/implementation/group-encryption.md)
   if (vg) {
     const opts = (m, myId, wrapKey) => ({
       groupId: vg.group_id, senderId: vg.sender, myId, clientId: m.client_id, recipients: m.recipients, wrapKey });

@@ -1,4 +1,4 @@
-# Staging (docs/staging.md): a second, separate napsack on staging.<domain>,
+# Staging (docs/operations/staging.md): a second, separate napsack on staging.<domain>,
 # for browser tests against a real deployment and for load tests.
 #
 # Isolation from production:

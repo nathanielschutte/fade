@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The smoke test and the browser tests against staging (docs/staging.md):
+# The smoke test and the browser tests against staging (docs/operations/staging.md):
 # a real deployment, behind Caddy, on AWS. Never production: it refuses any
 # address that isn't staging's.
 #   scripts/test-staging.sh            # everything

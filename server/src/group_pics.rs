@@ -1,5 +1,7 @@
-//! Pics in group chats, and group pictures. Like group texts, NOT end-to-end
-//! encrypted yet (migration 0007): the server can see these images.
+//! Pics in group chats, and group pictures. Group pics are end-to-end
+//! encrypted (format 3): opaque bytes here, like direct pics. Old format 0
+//! pics, and group pictures, are visible to the server and go through
+//! `images::clean`.
 //!
 //! A group pic is view-once per member. Its bytes live in a file under
 //! `Config::pic_dir` until everyone who was in the group when it was sent has
@@ -186,7 +188,7 @@ pub struct UploadParams {
     /// Format 0 only; a format 3 caption is sealed in with the photo.
     #[serde(default)]
     caption: String,
-    /// `?format=3`: an end-to-end encrypted pic (docs/group-encryption.md).
+    /// `?format=3`: an end-to-end encrypted pic (docs/implementation/group-encryption.md).
     #[serde(default)]
     format: i64,
 }

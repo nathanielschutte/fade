@@ -1,4 +1,4 @@
-//! Roles (docs/roles.md): User, PowerUser, Admin.
+//! Roles (docs/implementation/roles.md): User, PowerUser, Admin.
 //!
 //! Admins are a list in settings: `FADE_ADMINS`, plus the SSM parameter named
 //! by `FADE_ADMINS_PARAM` in production, reloadable without a deploy. They're

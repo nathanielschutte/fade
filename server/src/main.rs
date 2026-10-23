@@ -76,7 +76,7 @@ pub struct Config {
     pub push_allow_local: bool,
     /// Hard caps and budgets against abuse (guard.rs).
     pub limits: guard::Limits,
-    /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/BACKUPS.md).
+    /// Status file the backup job writes (infra/user_data.sh.tftpl, docs/operations/backups.md).
     pub backup_status_path: String,
     /// Oldest native client version still allowed, per platform. See version.rs.
     pub min_client_versions: Vec<(String, version::Semver)>,

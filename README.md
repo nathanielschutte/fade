@@ -26,19 +26,24 @@ cd server && cargo run          # http://127.0.0.1:8080; saving a web app file u
 bash scripts/test.sh            # everything CI runs; --no-browser skips the browser tests
 ```
 
-On Windows, build and test in WSL (Smart App Control blocks freshly built programs); [CLAUDE.md](CLAUDE.md) is aware of this setup. Releases go out with `scripts/deploy.sh` (from WSL) for now; see [RELEASING.md](docs/RELEASING.md).
+On Windows, build and test in WSL (Smart App Control blocks freshly built programs); [CLAUDE.md](CLAUDE.md) is aware of this setup. Releases go out with `scripts/deploy.sh` (from WSL) for now; see [releasing.md](docs/operations/releasing.md).
 
 ## Docs
 
 | | |
 |---|---|
-| [ONBOARDING.md](docs/ONBOARDING.md) | Start here if you're new to the code |
+| [onboarding.md](docs/onboarding.md) | Start here if you're new to the code |
 | [CLAUDE.md](CLAUDE.md) | How we work: the rules (data is never deleted), testing, shipping, code standards |
-| [plan.md](docs/plan.md) | What's done, what's next |
+| [plan.md](docs/management/plan.md) | What's done, what's next |
 | [how-napsack-works.md](docs/how-napsack-works.md) | The encryption, pics, notifications, and what the server can and can't see |
-| [API.md](docs/API.md) | Every endpoint and socket event |
-| [SECURITY.md](docs/SECURITY.md) | Protections, limits, and what to do if something looks wrong |
-| [OPERATIONS.md](docs/OPERATIONS.md) | AWS, settings, shell access, domains, cost |
-| [RELEASING.md](docs/RELEASING.md) | Versions, compatibility rules, releasing |
-| [BACKUPS.md](docs/BACKUPS.md) | Backups and restoring |
-| [mobile.md](docs/mobile.md) | The iOS app |
+| [api.md](docs/spec/api.md) | Every endpoint and socket event |
+| [security.md](docs/security.md) | Protections, limits, and what to do if something looks wrong |
+| [operations.md](docs/operations/operations.md) | AWS, settings, shell access, domains, cost |
+| [releasing.md](docs/operations/releasing.md) | Versions, compatibility rules, releasing |
+| [backups.md](docs/operations/backups.md) | Backups and restoring |
+| [staging.md](docs/operations/staging.md) | The staging copy, browser tests against it, and load test results |
+| [health-monitor.md](docs/implementation/health-monitor.md) | The outside monitor that checks and repairs the server |
+| [roles.md](docs/implementation/roles.md) | User, PowerUser, Admin, and the System page |
+| [mobile.md](docs/design/mobile.md) | The iOS app |
+
+Docs are grouped by purpose: `docs/spec/` (the API), `docs/implementation/` (how built features work), `docs/operations/` (running it), `docs/design/` (proposals), `docs/management/` (the plan). Names are lowercase.

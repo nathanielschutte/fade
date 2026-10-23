@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Load test staging (docs/staging.md; tests/load_test.py). Never production.
+# Load test staging (docs/operations/staging.md; tests/load_test.py). Never production.
 #   scripts/load-staging.sh --stages 50,100,200 --rate 6 --duration 60
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -43,7 +43,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Caddy terminates HTTPS (with HSTS) and caps request bodies; the app sends strict security headers on every response.
 - The app runs as its own user with a read-only system, no new privileges, a 400 MB memory ceiling, and no swap (so nothing in memory reaches disk).
 - Secrets (the invite code, admin list) live in AWS Parameter Store and are loaded into memory at start, never written to disk.
-- Backups run every hour to S3. The server can add backups but not read, change, or delete them, so even a fully compromised server can't destroy them. Disk snapshots are kept 30 days. See [BACKUPS.md](BACKUPS.md).
+- Backups run every hour to S3. The server can add backups but not read, change, or delete them, so even a fully compromised server can't destroy them. Disk snapshots are kept 30 days. See [backups.md](operations/backups.md).
 
 ## Limits
 
@@ -78,7 +78,7 @@ Being honest about the gaps:
 
 - **A large network flood (DDoS).** Everything above works inside the app. A flood big enough to saturate the instance's network, or Caddy's TLS handshakes, would still take napsack offline until it stops. The fix is a CDN/WAF in front (AWS CloudFront with WAF, or Cloudflare); it costs money and moves TLS to the provider, so it's a decision for when napsack is a bigger target.
 - **Many addresses at once.** Per-address limits slow one attacker; a botnet with thousands of addresses could still make noise. The account cap, the per-session limits, and the in-flight ceiling are what keep that from becoming damage.
-- **The server is a single machine.** If it dies, napsack is down until it's replaced (the data volume and backups survive). Planned: an Auto Scaling group of one ([plan.md](plan.md)).
+- **The server is a single machine.** If it dies, napsack is down until it's replaced (the data volume and backups survive). Planned: an Auto Scaling group of one ([plan.md](management/plan.md)).
 - **The web app is delivered by the server.** A compromised server could ship code that leaks keys as you type; every browser-based encrypted app shares this. The iOS app, signed and reviewed before install, closes it.
 - **Metadata.** The server sees who talks to whom and when; it needs to, to deliver messages.
 
@@ -88,7 +88,7 @@ Being honest about the gaps:
 2. **Stop new accounts.** Set `FADE_MAX_ACCOUNTS` to the current count (or change the invite code in `terraform.tfvars`), `terraform apply`, then `scripts/ssh.sh "sudo systemctl restart fade"`.
 3. **Shut out an address** that gets past the automatic bans: add a deny rule for it to the subnet's network ACL in AWS (instant, no restart).
 4. **Someone's account was taken over.** From the admin panel, issue them a reset code: it ends every session and gives them a new key.
-5. **The server itself is compromised.** Take it out of service (stop the instance), snapshot the data volume, and rebuild from a known release; the backups in S3 can't have been altered. [BACKUPS.md](BACKUPS.md) has the restore drill.
+5. **The server itself is compromised.** Take it out of service (stop the instance), snapshot the data volume, and rebuild from a known release; the backups in S3 can't have been altered. [backups.md](operations/backups.md) has the restore drill.
 
 ## Changing a limit
 

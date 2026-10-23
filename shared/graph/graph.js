@@ -1,4 +1,4 @@
-// The friend map's graph tech (docs/friend-graph.md): finding groups of
+// The friend map's graph tech (docs/implementation/friend-graph.md): finding groups of
 // friends, laying a graph out, and outlining groups. Plain math, no DOM, so
 // every client can use it (the web app gets it as /graph.js).
 //

@@ -1,5 +1,5 @@
 # Database backups: an hourly consistent copy of the SQLite database, kept
-# forever (docs/BACKUPS.md). The instance can only add objects here, never
+# forever (docs/operations/backups.md). The instance can only add objects here, never
 # delete or overwrite them, and versioning keeps anything that does change.
 
 resource "aws_s3_bucket" "backups" {

@@ -821,7 +821,7 @@ function pickRange(hours) {
 $("#m-host").addEventListener("change", (e) => { metrics.host = e.target.value; renderMetrics(); });
 let resizeTimer = null;
 
-// ---------- incidents (Admins only; plan X18, docs/health-monitor.md) ----------
+// ---------- incidents (Admins only; plan X18, docs/implementation/health-monitor.md) ----------
 // What the health monitor found and did, from its records in S3: the last
 // 7 days, open ones first. An Admin can mark one resolved; the monitor's own
 // record is never changed.
@@ -936,7 +936,7 @@ async function resolveIncident(btn, inc) {
   await loadIncidents(true);
 }
 
-// ---------- friend graph (docs/friend-graph.md) ----------
+// ---------- friend graph (docs/implementation/friend-graph.md) ----------
 // Everyone, or chosen people (you by default) with their friends or friends
 // of friends. Real usernames: this is what the server holds. The drawing is
 // the same module as the app's own friend map.
@@ -1067,7 +1067,7 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
-// ---------- roles (docs/roles.md) ----------
+// ---------- roles (docs/implementation/roles.md) ----------
 // Everyone for Admins; for PowerUsers, themselves and their friends. Admins
 // and PowerUsers make someone a PowerUser; only Admins take it away.
 

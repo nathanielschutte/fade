@@ -1,5 +1,5 @@
 //! Client/server compatibility. The rules behind these constants are in
-//! docs/RELEASING.md; read that before changing any of them.
+//! docs/operations/releasing.md; read that before changing any of them.
 
 use axum::{
     extract::{Request, State},

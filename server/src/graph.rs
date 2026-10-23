@@ -1,4 +1,4 @@
-//! The friend map (docs/friend-graph.md): which people and friendships a
+//! The friend map (docs/implementation/friend-graph.md): which people and friendships a
 //! request may see. Privacy is decided here, never in a client.
 //!
 //! A person's own map (`GET /api/graph`) has them, their friends, the

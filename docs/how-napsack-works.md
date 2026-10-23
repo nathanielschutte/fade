@@ -11,12 +11,17 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [Forgot your password?](#forgot-your-password)
 - [Sending a message](#sending-a-message)
 - [Pics](#pics)
+- [Group chats](#group-chats)
+- [Profiles](#profiles)
 - [Replies and reactions](#replies-and-reactions)
 - [Notifications](#notifications)
 - [Typing and "active now"](#typing-and-active-now)
+- [Invite links](#invite-links)
+- [The friend map](#the-friend-map)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
 - [Limits](#limits)
-- [The admin panel](#the-admin-panel)
+- [Roles and the System page](#roles-and-the-system-page)
+- [Keeping it running](#keeping-it-running)
 - [Glossary](#glossary)
 
 ## At a glance
@@ -25,13 +30,15 @@ Every direct text and pic, and every group message and pic, is encrypted in the 
 
 | The server knows | The server never sees |
 |---|---|
-| Usernames and who is friends with whom | What any text says |
-| When each message was sent, and whether it was a text or a pic | What any pic shows, or its caption |
-| Display names, nicknames, and profile pictures (see [Profiles](#profiles)) | Which emoji someone reacted with, or which message a text replies to |
-| That a reaction happened, on which message; who's online and who's typing (to friends who share it) | |
-| Roughly how long each message is | Your password |
-| When texts were read and whether pics were opened | Your private key, unwrapped |
-| Each account's public key | The key you share with each friend |
+| Usernames and who is friends with whom | What any text says, direct or group |
+| When each message was sent, and whether it was a text or a pic | What any pic shows, or its caption (or what was drawn on it) |
+| Who is in which group, and each group's name and picture | Which emoji someone reacted with in a direct chat, or which message a text replies to |
+| Display names, nicknames, profile pictures and birthdays (see [Profiles](#profiles)) | |
+| That a reaction happened, on which message; which emoji, in groups | |
+| Who's online and who's typing (to friends who share it) | Your password |
+| Roughly how long each message is | Your private key, unwrapped |
+| When texts were read and whether pics were opened | The key you share with each friend |
+| Each account's public key | The key that opens each group message |
 
 ## The parts
 
@@ -39,7 +46,7 @@ Every direct text and pic, and every group message and pic, is encrypted in the 
 
 **The web app** is plain JavaScript with no framework and no build step. All of the encryption lives in one file, `shared/crypto/crypto.js`, and uses only WebCrypto, the cryptography built into every modern browser. The iOS app uses the very same file. There are no third-party crypto libraries to trust.
 
-**The machine** is one small ARM server on AWS. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced, with a snapshot taken every day. Unopened pics wait on that disk as ciphertext (see [Pics](#pics)).
+**The machine** is one small ARM server on AWS, at napsack.io. Caddy sits in front for HTTPS. The database and TLS certificates live on a separate encrypted disk that survives the server being replaced. The database is backed up every hour and the disk snapshotted every day (see [Keeping it running](#keeping-it-running)). Unopened pics wait on that disk as ciphertext (see [Pics](#pics)).
 
 ## What happens to your password
 
@@ -130,11 +137,12 @@ That's 40 bytes: the first 12 are the random IV, then the 12 encrypted bytes of 
 Pics are called *snaps* in the code and API, so you'll see `snap` in the strings below.
 
 1. **Capture.** The front camera is mirrored, like a mirror, and the photo matches the preview.
-2. **Compress.** Redrawn as a JPEG, which drops all metadata, including GPS. Starts at 1280 px and quality 0.8, then lowers quality and shrinks until it's 200 KB or less.
-3. **Caption.** Optional, up to 200 characters, typed over the preview.
-4. **Encrypt.** The caption and the photo are packed together and encrypted as one: same chat key, fresh IV, associated string `napsack/v2/snap/<sender>/<recipient>`. This is message format 2 (below), so the server can't read the caption any more than the photo.
-5. **Wait on disk.** The server writes the ciphertext to a file on the encrypted data disk, up to 512 KB per pic, and notes its size in the database. A restart or a deploy doesn't lose it.
-6. **Open once.** The first fetch by the recipient deletes the file and marks the pic opened. A second fetch gets "gone".
+2. **Draw.** Optional: pen strokes and emoji stickers, with undo. They're flattened into the photo itself before anything else happens, so nothing about the drawing travels separately.
+3. **Compress.** Redrawn as a JPEG, which drops all metadata, including GPS. Starts at 1280 px and quality 0.8, then lowers quality and shrinks until it's 200 KB or less.
+4. **Caption.** Optional, up to 200 characters, typed over the preview.
+5. **Encrypt.** The caption and the photo are packed together and encrypted as one: same chat key, fresh IV, associated string `napsack/v2/snap/<sender>/<recipient>`. This is message format 2 (below), so the server can't read the caption any more than the photo.
+6. **Wait on disk.** The server writes the ciphertext to a file on the encrypted data disk, up to 512 KB per pic, and notes its size in the database. A restart or a deploy doesn't lose it.
+7. **Open once.** The recipient's app downloads the ciphertext, decrypts it, and shows it. Only then does it tell the server it was opened, and the server deletes the file and marks the pic opened, so a dropped download can simply be fetched again. A pic downloaded but never confirmed counts as opened 15 minutes after the first download. After that, a fetch gets "gone".
 
 Unopened pics expire after 30 days; the server deletes the file and marks them expired, so both people see what happened. The size check is the only check the server can make, because it can't see the image. In testing, a camera frame came out around 70 KB, and a deliberately hard-to-compress image around 160 KB.
 
@@ -150,15 +158,15 @@ Format 1 encrypts the JPEG bytes alone. Format 2 encrypts this instead:
 | that many | The caption, UTF-8 |
 | the rest | The JPEG |
 
-The associated string says `v2` (`napsack/v2/snap/7/3`), so a format 2 pic can't be passed off as format 1 or the other way round. Every message stores its format, and format 1 pics stay readable forever. Texts are still format 1. The pinned test vectors are in `tests/vectors/format2.json`.
+The associated string says `v2` (`napsack/v2/snap/7/3`), so a format 2 pic can't be passed off as format 1 or the other way round. Every message stores its format, and format 1 pics stay readable forever. Texts have a format 2 of their own (see [Replies and reactions](#replies-and-reactions)). The pinned test vectors are in `tests/vectors/format2.json`.
 
-Group pics aren't end-to-end encrypted (see [Group chats](#group-chats)), so their captions are plain text on the server, revealed with the pic when it's opened.
+Group pics use this same envelope, caption included, sealed with format 3 (see [Group chats](#group-chats)), and wait on disk the same way, view-once for each member.
 
 View-once is a server promise, not a cryptographic one. The recipient's screen shows the decrypted photo for ten seconds, and nothing stops a screenshot or a second camera.
 
 ## Group chats
 
-Group messages and pics are **end-to-end encrypted** (format 3). The full design, with the reasons and the threat model, is in [group-encryption.md](group-encryption.md). In short:
+Group messages and pics are **end-to-end encrypted** (format 3). The full design, with the reasons and the threat model, is in [group-encryption.md](implementation/group-encryption.md). In short:
 
 ```
 each message:
@@ -173,7 +181,9 @@ group wrap key(a, b) = HKDF(ECDH(a, b), salt "napsack/v1/pair/<lower id>/<higher
 
 The server stores the content once and one 60-byte wrap per member, and gives each member only their own. A wrap only the sender and that member could have made proves who sent the message, so neither the server nor another member can forge one. Someone who joins can't read what came before; someone who leaves or is removed isn't wrapped for again. Members' keys are pinned like friends' keys: if one changes, the app won't send to that group.
 
-**Not encrypted:** the group's **name** and **picture** (the server can see them, and each group says so), **reactions** in groups (which emoji), and messages sent before the group switched, which stay `format` 0 and readable by the server. The switch happened by itself with the first encrypted message, shown in the chat as "Messages and pics here are end-to-end encrypted from now on".
+**Not encrypted:** the group's **name** and **picture** (the server can see them, and each group says so), **reactions** in groups (which emoji), and messages and pics sent before the group switched, which stay `format` 0 and readable by the server. The switch happened by itself with the first encrypted message, shown in the chat as "Messages and pics here are end-to-end encrypted from now on". The group's picture, being visible to the server anyway, is rebuilt by the server like profile pictures.
+
+History starts when you join: the server sends each group message, and any later update to it (a reaction, "opened by"), only to members whose history includes it.
 
 ## Profiles
 
@@ -189,7 +199,7 @@ Texts are written in **format 2** now: instead of the bare text, the browser enc
 
 A reaction is one of six emoji, encrypted with the chat key and the associated string `napsack/v2/reaction/<sender>/<recipient>/<message id>`. Binding the message id in means the server can't move a reaction onto a different message. The server stores that a reaction happened and on which message; the newest one per person wins, and taking it back stores an empty one. Pinned vectors: `tests/vectors/texts2.json`.
 
-In group chats, replies and reactions are plain like everything else in a group.
+In group chats, a reply's link is sealed inside the encrypted text, as in direct chats. Reactions are the exception: in a group the server can see which emoji someone used (sealing them like messages is planned).
 
 ## Notifications
 
@@ -200,6 +210,16 @@ A notification says **who, never what**: "Ana: New message", "Sent you a pic", "
 ## Typing and "active now"
 
 While you type, your friend sees "Ana is typing…"; it travels over the live connection and is never stored. A green dot means a friend has napsack open, and "Active 5m ago" says when they last did. It's mutual and friends-only: turn off "Show friends when I'm active or typing" in your profile and nobody sees yours, and you stop seeing theirs.
+
+## Invite links
+
+You can invite someone with a link or a QR code (`/i/<token>`). Someone new signs up with it without the invite code and becomes your friend at once; someone who already has an account adds you in one tap. A link works 10 times and for 7 days, and you can turn it off. The server stores only a hash of the token, so the database alone can't be used to make a working link.
+
+## The friend map
+
+The Friends sheet can draw your **friend map**: you in the middle, your friends around you, a line between two friends who are friends with each other, and a **?** for each person a friend knows that you don't. Friends who know each other gather into groups, outlined and lettered.
+
+The server decides what's on it, and shows you only what you already know plus anonymous structure: a **?** has no id, name, or picture, and the ?s come in a shuffled order, so nothing hints at who one is. You can only ever get your own map. With the **Group chats** switch on, your group chats appear too, lined to you and the friends in them; members who aren't your friends are only counted, so a chat never gives away who a ? is. Details: [friend-graph.md](implementation/friend-graph.md).
 
 ## Safety codes and changed keys
 
@@ -221,11 +241,23 @@ Either way, your browser keeps the old key locally, so you can still read everyt
 - **A weak password is the weakest link.** Someone who stole the database could try passwords offline against the wrapped key. The 600,000-round stretch makes each guess slow, but a short or common password will still fall. Use a long one.
 - **The server delivers the app.** The web app's JavaScript comes from the same server. A compromised server could ship code that leaks keys as you type. Every browser-based encrypted app shares this problem. A native app, whose code is signed and reviewed before install, closes it.
 - **No forward secrecy.** Each pair of friends uses one long-lived key. If a password and old ciphertext both leaked, past messages could be read. Signal-style ratcheting fixes this at real complexity.
-- **Metadata is visible.** Who talks to whom, when, and how much is what the server needs to deliver messages. It's also what the admin panel shows, as counts.
+- **Metadata is visible.** Who talks to whom, when, and how much is what the server needs to deliver messages. It's also what the System page shows, as counts.
 
-## The admin panel
+## Roles and the System page
 
-Usernames on the server's admin list (`FADE_ADMINS`, set from Terraform's `admin_usernames`) can open `/admin`. It shows totals and activity (users, sign-ups, who's online, messages per day, pic open rates, server health), all computed from counts and timestamps. It can't show message content, because the server doesn't have any. Everyone else gets a "not found".
+Everyone is a **User**. Two roles see more of how napsack is doing, never more of anyone's private data, through the **System** page (the gear button). The server checks the role on every request and answers "not found" to anyone below it. Details: [roles.md](implementation/roles.md).
+
+- **PowerUser**, for friends curious about how napsack runs: the overview's counts (without the list of users), the Metrics tab without cost, and the friend graph with everyone they aren't friends with anonymous (no id, no username, an alias only they see). They can make a friend a PowerUser; only an Admin can take it away.
+- **Admin**: everything, including the users table, reset codes for people locked out, cost, the health monitor's incidents, and the server's logs. Admins are a list in the server's settings (an SSM parameter in production), never something the app itself can grant.
+
+Nothing on the System page shows message content: the server doesn't have any. Logs record events and ids (sign-ins, friendships, errors), never what anyone wrote, and the server redacts anything that looks like content or a secret.
+
+## Keeping it running
+
+- **Backups.** The database is copied to S3 every hour and kept forever; the server can add backups but can't read, change, or delete them. The data disk is also snapshotted daily, kept 30 days. Nothing in the database is ever deleted in the first place: when something ends (a friendship, a session), it's marked, not removed. [backups.md](operations/backups.md)
+- **The health monitor.** Every 5 minutes, a small program outside the server (an AWS Lambda) asks `https://napsack.io/api/health` whether the database answers and the disk has room. Two failures in a row open an incident, and it tries to fix things one gentle step at a time: restart the app, reboot, then move the server to new hardware. If none of that works, it asks for a person. Every step and its evidence is written down, and Admins see the last week of incidents on the Metrics tab. [health-monitor.md](implementation/health-monitor.md)
+- **Metrics.** The Metrics tab shows how the machine and the server are doing (CPU, memory, disk, response times, errors) and says plainly whether anything needs attention. [metrics.md](implementation/metrics.md)
+- **Staging.** A separate copy at staging.napsack.io, with no real accounts and no access to production's data, is where changes get tried on a real deployment and load tested. On the same size machine it handled 400 people online and 718 texts a second. [staging.md](operations/staging.md)
 
 ## Glossary
 
