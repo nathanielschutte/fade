@@ -390,6 +390,11 @@ pub async fn issue_reset_code(
         .fetch_optional(&state.db)
         .await?;
     let username = username.ok_or_else(|| AppError::not_found("No such user."))?;
+    if crate::team::is_system(&state.db, user).await? {
+        return Err(AppError::bad(
+            "That's napsack's own account: it has no password.",
+        ));
+    }
     let code = new_code();
     let at = now();
     let mut tx = state.db.begin().await?;

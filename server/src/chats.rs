@@ -9,7 +9,7 @@ use crate::{
     auth::AuthUser,
     db::{self, is_base64, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
-    friends::{require_friend, require_reachable},
+    friends::{require_friend_or_team, require_reachable},
     version,
     ws::Event,
     SharedState,
@@ -34,7 +34,7 @@ pub async fn list(
     Path(friend_id): Path<i64>,
     Query(page): Query<Page>,
 ) -> AppResult<Json<Vec<Message>>> {
-    require_friend(&state, me.id, friend_id).await?;
+    require_friend_or_team(&state, me.id, friend_id).await?;
     let limit = page.limit.unwrap_or(50).clamp(1, 200);
     let before = page.before.unwrap_or(i64::MAX);
 
@@ -157,7 +157,7 @@ pub async fn mark_read(
     AuthUser(me): AuthUser,
     Path(friend_id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_friend(&state, me.id, friend_id).await?;
+    require_friend_or_team(&state, me.id, friend_id).await?;
     let at = now();
     let result = sqlx::query(
         "UPDATE messages SET read_at = ?

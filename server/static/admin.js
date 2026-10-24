@@ -1127,6 +1127,7 @@ const ACTION_WORDS = {
   reset_code: "issued a reset code",
   announce: "posted an announcement",
   withdraw_announcement: "withdrew an announcement",
+  try_occasion: "tried a Team Napsack occasion",
 };
 const longDate = (ts) => dateLabel(ts, { year: "numeric", month: "short", day: "numeric" });
 const when = (ts) => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });

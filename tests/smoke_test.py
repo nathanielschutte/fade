@@ -297,8 +297,17 @@ def check_people(tag, a, a_tok, b, b_tok):
 SMOKE_ADMIN, SMOKE_ADMIN_KEY = "smoke_admin", base64.b64encode(b"smoke admin key, not a secret..").decode()
 
 
+def real_public_key():
+    """A real P-256 public key (SPKI, base64), for an account Team Napsack writes to."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    key = ec.generate_private_key(ec.SECP256R1()).public_key()
+    return b64(key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
+
+
 def admin_token():
-    r = register(SMOKE_ADMIN, auth_key=SMOKE_ADMIN_KEY)
+    # A real public key, so Team Napsack can write to this admin (check_team).
+    r = register(SMOKE_ADMIN, auth_key=SMOKE_ADMIN_KEY, public_key=real_public_key())
     if r.status_code == 409:
         r = call("POST", "/auth/login", json={"username": SMOKE_ADMIN, "auth_key": SMOKE_ADMIN_KEY})
     return ok(r).json()["token"]
@@ -945,6 +954,55 @@ def check_admin_users(tag):
     assert {a["id"] for a in recent} >= {posted["id"], second["id"]}, "kept"
     print("  admin users: turned off and back on with nothing lost, signed out, unlocked, recorded; announcements")
 
+def check_team(tag):
+    """Team Napsack (team.rs, occasions.rs): napsack's own account. It messages
+    people without being their friend; its chat is read-only; nobody signs in
+    as it, finds it, or acts on it. The schedule is read-only and checked."""
+    adm = admin_token()
+    me_admin = ok(call("GET", "/me", adm)).json()
+    r = ok(register(f"tm_{tag}")).json()
+    other = r["token"]
+
+    sched = ok(call("GET", "/admin/occasions", adm)).json()
+    team = sched["team_napsack"]
+    assert team and sched["problems"] == [], sched
+    ids = {o["id"] for o in sched["occasions"]}
+    assert {"test-hello", "birthday-wish"} <= ids, ids
+    assert all(o["only"] == ["nate"] or o["to"] == 'Users(["nate"])' for o in sched["occasions"]), "tests go to nate only"
+    ok(call("GET", "/admin/occasions", other), 404)
+    ok(call("POST", "/admin/occasions/test-hello/try", other), 404)
+    ok(call("POST", "/admin/occasions/no-such-thing/try", adm), 404)
+
+    if REMOTE:
+        # (Staging's smoke_admin is older than real keys in this test: it can't be written to.)
+        print("  team napsack: schedule checked; sending skipped remotely")
+        return
+    # Not there until it has said something.
+    assert not [c for c in ok(call("GET", "/friends", adm)).json() if c["id"] == team]
+    sent = ok(call("POST", "/admin/occasions/test-hello/try", adm)).json()
+    chat = next(c for c in ok(call("GET", "/friends", adm)).json() if c["id"] == team)
+    assert chat["system"] is True and chat["display_name"] == "Team Napsack" and chat["public_key"], chat
+    assert chat["last_message"]["id"] == sent["message_id"] and chat["last_message"]["format"] == 2
+    history = ok(call("GET", f"/chats/{team}/messages", adm)).json()
+    assert history[-1]["sender_id"] == team and history[-1]["recipient_id"] == me_admin["id"]
+    assert "Team Napsack" not in json.dumps(history), "it's encrypted like any text"
+    ok(call("POST", f"/chats/{team}/read", adm))
+    ok(call("PUT", f"/chats/{team}/mute", adm, json={"on": True, "hours": 8}))     # you can mute it
+    # Read-only, and not a person.
+    ok(call("POST", f"/chats/{team}/messages", adm, json={"ciphertext": b64(os.urandom(48)), "format": 2}), 404)
+    assert ok(call("GET", f"/chats/{team}/messages", other)).json() == [], "only your own messages from it"
+    ok(call("POST", "/friends/requests", other, json={"username": "napsack"}), 404)
+    who = ok(call("GET", f"/admin/users/{team}", adm)).json()
+    assert who["role"] == "system", who
+    ok(call("POST", f"/admin/users/{team}/deactivate", adm, json={}), 400)
+    ok(call("POST", f"/admin/users/{team}/reset-code", adm), 400)
+    login = call("POST", "/auth/login", json={"username": who["username"], "auth_key": AUTH_KEY})
+    assert login.status_code == 400 and "turned off" not in login.text
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM occasion_sends WHERE occasion = 'test-hello'").fetchone()[0] == 0, "a try isn't a send"
+    print("  team napsack: messages anyone, read-only, never signs in; schedule checked; try sends to you")
+
 def check_graph(tag):
     """The friend map: your own map only, with an anonymous ? for each person
     a friend knows that you don't; the admin graph for admins only."""
@@ -1382,6 +1440,7 @@ async def main():
     check_graph(tag)
     check_roles(tag)
     check_admin_users(tag)
+    check_team(tag)
     check_health()
     check_guard(tag)
     check_rate_limits(tag)

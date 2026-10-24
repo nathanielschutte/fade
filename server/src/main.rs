@@ -20,6 +20,7 @@ mod invites;
 mod logs;
 mod marks;
 mod metrics;
+mod occasions;
 mod people;
 mod presence;
 mod profiles;
@@ -30,6 +31,7 @@ mod roles;
 mod snaps;
 mod streaks;
 mod sysinfo;
+mod team;
 mod text;
 mod version;
 mod web;
@@ -294,6 +296,8 @@ async fn main() -> anyhow::Result<()> {
         admins,
     });
     metrics::spawn(state.clone());
+    // Team Napsack and its scheduled messages (occasions.rs).
+    occasions::spawn(state.clone());
     load_admins(state.clone()).await;
 
     snaps::spawn_sweeper(state.clone());
@@ -472,6 +476,8 @@ fn router(state: SharedState) -> Router {
             post(announcements::withdraw),
         )
         .route("/announcement", get(announcements::get))
+        .route("/admin/occasions", get(occasions::list))
+        .route("/admin/occasions/{id}/try", post(occasions::try_it))
         .route("/admin/incidents/{id}/resolve", post(incidents::resolve))
         .route("/admin/roles", get(roles::list))
         .route("/admin/roles/reload", post(roles::reload))

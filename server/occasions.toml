@@ -1,0 +1,49 @@
+# Team Napsack's scheduled messages (docs/implementation/team-napsack.md).
+#
+# Each [[occasion]] is checked every 5 minutes. On a day it's due, from `hour`
+# on (UTC), it goes to each recipient once, as a message from Team Napsack.
+# Edit this file, run the tests (they check it), and release.
+#
+#   id    Letters, digits, hyphens. It's how sends are remembered: never reuse
+#         or rename one that has sent. A changed text doesn't resend.
+#   when  "birthday"           on each person's birthday (from their profile)
+#         "yearly MM-DD"       every year on that day, e.g. "yearly 12-25"
+#         "once YYYY-MM-DD"    just that day
+#   hour  0 to 23, UTC. Optional, 15 (10 in the morning, US Central).
+#   to    "everyone"           every account that's on
+#         "birthday person"    (with "birthday") the person whose birthday it is
+#         "birthday friends"   (with "birthday") that person's friends
+#         ["nate", "ana"]      these usernames
+#   only  ["nate"]             optional: narrow any of the above to these
+#                              usernames, e.g. to try one out
+#   text  The message. {name} is the recipient's name; {birthday_name} is
+#         whose birthday it is (with "birthday"), as the recipient knows them.
+
+# ---------- tests: Nate only ----------
+
+[[occasion]]
+id = "test-hello"
+when = "once 2026-10-25"
+hour = 0
+to = ["nate"]
+text = "Hi {name}! This is Team Napsack's first message: occasions work. 🎉"
+
+[[occasion]]
+id = "test-halloween"
+when = "yearly 10-31"
+to = ["nate"]
+text = "Happy Halloween, {name}! 🎃"
+
+[[occasion]]
+id = "birthday-wish"
+when = "birthday"
+to = "birthday person"
+only = ["nate"]
+text = "Happy birthday, {name}! 🎂 From all of us at Team Napsack."
+
+[[occasion]]
+id = "birthday-heads-up"
+when = "birthday"
+to = "birthday friends"
+only = ["nate"]
+text = "It's {birthday_name}'s birthday today 🎂 Send them a pic!"

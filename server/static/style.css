@@ -674,6 +674,9 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 
 .chat-heading { display: flex; flex-direction: column; min-width: 0; }
 .chat-sub { padding-left: 0.5rem; font-size: 0.75rem; color: var(--fixer); line-height: 1.1; }
+/* A long name stays on one line in the header (it's in full on the profile). */
+.chat-title, .chat-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-title .title-button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-notice {
   flex: none;
   margin: 0.6rem var(--pad) 0;
@@ -1323,4 +1326,5 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 /* A friend whose account an Admin turned off: their chat stays readable. */
 .deactivated-note { margin: 0 var(--pad) 0.6rem; padding: 0.6rem 0.75rem; border-radius: var(--radius-s); background: var(--deep); color: var(--fixer); font-size: var(--step--1); text-align: center; }
 .deactivated-note[hidden] { display: none; }
+#chat-title.no-profile { cursor: default; }
 .admin-tabs a[hidden] { display: none; }

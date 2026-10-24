@@ -90,6 +90,18 @@ async fn target(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
         .ok_or_else(|| AppError::not_found("No such account."))
 }
 
+/// An account a person uses: not one the server speaks for (Team Napsack),
+/// which has no sessions, sign-in, or password to act on.
+async fn person(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
+    let user = target(db, id).await?;
+    if crate::team::is_system(db, id).await? {
+        return Err(AppError::bad(
+            "That's napsack's own account: there's nothing to do to it here.",
+        ));
+    }
+    Ok(user)
+}
+
 /// Friends see the account turned off or on in their chat list at once.
 async fn tell_friends(state: &SharedState, user: i64) -> sqlx::Result<()> {
     let friends = crate::roles::friend_ids(&state.db, user).await?;
@@ -140,7 +152,12 @@ pub async fn list(
         .await?;
         let online = state.hub.is_online(r.id);
         let mut v = serde_json::to_value(&r).unwrap_or(Value::Null);
-        v["role"] = json!(role);
+        // Team Napsack (team.rs) is napsack's own account, not a person's.
+        v["role"] = if crate::team::is_system(&state.db, r.id).await? {
+            json!("system")
+        } else {
+            json!(role)
+        };
         v["online"] = json!(online);
         out.push(v);
     }
@@ -211,7 +228,11 @@ pub async fn detail(
     .await?;
     let account = user.username.to_lowercase();
     let failed = state.login_fail_limit.used(&account);
-    let role = crate::roles::role_of(&state, &user).await?;
+    let role = if crate::team::is_system(db, id).await? {
+        json!("system")
+    } else {
+        json!(crate::roles::role_of(&state, &user).await?)
+    };
 
     Ok(Json(json!({
         "id": user.id,
@@ -263,7 +284,7 @@ pub async fn deactivate(
     Json(req): Json<Deactivate>,
 ) -> AppResult<Json<Value>> {
     crate::roles::require(&state, &me, Role::Admin).await?;
-    let user = target(&state.db, id).await?;
+    let user = person(&state.db, id).await?;
     if user.id == me.id {
         return Err(AppError::bad("You can't turn off your own account."));
     }
@@ -331,7 +352,7 @@ pub async fn reactivate(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     crate::roles::require(&state, &me, Role::Admin).await?;
-    target(&state.db, id).await?;
+    person(&state.db, id).await?;
     let done = sqlx::query(
         "UPDATE deactivations SET reactivated_by = ?, reactivated_at = ?
          WHERE user_id = ? AND reactivated_at IS NULL",
@@ -358,7 +379,7 @@ pub async fn sign_out(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     crate::roles::require(&state, &me, Role::Admin).await?;
-    target(&state.db, id).await?;
+    person(&state.db, id).await?;
     if id == me.id {
         return Err(AppError::bad(
             "To sign yourself out elsewhere, use your profile.",
@@ -390,7 +411,7 @@ pub async fn unlock(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     crate::roles::require(&state, &me, Role::Admin).await?;
-    let user = target(&state.db, id).await?;
+    let user = person(&state.db, id).await?;
     let account = user.username.to_lowercase();
     let failures = state.login_fail_limit.used(&account);
     state.login_fail_limit.clear(&account);

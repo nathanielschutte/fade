@@ -126,7 +126,7 @@ pub async fn mute_chat(
     Path(friend): Path<i64>,
     Json(req): Json<MuteRequest>,
 ) -> AppResult<Json<Value>> {
-    crate::friends::require_friend(&state, me.id, friend).await?;
+    crate::friends::require_friend_or_team(&state, me.id, friend).await?;
     let until = set_mute(&state.db, me.id, Chat::Friend(friend), &req).await?;
     tracing::info!(
         user_id = me.id,
@@ -263,7 +263,7 @@ pub async fn favorite_chat(
     Path(friend): Path<i64>,
     Json(t): Json<Toggle>,
 ) -> AppResult<Json<Value>> {
-    crate::friends::require_friend(&state, me.id, friend).await?;
+    crate::friends::require_friend_or_team(&state, me.id, friend).await?;
     if set_favorite(&state.db, me.id, Chat::Friend(friend), t.on).await? {
         tracing::info!(
             user_id = me.id,
@@ -303,7 +303,7 @@ pub async fn hide_chat(
     Path(friend): Path<i64>,
     Json(t): Json<Toggle>,
 ) -> AppResult<Json<Value>> {
-    crate::friends::require_friend(&state, me.id, friend).await?;
+    crate::friends::require_friend_or_team(&state, me.id, friend).await?;
     let newest: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(id), 0) FROM messages
          WHERE (sender_id = ?1 AND recipient_id = ?2) OR (sender_id = ?2 AND recipient_id = ?1)",

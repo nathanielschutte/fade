@@ -77,6 +77,7 @@ Almost every feature is this loop: **UI event → API call → handler (rules, S
 | `graph.rs` | The friend map, and the System graph; decides what each person may see |
 | `roles.rs` | User, PowerUser, Admin: who's which, and `roles::require` for every System endpoint |
 | `admin.rs`, `logs.rs`, `metrics.rs`, `sysinfo.rs` | The System page: overview counts, the log viewer, the Metrics tab and its readings |
+| `team.rs`, `occasions.rs` | Team Napsack, napsack's own account, and its scheduled messages (`server/occasions.toml`) |
 | `admin_users.rs`, `announcements.rs` | System → Users: accounts turned off and on, signed out, unlocked, and the record of Admin actions; the Admins' announcement banner |
 | `health.rs`, `incidents.rs` | `GET /api/health` for the outside monitor; the monitor's incidents on the Metrics tab |
 | `aws.rs` | The few AWS calls the server makes (CloudWatch, Cost Explorer, SSM, S3), signed by hand |
@@ -112,7 +113,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 |---|---|
 | `docs/` | This file; [how-napsack-works.md](how-napsack-works.md) (the encryption, and what the server can and can't see); [security.md](security.md) (protections, limits, what to do when attacked) |
 | `spec/` | [api.md](spec/api.md): every endpoint and socket event |
-| `implementation/` | How built features work: [group-encryption](implementation/group-encryption.md), [roles](implementation/roles.md), [admin-users](implementation/admin-users.md), [friend-graph](implementation/friend-graph.md), [metrics](implementation/metrics.md), [health-monitor](implementation/health-monitor.md), [qr](implementation/qr.md) |
+| `implementation/` | How built features work: [group-encryption](implementation/group-encryption.md), [roles](implementation/roles.md), [admin-users](implementation/admin-users.md), [team-napsack](implementation/team-napsack.md), [friend-graph](implementation/friend-graph.md), [metrics](implementation/metrics.md), [health-monitor](implementation/health-monitor.md), [qr](implementation/qr.md) |
 | `operations/` | Running it: [operations](operations/operations.md) (AWS, settings, shell, cost), [releasing](operations/releasing.md), [backups](operations/backups.md), [staging](operations/staging.md), [domain-move](operations/domain-move.md) |
 | `design/` | Proposals and plans not built yet: [mobile](design/mobile.md), [mono-scaling](design/mono-scaling.md), [horizontal-scaling](design/horizontal-scaling.md), [email](design/email.md) |
 | `management/` | [plan.md](management/plan.md): the task tracker |

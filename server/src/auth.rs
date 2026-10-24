@@ -355,6 +355,10 @@ pub async fn login(
         return Err(failed("no such user"));
     };
 
+    // Team Napsack and the like never sign in (team.rs).
+    if crate::team::is_system(&state.db, id).await? {
+        return Err(failed("system account"));
+    }
     if !verify_secret(stored, req.auth_key).await? {
         return Err(failed("wrong password"));
     }

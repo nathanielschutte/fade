@@ -16,6 +16,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [Replies and reactions](#replies-and-reactions)
 - [Notifications](#notifications)
 - [Typing and "active now"](#typing-and-active-now)
+- [Team Napsack](#team-napsack)
 - [Invite links](#invite-links)
 - [The friend map](#the-friend-map)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
@@ -210,6 +211,10 @@ A notification says **who, never what**: "Ana: New message", "Sent you a pic", "
 ## Typing and "active now"
 
 While you type, your friend sees "Ana is typing…"; it travels over the live connection and is never stored. A green dot means a friend has napsack open, and "Active 5m ago" says when they last did. It's mutual and friends-only: turn off "Show friends when I'm active or typing" in your profile and nobody sees yours, and you stop seeing theirs.
+
+## Team Napsack
+
+napsack's own account, **Team Napsack**, can write to anyone for occasions: a birthday wish, a holiday, a heads-up that a friend's birthday is today. Its messages are encrypted to you exactly as a friend's are, and your app decrypts them the same way. The difference is who writes them: the server holds Team Napsack's key and writes these itself, so it knows what they say. It still can't read anything else. Its chat is read-only, and it never signs in or becomes anyone's friend. [team-napsack.md](implementation/team-napsack.md)
 
 ## Invite links
 

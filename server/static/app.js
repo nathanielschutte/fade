@@ -1532,9 +1532,14 @@ function renderChatHeader() {
     ? `napsack says an admin reset ${chat.username}'s account on ${longDate(chat.key_reset_at)}, which gives them a new key. Compare safety codes to be sure it's really them.`
     : "Keys only change when an admin resets an account, and napsack doesn't say this one was. Someone may be trying to read this chat.";
   resetAcceptButton();
-  // A turned-off account (admin_users.rs) keeps its chat, but can't be sent to.
-  $("#deactivated-note").hidden = !chat.deactivated;
-  const blocked = chat.keyChanged || chat.deactivated;
+  // A turned-off account (admin_users.rs) keeps its chat, but can't be sent
+  // to; nor can Team Napsack (team.rs), which only sends.
+  $("#deactivated-note").hidden = !(chat.deactivated || chat.system);
+  $("#deactivated-note").textContent = chat.system
+    ? "Messages from Team Napsack, for birthdays and other occasions. You can't reply here."
+    : "This account has been turned off. You can read your chat, but nothing new can be sent.";
+  $("#chat-title").classList.toggle("no-profile", Boolean(chat.system));
+  const blocked = chat.keyChanged || chat.deactivated || chat.system;
   $("#composer-input").disabled = blocked;
   $("#composer .send").disabled = blocked;
   $("#camera-button").disabled = blocked;
@@ -2927,7 +2932,8 @@ $("#start-button").addEventListener("click", () => START_ACTIONS[0].run());
 function openNewGroup() {
   $("#new-group-form").reset();
   $("#new-group-note").textContent = "";
-  const friends = [...state.chats].sort((a, b) => chatName(a).localeCompare(chatName(b)));
+  // (Team Napsack isn't a friend: it can't be in a group.)
+  const friends = state.chats.filter((c) => !c.system).sort((a, b) => chatName(a).localeCompare(chatName(b)));
   $("#new-group-friends").replaceChildren(...friendPicker(friends));
   if (!friends.length) $("#new-group-friends").append(el("li", { class: "muted", text: "Add some friends first." }));
   $("#new-group-dialog").showModal();
@@ -2993,7 +2999,7 @@ async function openGroupInfo(groupId) {
         : null);
   }));
   const inGroup = new Set(g.members.map((m) => m.id));
-  const addable = state.chats.filter((f) => !inGroup.has(f.id)).sort((a, b) => chatName(a).localeCompare(chatName(b)));
+  const addable = state.chats.filter((f) => !f.system && !inGroup.has(f.id)).sort((a, b) => chatName(a).localeCompare(chatName(b)));
   $("#group-add-section").hidden = addable.length === 0;
   $("#group-add").replaceChildren(...addable.map((f) => {
     const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
@@ -3385,7 +3391,8 @@ $("#profile-picture-clear").addEventListener("click", () =>
 
 $("#my-profile").addEventListener("click", () => openProfile(state.me.id));
 $("#chat-title").addEventListener("click", () => {
-  if (state.activeId) openProfile(state.activeId);
+  // Team Napsack has no profile (team.rs).
+  if (state.activeId && !chatById(state.activeId)?.system) openProfile(state.activeId);
   else if (state.activeGroupId) openGroupInfo(state.activeGroupId);
 });
 

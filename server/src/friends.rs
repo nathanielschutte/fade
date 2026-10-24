@@ -35,6 +35,7 @@ struct ChatRow {
     birthday: Option<String>,
     muted_raw: Option<i64>,
     deactivated: bool,
+    system: bool,
 }
 
 #[derive(Serialize)]
@@ -75,6 +76,9 @@ pub struct ChatSummary {
     /// An Admin turned their account off (admin_users.rs): the chat's history
     /// stays, but nothing new can be sent to them.
     deactivated: bool,
+    /// Team Napsack (team.rs): napsack's own account, not a friend. Its chat
+    /// is listed once it has sent you something, and it's read-only.
+    system: bool,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -88,7 +92,7 @@ pub async fn list_chats(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
             {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
-            {DEACTIVATED} AS deactivated,
+            {DEACTIVATED} AS deactivated, {SYSTEM} AS system,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
                  OR (m.sender_id = u.id AND m.recipient_id = ?1)
@@ -97,9 +101,10 @@ pub async fn list_chats(
               WHERE m.sender_id = u.id AND m.recipient_id = ?1
                 AND ((m.kind = 'text' AND m.read_at IS NULL)
                   OR (m.kind = 'snap' AND m.snap_state = 'pending'))) AS unread
-         FROM friendships f
-         JOIN users u ON u.id = CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-         WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL"
+         FROM users u
+         WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+                        FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
+            OR ({SYSTEM} AND EXISTS (SELECT 1 FROM messages m WHERE m.sender_id = u.id AND m.recipient_id = ?1))"
     ))
     .bind(me.id)
     .fetch_all(&state.db)
@@ -120,7 +125,7 @@ pub async fn list_chats(
             avatar_id: row.avatar_id,
             public_key: row.public_key,
             key_reset_at: row.key_reset_at,
-            active_now: (i_share && row.share_activity && !row.deactivated)
+            active_now: (i_share && row.share_activity && !row.deactivated && !row.system)
                 .then(|| state.hub.is_online(row.id)),
             last_seen_at: if i_share && row.share_activity && !row.deactivated {
                 row.last_seen_at
@@ -137,6 +142,7 @@ pub async fn list_chats(
             last_message,
             unread: row.unread,
             deactivated: row.deactivated,
+            system: row.system,
         });
     }
     chats.sort_by(|a, b| {
@@ -253,7 +259,7 @@ pub async fn send_request(
     }
     // A turned-off account can't be found (admin_users.rs).
     let target = sqlx::query_as::<_, UserPublic>(&format!(
-        "SELECT id, username FROM users u WHERE username = ? AND NOT {DEACTIVATED}"
+        "SELECT id, username FROM users u WHERE username = ? AND NOT {DEACTIVATED} AND NOT {SYSTEM}"
     ))
     .bind(req.username.trim())
     .fetch_optional(&state.db)
@@ -423,6 +429,9 @@ pub async fn remove(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// `u` is an account the server speaks for, like Team Napsack (team.rs).
+const SYSTEM: &str = "EXISTS(SELECT 1 FROM system_accounts s WHERE s.user_id = u.id)";
+
 /// `u` (a user row in the query) has had their account turned off (admin_users.rs).
 const DEACTIVATED: &str =
     "EXISTS(SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)";
@@ -438,6 +447,15 @@ pub async fn require_reachable(state: &SharedState, me: i64, friend: i64) -> App
         ));
     }
     Ok(())
+}
+
+/// For reading a chat and marking it (read, favorite, hide, mute): a friend,
+/// or Team Napsack once it has sent you something.
+pub async fn require_friend_or_team(state: &SharedState, me: i64, other: i64) -> AppResult<()> {
+    if crate::team::id(&state.db).await? == Some(other) {
+        return Ok(());
+    }
+    require_friend(state, me, other).await
 }
 
 /// Shared guard for chat endpoints.

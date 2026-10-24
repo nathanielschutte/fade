@@ -327,7 +327,8 @@ pub async fn accounts_full(db: &sqlx::SqlitePool, max: i64) -> sqlx::Result<bool
     // A turned-off account doesn't hold a place (admin_users.rs).
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM users u WHERE NOT EXISTS
-           (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)",
+           (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = u.id)",
     )
     .fetch_one(db)
     .await?;
