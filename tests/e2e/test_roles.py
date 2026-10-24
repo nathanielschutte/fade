@@ -90,8 +90,8 @@ async def main():
             await expect(pwr.locator(f"#tab-{tab}")).to_be_visible()
         await expect(pwr.locator("#tab-logs")).to_be_hidden()
         await expect(pwr.locator("#t-users")).not_to_be_empty()
-        await expect(pwr.locator("#users-panel")).to_be_hidden()
-        assert await pwr.locator(".reset-button").count() == 0
+        await expect(pwr.locator("#tab-users")).to_be_hidden()  # People and account tools: Admins only
+        assert await pwr.locator("#u-actions button").count() == 0
         # Asking for Logs directly lands on the overview.
         await pwr.goto(f"{BASE}/admin#logs")
         await expect(pwr.locator("#view-overview")).to_be_visible(timeout=10000)

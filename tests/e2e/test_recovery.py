@@ -152,11 +152,11 @@ async def main():
         except AssertionError:
             await sign_up(admin, ADMIN)
             await save_recovery_key(admin)
-        await admin.goto(f"{BASE}/admin")
-        row = admin.locator("#users tr", has_text=BEN)
-        await row.locator(".reset-button").click()
-        await expect(row.locator(".reset-button")).to_have_text("Tap again: issue a reset code")
-        await row.locator(".reset-button").click()
+        await admin.goto(f"{BASE}/admin#users")
+        await admin.locator("#users tr", has_text=BEN).locator(".u-open").click()
+        await expect(admin.locator("#u-detail-title")).to_have_text(BEN, timeout=10000)
+        await admin.locator("#u-actions button", has_text="Reset password").click()
+        await admin.locator("#u-actions button", has_text="Tap again: issue a reset code").click()
         await expect(admin.locator("#reset-result")).to_contain_text(f"Reset code for {BEN}", timeout=10000)
         code = (await admin.locator(".reset-code").text_content()).strip()
         assert len(code) == 19, code

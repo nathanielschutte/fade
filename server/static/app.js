@@ -807,6 +807,33 @@ function enterApp() {
   connectSocket();
 }
 
+// ---------- announcements (announcements.rs) ----------
+// A short message from the Admins, at the top of the chat list until it ends
+// or is withdrawn. Dismissing one hides it on this device; a new one shows.
+const DISMISSED_ANNOUNCEMENT_KEY = "napsack.announcementDismissed";
+
+function showAnnouncement(a) {
+  state.announcement = a ?? null;
+  let dismissed = null;
+  try { dismissed = localStorage.getItem(DISMISSED_ANNOUNCEMENT_KEY); } catch { /* shown, then */ }
+  const show = Boolean(a) && String(a.id) !== dismissed && a.ends_at * 1000 > Date.now();
+  $("#announcement").hidden = !show;
+  if (show) $("#announcement-text").textContent = a.body;
+}
+
+async function loadAnnouncement() {
+  try {
+    showAnnouncement((await getJSON("/announcement")).announcement);
+  } catch (err) {
+    report("warn", "loading the announcement failed", errorFields(err));
+  }
+}
+
+$("#announcement-close").addEventListener("click", () => {
+  try { localStorage.setItem(DISMISSED_ANNOUNCEMENT_KEY, String(state.announcement?.id)); } catch { /* hidden for now, anyway */ }
+  $("#announcement").hidden = true;
+});
+
 function renderAccountBar() {
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
@@ -835,6 +862,7 @@ async function refreshChats() {
     report("warn", "loading chats failed", errorFields(err));
     return;
   }
+  if (!state.me) return; // signed out while it loaded (an ended session, an account turned off)
   renderChatList();
   renderChatHeader();
   if (state.activeId && !chatById(state.activeId)) closeChat(); // unfriended
@@ -946,6 +974,7 @@ $("#chat-list").addEventListener("touchcancel", endDrag);
 
 function chatStatus(chat) {
   if (chat.keyChanged) return { text: "Safety code changed" };
+  if (chat.deactivated) return { text: "Account turned off" };
   const m = chat.last_message;
   if (!m) return { text: "Say hi" };
   const mine = m.sender_id === state.me.id;
@@ -1108,6 +1137,7 @@ function rowIcon(name) {
 /** Favorites first, then everything else, each newest first. Hidden direct
  * chats sit out of the list behind a "Hidden chats" link. */
 function renderChatList() {
+  if (!state.me) return;
   const entries = [
     ...state.chats.map((chat) => ({
       at: chat.last_message?.created_at ?? 0,
@@ -1486,6 +1516,7 @@ $("#back-button").addEventListener("click", closeChat);
 
 /** A changed key blocks the chat until it's explained; there's no legitimate reason for one. */
 function renderChatHeader() {
+  if (!state.me) return;
   const chat = chatById(state.activeId);
   if (!chat) return;
   $("#chat-title").textContent = chatName(chat);
@@ -1501,9 +1532,12 @@ function renderChatHeader() {
     ? `napsack says an admin reset ${chat.username}'s account on ${longDate(chat.key_reset_at)}, which gives them a new key. Compare safety codes to be sure it's really them.`
     : "Keys only change when an admin resets an account, and napsack doesn't say this one was. Someone may be trying to read this chat.";
   resetAcceptButton();
-  $("#composer-input").disabled = chat.keyChanged;
-  $("#composer .send").disabled = chat.keyChanged;
-  $("#camera-button").disabled = chat.keyChanged;
+  // A turned-off account (admin_users.rs) keeps its chat, but can't be sent to.
+  $("#deactivated-note").hidden = !chat.deactivated;
+  const blocked = chat.keyChanged || chat.deactivated;
+  $("#composer-input").disabled = blocked;
+  $("#composer .send").disabled = blocked;
+  $("#camera-button").disabled = blocked;
 }
 
 function resetAcceptButton() {
@@ -2260,6 +2294,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 async function handleEvent(ev) {
+  // A socket's last events can arrive after its session ended and we signed out.
+  if (!state.me) return;
   switch (ev.type) {
     case "ready":
       state.wsRetry = 0;
@@ -2270,6 +2306,7 @@ async function handleEvent(ev) {
       checkForUpdate();
       // Anything could have happened while disconnected.
       refreshChats();
+      loadAnnouncement();
       refreshGroups();
       refreshRequests();
       if (state.activeId) openChat(state.activeId);
@@ -2311,6 +2348,9 @@ async function handleEvent(ev) {
       }
       break;
     }
+    case "announcement":
+      showAnnouncement(ev.announcement);
+      break;
     case "friends_changed":
       await refreshChats();
       await refreshRequests();
@@ -2502,6 +2542,7 @@ async function refreshGroups() {
     report("warn", "loading groups failed", errorFields(err));
     return;
   }
+  if (!state.me) return;
   renderChatList();
   if (state.activeGroupId && !groupById(state.activeGroupId)) closeChat(); // removed or left
 }
@@ -2555,6 +2596,7 @@ function setConversationMode(kind) {
   $("#chat-sub").hidden = !group;
   if (group) {
     $("#key-warning").hidden = true;
+    $("#deactivated-note").hidden = true;
     $("#composer-input").disabled = false;
     $("#composer .send").disabled = false;
   }
@@ -3356,6 +3398,7 @@ async function refreshRequests() {
     report("warn", "loading friend requests failed", errorFields(err));
     return;
   }
+  if (!state.me) return;
   renderRequests();
 }
 

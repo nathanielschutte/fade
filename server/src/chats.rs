@@ -9,7 +9,7 @@ use crate::{
     auth::AuthUser,
     db::{self, is_base64, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
-    friends::require_friend,
+    friends::{require_friend, require_reachable},
     version,
     ws::Event,
     SharedState,
@@ -75,7 +75,7 @@ pub async fn send_text(
     Path(friend_id): Path<i64>,
     Json(req): Json<NewText>,
 ) -> AppResult<Json<Message>> {
-    require_friend(&state, me.id, friend_id).await?;
+    require_reachable(&state, me.id, friend_id).await?;
     version::check_text_format(req.format)?;
     if req.ciphertext.len() > MAX_CIPHERTEXT_CHARS {
         return Err(AppError::bad("That message is too long."));

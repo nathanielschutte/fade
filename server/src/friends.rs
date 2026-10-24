@@ -34,6 +34,7 @@ struct ChatRow {
     hidden_upto: Option<i64>,
     birthday: Option<String>,
     muted_raw: Option<i64>,
+    deactivated: bool,
 }
 
 #[derive(Serialize)]
@@ -71,6 +72,9 @@ pub struct ChatSummary {
     muted: bool,
     /// When that mute ends by itself; null while muted means until turned off.
     muted_until: Option<i64>,
+    /// An Admin turned their account off (admin_users.rs): the chat's history
+    /// stays, but nothing new can be sent to them.
+    deactivated: bool,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -84,6 +88,7 @@ pub async fn list_chats(
         "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
             {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
             {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
+            {DEACTIVATED} AS deactivated,
             (SELECT m.id FROM messages m
               WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
                  OR (m.sender_id = u.id AND m.recipient_id = ?1)
@@ -115,8 +120,9 @@ pub async fn list_chats(
             avatar_id: row.avatar_id,
             public_key: row.public_key,
             key_reset_at: row.key_reset_at,
-            active_now: (i_share && row.share_activity).then(|| state.hub.is_online(row.id)),
-            last_seen_at: if i_share && row.share_activity {
+            active_now: (i_share && row.share_activity && !row.deactivated)
+                .then(|| state.hub.is_online(row.id)),
+            last_seen_at: if i_share && row.share_activity && !row.deactivated {
                 row.last_seen_at
             } else {
                 None
@@ -130,6 +136,7 @@ pub async fn list_chats(
             muted_until: crate::marks::muted(row.muted_raw, now()).1,
             last_message,
             unread: row.unread,
+            deactivated: row.deactivated,
         });
     }
     chats.sort_by(|a, b| {
@@ -244,12 +251,14 @@ pub async fn send_request(
             "That's a lot of friend requests for one day. Try again tomorrow.".into(),
         ));
     }
-    let target =
-        sqlx::query_as::<_, UserPublic>("SELECT id, username FROM users WHERE username = ?")
-            .bind(req.username.trim())
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_else(|| AppError::not_found("No one has that username."))?;
+    // A turned-off account can't be found (admin_users.rs).
+    let target = sqlx::query_as::<_, UserPublic>(&format!(
+        "SELECT id, username FROM users u WHERE username = ? AND NOT {DEACTIVATED}"
+    ))
+    .bind(req.username.trim())
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::not_found("No one has that username."))?;
 
     if target.id == me.id {
         return Err(AppError::bad("That's you."));
@@ -412,6 +421,23 @@ pub async fn remove(
     }
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "ok": true })))
+}
+
+/// `u` (a user row in the query) has had their account turned off (admin_users.rs).
+const DEACTIVATED: &str =
+    "EXISTS(SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)";
+
+/// For sending something to a friend (a text, a pic, a reaction): they must
+/// be a friend, and their account must be on. Reading history needs only
+/// `require_friend`, so a turned-off friend's chat stays readable.
+pub async fn require_reachable(state: &SharedState, me: i64, friend: i64) -> AppResult<()> {
+    require_friend(state, me, friend).await?;
+    if crate::admin_users::is_deactivated(&state.db, friend).await? {
+        return Err(AppError::bad(
+            "That account has been turned off, so it can't get messages.",
+        ));
+    }
+    Ok(())
 }
 
 /// Shared guard for chat endpoints.

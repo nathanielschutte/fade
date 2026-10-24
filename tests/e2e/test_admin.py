@@ -98,7 +98,10 @@ async def main():
         # app tab is on a non-admin page now, so it's just the admin).
         await expect(admin.locator("#t-online")).to_have_text("1", timeout=10000)
         await expect(admin.locator("#t-online-sub")).to_have_text("1 open connection")
-        await expect(admin.locator("#users tr")).to_have_count(len(names))
+        # The people list lives in the Users tab now (Admins only).
+        await admin.goto(f"{BASE}/admin#users")
+        await expect(admin.locator("#users tr")).to_have_count(len(names), timeout=10000)
+        await admin.goto(f"{BASE}/admin#overview")
 
         # Tooltip on the last bar.
         await admin.locator(".chart-col").last.hover()
@@ -168,7 +171,11 @@ async def main():
         phone_spots = await phone.evaluate(BAR_SPOTS)
         await phone.click("#tab-logs")
         await expect(phone.locator("#log-rows tr").first).to_be_visible()
-        assert await phone.evaluate(BAR_SPOTS) == phone_spots, (phone_spots, await phone.evaluate(BAR_SPOTS))
+        # On a phone the tab row scrolls to keep the open tab in view; the header itself stays put.
+        now_spots = await phone.evaluate(BAR_SPOTS)
+        assert now_spots[2] == phone_spots[2], (phone_spots, now_spots)
+        logs_tab = await phone.locator("#tab-logs").bounding_box()
+        assert 0 <= logs_tab["x"] and logs_tab["x"] + logs_tab["width"] <= 390, logs_tab
         overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"logs page scrolls sideways by {overflow}px"
         await shot(phone, "admin-logs-phone", full_page=False)

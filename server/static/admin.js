@@ -181,58 +181,7 @@ function render(s) {
     ["Protection", protectionText(server.protection, u.total)],
   ]);
 
-  // Admins only (roles.md): the server doesn't send the list to PowerUsers.
-  $("#users-panel").hidden = !u.list;
-  $("#users").replaceChildren(...(u.list ?? []).map((x) => el("tr", {},
-    el("td", { text: x.username }),
-    el("td", { text: dateLabel(x.created_at, { year: "numeric", month: "short", day: "numeric" }) }),
-    el("td", { text: ago(x.last_seen_at) }),
-    el("td", { class: "num", text: n(x.friends) }),
-    el("td", { class: "num", text: n(x.texts_sent) }),
-    el("td", { class: "num", text: n(x.snaps_sent) }),
-    el("td", {}, el("button", { type: "button", class: "reset-button", onclick: (e) => resetUser(e.currentTarget, x) },
-      x.id === pendingReset ? "Tap again: issue a reset code" : "Reset password")),
-  )));
-  if (u.list && !u.list.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No users yet." })));
-
   $("#updated").textContent = `Updated ${new Date(s.generated_at * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
-}
-
-// For someone who lost their password and their recovery key. Two taps; the
-// code is shown once, here, for the admin to hand over in person. The first
-// tap is remembered by user, not on the button, so the list refreshing in
-// between (it does every 30 seconds) doesn't lose it.
-let pendingReset = null;
-async function resetUser(btn, user) {
-  if (pendingReset !== user.id) {
-    pendingReset = user.id;
-    btn.textContent = "Tap again: issue a reset code";
-    return;
-  }
-  pendingReset = null;
-  btn.disabled = true;
-  const out = $("#reset-result");
-  try {
-    const res = await fetch(`/api/admin/users/${user.id}/reset-code`, {
-      method: "POST", headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` }, cache: "no-store",
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    const until = new Date(body.expires_at * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
-    out.replaceChildren(
-      el("p", {}, el("strong", { text: `Reset code for ${body.username}` })),
-      el("p", { class: "reset-code", text: body.code }),
-      el("p", { class: "muted", text: `Works once, until ${until}. Give it to them in person or on a call, not in a napsack chat they can't open. They'll get their account and friends back with a new password, but messages from before can't be read, and their friends will see a new safety code. If they still have their recovery key, they should use that instead: it keeps everything.` }),
-    );
-    out.hidden = false;
-    out.scrollIntoView({ block: "nearest" });
-  } catch (err) {
-    out.replaceChildren(el("p", { text: `Couldn't issue a code: ${err.message}` }));
-    out.hidden = false;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Reset password";
-  }
 }
 
 function fail(text) {
@@ -1077,8 +1026,10 @@ window.addEventListener("resize", () => {
 const ROLE_NAMES = { user: "User", power: "PowerUser", admin: "Admin" };
 const rolesView = { data: null, confirm: null };
 
-async function api(path, method = "GET") {
-  const res = await fetch(`/api${path}`, { method, headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` }, cache: "no-store" });
+async function api(path, method = "GET", payload = undefined) {
+  const headers = { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` };
+  if (payload !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(`/api${path}`, { method, headers, cache: "no-store", body: payload === undefined ? undefined : JSON.stringify(payload) });
   const body = await res.json().catch(() => ({}));
   if (res.status === 401) fail("Your session ended. Sign in again.");
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
@@ -1162,11 +1113,244 @@ $("#r-reload").addEventListener("click", async () => {
   loadRoles();
 });
 
+// ---------- users (Admins only; docs/implementation/admin-users.md) ----------
+// Everyone's account at a glance, and what an Admin can do about it. Turning
+// an account off keeps everything (Rule 1): it's signed out, can't sign in,
+// and friends can't send to it, until it's turned back on.
+
+const usersView = { list: null, open: null, detail: null, confirm: null };
+const ACTION_WORDS = {
+  deactivate: "turned the account off",
+  reactivate: "turned the account back on",
+  sign_out: "signed it out everywhere",
+  unlock: "cleared the sign-in lock",
+  reset_code: "issued a reset code",
+  announce: "posted an announcement",
+  withdraw_announcement: "withdrew an announcement",
+};
+const longDate = (ts) => dateLabel(ts, { year: "numeric", month: "short", day: "numeric" });
+const when = (ts) => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+async function loadUsers() {
+  try {
+    usersView.list = await api("/admin/users");
+  } catch (err) {
+    $("#u-note").textContent = `Couldn't load people: ${err.message}`;
+    return;
+  }
+  $("#message").hidden = true;
+  $("#admin").hidden = false;
+  renderUsers();
+  if (usersView.open != null) openUser(usersView.open, false);
+  loadAnnouncements();
+  loadActivity();
+}
+
+function userStatus(u) {
+  if (u.deactivated) return el("span", { class: "status-chip off", text: "Turned off" });
+  if (u.online) return el("span", { class: "status-chip on", text: "Online" });
+  return el("span", { class: "status-chip", text: "Active" });
+}
+
+function renderUsers() {
+  const data = usersView.list;
+  if (!data) return;
+  $("#u-note").textContent = `${data.active} of ${data.accounts_max} accounts in use${data.users.length > data.active ? ` · ${data.users.length - data.active} turned off` : ""}`;
+  const q = $("#u-search").value.trim().toLowerCase();
+  const people = data.users.filter((u) => !q || u.username.toLowerCase().includes(q));
+  $("#users").replaceChildren(...people.map((u) => el("tr", { class: u.id === usersView.open ? "selected" : null },
+    el("td", {}, el("button", { type: "button", class: "link u-open", onclick: () => openUser(u.id, true) }, u.username),
+      u.role !== "user" ? el("span", { class: `role-badge role-${u.role}`, text: ROLE_NAMES[u.role] }) : null),
+    el("td", {}, userStatus(u)),
+    el("td", { text: longDate(u.created_at) }),
+    el("td", { text: ago(u.last_seen_at) }),
+    el("td", { class: "num", text: n(u.friends) }),
+    el("td", { class: "num", text: n(u.texts_sent) }),
+    el("td", { class: "num", text: n(u.snaps_sent) }),
+  )));
+  if (!people.length) $("#users").append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: q ? "Nobody matches." : "No one yet." })));
+}
+
+async function openUser(id, scroll) {
+  usersView.open = id;
+  try {
+    usersView.detail = await api(`/admin/users/${id}`);
+  } catch (err) {
+    $("#u-note").textContent = `Couldn't load that account: ${err.message}`;
+    return;
+  }
+  renderUsers();
+  renderUser();
+  if (scroll) $("#u-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderUser() {
+  const d = usersView.detail;
+  if (!d) return;
+  $("#u-detail").hidden = false;
+  $("#u-detail-title").textContent = d.username;
+  $("#u-detail-status").replaceChildren(userStatus(d), " ", d.role !== "user" ? el("span", { class: `role-badge role-${d.role}`, text: ROLE_NAMES[d.role] }) : "");
+  const c = d.counts;
+  const lock = d.sign_in;
+  facts("#u-facts", [
+    ["Joined", longDate(d.created_at)],
+    ["Last seen", d.online ? "Online now" : ago(d.last_seen_at)],
+    ["Signed in on", `${d.sessions.length} ${d.sessions.length === 1 ? "device" : "devices"}${c.notification_devices ? `, ${c.notification_devices} with notifications` : ""}`],
+    ["Friends · groups", `${n(c.friends)} · ${n(c.groups)}`],
+    ["Sent", `${n(c.texts_sent)} texts, ${n(c.pics_sent)} pics, ${n(c.group_messages_sent)} group messages`],
+    ["Invite links made", n(c.invites_made)],
+    ["Recovery key", d.recovery_key ? "Saved at sign-up (they can recover with it)" : "None"],
+    ["Key reset", d.key_reset_at ? when(d.key_reset_at) : "Never"],
+    ["Wrong passwords", lock.failures ? `${lock.failures} of ${lock.limit} in the last 15 minutes${lock.locked ? ": locked" : ""}` : "None lately"],
+  ]);
+
+  const me = d.id === viewer.id;
+  const button = (key, words, again, run, opts = {}) => el("button", {
+    type: "button", class: `button ${opts.cls ?? ""}`, disabled: opts.disabled ? "" : null,
+    onclick: (e) => userAction(e.currentTarget, key, again, run),
+  }, usersView.confirm === key ? again : words);
+  const turnOff = !d.deactivated && !me && d.role !== "admin";
+  $("#u-actions").replaceChildren(...[
+    d.deactivated
+      ? button("reactivate", "Turn account back on", "Tap again: turn it back on", () => api(`/admin/users/${d.id}/reactivate`, "POST"))
+      : turnOff ? button("deactivate", "Turn account off", "Tap again: turn it off", () => api(`/admin/users/${d.id}/deactivate`, "POST", { reason: $("#u-reason").value }), { cls: "danger" }) : null,
+    !me && !d.deactivated ? button("sign_out", "Sign out everywhere", "Tap again: sign out everywhere", () => api(`/admin/users/${d.id}/sign-out`, "POST"), { disabled: !d.sessions.length }) : null,
+    button("unlock", "Clear sign-in lock", "Tap again: clear it", () => api(`/admin/users/${d.id}/unlock`, "POST"), { disabled: !lock.failures }),
+    !d.deactivated ? button("reset_code", "Reset password", "Tap again: issue a reset code", () => issueReset(d)) : null,
+  ].filter(Boolean));
+  // The reason box shows while turning off is a tap away.
+  $("#u-turn-off").hidden = !(turnOff && usersView.confirm === "deactivate");
+  if (d.role === "admin" && !me) $("#u-actions").append(el("p", { class: "panel-note", text: "Admins come from settings: to turn one off, take them off the admin list first." }));
+
+  const history = [
+    ...d.deactivations.flatMap((x) => [
+      { at: x.at, text: `Turned off by ${x.by}${x.reason ? `: “${x.reason}”` : ""}` },
+      x.reactivated_at ? { at: x.reactivated_at, text: `Turned back on by ${x.reactivated_by}` } : null,
+    ]).filter(Boolean),
+    ...d.actions.filter((a) => !["deactivate", "reactivate"].includes(a.action))
+      .map((a) => ({ at: a.at, text: `${a.by} ${ACTION_WORDS[a.action] ?? a.action}${actionDetail(a)}` })),
+  ].sort((a, b) => b.at - a.at);
+  $("#u-history").replaceChildren(...(history.length
+    ? history.map((h) => el("li", {}, el("span", { class: "incident-time", text: when(h.at) }), h.text))
+    : [el("li", { class: "muted", text: "No Admin has done anything to this account." })]));
+}
+
+function actionDetail(a) {
+  const d = a.detail ?? {};
+  if (d.sessions_ended != null) return ` (${d.sessions_ended} ${d.sessions_ended === 1 ? "device" : "devices"})`;
+  if (d.failures_cleared != null) return ` (${d.failures_cleared} wrong ${d.failures_cleared === 1 ? "password" : "passwords"})`;
+  return "";
+}
+
+// Every action takes two taps, remembered by action (the panel can redraw in between).
+async function userAction(btn, key, again, run) {
+  if (usersView.confirm !== key) {
+    usersView.confirm = key;
+    renderUser();
+    if (key === "deactivate") $("#u-reason").focus();
+    return;
+  }
+  usersView.confirm = null;
+  btn.disabled = true;
+  try {
+    await run();
+    if (key !== "reset_code") $("#reset-result").hidden = true;
+  } catch (err) {
+    const out = $("#reset-result");
+    out.replaceChildren(el("p", { text: `Couldn't do that: ${err.message}` }));
+    out.hidden = false;
+  }
+  $("#u-reason").value = "";
+  await loadUsers();
+}
+
+// For someone who lost their password and their recovery key. The code is
+// shown once, here, for the Admin to hand over in person.
+async function issueReset(user) {
+  const out = $("#reset-result");
+  const body = await api(`/admin/users/${user.id}/reset-code`, "POST");
+  const until = new Date(body.expires_at * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  out.replaceChildren(
+    el("p", {}, el("strong", { text: `Reset code for ${body.username}` })),
+    el("p", { class: "reset-code", text: body.code }),
+    el("p", { class: "muted", text: `Works once, until ${until}. Give it to them in person or on a call, not in a napsack chat they can't open. They'll get their account and friends back with a new password, but messages from before can't be read, and their friends will see a new safety code. If they still have their recovery key, they should use that instead: it keeps everything.` }),
+  );
+  out.hidden = false;
+}
+
+async function loadAnnouncements() {
+  let data;
+  try {
+    data = await api("/admin/announcements");
+  } catch (err) {
+    $("#a-note").textContent = `Couldn't load announcements: ${err.message}`;
+    return;
+  }
+  const showing = data.announcements.find((a) => a.showing);
+  $("#a-current").replaceChildren(showing
+    ? el("div", { class: "a-showing" },
+      el("p", { class: "a-body", text: showing.body }),
+      el("p", { class: "panel-note" }, `Showing until ${when(showing.ends_at)} · posted by ${showing.by}. `,
+        el("button", { type: "button", class: "link", onclick: () => withdrawAnnouncement(showing.id) }, "Withdraw")))
+    : el("p", { class: "muted", text: "Nothing showing. A new one replaces the last." }));
+}
+
+async function withdrawAnnouncement(id) {
+  try {
+    await api(`/admin/announcements/${id}/withdraw`, "POST");
+  } catch (err) {
+    $("#a-note").textContent = err.message;
+  }
+  loadAnnouncements();
+  loadActivity();
+}
+
+$("#a-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const note = $("#a-note");
+  $("#a-post").disabled = true;
+  try {
+    await api("/admin/announcements", "POST", { body: $("#a-body").value, hours: Number($("#a-hours").value) });
+    $("#a-body").value = "";
+    note.textContent = "Posted: everyone signed in sees it now.";
+  } catch (err) {
+    note.textContent = err.message;
+  } finally {
+    $("#a-post").disabled = false;
+  }
+  loadAnnouncements();
+  loadActivity();
+});
+
+async function loadActivity() {
+  let data;
+  try {
+    data = await api("/admin/actions");
+  } catch {
+    return;
+  }
+  $("#act-feed").replaceChildren(...(data.actions.length
+    ? data.actions.slice(0, 30).map((a) => el("li", {},
+      el("span", { class: "incident-time", text: when(a.at) }),
+      `${a.by} ${ACTION_WORDS[a.action] ?? a.action}${a.target ? ` for ${a.target}` : ""}${actionDetail(a)}`))
+    : [el("li", { class: "muted", text: "Nothing yet." })]));
+}
+
+$("#u-search").addEventListener("input", renderUsers);
+$("#u-close").addEventListener("click", () => {
+  usersView.open = null;
+  usersView.detail = null;
+  usersView.confirm = null;
+  $("#u-detail").hidden = true;
+  $("#reset-result").hidden = true;
+  renderUsers();
+});
+
 // ---------- tabs ----------
 
-const TABS = ["overview", "metrics", "graph", "roles", "logs"];
+const TABS = ["overview", "metrics", "graph", "users", "roles", "logs"];
 // Which tabs each role gets (roles.md). The server enforces the same, endpoint by endpoint.
-const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", roles: "power", logs: "admin" };
+const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", users: "admin", roles: "power", logs: "admin" };
 const RANK = { user: 0, power: 1, admin: 2 };
 let viewer = null;
 const allowed = (tab) => viewer && RANK[viewer.role] >= RANK[TAB_ROLES[tab]];
@@ -1181,10 +1365,13 @@ function showTab() {
     $(`#tab-${name}`).setAttribute("aria-current", name === tab ? "page" : "false");
   }
   $("#updated").hidden = tab !== "overview";
+  // On a phone the tab row scrolls: keep the open one in view.
+  $(`#tab-${tab}`).scrollIntoView({ block: "nearest", inline: "nearest" });
   if (tab === "logs") loadLogs(logs.loaded ? "tail" : "reset");
   else if (tab === "metrics") loadMetrics();
   else if (tab === "graph") loadGraph();
   else if (tab === "roles") loadRoles();
+  else if (tab === "users") loadUsers();
   else load();
 }
 

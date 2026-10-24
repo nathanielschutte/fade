@@ -44,6 +44,7 @@ On Windows, build and test in WSL (Smart App Control blocks freshly built progra
 | [staging.md](docs/operations/staging.md) | The staging copy, browser tests against it, and load test results |
 | [health-monitor.md](docs/implementation/health-monitor.md) | The outside monitor that checks and repairs the server |
 | [roles.md](docs/implementation/roles.md) | User, PowerUser, Admin, and the System page |
+| [admin-users.md](docs/implementation/admin-users.md) | Admin tools for accounts: turning one off (nothing deleted), sign-in locks, announcements |
 | [mobile.md](docs/design/mobile.md) | The iOS app |
 
 Docs are grouped by purpose: `docs/spec/` (the API), `docs/implementation/` (how built features work), `docs/operations/` (running it), `docs/design/` (proposals), `docs/management/` (the plan). Names are lowercase.

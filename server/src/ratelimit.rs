@@ -46,6 +46,23 @@ impl RateLimit {
         self.take(key, 1) == 1
     }
 
+    /// How many `key` has used in its current window, without recording anything.
+    pub fn used(&self, key: &str) -> u32 {
+        let hits = self.hits.lock().unwrap();
+        hits.get(key)
+            .filter(|(start, _)| start.elapsed() < self.window)
+            .map_or(0, |(_, n)| *n)
+    }
+
+    /// Forgets `key`'s window (an Admin clearing a sign-in lock).
+    pub fn clear(&self, key: &str) {
+        self.hits.lock().unwrap().remove(key);
+    }
+
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
     /// True if `key` has used up its window, without recording anything.
     pub fn exhausted(&self, key: &str) -> bool {
         let hits = self.hits.lock().unwrap();

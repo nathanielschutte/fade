@@ -12,6 +12,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 0k | [Team Napsack messages](#x22-team-napsack-messages-from-napsack-itself) | Features | Up next | Nate (2026-10-24) |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -66,6 +67,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
 | [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see operations.md) | 0.26.0 |
 | [The release pipeline](#p2-turn-on-cicd): main → release candidate on staging, `server-v*` tag → the same binary on production; releases kept forever, the newest ten candidates ([releasing.md](../operations/releasing.md)) | 0.31.1 |
+| [Admin tools for accounts](#x21-admin-tools-for-accounts): System → Users (turn accounts off and on, sign out everywhere, clear a sign-in lock, reset codes, admin activity), announcements | 0.32.0 |
 | [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](../operations/staging.md#results)) | infra, 0.30.1 |
 | [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 |
 | Move to napsack.getattr.com (old domain redirects) | infra |
@@ -376,6 +378,15 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X19. Low CPU credits is a warning, not an alarm
 - Requested (2026-10-23), queued: the Metrics tab shows low CPU credits in red, as urgent. It should be a warning (amber). A new or replaced instance starts with few credits and builds them up while idle, so a low balance soon after boot is expected. Red only if credits are near zero *and* the CPU is pinned at its baseline (actually throttled); check the AWS rule for launch credits on t4g standard and say "building up after a restart" when the instance is young.
+
+#### X21. Admin tools for accounts
+- Requested (2026-10-24): delete users from an admin page (turning the account off, never deleting data), and other useful admin features.
+- Built (0.32.0): System → **Users**, Admins only ([admin-users.md](../implementation/admin-users.md)). People with search and status; one account at a glance (counts and dates only); turn an account off and back on (a row in `deactivations`, nothing deleted: signed out, can't sign in, friends keep the chat but can't send to it, out of the account cap); sign out everywhere; clear a sign-in lock; the reset code, moved here; an append-only record of every Admin action; and announcements, a banner everyone signed in sees live.
+
+#### X22. Team Napsack: messages from napsack itself
+- Requested (2026-10-24), queued: a system account, **Team Napsack**, that can message anyone without being their friend, for occasions: birthdays, holidays, and so on. No UI needed: an easy way to schedule them in code.
+- Two kinds of schedule: driven by data (a person's birthday, with configurable recipients, e.g. just the birthday person) and by the calendar (holidays). To start, a couple of test events sent only to `nate`.
+- Encryption: Team Napsack gets its own key pair, held by the server, which encrypts each message to the recipient exactly as a friend would, so the app reads it like any chat. The server writes these, so it knows what they say; it still can't read anyone else's chats. Each message is sent exactly once (recorded), and its chat is read-only.
 
 #### X20. Long pic captions are cut off
 - Bug report from a friend (2026-10-23), queued: a caption longer than one line doesn't wrap; the rest is cut off. There's no visible character limit either. Check the caption box while writing (on the pic editor) and where it's shown (opening a pic, direct and group): wrap it, and either show a limit as you near it or make sure the server's limit is generous and enforced with a plain error. Test at phone width (390px).

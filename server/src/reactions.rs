@@ -20,7 +20,7 @@ use crate::{
     auth::AuthUser,
     db::{self, is_base64, now, Message},
     error::{AppError, AppResult},
-    friends::require_friend,
+    friends::require_reachable,
     groups::{self, GroupMessage},
     push::{self, Note},
     ws::Event,
@@ -128,7 +128,7 @@ pub async fn react(
     Path((friend, message_id)): Path<(i64, i64)>,
     Json(req): Json<SetReaction>,
 ) -> AppResult<Json<Message>> {
-    require_friend(&state, me.id, friend).await?;
+    require_reachable(&state, me.id, friend).await?;
     let message = db::get_message(&state.db, message_id)
         .await?
         .filter(|m| {

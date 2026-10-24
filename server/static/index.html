@@ -94,6 +94,12 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>
+    <div class="announcement" id="announcement" role="status" hidden>
+      <p class="announcement-text" id="announcement-text"></p>
+      <button type="button" class="icon-button" id="announcement-close" aria-label="Dismiss">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
     <div class="recovery-nudge" id="recovery-nudge" hidden>
       <p>Save a recovery key, so a forgotten password can't cost you your messages.</p>
       <button type="button" class="button" id="recovery-nudge-button">Set up</button>
@@ -156,6 +162,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
+      <p class="deactivated-note" id="deactivated-note" hidden>This account has been turned off. You can read your chat, but nothing new can be sent.</p>
       <form class="composer" id="composer">
         <button type="button" class="icon-button snap-button" id="camera-button" aria-label="Send a pic">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>

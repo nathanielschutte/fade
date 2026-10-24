@@ -58,7 +58,11 @@ async fn keep_history(db: &mut SqliteConnection, user: i64, reason: &str) -> sql
 
 /// Ends every session for `user` except `keep` (a token hash), and closes
 /// their live connections. Returns how many sessions ended.
-async fn end_sessions(state: &SharedState, user: i64, keep: Option<&str>) -> sqlx::Result<u64> {
+pub(crate) async fn end_sessions(
+    state: &SharedState,
+    user: i64,
+    keep: Option<&str>,
+) -> sqlx::Result<u64> {
     let ended = sqlx::query(
         "UPDATE sessions SET revoked_at = ?
          WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? AND token_hash != ?",
@@ -284,6 +288,10 @@ async fn check_recovery(
     if !verify_secret(hash, recovery_auth_key.to_owned()).await? {
         return Err(failed("wrong recovery key"));
     }
+    if crate::admin_users::is_deactivated(&state.db, id).await? {
+        tracing::info!(ip = %who.ip, user_id = id, "recovery refused: account turned off");
+        return Err(AppError::bad(auth::TURNED_OFF));
+    }
     Ok((UserPublic { id, username: name }, wrapped, public_key))
 }
 
@@ -403,6 +411,7 @@ pub async fn issue_reset_code(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    crate::admin_users::record(&state.db, me.id, "reset_code", Some(user), json!({})).await?;
     tracing::info!(admin_id = me.id, user_id = user, "reset code issued");
     Ok(Json(
         json!({ "username": username, "code": code, "expires_at": at + RESET_CODE_SECS }),
@@ -454,6 +463,10 @@ pub async fn reset_with_code(
     let Some((id, username, code_id)) = found else {
         return Err(failed("no matching code"));
     };
+    if crate::admin_users::is_deactivated(&state.db, id).await? {
+        tracing::info!(ip = %who.ip, user_id = id, "reset refused: account turned off");
+        return Err(AppError::bad(auth::TURNED_OFF));
+    }
     let hash = hash_secret(req.new_auth_key).await?;
     let mut tx = state.db.begin().await?;
     let claimed =

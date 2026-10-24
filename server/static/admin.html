@@ -17,6 +17,7 @@
     <a href="#overview" id="tab-overview" aria-current="page">Overview</a>
     <a href="#metrics" id="tab-metrics">Metrics</a>
     <a href="#graph" id="tab-graph">Graph</a>
+    <a href="#users" id="tab-users" hidden>Users</a>
     <a href="#roles" id="tab-roles">Roles</a>
     <a href="#logs" id="tab-logs" hidden>Logs</a>
   </nav>
@@ -61,19 +62,6 @@
     </section>
   </div>
 
-  <section class="panel" id="users-panel" aria-labelledby="users-title" hidden>
-    <header class="panel-head">
-      <h2 id="users-title">Users</h2>
-      <span class="panel-note">Counts only. Message content is end-to-end encrypted and never visible here.</span>
-    </header>
-    <div class="reset-result" id="reset-result" role="status" hidden></div>
-    <div class="table-scroll">
-      <table class="users-table">
-        <thead><tr><th>Username</th><th>Joined</th><th>Last seen</th><th class="num">Friends</th><th class="num">Texts sent</th><th class="num">Pics sent</th><th><span class="visually-hidden">Reset</span></th></tr></thead>
-        <tbody id="users"></tbody>
-      </table>
-    </div>
-  </section>
 </div>
 
 <div class="admin-view" id="view-metrics" hidden>
@@ -139,6 +127,75 @@
     </div>
     <div class="graph-host" id="g-host"><p class="muted">Loading…</p></div>
   </section>
+</div>
+
+<div class="admin-view" id="view-users" hidden>
+  <section class="panel" aria-labelledby="u-title">
+    <header class="panel-head">
+      <h2 id="u-title">People</h2>
+      <span class="panel-note" id="u-note"></span>
+    </header>
+    <p class="panel-note">Counts and dates only. Messages are end-to-end encrypted and never visible here. Choose someone to manage their account.</p>
+    <input type="search" class="r-search" id="u-search" placeholder="Search people" aria-label="Search people" autocomplete="off">
+    <div class="table-scroll">
+      <table class="users-table">
+        <thead><tr><th>Person</th><th>Status</th><th>Joined</th><th>Last seen</th><th class="num">Friends</th><th class="num">Texts</th><th class="num">Pics</th></tr></thead>
+        <tbody id="users"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel u-detail" id="u-detail" aria-labelledby="u-detail-title" hidden>
+    <header class="panel-head">
+      <h2 id="u-detail-title"></h2>
+      <span class="panel-note" id="u-detail-status"></span>
+      <button type="button" class="icon-button u-close" id="u-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <dl class="facts" id="u-facts"></dl>
+    <div class="u-actions" id="u-actions"></div>
+    <div class="u-turn-off" id="u-turn-off" hidden>
+      <label for="u-reason">Why (only Admins see this)</label>
+      <input type="text" id="u-reason" maxlength="200" placeholder="Optional" autocomplete="off">
+    </div>
+    <div class="reset-result" id="reset-result" role="status" hidden></div>
+    <h3 class="u-subhead">History</h3>
+    <ul class="u-history" id="u-history"></ul>
+  </section>
+
+  <div class="panel-row">
+    <section class="panel" aria-labelledby="a-title">
+      <header class="panel-head">
+        <h2 id="a-title">Announcement</h2>
+        <span class="panel-note">Everyone signed in sees it as a banner, live</span>
+      </header>
+      <div class="a-current" id="a-current"></div>
+      <form class="a-form" id="a-form">
+        <label for="a-body" class="visually-hidden">Announcement</label>
+        <textarea id="a-body" rows="2" maxlength="280" placeholder="e.g. napsack moved to napsack.io. Your saved password is listed under napsack.getattr.com." required></textarea>
+        <div class="a-row">
+          <label for="a-hours">Show for</label>
+          <select id="a-hours">
+            <option value="1">an hour</option>
+            <option value="24" selected>a day</option>
+            <option value="72">3 days</option>
+            <option value="168">a week</option>
+            <option value="336">2 weeks</option>
+          </select>
+          <button type="submit" class="button primary" id="a-post">Post</button>
+        </div>
+        <p class="panel-note" id="a-note"></p>
+      </form>
+    </section>
+    <section class="panel" aria-labelledby="act-title">
+      <header class="panel-head">
+        <h2 id="act-title">Admin activity</h2>
+        <span class="panel-note">Every Admin action, newest first. Kept forever.</span>
+      </header>
+      <ul class="u-history" id="act-feed"></ul>
+    </section>
+  </div>
 </div>
 
 <div class="admin-view" id="view-roles" hidden>

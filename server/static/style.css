@@ -660,7 +660,14 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 /* Narrow screens: the tabs get their own row so the header never overflows. */
 @media (max-width: 520px) {
   .admin-bar { flex-wrap: wrap; height: auto; min-height: var(--bar-h); padding-block: 0.5rem; row-gap: 0.4rem; }
-  .admin-bar .admin-tabs { order: 3; width: 100%; margin-left: 0; }
+  /* Six tabs for an Admin don't fit at phone width: the row scrolls sideways
+     on its own (the page never does), with the open tab kept in view (admin.js). */
+  .admin-bar .admin-tabs {
+    order: 3; width: 100%; margin-left: 0;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .admin-bar .admin-tabs::-webkit-scrollbar { display: none; }
+  .admin-tabs a { flex: none; }
 }
 
 /* ---------- groups ---------- */
@@ -1274,4 +1281,46 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .role-admin { color: var(--paper); background: var(--wash); }
 .role-user { color: var(--fixer); }
 .r-admin { margin-top: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+
+/* System → Users (Admins): people, one account, announcements, activity. */
+.users-table .u-open { padding: 0; font-weight: 600; margin-right: 0.4rem; }
+.users-table tr.selected td { background: var(--wash); }
+.status-chip { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.75rem; color: var(--fixer); border: 1px solid var(--rule); }
+.status-chip.on { color: var(--sage); border-color: rgba(147, 197, 163, 0.5); }
+.status-chip.off { color: var(--danger); border-color: rgba(232, 165, 152, 0.5); }
+.u-detail .panel-head { align-items: center; }
+.u-close { margin-left: auto; }
+.u-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0 0.25rem; }
+.u-actions .button[disabled] { opacity: 0.45; cursor: default; }
+.u-turn-off { display: grid; gap: 0.3rem; margin-top: 0.6rem; max-width: 28rem; font-size: var(--step--1); color: var(--fixer); }
+.u-turn-off input {
+  min-height: 2.4rem; padding: 0 0.75rem; border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--deep); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.u-subhead { margin: 1.1rem 0 0.4rem; font-size: var(--step--1); color: var(--fixer); font-weight: 600; }
+.u-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; font-size: var(--step--1); color: var(--fixer); }
+.u-history li { overflow-wrap: anywhere; }
+.a-form { display: grid; gap: 0.5rem; margin-top: 0.6rem; }
+.a-form textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; padding: 0.6rem 0.75rem; border: 1px solid var(--rule);
+  border-radius: var(--radius-s); background: var(--deep); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.a-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: var(--step--1); color: var(--fixer); }
+.a-row select { min-height: 2.2rem; border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--deep); color: var(--paper); font: inherit; }
+.a-row .button { margin-left: auto; }
+.a-showing { padding: 0.6rem 0.75rem; border-left: 3px solid var(--sage); background: var(--deep); border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+.a-body { margin: 0 0 0.3rem; color: var(--paper); overflow-wrap: anywhere; }
+
+/* The Admins' announcement, at the top of the app (announcements.rs). */
+.announcement {
+  display: flex; align-items: flex-start; gap: 0.6rem; margin: 0.6rem var(--pad) 0;
+  padding: 0.6rem 0.75rem; border-radius: var(--radius-s); background: var(--wash);
+  border-left: 3px solid var(--sage); font-size: var(--step--1); color: var(--paper);
+}
+.announcement[hidden] { display: none; }
+.announcement-text { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.announcement .icon-button { flex: none; margin: -0.3rem -0.3rem 0 0; }
+/* A friend whose account an Admin turned off: their chat stays readable. */
+.deactivated-note { margin: 0 var(--pad) 0.6rem; padding: 0.6rem 0.75rem; border-radius: var(--radius-s); background: var(--deep); color: var(--fixer); font-size: var(--step--1); text-align: center; }
+.deactivated-note[hidden] { display: none; }
 .admin-tabs a[hidden] { display: none; }

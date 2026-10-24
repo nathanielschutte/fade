@@ -25,6 +25,7 @@ The admin panel becomes **System** (a gear in the account bar, shown to PowerUse
 | System → Graph: everyone, chosen people, depth, "show their graph" | – | yes, but people they aren't friends with are **anonymous** | yes, with usernames |
 | System → Logs (addresses, user ids, events) | – | **no** | yes |
 | System → Metrics → Incidents (health monitor records; mark resolved) | – | **no** | yes |
+| System → Users (accounts, turn off and on, sign out everywhere, clear a sign-in lock, reset codes, announcements, admin activity; [admin-users.md](admin-users.md)) | – | **no** | yes |
 | System → Roles: see roles | – | themselves and their friends | everyone |
 | Make someone a PowerUser | – | their friends only | anyone |
 | Take PowerUser away | – | **no** | yes |

@@ -54,11 +54,16 @@ pub fn hash_token(token: &str) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// What someone whose account an Admin turned off sees when they try to get in.
+pub const TURNED_OFF: &str =
+    "This account has been turned off. Ask whoever runs napsack to turn it back on.";
+
 pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option<UserPublic>> {
     let at = now();
     let user = sqlx::query_as::<_, UserPublic>(
         "SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token_hash = ? AND s.expires_at > ? AND s.revoked_at IS NULL",
+         WHERE s.token_hash = ? AND s.expires_at > ? AND s.revoked_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)",
     )
     .bind(hash_token(token))
     .bind(at)
@@ -352,6 +357,11 @@ pub async fn login(
 
     if !verify_secret(stored, req.auth_key).await? {
         return Err(failed("wrong password"));
+    }
+    // Said only after the right password, so it reveals nothing to a guesser.
+    if crate::admin_users::is_deactivated(&state.db, id).await? {
+        tracing::info!(ip = %who.ip, user_id = id, "sign-in refused: account turned off");
+        return Err(AppError::bad(TURNED_OFF));
     }
 
     // The wrapped key is only useful with the password, which the server never sees.

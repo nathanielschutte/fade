@@ -53,7 +53,9 @@ pub async fn find_valid(db: &SqlitePool, token: &str) -> sqlx::Result<Option<(i6
     let row: Option<(i64, i64, String)> = sqlx::query_as(
         "SELECT i.id, u.id, u.username FROM invites i JOIN users u ON u.id = i.created_by
          WHERE i.token_hash = ? AND i.revoked_at IS NULL AND i.expires_at > ?
-           AND (SELECT COUNT(*) FROM invite_uses x WHERE x.invite_id = i.id) < i.max_uses",
+           AND (SELECT COUNT(*) FROM invite_uses x WHERE x.invite_id = i.id) < i.max_uses
+           -- A turned-off account's links stop working (admin_users.rs).
+           AND NOT EXISTS (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)",
     )
     .bind(hash_token(token))
     .bind(now())

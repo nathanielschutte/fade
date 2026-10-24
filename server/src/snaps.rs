@@ -22,7 +22,7 @@ use crate::{
     auth::AuthUser,
     db::{self, now, Message, MESSAGE_COLS},
     error::{AppError, AppResult},
-    friends::require_friend,
+    friends::require_reachable,
     version,
     ws::Event,
     SharedState,
@@ -92,7 +92,7 @@ pub async fn upload(
     Query(params): Query<UploadParams>,
     body: Bytes,
 ) -> AppResult<Json<Message>> {
-    require_friend(&state, me.id, friend_id).await?;
+    require_reachable(&state, me.id, friend_id).await?;
     version::check_snap_format(params.format)?;
     if params
         .client_id

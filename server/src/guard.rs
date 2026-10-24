@@ -324,9 +324,13 @@ pub fn check_write_room(state: &SharedState, method: &Method) -> Result<(), AppE
 
 /// Sign-up stops once there are this many accounts.
 pub async fn accounts_full(db: &sqlx::SqlitePool, max: i64) -> sqlx::Result<bool> {
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(db)
-        .await?;
+    // A turned-off account doesn't hold a place (admin_users.rs).
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users u WHERE NOT EXISTS
+           (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)",
+    )
+    .fetch_one(db)
+    .await?;
     Ok(n >= max)
 }
 

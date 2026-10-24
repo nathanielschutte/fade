@@ -767,8 +767,13 @@ def check_roles(tag):
     for method, path in (("GET", "/admin/stats"), ("GET", "/admin/metrics"), ("GET", "/admin/graph"), ("GET", "/admin/roles"),
                          ("GET", "/admin/logs"), ("POST", f"/admin/roles/{uid['friend']}"), ("DELETE", f"/admin/roles/{uid['friend']}"),
                          ("POST", "/admin/roles/reload"), ("POST", f"/admin/users/{uid['friend']}/reset-code"),
-                         ("GET", "/admin/incidents"), ("POST", "/admin/incidents/20261023T171000Z/resolve")):
-        ok(call(method, path, tok["user"]), 404)
+                         ("GET", "/admin/incidents"), ("POST", "/admin/incidents/20261023T171000Z/resolve"),
+                         ("GET", "/admin/users"), ("GET", f"/admin/users/{uid['friend']}"),
+                         ("POST", f"/admin/users/{uid['friend']}/deactivate"), ("POST", f"/admin/users/{uid['friend']}/reactivate"),
+                         ("POST", f"/admin/users/{uid['friend']}/sign-out"), ("POST", f"/admin/users/{uid['friend']}/unlock"),
+                         ("GET", "/admin/actions"), ("GET", "/admin/announcements"), ("POST", "/admin/announcements"),
+                         ("POST", "/admin/announcements/1/withdraw")):
+        ok(call(method, path, tok["user"], json={"body": "x", "hours": 1}), 404)
 
     # An Admin makes someone a PowerUser (once).
     ok(call("POST", f"/admin/roles/{uid['power']}", adm))
@@ -791,8 +796,13 @@ def check_roles(tag):
     ok(call("GET", "/admin/logs", P), 404)
     ok(call("POST", f"/admin/users/{uid['friend']}/reset-code", P), 404)
     ok(call("POST", "/admin/roles/reload", P), 404)
-    # No incidents either (Admins only, X18).
+    # No incidents either (Admins only, X18), and no Users tab or announcements.
     ok(call("GET", "/admin/incidents", P), 404)
+    for method, path in (("GET", "/admin/users"), ("GET", f"/admin/users/{uid['stranger']}"),
+                         ("POST", f"/admin/users/{uid['stranger']}/deactivate"), ("POST", f"/admin/users/{uid['stranger']}/sign-out"),
+                         ("POST", f"/admin/users/{uid['stranger']}/unlock"), ("GET", "/admin/actions"),
+                         ("POST", "/admin/announcements")):
+        ok(call(method, path, P, json={"body": "x", "hours": 1}), 404)
     ok(call("POST", "/admin/incidents/20261023T171000Z/resolve", P), 404)
 
     # The graph: friends by name; everyone else anonymous, in every form.
@@ -840,6 +850,100 @@ def check_roles(tag):
         n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_roles WHERE user_id IN (?, ?, ?)", (uid["power"], uid["friend"], uid["user"])).fetchone()[0]
         assert n == 3, f"grants are marked ended, never deleted: {n}"
     print("  roles: Users see nothing; PowerUsers no names, cost, logs, or resets; Admins everything")
+
+def check_admin_users(tag):
+    """System → Users (admin_users.rs): turning an account off keeps all of it,
+    but it can't sign in or be sent to, until it's turned back on; signing out
+    everywhere; clearing a sign-in lock; every action recorded. Announcements."""
+    adm = admin_token()
+    me_admin = ok(call("GET", "/me", adm)).json()
+    r = {n: ok(register(f"au_{n}_{tag}")).json() for n in "xy"}
+    x, y = r["x"]["user"], r["y"]["user"]
+    x_tok, y_tok = r["x"]["token"], r["y"]["token"]
+    befriend(y_tok, x, x_tok, y["id"])
+    ok(call("POST", f"/chats/{x['id']}/messages", y_tok, json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    invite = ok(call("POST", "/invites", x_tok)).json()
+
+    people = ok(call("GET", "/admin/users", adm)).json()
+    row = next(u for u in people["users"] if u["id"] == x["id"])
+    assert row["deactivated"] is False and row["role"] == "user" and row["friends"] == 1, row
+    assert people["accounts_max"] >= people["active"] >= 3
+    d = ok(call("GET", f"/admin/users/{x['id']}", adm)).json()
+    assert d["counts"]["friends"] == 1 and d["counts"]["invites_made"] == 1 and len(d["sessions"]) >= 1, d
+    assert d["deactivated"] is False and d["sign_in"]["failures"] == 0
+    assert not {"auth_hash", "token_hash", "code", "wrapped_private_key"} & set(json.dumps(d).split('"')), "nothing secret"
+    ok(call("GET", "/admin/users/999999", adm), 404)
+
+    # Not yourself, not another Admin, and a reason is checked like other text.
+    ok(call("POST", f"/admin/users/{me_admin['id']}/deactivate", adm, json={}), 400)
+    ok(call("POST", f"/admin/users/{x['id']}/deactivate", adm, json={"reason": "a\u202eb"}), 400)
+    ok(call("POST", f"/admin/users/{x['id']}/deactivate", adm, json={"reason": "z" * 201}), 400)
+
+    # Off: signed out, can't sign in (said only after the right password), can't be sent to or found.
+    off = ok(call("POST", f"/admin/users/{x['id']}/deactivate", adm, json={"reason": "asked to leave"})).json()
+    assert off["deactivated"] is True and off["sessions_ended"] >= 1, off
+    ok(call("POST", f"/admin/users/{x['id']}/deactivate", adm, json={}), 409)
+    ok(call("GET", "/me", x_tok), 401)
+    wrong = call("POST", "/auth/login", json={"username": x["username"], "auth_key": b64(os.urandom(32))})
+    assert wrong.status_code == 400 and "turned off" not in wrong.text, wrong.text
+    turned = call("POST", "/auth/login", json={"username": x["username"], "auth_key": AUTH_KEY})
+    assert turned.status_code == 400 and "turned off" in turned.json()["error"], turned.text
+    sent = call("POST", f"/chats/{x['id']}/messages", y_tok, json={"ciphertext": b64(os.urandom(48)), "format": 2})
+    assert sent.status_code == 400 and "turned off" in sent.json()["error"], sent.text
+    history = ok(call("GET", f"/chats/{x['id']}/messages", y_tok)).json()
+    assert len(history) == 1, "the chat stays readable"
+    friend = next(c for c in ok(call("GET", "/friends", y_tok)).json() if c["id"] == x["id"])
+    assert friend["deactivated"] is True and friend.get("active_now") is None and friend.get("last_seen_at") is None, friend
+    ok(call("POST", "/friends/requests", adm, json={"username": x["username"]}), 404)
+    ok(call("GET", f"/invites/lookup/{invite['path'].rsplit('/', 1)[-1]}"), 404)
+    row = next(u for u in ok(call("GET", "/admin/users", adm)).json()["users"] if u["id"] == x["id"])
+    assert row["deactivated"] is True
+
+    # On again: everything as it was.
+    ok(call("POST", f"/admin/users/{x['id']}/reactivate", adm))
+    ok(call("POST", f"/admin/users/{x['id']}/reactivate", adm), 409)
+    x_tok = ok(call("POST", "/auth/login", json={"username": x["username"], "auth_key": AUTH_KEY})).json()["token"]
+    ok(call("POST", f"/chats/{x['id']}/messages", y_tok, json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    assert ok(call("GET", f"/chats/{y['id']}/messages", x_tok)).json(), "their history came back with them"
+
+    # Signing out everywhere ends every session.
+    ok(call("POST", f"/admin/users/{x['id']}/sign-out", adm))
+    ok(call("GET", "/me", x_tok), 401)
+    ok(call("POST", f"/admin/users/{me_admin['id']}/sign-out", adm), 400)
+
+    # A sign-in lock: wrong passwords counted, then cleared.
+    for _ in range(3):
+        ok(call("POST", "/auth/login", json={"username": y["username"], "auth_key": b64(os.urandom(32))}), 400)
+    assert ok(call("GET", f"/admin/users/{y['id']}", adm)).json()["sign_in"]["failures"] == 3
+    assert ok(call("POST", f"/admin/users/{y['id']}/unlock", adm)).json()["failures_cleared"] == 3
+    assert ok(call("GET", f"/admin/users/{y['id']}", adm)).json()["sign_in"]["failures"] == 0
+
+    # Every action recorded, and shown on the account.
+    acts = [a["action"] for a in ok(call("GET", f"/admin/users/{x['id']}", adm)).json()["actions"]]
+    assert acts[:3] == ["sign_out", "reactivate", "deactivate"], acts
+    feed = ok(call("GET", "/admin/actions", adm)).json()["actions"]
+    assert any(a["action"] == "unlock" and a["target"] == y["username"] for a in feed), feed[:5]
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM deactivations WHERE user_id = ?", (x["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM users WHERE id = ?", (x["id"],)).fetchone()[0] == 1, "never deleted"
+
+    # Announcements: one at a time, checked, everyone signed in sees them, withdrawn not deleted.
+    ok(call("GET", "/announcement"), 401)
+    for bad in ({"body": "", "hours": 24}, {"body": "x" * 281, "hours": 24}, {"body": "two\nlines", "hours": 24},
+                {"body": "ok", "hours": 0}, {"body": "ok", "hours": 24 * 15}):
+        ok(call("POST", "/admin/announcements", adm, json=bad), 400)
+    posted = ok(call("POST", "/admin/announcements", adm, json={"body": f"hello {tag}", "hours": 24})).json()["announcement"]
+    seen = ok(call("GET", "/announcement", y_tok)).json()["announcement"]
+    assert seen["id"] == posted["id"] and seen["body"] == f"hello {tag}", seen
+    second = ok(call("POST", "/admin/announcements", adm, json={"body": f"again {tag}", "hours": 1})).json()["announcement"]
+    assert ok(call("GET", "/announcement", y_tok)).json()["announcement"]["id"] == second["id"], "the new one replaces the last"
+    ok(call("POST", f"/admin/announcements/{second['id']}/withdraw", adm))
+    ok(call("POST", f"/admin/announcements/{second['id']}/withdraw", adm), 404)
+    assert ok(call("GET", "/announcement", y_tok)).json()["announcement"] is None
+    recent = ok(call("GET", "/admin/announcements", adm)).json()["announcements"]
+    assert {a["id"] for a in recent} >= {posted["id"], second["id"]}, "kept"
+    print("  admin users: turned off and back on with nothing lost, signed out, unlocked, recorded; announcements")
 
 def check_graph(tag):
     """The friend map: your own map only, with an anonymous ? for each person
@@ -1277,6 +1381,7 @@ async def main():
     await check_late_joiner(tag)
     check_graph(tag)
     check_roles(tag)
+    check_admin_users(tag)
     check_health()
     check_guard(tag)
     check_rate_limits(tag)

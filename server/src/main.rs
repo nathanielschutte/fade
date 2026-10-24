@@ -1,5 +1,7 @@
 mod account;
 mod admin;
+mod admin_users;
+mod announcements;
 mod auth;
 mod aws;
 mod birthdays;
@@ -444,6 +446,32 @@ fn router(state: SharedState) -> Router {
         .route("/admin/metrics", get(metrics::get))
         .route("/admin/graph", get(graph::admin))
         .route("/admin/incidents", get(incidents::list))
+        // System → Users (Admins; admin_users.rs) and announcements.
+        .route("/admin/users", get(admin_users::list))
+        .route("/admin/users/{user_id}", get(admin_users::detail))
+        .route(
+            "/admin/users/{user_id}/deactivate",
+            post(admin_users::deactivate),
+        )
+        .route(
+            "/admin/users/{user_id}/reactivate",
+            post(admin_users::reactivate),
+        )
+        .route(
+            "/admin/users/{user_id}/sign-out",
+            post(admin_users::sign_out),
+        )
+        .route("/admin/users/{user_id}/unlock", post(admin_users::unlock))
+        .route("/admin/actions", get(admin_users::actions))
+        .route(
+            "/admin/announcements",
+            get(announcements::recent).post(announcements::post),
+        )
+        .route(
+            "/admin/announcements/{id}/withdraw",
+            post(announcements::withdraw),
+        )
+        .route("/announcement", get(announcements::get))
         .route("/admin/incidents/{id}/resolve", post(incidents::resolve))
         .route("/admin/roles", get(roles::list))
         .route("/admin/roles/reload", post(roles::reload))

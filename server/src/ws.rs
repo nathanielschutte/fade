@@ -57,6 +57,10 @@ pub enum Event {
         active: bool,
         last_seen_at: i64,
     },
+    /// The Admins' announcement changed: the current one, or none (announcements.rs).
+    Announcement {
+        announcement: Option<crate::announcements::Announcement>,
+    },
 }
 
 struct Conn {
@@ -187,6 +191,17 @@ impl Hub {
             if seen.insert(u) {
                 self.send(u, event);
             }
+        }
+    }
+
+    /// Sends to everyone connected (announcements).
+    pub fn send_all(&self, event: &Event) {
+        let Ok(text) = serde_json::to_string(event) else {
+            return;
+        };
+        let mut conns = self.conns.lock().unwrap();
+        for list in conns.values_mut() {
+            list.retain(|c| c.tx.send(text.clone()).is_ok());
         }
     }
 
