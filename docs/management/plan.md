@@ -6,7 +6,7 @@ Central task tracking doc for napsack, for everyone who works on it (and their C
 ## How to use it
 
 - **Before starting:** read the Tracker (who's on what) and the open pull requests (`gh pr list`). Don't start something someone else has; talk to them.
-- **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. A Claude session writes who it works for: "Claude for Nate".
+- **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. A Claude session just writes who it works for: ex. "Nate" (NOT "Claude for Nate").
 - **A new idea** goes into an Epic first (an entry with a short id, like `X38`: what was asked, by whom and when, and the decisions), then into the Tracker by priority.
 - **As you go:** keep your row's Status current, and add "Built (version): ..." notes to the Epic entry when it ships. The plan changes travel in the same pull request as the work.
 - **When it's done:** Status **Done**, with the version it shipped in. Done rows move to the Done table once the Tracker gets long.
@@ -17,7 +17,7 @@ Work top to bottom. Each row links to its entry in the Epics below, which holds 
 
 Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blocked on a choice, noted in the epic) · **On hold** · **Done**
 
-**Who**: the person working on it (or "Claude for <person>"), or – if it's free to pick up.
+**Who**: the person working on it, or – if it's free to pick up.
 
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
