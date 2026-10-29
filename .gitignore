@@ -11,6 +11,7 @@ infra/terraform.tfvars
 __pycache__/
 server/pics/
 docs/dev/
+docs/management/scratchpad-work.txt
 
 # Built by Terraform (the health monitor zip).
 infra/.build/
