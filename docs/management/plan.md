@@ -6,94 +6,98 @@ Central task tracking doc for napsack, for everyone who works on it (and their C
 ## How to use it
 
 - **Before starting:** read the Tracker (who's on what) and the open pull requests (`gh pr list`). Don't start something someone else has; talk to them.
-- **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. A Claude session just writes who it works for: ex. "Nate" (NOT "Claude for Nate").
+- **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. **Who** and **Author** are always a person's name ("Nate"); a Claude session writes the person it works for, never itself (its part is in the commits, as co-author).
 - **A new idea** goes into an Epic first (an entry with a short id, like `X38`: what was asked, by whom and when, and the decisions), then into the Tracker by priority.
 - **As you go:** keep your row's Status current, and add "Built (version): ..." notes to the Epic entry when it ships. The plan changes travel in the same pull request as the work.
-- **When it's done:** Status **Done**, with the version it shipped in. Done rows move to the Done table once the Tracker gets long.
+- **When it ships:** the row leaves the Tracker for the bottom of the Done table, with the version it shipped in (or `infra`, `process`) and its author, and the Tracker is renumbered.
 
 ## Tracker
 
-Work top to bottom. Each row links to its entry in the Epics below, which holds the details and design notes.
+Live work only, top to bottom: what's being worked on, then what's next. Each row links to its entry in the Epics below, which holds the details and design notes. **#** is a row's place in line, renumbered (1, 2, 3, ...) whenever a row is added, finished, or moved, so a task is named by its Epic id (`X38`), never its number.
 
-Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blocked on a choice, noted in the epic) · **On hold** · **Done**
+Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blocked on a choice, noted in the epic) · **On hold**
 
 **Who**: the person working on it, or – if it's free to pick up.
 
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
-| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Nate | Done | Nate (2026-10-28); 0.34.0 |
-| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Nate | Done | Nate (2026-10-28); 0.35.0 |
-| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Nate | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
-| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Nate | Done | Nate (2026-10-28); 0.37.0 |
-| 0p | [Change your username](#x30-change-your-username) | Features | Nate | Done | Nate (2026-10-28); 0.38.0 |
-| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Nate | Done | Nate (2026-10-28); 0.39.0 |
-| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Nate | Done | Nate (2026-10-28); 0.40.0 |
-| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Nate | Done | Nate (2026-10-29); 0.41.0 |
-| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Nate | Done | Nate (2026-10-29); 0.41.0 |
-| 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
-| 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
-| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Nate | Done | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac. 0.42.0 |
-| 0x | [Faster tests, same coverage](#p4-faster-test-runs-same-coverage) | Process | Nate | In progress | Nate (2026-10-29): development speed and CI minutes |
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
-| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 4 | [Disappearing texts](#f18-disappearing-texts) | Features | – | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 2 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
+| 3 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
+| 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
+| 6 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
+| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | – | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
-| Task | Shipped |
-|---|---|
-| [Logging pass and admin log viewer](#d1-log-viewer) | 0.2.0 |
-| [Rename "snap" to "pic"](#x1-rename-snap) | 0.3.0 |
-| [Profile page](#f4-profile-page) | 0.4.0 |
-| [Chat pagination](#f3-chat-pagination) | 0.5.0 |
-| [Client debug logs](#d2-client-debug-logs) | 0.6.0 |
-| [Backups you can restore](#i2-backups-you-can-restore): hourly to S3, kept forever, drill passed | infra |
-| Backup status in the admin panel (part of [backups](#i2-backups-you-can-restore)) | 0.7.0 |
-| [Mark inactive instead of deleting](#p4-mark-inactive-instead-of-deleting) | 0.8.0 |
-| [Request auditing and security hardening](#s1-request-auditing-and-security-hardening) | 0.9.0, 0.9.1 |
-| [Group chats](#f7-group-chats) (texts; not end-to-end encrypted yet) | 0.10.0 |
-| [Account bar on the main screen](#x2-account-buttons-on-the-main-screen), favicon | 0.11.0 |
-| Pics and group pictures in group chats (not end-to-end encrypted yet; view-once, 30 days), shorter list previews, server resources in admin | 0.12.0 |
-| Hostile-input hardening: images rebuilt server-side, SQL guard test, text validation, write and socket caps (see CLAUDE.md, Security) | 0.12.0 |
-| [Profile pics and nicknames](#f5-profile-pic-and-nicknames): display names, private nicknames, profile pictures | 0.13.0 |
-| [Pics last 30 days](#f9-pics-last-30-days): unopened pics wait on disk and survive restarts | 0.13.0 |
-| [Captions on pictures](#f6-captions-on-pictures): message format 2 for direct pics; plain captions in groups | 0.13.0 |
-| [Password reset and recovery](#f2-password-reset-and-recovery): recovery keys, change password, admin reset codes, accepting a friend's new key | 0.14.0 |
-| [Account safety basics](#f8-account-safety-basics): sign out other devices (sign-in limits shipped in 0.9) | 0.14.0 |
-| [Install as an app, with notifications](#f10-install-as-an-app-with-notifications) | 0.15.0 |
-| [Reactions and replies](#f11-reactions-and-replies): text format 2, encrypted reactions | 0.15.0 |
-| [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 |
-| Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([security.md](../security.md)); Home Screen app clears the iPhone status bar | 0.16.0 |
-| [Invite links and QR codes](#f14-invite-links-and-qr-codes) | 0.17.0 |
-| Push refusals log the push service's reason; an unchanged subscription no longer adds a row | 0.17.3 |
-| [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 |
-| [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 |
-| iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 |
-| [Favorites](plan.md#x3-chat-list-tools-pin-mute-search) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 |
-| [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 |
-| **[End-to-end encrypted group chats](../implementation/group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 |
-| [Draw on pics](#f13-draw-on-pics): a pen, stickers, and undo, flattened into the photo before it's encrypted | 0.22.0 |
-| [Streaks](#f15-streaks): 🔥 and a count when you've both sent pics every day, ⌛ when it's about to end | 0.23.0 |
-| [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 |
-| [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 |
-| [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 |
-| [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 |
-| [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 |
-| [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 |
-| [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 |
-| [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 |
-| [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 |
-| [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see operations.md) | 0.26.0 |
-| [The release pipeline](#p2-turn-on-cicd): main → release candidate on staging, `server-v*` tag → the same binary on production; releases kept forever, the newest ten candidates ([releasing.md](../operations/releasing.md)) | 0.31.1 |
-| [Admin tools for accounts](#x21-admin-tools-for-accounts): System → Users (turn accounts off and on, sign out everywhere, clear a sign-in lock, reset codes, admin activity), announcements | 0.32.0 |
-| [Team Napsack](#x22-team-napsack-messages-from-napsack-itself): napsack's own account, scheduled messages for birthdays and holidays (`server/occasions.toml`) | 0.33.0 |
-| [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](../operations/staging.md#results)) | infra, 0.30.1 |
-| [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 |
-| Move to napsack.getattr.com (old domain redirects) | infra |
-| Development standard ([CLAUDE.md](../../CLAUDE.md)), CI green on GitHub | process |
+Oldest first; newly shipped rows go at the bottom.
+
+| Task | Shipped | Author |
+|---|---|---|
+| [Logging pass and admin log viewer](#d1-log-viewer) | 0.2.0 | Nate |
+| [Rename "snap" to "pic"](#x1-rename-snap) | 0.3.0 | Nate |
+| [Profile page](#f4-profile-page) | 0.4.0 | Nate |
+| [Chat pagination](#f3-chat-pagination) | 0.5.0 | Nate |
+| [Client debug logs](#d2-client-debug-logs) | 0.6.0 | Nate |
+| [Backups you can restore](#i2-backups-you-can-restore): hourly to S3, kept forever, drill passed | infra | Nate |
+| Backup status in the admin panel (part of [backups](#i2-backups-you-can-restore)) | 0.7.0 | Nate |
+| [Mark inactive instead of deleting](#p4-mark-inactive-instead-of-deleting) | 0.8.0 | Nate |
+| [Request auditing and security hardening](#s1-request-auditing-and-security-hardening) | 0.9.0, 0.9.1 | Nate |
+| [Group chats](#f7-group-chats) (texts; not end-to-end encrypted yet) | 0.10.0 | Nate |
+| [Account bar on the main screen](#x2-account-buttons-on-the-main-screen), favicon | 0.11.0 | Nate |
+| Pics and group pictures in group chats (not end-to-end encrypted yet; view-once, 30 days), shorter list previews, server resources in admin | 0.12.0 | Nate |
+| Hostile-input hardening: images rebuilt server-side, SQL guard test, text validation, write and socket caps (see CLAUDE.md, Security) | 0.12.0 | Nate |
+| [Profile pics and nicknames](#f5-profile-pic-and-nicknames): display names, private nicknames, profile pictures | 0.13.0 | Nate |
+| [Pics last 30 days](#f9-pics-last-30-days): unopened pics wait on disk and survive restarts | 0.13.0 | Nate |
+| [Captions on pictures](#f6-captions-on-pictures): message format 2 for direct pics; plain captions in groups | 0.13.0 | Nate |
+| [Password reset and recovery](#f2-password-reset-and-recovery): recovery keys, change password, admin reset codes, accepting a friend's new key | 0.14.0 | Nate |
+| [Account safety basics](#f8-account-safety-basics): sign out other devices (sign-in limits shipped in 0.9) | 0.14.0 | Nate |
+| [Install as an app, with notifications](#f10-install-as-an-app-with-notifications) | 0.15.0 | Nate |
+| [Reactions and replies](#f11-reactions-and-replies): text format 2, encrypted reactions | 0.15.0 | Nate |
+| [Typing and "active now"](#f12-typing-and-active-now) | 0.15.0 | Nate |
+| Abuse protection: account and device caps, request budgets, scanner refusal and probe bans, load shedding, disk floors ([security.md](../security.md)); Home Screen app clears the iPhone status bar | 0.16.0 | Nate |
+| [Invite links and QR codes](#f14-invite-links-and-qr-codes) | 0.17.0 | Nate |
+| Push refusals log the push service's reason; an unchanged subscription no longer adds a row | 0.17.3 | Nate |
+| [Pics back to back](#x4-open-pics-back-to-back), [message box grows to 4 lines](#x5-composer-grows-to-4-lines), [keyboard stays up after Send](#x6-keyboard-stays-up-after-send), [pull to refresh](#x7-pull-to-refresh-the-chat-list), [group "seen by"](#f17-group-chats-seen-by-then-end-to-end); admin tabs no longer jump between Overview and Logs | 0.18.0 | Nate |
+| [Chat list header](#x8-chat-list-header-buttons): Friends and a + for starting things, together on the right | 0.18.1 | Nate |
+| iPhone notifications from some friends were refused by Apple ("BadWebPushTopic"): push topics are now valid base64url, and keyed so the push service can't tell who sent them | 0.18.2 | Nate |
+| [Favorites](plan.md#x3-chat-list-tools-pin-mute-search) and [hiding chats](#x3-chat-list-tools-pin-mute-search): swipe (phone) or hover (computer) a chat for Favorite, Hide, or Leave | 0.19.0 | Nate |
+| [Admin "Online now"](#d3-admin-online-now-count) counts whoever is looking at the admin page; [removing people from groups](#x9-removing-people-from-groups) says who can, and takes two taps; [birthdays](#f19-birthday-and-more-profile-fields) on profiles, with a 🎂 on the day | 0.20.0 | Nate |
+| **[End-to-end encrypted group chats](../implementation/group-encryption.md)** (format 3): messages and pics; the group's name and picture, and reactions, still visible to the server, and every group says so | 0.21.0 | Nate |
+| [Draw on pics](#f13-draw-on-pics): a pen, stickers, and undo, flattened into the photo before it's encrypted | 0.22.0 | Nate |
+| [Streaks](#f15-streaks): 🔥 and a count when you've both sent pics every day, ⌛ when it's about to end | 0.23.0 | Nate |
+| [Mute and search](#x3-chat-list-tools-pin-mute-search): mute a chat for 8 hours, a week, or always; search chats by name and messages by text (in the browser) | 0.24.0 | Nate |
+| [Befriend people from a group](#x10-befriend-people-from-a-group): Add friend / Requested / Accept in a group's member list | 0.24.1 | Nate |
+| [Bad connections](#x11-bad-connections): pics count as opened only once shown; texts and pics resend safely; heartbeat and offline note | 0.25.0 | Nate |
+| [Double tap a chat to send a pic](#x12-double-tap-a-chat-to-send-a-pic); [double tap the camera to switch it](#x13-double-tap-the-camera-to-switch-it) | 0.25.1 | Nate |
+| [Phone double tap waits a beat](#x12-double-tap-a-chat-to-send-a-pic); [group badge in the list](#x14-tell-groups-from-direct-chats-in-the-list) | 0.25.2 | Nate |
+| [Friend map](#x15-friend-map): your own map (friends, who knows who, ? for friends of friends) and the admin graph (everyone or chosen people, depth 1–2) | 0.27.0 | Nate |
+| [Roles](#s2-roles): User, PowerUser, Admin; System pages scoped by role; admins from SSM | 0.28.0 | Nate |
+| [Health monitor](#i6-health-monitor): /api/health, a Lambda every 5 minutes that restarts, reboots, or moves the server, incidents in S3, SNS notices | 0.29.0 | Nate |
+| [napsack.io](#i7-napsackio): the production address; napsack.getattr.com, fade.getattr.com and www redirect (301) | infra, 2026-10-23 | Nate |
+| [Metrics tab](#i4-metrics-how-is-the-infrastructure-doing): machine and server readings, status, cost (see operations.md) | 0.26.0 | Nate |
+| [The release pipeline](#p2-turn-on-cicd): main → release candidate on staging, `server-v*` tag → the same binary on production; releases kept forever, the newest ten candidates ([releasing.md](../operations/releasing.md)) | 0.31.1 | Nate |
+| [Admin tools for accounts](#x21-admin-tools-for-accounts): System → Users (turn accounts off and on, sign out everywhere, clear a sign-in lock, reset codes, admin activity), announcements | 0.32.0 | Nate |
+| [Team Napsack](#x22-team-napsack-messages-from-napsack-itself): napsack's own account, scheduled messages for birthdays and holidays (`server/occasions.toml`) | 0.33.0 | Nate |
+| [Staging](#i8-staging): staging.napsack.io, isolated from production; all browser tests pass against it; load tested: 400 online and 718 texts/s on a nano, no errors ([results](../operations/staging.md#results)) | infra, 0.30.1 | Nate |
+| [Group chats on the friend map](#x16-group-chats-on-the-friend-map) (a switch; names only for members), [rounded-square group pictures](#x17-a-better-group-badge-in-the-chat-list) instead of the badge, [incidents on Metrics](#x18-incidents-on-the-metrics-page) (Admins; mark resolved), [low CPU credits a warning](#x19-low-cpu-credits-is-a-warning-not-an-alarm), [long captions wrap](#x20-long-pic-captions-are-cut-off) | 0.30.0 | Nate |
+| Move to napsack.getattr.com (old domain redirects) | infra | Nate |
+| Development standard ([CLAUDE.md](../../CLAUDE.md)), CI green on GitHub | process | Nate |
+| [Loading and slow-network states](#x23-clear-loading-and-slow-network-states), [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger), [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | 0.34.0 | Nate |
+| [Tabs, a camera tab, and send to many](#x26-tabs-a-camera-tab-and-send-to-many) | 0.35.0 | Nate |
+| [Camera zoom](#x27-camera-zoom), [short videos](#x28-short-videos), with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part | 0.36.0 | Nate |
+| [Edit sent texts](#x29-edit-sent-texts) | 0.37.0 | Nate |
+| [Change your username](#x30-change-your-username) | 0.38.0 | Nate |
+| [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | 0.39.0 | Nate |
+| [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic), [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | 0.40.0 | Nate |
+| [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it); [video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | 0.41.0 | Nate |
+| [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | process | Nate |
+| [Group formats in `/api/config`](#f1-ios-app) (for the iOS app; the first release made from the Mac) | 0.42.0 | Nate |
+| [Faster tests, same coverage](#p4-faster-test-runs-same-coverage): four at a time, shared helpers, no waiting out timeouts; sockets answer a close; Metrics tips go with a redraw | 0.42.1 | Nate |
+| [Development on a Mac](#p6-development-on-a-mac): tests on macOS, Terraform state in S3, the Mac's SSH key on both servers | infra, 2026-10-29 | Nate |
 
 
 ## Epics
@@ -108,6 +112,9 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 - **The tests assumed Linux.** The Metrics tab reads CPU, memory, and network from `/proc`, so a server run on a Mac has none of them, and the smoke test and `test_metrics.py` failed there. They now expect only what the system can measure; every deployed server is Linux. Homebrew also refuses to install anything while the Command Line Tools trail the installed Xcode (selecting Xcode isn't enough), so onboarding.md says to keep them current.
 - **Terraform state was only on the Windows machine** (`infra/` and `infra/staging/`, and staging's tfvars). **Decided (Nate):** copy it over, then move both roots' state to an S3 backend with locking, so it doesn't live on one laptop. Done (2026-10-29): `fade-tfstate-<account>-us-east-1` (versioned, encrypted, HTTPS-only, lock file), both roots migrated and planning as before ([operations.md](../operations/operations.md)); the local copies are kept off the repo on the Mac.
 - **The Mac's SSH key** is in `ssh_public_keys`, which the boot script writes, so adding it replaces the instance. **Decided (Nate):** staging now, through Terraform; production at a quiet time, with the data-volume checklist (CLAUDE.md, Rule 1). Staging done (2026-10-29): new instance, `scripts/ssh.sh` from the Mac works, data volume mounted, clean start. Production's apply is still to do; it also opens port 22 to Nate's address (`ssh_allowed_cidrs`, new in tfvars) and re-uploads the health monitor (the same code, zipped on a Mac).
+- **Done (2026-10-29):** the suite passes on macOS; both roots' state is in S3; the pipeline worked end to end from the Mac (pull requests, merges, staging, `server-v0.42.0` and `server-v0.42.1`). Production's instance was replaced for the Mac's key after 0.42.1 shipped: snapshot `snap-0df71556136ac32c3` first, row counts the same before and after (27 users, 48 friendships, 588 messages, 90 sessions), the data volume mounted, `scripts/ssh.sh` in from the Mac, port 22 open to Nate's address only. Both roots plan "No changes".
+- Staging follows the newest Amazon Linux image (production pins its AMI), so its plan shows a replacement whenever AWS publishes one; applying it is harmless (no user data), and was done the same day.
+
 
 #### P5. Pull requests and repository protection
 - Nate (2026-10-28): branch protection is on: other collaborators reach `main` only through pull requests, reviewed by the code owner (Nate) on the latest push; release tags are protected, need the staging deploy to have succeeded, and only repository admins create them. Admins can bypass all of it.
@@ -130,6 +137,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
   - **Chrome on macOS** takes 20s to quit after each test; on a Mac the tests now use Playwright's own headless browser (also: no Chrome window popping up), and only the video test (Chrome's codecs) uses Chrome.
   - **One file at a time**, on a 4-core machine.
 - **Built (0.42.1):** the browser tests run four at a time (`tests/e2e/run.py`), each file in its own process. Files that change what every page sees set `RUNS_ALONE` and run first, by themselves (the announcement, live reload, the exact online count); files sharing the admin account take turns. The helpers 30 files had copied (`sign_up` in 13 versions, `befriend` 18 times) are in `common.py`, 650 lines fewer. `scripts/test.sh` and `test-one.sh` share their setup (`scripts/test-env.sh`), and `test.sh` prints each part's time and the total. Locally: 9.5 minutes → 2.75 (browser tests 467s → 110s, smoke test 74s → 45s).
+- **On CI** (0.42.1): the test job takes 4 to 6.5 minutes, depending on the runner (11.4 before). `test_marks` takes ~75s there against ~15s on a Mac, evenly slower through every step (run.py stamps each line), so the runner, not one wait; worth a look if it grows.
 - **Next, worth doing:** go through the browser tests for checks that are really API rules (who may, what's refused) and make sure the smoke test owns them, leaving the browser test to show the person sees it. CLAUDE.md now says to test each rule at the lowest layer that proves it.
 
 #### P3. Testing in WSL (and moving the repo there)
@@ -162,6 +170,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 - [ ] Bump to 0.2.0 and ship `server-v0.2.0` through the release workflow. Production is running the same code today as build `6f0519f-dirty`.
 - [x] The release pipeline (2026-10-23, [releasing.md](../operations/releasing.md#releasing-the-server)): every push to `main` is tested, built once as a release candidate (`releases/main/fade-server-<sha>`, newest ten kept) and put on staging; a `server-v*` tag promotes that same binary to `releases/tags/fade-server-<version>` (kept forever) and production, after a backup. One AWS role per GitHub environment (`infra/github.tf`); the old tag workflow's file was invalid YAML (a stray line), which is why it "failed" on every push.
 - [x] Staging variables set; the first release through the pipeline, `server-v0.31.1` (2026-10-23): main → candidate `548ec6a` on staging → tag → the same binary on production, backed up first. The deploy roles had to accept GitHub's id-based OIDC subject (`repo:owner@id/name@id:...`). The bucket was then cleaned to the new layout: 46 older builds moved to `releases/tags/` with their commit as metadata.
+
+#### P7. A GitHub Release for every server release
+- Nate (2026-10-29): the release pipeline also creates a GitHub Release for the new `server-v<version>` tag, with release notes generated automatically, marked as the latest release.
+- Notes: GitHub's generated notes list the pull requests merged since the previous tag, which now covers every change (they all arrive through pull requests). Create it in `release-server.yml` after production is updated, so a Release means it's live; the job needs `contents: write` for it. Open: when iOS releases (`ios-v*`) start, which one is "latest" (probably the server's, with the app's as its own Releases).
 
 ### Features
 
@@ -294,6 +306,20 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
   2. **Real deletion for these only:** an explicit, narrow exception to Rule 1 for ciphertext the sender asked to disappear, like pic files today. Needs the user's sign-off on the rule change.
   3. **Skip it.**
 
+#### F20. Better video quality
+- Nate (2026-10-29): the video quality is pretty low. Fine for now; list the options (formats, resolutions, sizes). Metadata is always stripped from videos, as from pictures.
+- Today (0.36.0, X28): drawn through a canvas at 30 frames a second, longest edge 1280 px, 1.5 Mbit/s of video and 64 kbit/s of sound; H.264 (Baseline) and AAC in MP4 where the browser records it (Safari, newer Chrome), otherwise VP8 and Opus in WebM. At most 4 MB and 10 seconds (`FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS`).
+- Metadata: re-recording on the device means a video carries nothing from the camera's own file (no location, device, or time). The server can't strip anything, since videos are end-to-end encrypted, so every option below keeps the re-encode on the device.
+- Options, cheapest first:
+  1. **More bits, same cap:** 10 seconds in 4 MB allows about 3.2 Mbit/s in all, so 2.5 to 3 Mbit/s of video, nearly twice today's. One number; no format change.
+  2. **A better H.264 profile** (Main or High instead of Baseline) where the recorder offers it: better at the same size, and still plays wherever MP4 does.
+  3. **Record the camera directly** when there's no zoom or mirroring, instead of through the canvas: sharper, and fewer dropped frames on slow phones. Zoom and the front camera's mirroring still need the canvas.
+  4. **Higher resolution** (1920 px edge): only together with more bits, or it looks worse.
+  5. **VP9 or AV1** (WebM): better for the size, but some iPhones don't play WebM, so it needs a fallback.
+  6. **A larger cap** (say 8 MB): longer or sharper videos, against the disk budget and upload time on a poor connection (`guard.rs`, security.md).
+  7. **The iOS app** ([F1](#f1-ios-app)) records with AVFoundation (HEVC or H.264, at settings it chooses), which is where iPhones gain most.
+- Whatever is chosen: compare on real phones (an iPhone and an Android), and check sizes stay under the cap.
+
 ### Debug
 
 #### D10. 0.39.0's fix for D9 cut the bottom off (undone in 0.41.1)
@@ -399,6 +425,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 - Requested (2026-10-23): a page graphing friend relationships that shows distinct groups clearly. Build the graph tech as a module; two views: every person's own map (themselves, their friends, and a **?** for each friend of a friend they don't know), and an admin view with a switch between chosen people (default: yourself; one or more; depth 1–2) and everyone.
 - Design: [friend-graph.md](../implementation/friend-graph.md). Server decides scope and privacy (`graph.rs`); clusters and layout in a shared, platform-neutral module (`shared/graph/graph.js`, usable by iOS later); an SVG renderer shared by both pages.
 - Done (0.27.0): Friends → **See your friend map**; admin → **Graph** tab. Groups found by Louvain modularity, outlined and lettered; three colors at most (validated for every pair), names on every node. Tests: Rust (scope, privacy), Node (clusters, layout, hull), smoke (`check_graph`), browser (`test_graph.py`).
+
+#### X38. Group names cut short in the chat header
+- Nate (2026-10-29), bug: in a group chat, the name at the top is cut off early, seemingly always the last three characters, even when there's room: "Rats" shows as "R...", "Gayboiz" as "Gayb...", "Dusty Relics" as "Dusty Rel...". Direct chats, titled with the person's name, aren't affected.
+- Where to look: the header title (`#chat-title`, filled for groups in `app.js` where a group opens; its ellipsis is in `style.css`, `.chat-title`). Something in the group header takes room the title needs, or the title's width is fixed before the name is in. Reproduce in a browser test at phone and desktop widths; the fix's test checks a short group name shows in full.
 
 ### Security
 
