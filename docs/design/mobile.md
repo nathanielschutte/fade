@@ -1,111 +1,99 @@
-# The iOS app
+# The iOS app (and Android later)
 
-The plan for napsack's native app: what it's built with, how it shares the encryption with the web client, and how it's developed, versioned, and released. Release rules that apply to every client are in [releasing.md](../operations/releasing.md).
+The plan for napsack's native apps: what they're built with, how they keep the encryption identical to the web client's, and how they're developed, versioned, and released. Release rules that apply to every client are in [releasing.md](../operations/releasing.md).
 
-## Stack: Expo (React Native, TypeScript)
+## Stack: native Swift, then Kotlin
 
-**Decision:** build the app with Expo and React Native, in TypeScript, and build, sign, and ship it with Expo Application Services (EAS).
+**Decision (Nate, 2026-10-29):** the iOS app is native **Swift** (SwiftUI), built in Xcode. A later Android app will be native **Kotlin**, its own port. This replaces the earlier plan (2026-10-21) to build one React Native app with Expo; that prototype only ever ran the crypto checks on a phone, so little is lost.
 
-Why this over the alternatives:
+Why native:
 
-- **It works from Windows.** EAS builds and signs iOS apps on Apple hardware in the cloud, so day-to-day work happens in Windows and WSL, and the phone runs real builds. The MacBook stays optional: useful for the iOS Simulator and for debugging native crashes, but not required to ship. A Swift app would need the Mac for everything, and Flutter's iOS builds also need a Mac or a separate cloud builder.
-- **It can share the encryption with the web client.** The message formats are defined by `shared/crypto/crypto.js`, which uses the WebCrypto API. React Native gets the same API (`crypto.subtle`: ECDH P-256, HKDF, PBKDF2, AES-GCM) from `react-native-quick-crypto`, which runs it natively. One JavaScript implementation then serves both clients, so they can't drift apart. Getting this wrong would make messages unreadable across clients, which is the most expensive bug this project can have.
-- **It's a real native app.** React Native renders native iOS views. It isn't a web page in a wrapper. That's what matters for the camera, the Keychain, and push notifications, and it's also what closes the "server delivers the JavaScript" gap from [how-napsack-works.md](../how-napsack-works.md#limits), because the app's code is signed and reviewed before install.
-- **It covers Android later** from the same code, if that ever matters.
+- **The camera and video.** Pics, short videos, zoom, holding to record, and the microphone are the heart of napsack. AVFoundation gives full control of all of it, without the limits a web view or a cross-platform layer puts in the way.
+- **A real phone layout.** The installed web app has kept running into Safari's Home Screen quirks (the bottom bar's position, permissions asked again on every launch). A native app has none of them.
+- **The platform, directly.** The Keychain for keys, APNs for notifications, background behavior, and the share sheet, each used as Apple documents it.
+- **It closes a gap.** A web app's code comes from the server on every load, so a compromised server could ship code that leaks keys ([how-napsack-works.md](../how-napsack-works.md#limits)). An app's code is signed and reviewed before it's installed.
 
-The trade-off: a dependency on Expo's tooling and cloud. The free tier's build queue is slow, and there's a paid plan if that ever hurts. The app stays a standard React Native project, so it could leave EAS later.
+The cost, and how it's handled:
+
+- **The encryption is written again, in each language.** Today `shared/crypto/crypto.js` is the reference implementation (the web client uses it). Swift implements the same formats with CryptoKit, and Kotlin will with the Java and Android crypto APIs. The pinned test vectors in `tests/vectors/` are the contract: each port must open every vector byte for byte, as the independent Python checks already do. A port that disagrees with a vector is wrong, never the vector.
+- **iOS work needs a Mac with Xcode.** The web and server work doesn't.
 
 ## How it fits the repo
 
 ```
 server/            Rust server; also serves the web client
-  static/          web client (plain JS, no build step); keystore.js is its IndexedDB key storage
-shared/            code every client uses: plain ES modules, no build step
-  crypto/          crypto.js (formats 1 and 2), vector-checks.js, vectors.test.js
-mobile/            the Expo app (TypeScript, Expo SDK 58)
-tests/vectors/     format1.json, format2.json: fixed inputs and the exact bytes they must produce
+shared/crypto/     crypto.js: the reference implementation (web), and vector-checks.js
+tests/vectors/     the pinned vectors every implementation must reproduce exactly
+ios/               the Swift app (Xcode project), from its first commit
+android/           the Kotlin app, later
+mobile/            the retired Expo prototype; removed once ios/ passes every vector
 ```
 
-- **Shared crypto, no build step for the web.** The crypto lives in `shared/crypto/crypto.js` as a plain ES module. The server compiles it into the binary and serves it as `/crypto.js` for the web client; the app imports the same file through Metro (`mobile/metro.config.js` watches `shared/`). Key storage is the only platform-specific part, so it isn't in that file: IndexedDB on the web (`server/static/keystore.js`), the iOS Keychain on the phone.
-- **Test vectors keep the clients in lockstep.** [`tests/vectors/format1.json`](../../tests/vectors/format1.json) and [`format2.json`](../../tests/vectors/format2.json) pin a password, two key pairs, a wrapped key, a text, pics with and without captions, and a safety code, generated once from the web implementation. `shared/crypto/vector-checks.js` runs every check against them; Node runs it in CI (`node --test`), and the app runs it on the phone. The browser runs the same checks in `tests/e2e/test_crypto_vectors.py`, and Python checks the documented layouts independently.
-- **Keys on the phone.** The unwrapped private key goes in the iOS Keychain (via `expo-secure-store`), readable only while the phone is unlocked and never synced to iCloud or other devices. The password-derived sign-in works exactly as on the web, so history works on the phone from day one.
+- **Crypto in Swift.** Everything the formats use is built into iOS:
+
+  | What | Where in iOS |
+  |---|---|
+  | PBKDF2-SHA256, 600,000 rounds | CommonCrypto (`CCKeyDerivationPBKDF`) |
+  | HKDF-SHA256 | CryptoKit (`HKDF<SHA256>`) |
+  | P-256 key agreement | CryptoKit (`P256.KeyAgreement`), keys as PKCS#8 and SPKI DER |
+  | AES-256-GCM with associated data | CryptoKit (`AES.GCM`) |
+
+  The formats to cover: texts (1, 2), pics (1, 2), videos and photos (4 to 7), group messages (3, 5, 7), edits, reactions, recovery keys, and safety codes ([how-napsack-works.md](../how-napsack-works.md)).
+- **The vectors run in the app's tests.** An XCTest target reads `tests/vectors/*.json` and makes every check `shared/crypto/vector-checks.js` makes. It runs on every build in CI, and on a real iPhone too, since that's where the 600,000-round PBKDF2 has to stay near a second.
+- **Keys on the phone.** The unwrapped private key goes in the Keychain, readable only while the phone is unlocked (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) and never synced to iCloud or other devices. Sign-in derives keys from the password exactly as on the web, so history works on the phone from day one.
 - **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this".
 
 ## Getting set up
 
-Accounts:
-- **Apple Developer Program** ($99/year), needed to put builds on your own iPhone, for TestFlight, and for the App Store.
-- **Expo account** (free to start), for EAS Build, Submit, and Update.
+- **A Mac with Xcode** (the current version, from the App Store).
+- **No paid account to start.** Without one, the app runs in the iOS Simulator, and on your own iPhone through a free Apple ID: in Xcode, add your Apple ID under Settings › Accounts, and choose its "Personal Team" for signing. The catch: an app signed that way stops opening after 7 days (build it again from Xcode), and it can't use push notifications.
+- **The Apple Developer Program** ($99/year) is needed for push notifications, TestFlight, and the App Store.
+- On the phone: Settings › Privacy & Security › Developer Mode, on (iOS asks once for apps installed from Xcode).
 
-**Everything runs in WSL**, like the server. Smart App Control blocks the unsigned native binaries that many npm packages ship, so Node tooling doesn't run reliably on Windows here. EAS builds and signs in Expo's cloud, so no Mac is needed.
-- Node: installed with nvm (`~/.nvm`), currently Node 24 LTS. Non-interactive shells need `. ~/.nvm/nvm.sh` first; `scripts/test.sh` does that on its own.
-- EAS CLI: `npx eas-cli@latest <command>` from `mobile/` (no global install needed).
-
-One-time, once Apple approves the developer account (all in `mobile/`, interactive):
-1. `npx eas-cli@latest login`, then `npx eas-cli@latest init`. That links the project and prints its id; put it in `extra.eas.projectId` in `app.config.ts`.
-2. `npx eas-cli@latest device:create` to register your iPhone (open the link it gives on the phone).
-3. `npx eas-cli@latest build --profile development --platform ios`. The first time, it signs in to your Apple account and makes the certificates and provisioning profile itself. Install the result on the phone from the link it prints.
-4. On the phone: Settings › Privacy & Security › Developer Mode, on (iOS asks once for development builds).
-
-Then, day to day: `npx expo start --tunnel` in `mobile/`, and open the project in the napsack development build on the phone. The tunnel is needed because the phone can't reach WSL's network directly. A new development build is only needed when native code changes (a new native package, or config plugins).
-
-The development build will point at a server you choose: your own (`scripts/test.sh` setup, through a tunnel) or production.
+The app points at a server you choose: your own (`cargo run`, reached from the phone over your network or a tunnel), staging, or production.
 
 ## Decisions still open
 
 - **Which address the app talks to.** An installed app keeps whatever server address it was built with, and old versions stay installed for months. Since the domain will change again, the app should use an address that never changes (for example a dedicated `api.` name, or a small "where is the server" lookup), or every move needs the old domain kept forever. Decide before the first TestFlight build.
-- **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload. Once settled, record the answer in `app.config.ts` (`ios.infoPlist.ITSAppUsesNonExemptEncryption`) so it isn't asked on every build. This is a legal declaration, so it's yours to make; Apple's export compliance help in App Store Connect walks through it.
+- **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload, then set `ITSAppUsesNonExemptEncryption` in the app's `Info.plist` so it isn't asked on every build. This is a legal declaration, so it's yours to make; Apple's export compliance help in App Store Connect walks through it.
 - **A reviewer account for external TestFlight** (see TestFlight): one production account for Apple's reviewer, or wait on external testing.
+- **The oldest iOS supported.** Newer versions mean fewer workarounds; a recent iOS (17 or later) covers nearly every iPhone in use.
 
 ## Versions, builds, and releases
 
 | | Where | Who changes it |
 |---|---|---|
-| App version (`1.2.0`) | `version` in `mobile/app.config.ts` | You, per release: SemVer like the server |
-| Build number (`37`) | stored by EAS | EAS, automatically on every build |
-| Native fingerprint | computed by Expo from native code and config | Expo; decides which installed apps an over-the-air update can reach |
-
-Build profiles in `mobile/eas.json`:
-- **development**: dev client with live reload, installed on registered devices.
-- **simulator**: the same dev client for the iOS Simulator on a Mac. Unsigned, so it needs no Apple developer account: `npx eas-cli@latest build --profile simulator --platform ios`, then drag the downloaded app onto a running Simulator (or let `eas build:run -p ios` install it).
-- **preview**: a release build installed directly on registered devices (no TestFlight), for trying a release build quickly.
-- **production**: the store build; goes to TestFlight and then the App Store. EAS bumps the build number.
+| App version (`1.2.0`) | the Xcode target's Marketing Version | the owner, per release: SemVer like the server |
+| Build number (`37`) | the target's Current Project Version | bumped on every upload |
 
 Shipping:
-1. **Native change.** Bump `version`, commit, and tag `ios-v1.2.0`. A workflow (added with the app) runs `eas build --profile production --auto-submit`, which builds in the cloud and uploads to TestFlight. Test it there, then submit for review in App Store Connect.
-2. **JavaScript-only fix.** `eas update --channel production` publishes it. Only installed apps with the same native fingerprint receive it, so a fix can't reach an app whose native side it doesn't match. It's bound by the same compatibility rules as everything else.
+1. **A release.** Bump the version, merge it to `main` through a pull request, and tag `ios-v1.2.0`. At first the build is archived and uploaded from Xcode (Product › Archive, then Distribute App); later a workflow on a macOS runner does the same from the tag, with an App Store Connect API key.
+2. Test it on TestFlight, then submit for review in App Store Connect.
 
 Release order always follows [releasing.md](../operations/releasing.md): server first, then the app. Raise `min_client_versions.ios` only after the newer app is out and installed.
 
 ## TestFlight
 
-TestFlight is how early users get the app before the App Store: they install Apple's TestFlight app, tap a link, and get every new build automatically. Each build lasts 90 days.
+TestFlight is how early users get the app before the App Store: they install Apple's TestFlight app, tap a link, and get every new build automatically. Each build lasts 90 days. It needs the paid Developer Program.
 
-**Plan (2026-10-21): prove the pipeline first, with the crypto check screen as build 1.** Signing, uploading, and Apple's paperwork are where first-time apps get stuck, and none of it depends on what the app does. Once build 1 is on your phone through TestFlight, every later milestone ships the same way in minutes.
-
-One-time setup (in `mobile/`, in WSL):
-1. **An App Store Connect API key**, so EAS can sign and upload without an interactive Apple sign-in (and CI can later): App Store Connect › Users and Access › Integrations › App Store Connect API › generate a key with the **App Manager** role. Download the `.p8` (Apple offers it once) and keep it out of the repo. Give it to EAS with `npx eas-cli@latest credentials` (iOS › App Store Connect API Key); EAS stores it for the project.
-2. **A production build:** `npx eas-cli@latest build --profile production --platform ios`. The first run makes the distribution certificate and provisioning profile.
-3. **Upload:** `npx eas-cli@latest submit --platform ios --latest`. The first submit creates the app in App Store Connect (bundle id `com.getattr.napsack`, permanent). App names are unique across the whole App Store: if "napsack" is taken, the store name needs a suffix ("napsack chat"), while the name under the icon stays "napsack".
-4. **Export compliance** (asked per build until it's declared in `app.config.ts` with `ios.infoPlist.ITSAppUsesNonExemptEncryption`). See Decisions still open.
+One-time setup:
+1. **The app in App Store Connect,** with the bundle id `com.getattr.napsack` (permanent). App names are unique across the whole App Store: if "napsack" is taken, the store name needs a suffix ("napsack chat"), while the name under the icon stays "napsack".
+2. **An App Store Connect API key** (Users and Access › Integrations › App Store Connect API, with the **App Manager** role), once uploads move to CI. Download the `.p8` (Apple offers it once) and keep it out of the repo.
+3. **Export compliance** (see Decisions still open).
 
 Getting it to people:
 - **Internal testing** (you, and anyone you add to the App Store Connect team, up to 100): no review, available minutes after processing. Start here.
-- **External testing** (friends, up to 10,000, by email or a **public link**): the first build of each version goes through Beta App Review, usually about a day. It asks for a short description, a feedback email, and **sign-in details for the reviewer**, since napsack needs an account. That means one real account for Apple on production (the user's call; CLAUDE.md says no test accounts in production without asking). Later builds of the same version usually skip review.
+- **External testing** (friends, up to 10,000, by email or a **public link**): the first build of each version goes through Beta App Review, usually about a day. It asks for a short description, a feedback email, and **sign-in details for the reviewer**, since napsack needs an account. That means one real account for Apple on production (the owner's call; CLAUDE.md says no test accounts in production without asking). Later builds of the same version usually skip review.
 - Feedback: testers can screenshot and send notes from inside TestFlight; they show in App Store Connect.
-
-Order, then:
-1. Build 1 (crypto check) to internal TestFlight. Read the checks on your phone. This also finishes milestone 1.
-2. Skeleton (milestone 2) to internal TestFlight; decide the server address first (Decisions still open).
-3. When it's usable day to day: an external group with a public link for friends.
-4. Push (milestone 4) before or soon after friends join, since a messenger without notifications feels broken.
 
 ## First milestones
 
-1. **Crypto spike.** Move the crypto to `shared/`, and prove `react-native-quick-crypto` reproduces them byte for byte on a real iPhone, including 600,000-round PBKDF2 in about a second. If it can't, the fallback is the audited `@noble` libraries, but PBKDF2 would be slow in pure JavaScript, so this is the biggest risk and goes first.
-   - Done so far: the crypto is in `shared/crypto/` (the web client is unchanged in behavior), the checks pass in Node and Chromium, and the app (`mobile/`) is a single screen that runs every check on the phone and times PBKDF2. On paper, quick-crypto supports every operation we use; the open questions are AES-GCM's `additionalData` and HKDF deriving an AES-GCM key, which the screen tests.
-   - Left: a development build on the iPhone (waiting on Apple), and reading the screen. All green with PBKDF2 near a second means the plan holds.
-2. **Skeleton.** Sign in, chat list, chat screen, sending and reading texts, against production.
-3. **Camera and snaps.** Mirrored front camera and the same 200 KB compression as the web.
-4. **Push notifications.** Device tokens on the server and APNs delivery. The server can't read messages, so notifications say who sent something, never what.
+1. **The crypto, in Swift, passing every vector.** The riskiest part goes first: a Swift package with the formats above, and an XCTest target that runs every pinned vector, plus a timing check that 600,000-round PBKDF2 stays near a second on a real iPhone. Nothing ships until it's all green.
+2. **Skeleton.** Sign in, chat list, chat screen, sending and reading texts, against a chosen server.
+3. **The camera.** Pics and short videos with AVFoundation: zoom, holding to record, the same compression and size limits as the web app, and the formats 6 and 7 envelopes with the caption's place.
+4. **Notifications.** APNs: the server's `push.rs` gains APNs delivery alongside Web Push (needs the paid program). The server can't read messages, so notifications say who sent something, never what.
 5. **TestFlight** for friends, then the App Store.
+
+## Android, later
+
+A native Kotlin app (Jetpack Compose), in `android/`. Its crypto is its own port, held to the same vectors in its own test suite: PBKDF2 and AES-GCM from `javax.crypto`, P-256 key agreement, HKDF, and keys in the Android Keystore. It follows the same version handshake (`X-Napsack-Client: android/<version>`) and release order. Not started; it waits until the iOS app is in people's hands.

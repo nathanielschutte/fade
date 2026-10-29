@@ -26,7 +26,7 @@ cd server && cargo run          # http://127.0.0.1:8080; saving a web app file u
 bash scripts/test.sh            # everything CI runs; --no-browser skips the browser tests
 ```
 
-On Windows, build and test in WSL (Smart App Control blocks freshly built programs); [CLAUDE.md](CLAUDE.md) is aware of this setup. Releases go out with `scripts/deploy.sh` (from WSL) for now; see [releasing.md](docs/operations/releasing.md).
+Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute through pull requests, and how releases work: [onboarding.md](docs/onboarding.md) and [releasing.md](docs/operations/releasing.md).
 
 ## Docs
 

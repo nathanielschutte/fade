@@ -34,7 +34,7 @@ Every script picks the stack from `FADE_STACK` (empty means production):
 
 ```sh
 git push origin main                      # CI: tests, then builds and deploys the commit to staging
-FADE_STACK=staging scripts/deploy.sh      # WSL; a local build instead, to staging only
+FADE_STACK=staging scripts/deploy.sh      # a local build instead, to staging only (needs cargo-zigbuild)
 FADE_STACK=staging scripts/ssh.sh "sudo journalctl -u fade -n 30"
 scripts/test-staging.sh                   # smoke test + all browser tests against staging
 scripts/test-staging.sh --no-browser      # smoke test only

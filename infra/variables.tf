@@ -11,7 +11,7 @@ variable "region" {
 }
 
 variable "ssh_public_keys" {
-  description = "Public keys (the key text, not file paths) allowed to SSH as ec2-user. List one per machine you work from, e.g. Windows and WSL, so it doesn't matter where terraform runs. Empty falls back to ssh_public_key_path."
+  description = "Public keys (the key text, not file paths) allowed to SSH as ec2-user. List one per machine you work from, so it doesn't matter where terraform runs. Empty falls back to ssh_public_key_path."
   type        = list(string)
   default     = []
 }

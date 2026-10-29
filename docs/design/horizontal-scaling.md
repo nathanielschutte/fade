@@ -65,7 +65,7 @@ SQLite is a file on one server's disk. Two servers can't write it. Network file 
 - Placeholders go from `?` to `$1, $2, ...`; `INSERT OR IGNORE` becomes `ON CONFLICT DO NOTHING`; SQLite `pragma_*` and `AUTOINCREMENT` go away; `BLOB` becomes `BYTEA`; integer ids become `BIGINT` identity columns.
 - Migrations get a fresh, equivalent Postgres baseline. The SQLite migrations stay in the repo, unedited.
 - The existing guard tests carry over: `migrations_never_destroy_data`, `code_never_deletes_rows`, and `sql_only_interpolates_constants`.
-- Tests get a throwaway Postgres. `scripts/test.sh` starts one in a temporary folder (`initdb` + `pg_ctl`). That works in WSL after one `sudo apt install postgresql`, and in CI, where GitHub's Ubuntu runners already include it.
+- Tests get a throwaway Postgres. `scripts/test.sh` starts one in a temporary folder (`initdb` + `pg_ctl`). That works on a development machine after installing PostgreSQL, and in CI, where GitHub's Ubuntu runners already include it.
 
 ### The pics on disk
 
@@ -127,7 +127,7 @@ VPC 10.42.0.0/16 + an IPv6 block, two zones
 
 Today `scripts/deploy.sh` copies the binary over SSH to one server, and the CI release finds "the one running instance" and runs an update over SSM. With a group of servers that come and go, the server should **pull** its release instead of having it pushed:
 
-1. **Build** the ARM64 binary as now (cargo-zigbuild, in WSL or CI).
+1. **Build** the ARM64 binary as now (cargo-zigbuild, locally or in CI).
 2. **Upload** it to S3 as `releases/fade-server-<version>-<build>`.
 3. **Point** the SSM parameter `/fade/release` at it. Parameter history doubles as a free deploy log.
 4. **Roll:** `aws autoscaling start-instance-refresh`, with minimum healthy 100% and maximum 200%. That launches each new server first, waits until the load balancer calls it healthy, then retires an old one. Auto-rollback is on: if new servers don't become healthy, the group goes back.

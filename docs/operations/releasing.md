@@ -34,7 +34,7 @@ A change that can't follow these rules is a new API version: new routes under `/
 
 The server refuses formats not in `MESSAGE_FORMATS`, so a client can't jump ahead of step 3 by accident.
 
-While the web app is the only client, steps 1 to 4 collapse into one release: it's served by the same binary, so the reader and the writer ship together. Tabs still open on the old version see the update banner, and an old tab shown a newer-format pic says "reload to open it" without using it up. That's how format 2 shipped: pics with captions (0.13.0), then texts as a JSON envelope and encrypted reactions (0.15.0). Once the iOS app exists, follow the steps.
+While the web app is the only client, steps 1 to 4 collapse into one release: it's served by the same binary, so the reader and the writer ship together. Tabs still open on the old version see the update banner, and an old tab shown a newer-format pic says "reload to open it" without using it up. That's how format 2 shipped: pics with captions (0.13.0), then texts as a JSON envelope and encrypted reactions (0.15.0). Once the native apps exist (Swift for iOS, later Kotlin for Android; [mobile.md](../design/mobile.md)), follow the steps: each has its own implementation of the formats, and its own release.
 
 **4. Retiring old app versions.** Native apps send `X-Napsack-Client: ios/1.2.0+37`. The server answers any request from an app older than its platform's minimum with `426 Upgrade Required` and a message, and the app shows an update screen. `/api/config` is exempt, so an old app can always find out why. Set minimums in Terraform as `FADE_MIN_CLIENT_VERSIONS=ios=1.2.0` and apply. Raise them only when you need to (a security fix, retiring old API routes, a new message format), and give people time to update first. Requests without the header (the web client, scripts) are never blocked.
 
@@ -47,20 +47,20 @@ While the web app is the only client, steps 1 to 4 collapse into one release: it
 Every release goes through staging first, as the exact binary that will reach production.
 
 ```
-develop and test locally ──▶ push to main ──▶ CI: tests ──▶ release candidate ──▶ staging
+branch + pull request ──▶ CI: tests ──▶ squash-merge to main ──▶ release candidate ──▶ staging
                                                             releases/main/fade-server-<sha>
                                                                                     │ looks good
                      production ◀── backup, fade-update ◀── release ◀── tag server-v<version>
                                                             releases/tags/fade-server-<version>
 ```
 
-### 1. Develop and test locally
+### 1. Develop and test, on a branch
 
-Build the change, with its tests, on a branch or on `main` locally. Before pushing, run the whole suite in WSL: `bash scripts/test.sh` (unit tests, crypto vectors, the API smoke test, every browser test), plus `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` in `server/`. Look at anything a person sees at desktop and phone width (CLAUDE.md, "How every change is tested").
+Build the change, with its tests, on a branch (`<name>/<topic>`). Before opening the pull request, run the whole suite: `bash scripts/test.sh` (unit tests, crypto vectors, the API smoke test, every browser test), plus `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` in `server/`. Look at anything a person sees at desktop and phone width (CLAUDE.md, "How every change is tested").
 
-### 2. Push to main: a release candidate on staging
+### 2. A pull request, then a release candidate on staging
 
-`git push origin main`. The **CI** workflow (`.github/workflows/ci.yml`) runs everything again (format, lints, all the tests, Terraform validation). If it passes, its **Release candidate on staging** job:
+Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). The **CI** workflow (`.github/workflows/ci.yml`) runs everything on it (format, lints, all the tests, Terraform validation), and the owner reviews it. The owner squash-merges it into `main`, where CI runs again, and if it passes, its **Release candidate on staging** job:
 1. builds the ARM server binary once, stamped with the commit (`build` = the short sha);
 2. uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
 3. deletes all but the newest ten candidates (releases are kept forever; see below);
@@ -75,8 +75,8 @@ Pushes to `main` never cancel each other, so every commit gets its candidate. A 
 ### 4. Tag: the release on production
 
 When staging looks good:
-1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), commit it (`server 1.4.0`), and push it to `main`. That's a candidate too; it's the one you'll release, so let it reach staging.
-2. Tag that commit and push the tag: `git tag server-v1.4.0 && git push origin server-v1.4.0`.
+1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), usually as part of the feature's pull request, or in a small one of its own (`server 1.4.0`). Once merged, that commit is a candidate too; it's the one you'll release, so let it reach staging.
+2. The owner tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags.
 
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
@@ -107,7 +107,7 @@ Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)),
 
 ### Hotfix without CI
 
-`scripts/deploy.sh` (from WSL) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. On production it saves `releases/hotfix/fade-server-<version>-<sha>`; with `FADE_STACK=staging`, a candidate in `releases/main/`. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Afterwards, commit, push, and release a tag the normal way so production runs a tagged release again.
+`scripts/deploy.sh` (the owner's; needs cargo-zigbuild and zig) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. On production it saves `releases/hotfix/fade-server-<version>-<sha>`; with `FADE_STACK=staging`, a candidate in `releases/main/`. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Afterwards, open a pull request for the same change, merge it, and release a tag the normal way so production runs a tagged release again.
 
 ### Rollback
 
