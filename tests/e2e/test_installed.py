@@ -7,7 +7,7 @@ environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, launch, shot, fill_sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
@@ -47,23 +47,13 @@ async def bottom_of(page, selector):
     return box["y"] + box["height"]
 
 
-async def sign_up(page, name):
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-
-
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw, full=True)
         ana = await installed_page(browser)
         assert await ana.evaluate("getComputedStyle(document.querySelector('.auth')).paddingTop") != "0px"
         assert await top_of(ana, ".wordmark") >= TOP, "sign-in screen under the status bar"
-        await sign_up(ana, ANA)
+        await fill_sign_up(ana, ANA)
 
         # The chat list header, and the tabs above the home indicator.
         assert await top_of(ana, ".list-pane .bar") >= TOP
@@ -80,7 +70,7 @@ async def main():
         # In a chat: the back button and the title are tappable.
         ben = await (await browser.new_context()).new_page()
         await ben.goto(BASE)
-        await sign_up(ben, BEN)
+        await fill_sign_up(ben, BEN)
         await ana.click("#friends-button")
         await ana.fill("#add-friend-form input[name=username]", BEN)
         await ana.click("#add-friend-form button[type=submit]")
@@ -122,7 +112,7 @@ async def main():
         await bare_ctx.add_init_script("delete window.Notification; delete window.PushManager;")
         bare = watch(await bare_ctx.new_page(), "no-notifications")
         await bare.goto(BASE)
-        await sign_up(bare, f"cal_{tag}")
+        await fill_sign_up(bare, f"cal_{tag}")
         assert await bare.evaluate("typeof Notification") == "undefined"
         await bare.reload()
         await expect(bare.locator("#app")).to_be_visible(timeout=20000)

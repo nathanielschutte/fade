@@ -5,9 +5,8 @@ environment; see common.py."""
 import asyncio, re, sys
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, REMOTE, launch, shot, PASSWORD, sign_up_or_in, open_page, PHONE
 
-ADMIN_PW = "correct horse battery"
 errors = []
 
 # Data marks (lines, bands, dots) that reach outside a chart's plot area.
@@ -17,34 +16,6 @@ OUTSIDE = """() => [...document.querySelectorAll('.mchart-svg')].flatMap((s) => 
     .filter((b) => b.x < 40 || b.x + b.width > w - 6)
     .map((b) => [Math.round(b.x), Math.round(b.width), w]);
 })"""
-
-
-async def page_for(browser, label, **ctx):
-    context = await browser.new_context(**ctx)
-    p = await context.new_page()
-    p.on("pageerror", lambda e: errors.append(f"{label}: {e}"))
-    # (A failed sign-in before signing up logs a 400; that one is expected.)
-    p.on("console", lambda m: m.type == "error" and "status of 4" not in m.text and errors.append(f"{label}: {m.text}"))
-    await p.goto(BASE)
-    return p
-
-
-async def sign_up_or_in(p, name, pw):
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", pw)
-    await p.click("#auth-submit")
-    try:
-        await expect(p.locator("#app")).to_be_visible(timeout=15000)
-        return
-    except AssertionError:
-        pass
-    await p.click("#auth-toggle")
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", pw)
-    await p.fill("input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
 
 
 DRAWN = """() => [...document.querySelectorAll('.mchart')].map((c) =>
@@ -122,8 +93,8 @@ async def check_metrics(p, phase):
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
-        await sign_up_or_in(admin, ADMIN, ADMIN_PW)
+        admin = await open_page(browser, errors, "admin", console=True, viewport={"width": 1200, "height": 900})
+        await sign_up_or_in(admin, ADMIN, PASSWORD)
         await admin.goto(f"{BASE}/admin#metrics")
         await check_metrics(admin, "24 hours")
         await check_series(admin)
@@ -189,8 +160,8 @@ async def main():
         await expect(admin.locator("#m-note")).to_have_text("Each point: a minute or more (average, with its range)")
 
         # A phone: one column, nothing wider than the screen.
-        phone = await page_for(browser, "phone", viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-        await sign_up_or_in(phone, ADMIN, ADMIN_PW)
+        phone = await open_page(browser, errors, "phone", console=True, **PHONE)
+        await sign_up_or_in(phone, ADMIN, PASSWORD)
         await phone.goto(f"{BASE}/admin#metrics")
         await check_metrics(phone, "phone")
         overflow = await phone.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")

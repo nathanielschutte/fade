@@ -7,58 +7,19 @@ says it changed, and adding a friend by it finds you. Friends see "was
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, no_placeholders, save_recovery_key, shot
+from common import INVITE, launch, no_placeholders, shot, PASSWORD, befriend, row, fill_sign_up, open_page, sign_in
 
 tag = uuid.uuid4().hex[:5]
 ANA, ANNA, BEN, CAL = f"ana_{tag}", f"anna_{tag}", f"ben_{tag}", f"cal_{tag}"
-PW = "correct horse battery"
 errors = []
-
-
-async def page_for(browser):
-    page = await (await browser.new_context()).new_page()
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    await page.goto(BASE)
-    return page
-
-
-async def sign_up(page, name):
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", PW)
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-
-
-async def sign_in(page, name):
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", PW)
-    await page.click("#auth-submit")
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana, ben = await page_for(browser), await page_for(browser)
-        await sign_up(ana, ANA)
-        await sign_up(ben, BEN)
+        ana, ben = await open_page(browser, errors), await open_page(browser, errors)
+        await fill_sign_up(ana, ANA)
+        await fill_sign_up(ben, BEN)
         await befriend(ana, ben, BEN, ANA)
         await row(ana, BEN).click()
         await ana.fill("#composer-input", "before the rename")
@@ -71,14 +32,14 @@ async def main():
         await expect(ana.locator("#username-status")).to_have_text(f"Your username is @{ANA}.", timeout=10000)
         await ana.click("#username-change")
         await ana.fill("#username-form input[name=username]", BEN)  # taken
-        await ana.fill("#username-form input[name=password]", PW)
+        await ana.fill("#username-form input[name=password]", PASSWORD)
         await ana.click("#username-submit")
         await expect(ana.locator("#username-error")).to_have_text("That username is taken.", timeout=20000)
         await ana.fill("#username-form input[name=username]", ANNA)
         await ana.fill("#username-form input[name=password]", "wrong password!")
         await ana.click("#username-submit")
         await expect(ana.locator("#username-error")).to_contain_text("password", timeout=20000)
-        await ana.fill("#username-form input[name=password]", PW)
+        await ana.fill("#username-form input[name=password]", PASSWORD)
         await ana.click("#username-submit")
         await expect(ana.locator("#security-note")).to_have_text(f"Your username is now @{ANNA}. Sign in with it from now on.", timeout=20000)
         await expect(ana.locator("#profile-sub")).to_contain_text(f"@{ANNA} · was @{ANA}")
@@ -99,24 +60,24 @@ async def main():
 
         # Signing in: the old name says it changed; the new one opens everything.
         await ana.click("#sign-out")
-        await sign_in(ana, ANA)
+        await sign_in(ana, ANA, wait=False)
         await expect(ana.locator("#auth-error")).to_have_text("That username was changed. Sign in with the new one.", timeout=20000)
-        await sign_in(ana, ANNA)
+        await sign_in(ana, ANNA, wait=False)
         await expect(ana.locator("#app")).to_be_visible(timeout=20000)
         await row(ana, BEN).click()
         await expect(ana.locator(".msg-body", has_text="before the rename")).to_be_visible(timeout=10000)
         print("old name says it changed; the new one signs in, history and all")
 
         # The old name stays hers: nobody can sign up with it, and it finds her.
-        cal = await page_for(browser)
+        cal = await open_page(browser, errors)
         await cal.click("#auth-toggle")
         await cal.fill("#auth-form input[name=username]", ANA)
-        await cal.fill("#auth-form input[name=password]", PW)
+        await cal.fill("#auth-form input[name=password]", PASSWORD)
         await cal.fill("#auth-form input[name=invite_code]", INVITE)
         await cal.click("#auth-submit")
         await expect(cal.locator("#auth-error")).to_have_text("That username is taken.", timeout=20000)
         await cal.click("#auth-toggle")
-        await sign_up(cal, CAL)
+        await fill_sign_up(cal, CAL)
         await cal.click("#friends-button")
         await cal.fill("#add-friend-form input[name=username]", ANA)
         await cal.click("#add-friend-form button[type=submit]")

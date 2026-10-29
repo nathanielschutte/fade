@@ -10,7 +10,7 @@ environment; see common.py."""
 import asyncio, json, os, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, launch, shot, befriend, sign_up
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from push_receiver import Receiver  # noqa: E402
@@ -28,21 +28,10 @@ FAKE_PUSH = """(sub) => {
 }"""
 
 
-async def sign_up(browser, name, push=None, **ctx):
-    context = await browser.new_context(**ctx)
-    if push:
-        await context.grant_permissions(["notifications"], origin=BASE)
-        await context.add_init_script(f"({FAKE_PUSH})({json.dumps(push)})")
-    page = await context.new_page()
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
+def with_push(subscription):
+    """open_page options for an app whose notifications are allowed and whose
+    push subscription is the receiver's (FAKE_PUSH)."""
+    return {"permissions": ["notifications"], "init": f"({FAKE_PUSH})({json.dumps(subscription)})"}
 
 
 async def api(page, path, method="GET", body=None):
@@ -53,23 +42,12 @@ async def api(page, path, method="GET", body=None):
     }""", [path, method, body])
 
 
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
 async def main():
     rx = Receiver()
     phone = rx.browser(f"ana-{tag}")
     async with async_playwright() as pw:
         browser = await launch(pw, full=True)
-        ana = await sign_up(browser, ANA, push=phone.subscription())
+        ana = await sign_up(browser, ANA, **with_push(phone.subscription()))
         ben = await sign_up(browser, BEN)
         await befriend(ana, ben, BEN, ANA)
         ben_id = (await api(ben, "/me"))["id"]

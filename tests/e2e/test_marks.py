@@ -6,38 +6,11 @@ swiping it. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, launch, shot, PHONE, befriend, row, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
 GROUP = f"Cabin {tag}"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
-
-
-async def sign_up(browser, name, **ctx):
-    page = await (await browser.new_context(**ctx)).new_page()
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
 async def swipe(page, locator, dx):
     """A finger dragging sideways `dx` pixels across `locator`."""
     box = await locator.bounding_box()
@@ -49,10 +22,6 @@ async def swipe(page, locator, dx):
         await asyncio.sleep(0.02)
     await cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     await asyncio.sleep(0.3)
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
 async def section_names(page):

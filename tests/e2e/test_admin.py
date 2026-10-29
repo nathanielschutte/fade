@@ -4,9 +4,11 @@ Settings come from the environment; see common.py."""
 import asyncio, re, json, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, INVITE, REMOTE, launch, shot, PASSWORD, sign_up_or_in, open_page
 
-ADMIN_PW = "correct horse battery"
+# run.py runs this file with nothing else running, because it:
+RUNS_ALONE = "counts exactly who's online, which other tests would change"
+
 OTHER = f"bob_{uuid.uuid4().hex[:5]}"
 errors = []
 
@@ -16,39 +18,12 @@ BAR_SPOTS = """() => ['#tab-overview', '#tab-logs', '.admin-bar .button']
   .map((s) => Math.round(document.querySelector(s).getBoundingClientRect().x))"""
 
 
-async def page_for(browser, label, width=1100, height=800):
-    ctx = await browser.new_context(viewport={"width": width, "height": height})
-    p = await ctx.new_page()
-    p.on("pageerror", lambda e: errors.append(f"{label}: {e}"))
-    p.on("console", lambda m: m.type == "error" and "status of 4" not in m.text and errors.append(f"{label}: {m.text}"))
-    await p.goto(BASE)
-    return p
-
-
-async def sign_up_or_in(p, name, pw):
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", pw)
-    await p.click("#auth-submit")
-    try:
-        await expect(p.locator("#app")).to_be_visible(timeout=15000)
-        return
-    except AssertionError:
-        pass
-    await p.click("#auth-toggle")
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", pw)
-    await p.fill("input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
-
-
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        admin = await page_for(browser, "admin")
-        other = await page_for(browser, "other")
-        await sign_up_or_in(admin, ADMIN, ADMIN_PW)
+        admin = await open_page(browser, errors, "admin", console=True, viewport={"width": 1100, "height": 800})
+        other = await open_page(browser, errors, "other", console=True, viewport={"width": 1100, "height": 800})
+        await sign_up_or_in(admin, ADMIN, PASSWORD)
         await sign_up_or_in(other, OTHER, "another password 1")
 
         # A friendship and a couple of texts so the numbers move.
@@ -166,7 +141,7 @@ async def main():
         await shot(admin, "admin-logs", full_page=False)
         print("logs: events present, searchable, filterable, no secrets or content")
 
-        phone = await page_for(browser, "phone", 390, 844)
+        phone = await open_page(browser, errors, "phone", console=True, viewport={"width": 390, "height": 844})
         await phone.evaluate("(t) => localStorage.setItem('fade.token', t)",
                              await admin.evaluate("localStorage.getItem('fade.token')"))
         await phone.goto(BASE + "/admin")

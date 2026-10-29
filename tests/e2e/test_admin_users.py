@@ -6,75 +6,30 @@ environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, launch, shot, PHONE, befriend, row, sign_up_or_in, fill_sign_up, open_page, sign_in
+
+# run.py runs this file with nothing else running, because it:
+RUNS_ALONE = "posts an announcement every signed-in page shows"
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
-PW = "correct horse battery"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
-
-
-async def page_for(browser, label, **ctx):
-    p = await (await browser.new_context(**ctx)).new_page()
-    p.on("pageerror", lambda e: errors.append(f"{label}: {e} {(e.stack or '')[:400]}"))
-    await p.goto(BASE)
-    return p
-
-
-async def sign_up(p, name):
-    await p.click("#auth-toggle")
-    await p.fill("#auth-form input[name=username]", name)
-    await p.fill("#auth-form input[name=password]", PW)
-    await p.fill("#auth-form input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
-
-
-async def sign_in(p, name):
-    await p.fill("#auth-form input[name=username]", name)
-    await p.fill("#auth-form input[name=password]", PW)
-    await p.click("#auth-submit")
-
-
-async def sign_up_or_in(p, name):
-    await sign_in(p, name)
-    try:
-        await expect(p.locator("#app")).to_be_visible(timeout=15000)
-    except AssertionError:
-        await sign_up(p, name)
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana = await page_for(browser, "ana", viewport={"width": 1200, "height": 850})
-        ben = await page_for(browser, "ben", **PHONE)
-        await sign_up(ana, ANA)
-        await sign_up(ben, BEN)
+        ana = await open_page(browser, errors, "ana", viewport={"width": 1200, "height": 850})
+        ben = await open_page(browser, errors, "ben", **PHONE)
+        await fill_sign_up(ana, ANA)
+        await fill_sign_up(ben, BEN)
         await befriend(ana, ben, BEN, ANA)
         await row(ana, BEN).locator(".chat-item").click()
         await ana.fill("#composer-input", "see you at 8")
         await ana.press("#composer-input", "Enter")
         await expect(ana.locator(".msg", has_text="see you at 8")).to_be_visible(timeout=10000)
 
-        admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
+        admin = await open_page(browser, errors, "admin", viewport={"width": 1200, "height": 900})
         await sign_up_or_in(admin, ADMIN)
         await admin.goto(f"{BASE}/admin#users")
         await expect(admin.locator("#tab-users")).to_be_visible(timeout=10000)
@@ -100,7 +55,7 @@ async def main():
 
         # Ben is signed out at once, and can't get back in.
         await expect(ben.locator("#auth")).to_be_visible(timeout=15000)
-        await sign_in(ben, BEN)
+        await sign_in(ben, BEN, wait=False)
         await expect(ben.locator("#auth-error")).to_contain_text("turned off", timeout=15000)
         await shot(ben, "users-turned-off-phone", full_page=False)
 
@@ -115,7 +70,7 @@ async def main():
         await admin.locator("#u-actions button", has_text="Turn account back on").click()
         await admin.locator("#u-actions button", has_text="Tap again: turn it back on").click()
         await expect(admin.locator("#u-detail-status .status-chip")).not_to_have_text("Turned off", timeout=10000)
-        await sign_in(ben, BEN)
+        await sign_in(ben, BEN, wait=False)
         await expect(ben.locator("#app")).to_be_visible(timeout=20000)
         await expect(row(ben, ANA)).to_be_visible(timeout=10000)
         await expect(ana.locator("#deactivated-note")).to_be_hidden(timeout=10000)
@@ -141,7 +96,7 @@ async def main():
         await expect(ben.locator("#announcement")).to_be_hidden(timeout=10000)
 
         # The Users tab at phone width: nothing scrolls sideways.
-        phone = await page_for(browser, "admin-phone", **PHONE)
+        phone = await open_page(browser, errors, "admin-phone", **PHONE)
         await sign_up_or_in(phone, ADMIN)
         await phone.goto(f"{BASE}/admin#users")
         await expect(phone.locator("#users tr", has_text=ANA)).to_have_count(1, timeout=10000)

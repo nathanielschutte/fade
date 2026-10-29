@@ -10,9 +10,8 @@ from playwright.async_api import async_playwright, expect
 
 import uuid
 
-from common import BASE, INVITE, REMOTE, launch, save_recovery_key, shot
+from common import BASE, INVITE, REMOTE, launch, save_recovery_key, shot, PHONE
 
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 

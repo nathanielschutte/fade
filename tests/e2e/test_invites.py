@@ -10,7 +10,7 @@ import qrcode
 from qrcode.util import MODE_8BIT_BYTE, QRData
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, no_placeholders, shot
+from common import BASE, launch, no_placeholders, shot, fill_sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -69,15 +69,9 @@ async def check_rendered(page, link, selector="#invite-qr svg"):
 
 
 async def sign_up(page, name, code=True):
-    if not await page.locator("#invite-banner").is_visible():
-        await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    if code:
-        await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
+    """From an invite link the form is already on signing up (its banner shows)."""
+    on_invite = await page.locator("#invite-banner").is_visible()
+    await fill_sign_up(page, name, code=code, toggle=not on_invite)
 
 
 async def main():

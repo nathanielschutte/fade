@@ -9,6 +9,9 @@ from playwright.async_api import async_playwright, expect
 
 from common import BASE, INVITE, launch, save_recovery_key
 
+# run.py runs this file with nothing else running, because it:
+RUNS_ALONE = "touches the web app's files, which reloads every open page"
+
 STATIC = os.path.join(os.path.dirname(__file__), "..", "..", "server", "static")
 
 

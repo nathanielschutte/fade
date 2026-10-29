@@ -6,12 +6,11 @@ environment; see common.py."""
 import asyncio, json, re, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, no_placeholders, save_recovery_key, shot
+from common import launch, no_placeholders, shot, PHONE, befriend, row, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
 GROUP = f"Clips {tag}"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 # window.__noMic: the microphone is refused.
@@ -39,42 +38,14 @@ navigator.mediaDevices.getUserMedia = async (want) => {
 """
 
 
-async def sign_up(browser, name, max_seconds=None):
-    ctx = await browser.new_context(**PHONE)
-    await ctx.add_init_script(STUB)
-    page = await ctx.new_page()
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    if max_seconds:
-        async def shorter(route):
-            res = await route.fetch()
-            config = await res.json()
-            config["video_max_seconds"] = max_seconds
-            await route.fulfill(response=res, body=json.dumps(config))
-        await page.route("**/api/config", shorter)
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
+async def three_second_videos(page):
+    """The server's config says videos stop at 3 seconds, so the limit comes quickly."""
+    async def shorter(route):
+        res = await route.fetch()
+        config = await res.json()
+        config["video_max_seconds"] = 3
+        await route.fulfill(response=res, body=json.dumps(config))
+    await page.route("**/api/config", shorter)
 
 
 async def hold_shutter(page, ms, slide_up=0):
@@ -94,9 +65,9 @@ async def hold_shutter(page, ms, slide_up=0):
 
 async def main():
     async with async_playwright() as pw:
-        browser = await launch(pw)
-        ana = await sign_up(browser, ANA, max_seconds=3)
-        ben = await sign_up(browser, BEN)
+        browser = await launch(pw, chrome=True)  # Chrome's codecs: recorded videos' sound
+        ana = await sign_up(browser, ANA, errors=errors, init=STUB, prepare=three_second_videos, **PHONE)
+        ben = await sign_up(browser, BEN, errors=errors, init=STUB, **PHONE)
         await befriend(ana, ben, BEN, ANA)
 
         # A tap still takes a photo.
