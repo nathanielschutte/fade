@@ -12,6 +12,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | In progress | Nate (2026-10-28); release 1 |
+| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Up next | Nate (2026-10-28); release 2 |
+| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Up next | Nate (2026-10-28); releases 3 and 4 |
+| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Up next | Nate (2026-10-28); release 5 |
+| 0p | [Change your username](#x30-change-your-username) | Features | Up next | Nate (2026-10-28); release 6 |
+| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -382,6 +388,46 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X21. Admin tools for accounts
 - Requested (2026-10-24): delete users from an admin page (turning the account off, never deleting data), and other useful admin features.
 - Built (0.32.0): System → **Users**, Admins only ([admin-users.md](../implementation/admin-users.md)). People with search and status; one account at a glance (counts and dates only); turn an account off and back on (a row in `deactivations`, nothing deleted: signed out, can't sign in, friends keep the chat but can't send to it, out of the account cap); sign out everywhere; clear a sign-in lock; the reset code, moved here; an append-only record of every Admin action; and announcements, a banner everyone signed in sees live.
+
+#### X23. Clear loading and slow-network states
+- Requested (2026-10-28): before data arrives, the chat list says "No friends yet" and chats look empty, which isn't true. Show that things are loading (placeholders shaped like what's coming), say plainly when the connection is very slow or down, and never show an empty state until the server has answered.
+- Covers the chat list, a chat's messages, groups, the friends sheet, and profiles. A slow-network notice after a few seconds without an answer; an offline notice when requests fail.
+
+#### X24. Tap a picture to see it bigger
+- Requested (2026-10-28): tapping a profile picture (a friend's profile) or a group's picture (group info) shows it large in the middle of the screen, in the same circle or rounded square, over the page. Tap outside it or the × to close.
+
+#### X25. Adding friends: a personal QR and link
+- Requested (2026-10-28): keep adding by username, and make it obvious how else to add someone. Decided (Nate): each person gets one long-lived "add me" link and QR, unlimited uses, until they reset it (the old one then stops working). Someone with an account who opens it adds them in one tap; someone new can sign up with it, like an invite. It builds on invite links (`invites.rs`, `qr.js`); the 10-use, 7-day invite links stay for inviting new people.
+- The Friends sheet leads with the three ways: show my QR, share my link, add by username.
+
+#### X26. Tabs, a camera tab, and send to many
+- Requested (2026-10-28): on phones, tabs along the bottom: **Chats · Camera · Profile**. The profile and settings move out of the bottom-left button into their own tab (they're growing). Decided (Nate): phones only; computers keep the side-by-side layout, with Camera and Profile buttons in the list pane.
+- The camera tab has no chat to send to, so after taking a pic its button is **Send to…**: a list of chats (friends and groups) to pick one or more. Each recipient gets their own end-to-end encrypted copy (format 2 per friend; format 3 per group). The camera button inside a chat stays as it is.
+
+#### X27. Camera zoom
+- Requested (2026-10-28): zoom while taking a pic, with the back camera, on phones (pinch, and a zoom control). Desktop doesn't matter. Uses the camera's own zoom where the browser offers it, else a crop of the frame.
+
+#### X28. Short videos
+- Requested (2026-10-28): press and hold the shutter to record, up to 10 seconds (a setting); while recording, sliding the finger up zooms in. Decided (Nate): with sound (asks for the microphone the first time), view-once like pics, in direct chats and groups, end-to-end encrypted.
+- A new message format for the envelope (the media type with the bytes; readers before writers), a size cap and disk budget for videos (`guard.rs`, security.md), and the same open-once confirmation as pics.
+
+#### X29. Edit sent texts
+- Requested (2026-10-28): tap your own text for an **Edit** option. Later, on the phone app: tap and hold shows the reaction row and a menu below it (Edit, Copy, Reply, ...).
+- Decided (Nate): within 15 minutes of sending; recipients see "Edited" and can tap to see earlier versions. Direct and group texts. Every version is kept (Rule 1): an edit is a new encrypted row that supersedes the shown text, never an overwrite.
+
+#### X30. Change your username
+- Requested (2026-10-28): change your username itself, so it seems completely changed: you're found by the new one, and everything shows it.
+- Decided (Nate): old usernames are **reserved forever**: they keep leading to the person ("now @newname", noted as a past username) and nobody else can take them, so no one can be mistaken for a friend under their old name. Renames at most **once every 7 days** (Admins exempt); friends see a note in the chat.
+- Encryption: the username salts the password (PBKDF2), so a rename asks for the password and re-locks the private key under the new name, like a password change (old credentials kept in `credential_history`). Safety codes and message encryption use keys and ids, not usernames, so nothing else changes.
+
+#### X31. Load in pieces, and keep encrypted data on the device
+- Requested (2026-10-28): as more people join, load more incrementally, suited to bad connections, possibly adapting to the connection.
+- Decided (Nate): keep the server's responses on the device as they arrive, still encrypted, and decrypt on open, so the chat list and recent messages show at once and refresh in the background. Cleared on sign-out. No readable text is stored beyond what the device already holds (the key).
+- Plus smaller first loads (the newest messages first, the rest as you scroll; pictures on demand), sized to the connection when it's slow.
+
+#### X32. Small things from the production logs (2026-10-28)
+- Someone signed in with an email address as their username: say "username, not email" when the field holds an `@`.
+- Favorites are capped at 10 (Nate hit it): consider raising it.
 
 #### X22. Team Napsack: messages from napsack itself
 - Requested (2026-10-24), queued: a system account, **Team Napsack**, that can message anyone without being their friend, for occasions: birthdays, holidays, and so on. No UI needed: an easy way to schedule them in code.
