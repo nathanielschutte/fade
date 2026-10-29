@@ -34,6 +34,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Claude for Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
 | 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Claude for Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
 | 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Claude for Nate | Done | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac. 0.42.0 |
+| 0x | [Faster tests, same coverage](#p4-faster-test-runs-same-coverage) | Process | Nate | In progress | Nate (2026-10-29): development speed and CI minutes |
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -94,9 +95,6 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | Move to napsack.getattr.com (old domain redirects) | infra |
 | Development standard ([CLAUDE.md](../../CLAUDE.md)), CI green on GitHub | process |
 
-Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what shipped afterwards.
-
-**Why this order.** Process and data safety come first because everything else builds on them. Pagination, the "snap" rename, logging, and the recovery design come before the iOS app because each one changes something the app would otherwise have to build twice: the history API, the vocabulary, the debugging tools, and the key handling.
 
 ## Epics
 
@@ -125,6 +123,14 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Already in place: while building, only the affected test runs (one browser test, the unit tests); the full suite runs once per release, and releases group related features (2026-10-28: nine features in seven releases).
 - Opportunity, no coverage lost: run the browser tests a few at a time instead of one after another (`scripts/test.sh` runs 25 files in sequence; each uses its own accounts). Tests that change things every page sees (announcements in `test_admin_users.py`, Team Napsack in `test_team.py`, metrics and roles) would still run alone, before or after the rest. Expected: several minutes less per run. Watch for timing flakes under load before adopting it.
 - Not recommended: dropping overlapping checks between the smoke test and browser tests. They test different layers (the API directly, and the app as a person uses it), and the overlap is what catches a client and server drifting apart.
+- **Nate (2026-10-29):** the browser tests take too long, locally and in GitHub's billed minutes. Find the bottleneck; share what's expensive or repeated (helpers in a common file); keep every bit of coverage. Also: run unit and API tests in CI (they always have been: `scripts/test.sh` runs all of it), and lean on them before browser tests. Print how long each part of `scripts/test.sh` takes, and the total.
+- **Measured first** (CI's timestamped log, and sampling where each test waited): CI's test job took 11.4 minutes. Starting Playwright and a browser costs under a second per file, so sharing one browser saves little. The time went to waiting:
+  - **The smoke test's sockets** (20s): two never closed until a 10-second timeout, because the client had stopped reading once 16 unread events piled up. And the server never answered a close frame at all (clients saw an abnormal closure, 1006); it does now (0.42.1).
+  - **Sign in, else sign up** (15s each time): six copies of a helper waited out a 15-second timeout whenever the account didn't exist yet (`test_admin` 46s → 7s).
+  - **Chrome on macOS** takes 20s to quit after each test; on a Mac the tests now use Playwright's own headless browser (also: no Chrome window popping up), and only the video test (Chrome's codecs) uses Chrome.
+  - **One file at a time**, on a 4-core machine.
+- **Built (0.42.1):** the browser tests run four at a time (`tests/e2e/run.py`), each file in its own process. Files that change what every page sees set `RUNS_ALONE` and run first, by themselves (the announcement, live reload, the exact online count); files sharing the admin account take turns. The helpers 30 files had copied (`sign_up` in 13 versions, `befriend` 18 times) are in `common.py`, 650 lines fewer. `scripts/test.sh` and `test-one.sh` share their setup (`scripts/test-env.sh`), and `test.sh` prints each part's time and the total. Locally: 9.5 minutes → 2.75 (browser tests 467s → 110s, smoke test 74s → 45s).
+- **Next, worth doing:** go through the browser tests for checks that are really API rules (who may, what's refused) and make sure the smoke test owns them, leaving the browser test to show the person sees it. CLAUDE.md now says to test each rule at the lowest layer that proves it.
 
 #### P3. Testing in WSL (and moving the repo there)
 - **Dropped (2026-10-29):** the project no longer assumes anyone's machine; [onboarding.md](../onboarding.md) sets up macOS, Linux, or Windows through WSL (keeping the code on WSL's own disk). The notes below are kept as history.

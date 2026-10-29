@@ -2,104 +2,79 @@
 # Build the server, run it on a throwaway database, and run every test against it:
 # unit tests, crypto vector checks, the API smoke test, and (unless --no-browser)
 # the browser tests, which include shared/crypto's checks against the pinned vectors.
+# Prints how long each part took, and the total, at the end (even when one fails).
 #
 #   scripts/test.sh               everything
 #   scripts/test.sh --no-browser  skip Playwright (no Chrome needed)
 #
-# Needs: cargo, Node.js 22+, python3 with tests/requirements.txt installed, and Chrome
-# (or E2E_CHROME=bundled after `python3 -m playwright install chromium`).
-# Works on Linux, macOS, and CI; on Windows, in WSL (setup: docs/onboarding.md).
+# Needs: cargo, Node.js 22+, python3 with tests/requirements.txt installed, and
+# Playwright's Chromium (`python3 -m playwright install chromium`); Google Chrome
+# for the video test. Works on Linux, macOS, and CI; on Windows, in WSL (setup:
+# docs/onboarding.md). The browser tests run several at a time (tests/e2e/run.py;
+# E2E_JOBS=1 for one at a time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BROWSER=1
 [ "${1:-}" = "--no-browser" ] && BROWSER=0
 PORT="${PORT:-8099}"
-# Python: $PYTHON, else the test venv (~/.venvs/napsack-tests) if it exists, else whatever python3 is on PATH.
-VENV_PY="$HOME/.venvs/napsack-tests/bin/python"
-if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
-elif [ -x "$VENV_PY" ]; then PY="$VENV_PY"
-else PY="$(command -v python3 || command -v python)"; fi
+. scripts/test-env.sh
 
-# Linux without Google Chrome: use Playwright's own Chromium. Its build for
-# Ubuntu 24.04 runs on newer Ubuntu releases Playwright doesn't recognize yet.
-if [ "$(uname -s)" = Linux ] && ! command -v google-chrome >/dev/null; then
-  export E2E_CHROME="${E2E_CHROME:-bundled}"
-  if grep -qE '^VERSION_ID="(2[6-9]|[3-9][0-9])' /etc/os-release 2>/dev/null; then
-    export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
+# Seconds, to the millisecond: bash 5's clock, else Perl's (macOS ships bash 3.2).
+now() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then echo "${EPOCHREALTIME/,/.}"
+  else perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; fi
+}
+STARTED="$(now)"
+SECTION=""
+SECTION_START=""
+TIMES=""
+# `section "name"` ends the one before (recording its time) and starts the next.
+section() {
+  local t
+  t="$(now)"
+  if [ -n "$SECTION" ]; then
+    TIMES="$TIMES$(awk -v a="$SECTION_START" -v b="$t" -v n="$SECTION" 'BEGIN { printf "%7.1fs  %s", b - a, n }')"$'\n'
   fi
-fi
+  SECTION="$1"
+  SECTION_START="$t"
+  if [ -n "$1" ]; then echo "==> $1"; fi
+}
+finish() {
+  local code=$?
+  kill "${SERVER_PID:-}" 2>/dev/null || true
+  section ""
+  echo
+  echo "==> times"
+  printf "%s" "$TIMES"
+  awk -v a="$STARTED" -v b="$(now)" 'BEGIN { printf "%7.1fs  total\n", b - a }'
+  if [ "$code" -eq 0 ]; then echo "==> all tests passed"; else echo "==> failed"; fi
+}
+trap finish EXIT
 
-echo "==> unit tests"
+section "unit tests"
 (cd server && cargo test --quiet)
 
-echo "==> crypto vectors (independent implementation)"
-"$PY" tests/vectors/check_format1.py
-"$PY" tests/vectors/check_format2.py
-"$PY" tests/vectors/check_recovery.py
-"$PY" tests/vectors/check_texts2.py
-"$PY" tests/vectors/check_group3.py
-"$PY" tests/vectors/check_media4.py
-"$PY" tests/vectors/check_edits2.py
-"$PY" tests/vectors/check_media6.py
+section "crypto vectors (independent implementation)"
+for check in tests/vectors/check_*.py; do "$PY" "$check"; done
 
-echo "==> shared crypto against the vectors (Node)"
+section "shared crypto against the vectors (Node)"
 # Node installed with nvm isn't loaded by non-interactive shells.
 if ! command -v node >/dev/null && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi
 command -v node >/dev/null || { echo "Node.js is required (see CLAUDE.md, Environment notes)"; exit 1; }
 node --test "shared/**/*.test.js"
 
-echo "==> health monitor (decisions, with AWS faked)"
+section "health monitor (decisions, with AWS faked)"
 "$PY" tests/health_monitor_test.py
 
-echo "==> building server"
+section "building server"
 (cd server && cargo build --quiet)
-BIN=server/target/debug/fade-server
-# A folder shared by a Windows and a Linux build has both binaries, so choose by OS, not by what exists.
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) BIN="$BIN.exe" ;; esac
-
-TMP="$(mktemp -d)"
-# A Windows binary and Windows Python need a Windows-style path.
-command -v cygpath >/dev/null && TMP="$(cygpath -m "$TMP")"
-
-export NAPSACK_URL="http://127.0.0.1:$PORT"
-export NAPSACK_INVITE="letmein"
-export NAPSACK_ADMIN="e2e_admin"
-export NAPSACK_DB="$TMP/test.db"
-export NAPSACK_SHOTS="${NAPSACK_SHOTS:-$TMP/shots}"
-
-start_server() {
-  # Two runs on one port would quietly test each other's server (and read the
-  # wrong database), so refuse instead.
-  if curl -sf "$NAPSACK_URL/api/config" >/dev/null 2>&1; then
-    echo "Something is already serving on port $PORT (another test run?). Stop it, or run with PORT=<another port>."
-    exit 1
-  fi
-  FADE_BIND="127.0.0.1:$PORT" \
-  FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
-  FADE_INVITE_CODE="$NAPSACK_INVITE" \
-  FADE_ADMINS="$NAPSACK_ADMIN,smoke_admin" \
-  FADE_MIN_CLIENT_VERSIONS="ios=1.2.0" \
-  FADE_PUSH_ALLOW_LOCAL=true \
-  FADE_MAX_ACCOUNTS=1000 \
-  RUST_LOG="${RUST_LOG:-fade_server=warn}" \
-    "$BIN" >> "$TMP/server.log" 2>&1 &
-  SERVER_PID=$!
-  for _ in $(seq 1 50); do
-    curl -sf "$NAPSACK_URL/api/config" >/dev/null && break
-    sleep 0.2
-  done
-  if ! kill -0 "$SERVER_PID" 2>/dev/null || ! curl -sf "$NAPSACK_URL/api/config" >/dev/null; then
-    cat "$TMP/server.log"; echo "server didn't start"; exit 1
-  fi
-}
-trap 'kill ${SERVER_PID:-} 2>/dev/null || true' EXIT
 start_server
 
-echo "==> API smoke test"
+section "API smoke test"
 "$PY" tests/smoke_test.py
 
-echo "==> unopened pics survive a restart"
+section "unopened pics survive a restart"
 export NAPSACK_RESTART_STATE="$TMP/restart.json"
 "$PY" tests/restart_test.py before
 kill "$SERVER_PID"
@@ -108,11 +83,7 @@ start_server
 "$PY" tests/restart_test.py after
 
 if [ "$BROWSER" = 1 ]; then
-  for t in tests/e2e/test_*.py; do
-    echo "==> $t"
-    (cd tests/e2e && "$PY" "$(basename "$t")")
-  done
+  section "browser tests"
+  "$PY" tests/e2e/run.py
   echo "screenshots: $NAPSACK_SHOTS"
 fi
-
-echo "==> all tests passed"

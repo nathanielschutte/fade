@@ -150,7 +150,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 
 **Tests** (`tests/`):
 - `smoke_test.py` drives the API directly (one `check_*` function per area, including `check_roles`, the full role matrix).
-- `e2e/test_*.py` drive real browsers through whole features.
+- `e2e/test_*.py` drive real browsers through whole features, several at a time (`e2e/run.py`), with their shared helpers in `e2e/common.py`.
 - `vectors/` pin the encryption's exact bytes; they're never regenerated.
 - `restart_test.py` (unopened pics survive a restart) and `health_monitor_test.py` (the monitor's decisions, with AWS faked).
 - `load_test.py` load tests staging, never production.
@@ -233,7 +233,7 @@ Several people (and their Claude sessions) can be working at once, so everyone w
 3. **Server**: a handler (in the closest file, or a new one registered with `mod` in `main.rs`), a route in `fn router`, and a unit test in the file's `mod tests` if there's logic worth testing (`db::tests::temp_db()` gives you a fresh database).
 4. **Smoke test**: a `check_*` function in `tests/smoke_test.py` that proves the API's rules (including the ones that should say no). Anything on the System page also gets rows in `check_roles`.
 5. **Web app**: HTML in `index.html`, behavior in `app.js`, style in `style.css` (no inline `style="..."`; the page's security policy forbids it).
-6. **Browser test**: a `tests/e2e/test_*.py` that does it the way a person would. Copy the shape of `test_profile.py`.
+6. **Browser test**: a `tests/e2e/test_*.py` that does it the way a person would, for what only a browser can show (the smoke test has already proved the rules). Copy the shape of `test_profile.py`, and use `common.py`'s helpers (`sign_up`, `befriend`, ...) rather than writing your own.
 7. **Run it**: `bash scripts/test-one.sh test_yours.py` while working; `bash scripts/test.sh` before you're done (also checks formatting: run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in `server/`).
 8. **Look at it**: open it yourself, at phone width (390 px) too. Tests print where their screenshots went.
 9. **Docs**: [api.md](spec/api.md) for any API change, the feature's doc if it has one, and your row in [plan.md](management/plan.md).
@@ -254,6 +254,7 @@ Several people (and their Claude sessions) can be working at once, so everyone w
 - A brand-new file in `server/static/` needs a line in `server/src/web.rs` (and a restart) before it's served.
 - A new migration file isn't picked up: `touch server/src/db.rs`, then build (the migrations are compiled in).
 - Emoji show as boxes in test screenshots: the test machine has no emoji font. Real devices are fine.
+- The browser tests run four at a time, each file printing its output when it finishes. To follow one as it runs, use `scripts/test-one.sh`, or `E2E_JOBS=1 bash scripts/test.sh`.
 - On a Mac, the Metrics tab's CPU, memory, and network charts stay empty locally: those readings come from Linux's `/proc`, and every deployed server is Linux. The tests expect only what each system can measure.
 - Notifications need HTTPS and a real device (or the browser test's stand-in); `localhost` won't get real pushes.
 - Terraform has two roots: `infra/` (production) and `infra/staging/`. Run plans in the one you mean (the owner's; contributors don't need Terraform).
