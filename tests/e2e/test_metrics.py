@@ -9,6 +9,12 @@ from common import ADMIN, BASE, REMOTE, launch, shot, PASSWORD, sign_up_or_in, o
 
 errors = []
 
+HAS_READINGS = """async () => {
+  const r = await fetch('/api/admin/metrics?hours=1', { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } });
+  const d = await r.json();
+  return d.hosts.length > 0 && Boolean(d.hosts[0].latest);
+}"""
+
 # Data marks (lines, bands, dots) that reach outside a chart's plot area.
 OUTSIDE = """() => [...document.querySelectorAll('.mchart-svg')].flatMap((s) => {
   const w = s.viewBox.baseVal.width;
@@ -95,6 +101,12 @@ async def main():
         browser = await launch(pw)
         admin = await open_page(browser, errors, "admin", console=True, viewport={"width": 1200, "height": 900})
         await sign_up_or_in(admin, ADMIN, PASSWORD)
+        # The server's first reading comes about 20 seconds after it starts, and
+        # this test can run that early (run.py starts it among the first).
+        for _ in range(40):
+            if await admin.evaluate(HAS_READINGS):
+                break
+            await asyncio.sleep(1)
         await admin.goto(f"{BASE}/admin#metrics")
         await check_metrics(admin, "24 hours")
         await check_series(admin)
@@ -124,6 +136,10 @@ async def main():
                     raise
         assert label in await admin.locator("#tip").inner_text()
         await shot(admin, "metrics-desktop")
+        # Every refresh redraws the charts; one redrawn under the still pointer takes its tip with it
+        # (reloading the range from the page's own script redraws them without moving, focusing, or scrolling).
+        await admin.evaluate("() => document.querySelector('#m-range .segment[aria-pressed=true]').click()")
+        await expect(admin.locator("#tip")).to_be_hidden()
         await admin.mouse.move(5, 5)
         await expect(admin.locator("#tip")).to_be_hidden()
 

@@ -680,6 +680,9 @@ function renderMetrics() {
   renderStatus(data);
   renderCost(data);
 
+  // The charts are about to be replaced: a tip over one would show the old
+  // drawing's numbers, and the chart under the pointer never hears it leave.
+  hideTip();
   const host = data.hosts.find((h) => h.host === metrics.host);
   if (!host) {
     $("#m-charts").replaceChildren(el("p", { class: "muted", text: "No readings yet. The first arrive 20 seconds after the server starts." }));
