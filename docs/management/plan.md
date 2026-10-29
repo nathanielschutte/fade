@@ -33,7 +33,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
 | 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Claude for Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
 | 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Claude for Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
-| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Claude for Nate | In progress | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac |
+| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Claude for Nate | Done | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac. 0.42.0 |
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -165,6 +165,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - **Decided (Nate, 2026-10-29): native Swift**, in Xcode, instead of React Native and Expo; Android later as its own Kotlin port. The encryption is ported to each language and held to the pinned vectors. First milestone: the Swift crypto passing every vector.
 - Needs: a Mac with Xcode (no paid account to start: the Simulator, and a free Apple ID's Personal Team on Nate's iPhone); the Apple Developer Program for push notifications and TestFlight (waiting on Apple).
 - Getting it to early users: TestFlight (internal testers first, then an external group by public link, which needs a short Beta App Review).
+- Built (0.42.0): `/api/config` lists `group_message_formats` (0, 3, 5, 7) beside `message_formats`, so the app learns every format a history can hold from the call it makes at launch.
 - Earlier (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` became an Expo app whose one screen ran every vector check on a phone. Retired with the move to Swift; `mobile/` goes once `ios/` passes every vector.
 
 #### F2. Password reset and recovery
