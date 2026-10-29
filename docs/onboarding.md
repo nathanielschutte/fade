@@ -54,7 +54,7 @@ brew install python node sqlite              # with Homebrew (https://brew.sh)
 curl https://sh.rustup.rs -sSf | sh          # Rust
 ```
 
-With Xcode installed, point the command line at it: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`. Otherwise builds use the separate Command Line Tools, and Homebrew refuses to install anything once those fall behind the current Xcode.
+With Xcode installed, point the command line at it (`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`), and keep the separate Command Line Tools current too (System Settings › Software Update): Homebrew refuses to install anything while they trail Xcode, whichever one is selected.
 
 **Linux** (Debian or Ubuntu; other distributions have the same packages under similar names):
 
