@@ -1,0 +1,8 @@
+# This machine's signing team (Config/Local.xcconfig.example says what goes in it).
+Config/Local.xcconfig
+# Xcode's per-user state and build output.
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.build/
+.swiftpm/

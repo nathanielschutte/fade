@@ -1,0 +1,15 @@
+// Copy to Local.xcconfig (git ignores it) and fill in your own values
+// (docs/ios-onboarding.md).
+
+// Your team: Xcode > Settings > Accounts, select the team, and its id is the
+// ten characters after "Team ID" (or in developer.apple.com > Membership).
+DEVELOPMENT_TEAM = ABCDE12345
+
+// A free Apple ID (Personal Team) builds this variant, so the real bundle id
+// stays free for the Developer Program team. Delete the line once you're
+// signing with that team.
+NAPSACK_BUNDLE_ID = com.getattr.napsack.dev
+
+// Where a fresh install points, for example your Mac running `cargo run` with
+// FADE_BIND=0.0.0.0:8080 (the phone reaches it by the Mac's name on your network).
+// NAPSACK_SERVER_URL = http:/$()/your-mac.local:8080

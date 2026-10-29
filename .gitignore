@@ -28,3 +28,6 @@ tests/.loadtest-*
 
 # Release builds (scripts/release.sh).
 dist/
+
+# Finder's folder settings (macOS).
+.DS_Store
