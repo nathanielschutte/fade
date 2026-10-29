@@ -1,6 +1,12 @@
 # Onboarding
 
-You know what napsack does. This gets you from there to changing it: how the pieces fit, where things live, how it runs in production, the daily loop, and the handful of rules that matter. Read it once top to bottom, then keep it open while you build your first feature (pick one from the top of the [plan](management/plan.md)'s Tracker).
+You know what napsack does. This gets you from there to changing it: how the pieces fit, setting up your machine, where things live, how it runs in production, how we work together, the daily loop, and the handful of rules that matter. Read it once top to bottom, then keep it open while you build your first feature (pick one from the top of the [plan](management/plan.md)'s Tracker).
+
+Two kinds of people work on napsack:
+- **The owner** (Nate): an Admin of the app and the repository. Merges pull requests, releases, and runs production (AWS, Terraform, settings).
+- **Contributors**: work on branches and open pull requests. Everything you need runs on your own machine; you don't need access to AWS or production.
+
+Most of this doc is for both. Where something is the owner's alone, it says so.
 
 ## The picture
 
@@ -26,13 +32,55 @@ You know what napsack does. This gets you from there to changing it: how the pie
 
 ## Your machine
 
-Everything builds and runs in **WSL** (Ubuntu). Windows' Smart App Control blocks freshly compiled programs, so Rust and the tests can't run on the Windows side. The setup is done; for a new machine it's in [CLAUDE.md](../CLAUDE.md) (Environment notes).
+napsack builds and runs on macOS and Linux. On Windows, use WSL (Windows Subsystem for Linux): the scripts are written for a Unix shell, and Windows' Smart App Control can block freshly compiled programs.
 
-Open an Ubuntu terminal and:
+**What you need:**
+
+| Tool | For |
+|---|---|
+| git | the code |
+| Rust (stable, through [rustup](https://rustup.rs)) | the server |
+| Python 3.12 or newer | the smoke test, browser tests, and vector checks |
+| Node.js 24 LTS | the shared crypto's tests (`node --test`) |
+| Chromium, through Playwright | the browser tests |
+| sqlite3 (optional) | looking inside your local database |
+| Xcode (macOS only) | the iOS app ([mobile.md](design/mobile.md)) |
+
+**macOS:**
 
 ```sh
-cd /mnt/c/Users/nates/Documents/code/fade/server
-FADE_ADMINS=you cargo run          # http://127.0.0.1:8080, open it in your Windows browser
+xcode-select --install                       # compilers and git
+brew install python node sqlite              # with Homebrew (https://brew.sh)
+curl https://sh.rustup.rs -sSf | sh          # Rust
+```
+
+**Linux** (Debian or Ubuntu; other distributions have the same packages under similar names):
+
+```sh
+sudo apt-get install -y build-essential git curl python3-venv sqlite3
+curl https://sh.rustup.rs -sSf | sh          # Rust
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && nvm install 24   # Node
+```
+
+**Windows:** install WSL with Ubuntu (`wsl --install` in an administrator PowerShell, then restart), open the Ubuntu terminal, and follow the Linux steps there. Keep the code inside WSL's own disk (`~/code/fade`), not under `/mnt/c`: builds and tests are several times faster. VS Code's WSL extension opens it from Windows (`code .` in the Ubuntu terminal), and your Windows browser reaches the local server at `http://127.0.0.1:8080`.
+
+**Then, on any of them:**
+
+```sh
+git clone https://github.com/nathanielschutte/fade.git && cd fade
+python3 -m venv ~/.venvs/napsack-tests
+~/.venvs/napsack-tests/bin/pip install -r tests/requirements.txt
+~/.venvs/napsack-tests/bin/python -m playwright install --with-deps chromium
+bash scripts/test.sh                         # everything; the first build takes a few minutes
+```
+
+`scripts/test.sh` finds that test environment (or uses `$PYTHON`) and Playwright's Chromium on its own. If Playwright says it doesn't support your Linux version, set `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64` before installing and running. Fonts differ between systems, which is why layout checks are made against the same Linux Chromium that CI uses.
+
+**Run it:**
+
+```sh
+cd server
+FADE_ADMINS=you cargo run          # http://127.0.0.1:8080
 ```
 
 That makes `server/fade.db` (your local database) and `server/pics/` next to it, both ignored by git. Sign up as `you` and as a second account in a private window, befriend yourself, and you have both ends of a conversation. `FADE_ADMINS=you` makes `you` an Admin, so the **System** button (gear icon) appears and every System tab works, logs included ([Roles](#roles-and-the-system-page) below). To start fresh, stop the server and delete `fade.db` and `pics/`.
@@ -92,9 +140,9 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 - `admin.html` and `admin.js`: the System page.
 - Smaller modules: `keystore.js` (keys in IndexedDB), `draw.js` (drawing on pics), `qr.js` (invite QR codes), `graph-view.js` (drawing the friend map), `sw.js` (the service worker: notifications).
 
-**Shared** (`shared/`): `crypto/crypto.js` is the whole encryption scheme, used by the web app and the iOS app alike, with `vector-checks.js` to prove a client gets the pinned bytes right. `graph/graph.js` is the friend map's math (clusters, layout).
+**Shared** (`shared/`): `crypto/crypto.js` is the whole encryption scheme as the web app runs it, and the reference the native apps' own implementations are held to; `vector-checks.js` proves a client gets the pinned bytes right. `graph/graph.js` is the friend map's math (clusters, layout).
 
-**iOS app** (`mobile/`): Expo and React Native, in progress. Today it runs the crypto vector checks on a phone. Plan: [mobile.md](design/mobile.md).
+**iOS app**: native Swift, being started in `ios/` (`mobile/` holds a retired Expo prototype until then). An Android app in Kotlin comes later. Plan: [mobile.md](design/mobile.md).
 
 **Infrastructure** (`infra/`): Terraform for everything in AWS ([Production](#production) below). `infra/staging/` is a separate copy for testing.
 
@@ -143,7 +191,7 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 
 - **The server.** One EC2 instance (t4g.nano: 2 ARM vCPUs, 0.5 GB), with Caddy in front for HTTPS and the old addresses redirecting. The boot script (`infra/user_data.sh.tftpl`) sets everything up and pulls the newest release from S3. Settings live in SSM Parameter Store (`/fade/env`), fetched into memory on every start. You get a shell with `scripts/ssh.sh`, tunneled through SSM (port 22 is closed).
 - **The data.** A separate encrypted disk (`aws_ebs_volume.data`, with `prevent_destroy`) holds the database and unopened pics. It survives the instance being replaced. The database is backed up to S3 every hour, kept forever; the disk is snapshotted daily, kept 30 days ([backups.md](operations/backups.md)).
-- **Releases.** A release is one binary, built by GitHub Actions. Every push to `main` that passes CI becomes a release candidate in S3 and goes to staging; when staging looks good, a `server-v<version>` tag sends that same binary to production, after a backup. Releases are kept forever (the newest ten candidates too), so `scripts/rollback.sh` can go back. `scripts/deploy.sh` (from WSL) is the hotfix path ([releasing.md](operations/releasing.md)).
+- **Releases.** A release is one binary, built by GitHub Actions. Every push to `main` that passes CI becomes a release candidate in S3 and goes to staging; when staging looks good, a `server-v<version>` tag sends that same binary to production, after a backup. Releases are kept forever (the newest ten candidates too), so `scripts/rollback.sh` can go back. `scripts/deploy.sh` is the owner's hotfix path ([releasing.md](operations/releasing.md)).
 - **The health monitor.** A Lambda (`infra/health/monitor.py`) checks `https://napsack.io/api/health` every 5 minutes ([health-monitor.md](implementation/health-monitor.md)):
   - One failure is noted; two in a row open an **incident**.
   - It then tries one repair step per run, gently first: restart the app (through SSM), reboot, then stop and start (which moves it to new hardware). If none of that works, it stops and calls for a person.
@@ -151,6 +199,18 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
   - Admins see the last 7 days of incidents on the Metrics tab and can mark one resolved. The monitor can act only on instances tagged `App=fade`, and it can't delete anything.
 - **The Metrics tab** shows how the machine and the server are doing (CPU, memory, disks, CPU credits, response times, errors, what it costs), with a status at the top: all good, worth watching, or in the red ([metrics.md](implementation/metrics.md)).
 - **Staging.** <https://staging.napsack.io> is a separate copy with its own Terraform state (`infra/staging/`), its own disk and settings, and no backups. It can't read production's settings, data, or releases. Run the browser tests against it with `scripts/test-staging.sh` and load test it with `scripts/load-staging.sh` ([staging.md](operations/staging.md)). On the same size machine it handled 400 people online and 718 texts a second.
+
+## Working together
+
+Several people (and their Claude sessions) can be working at once, so everyone works in the open:
+
+1. **Before you start, look at what's in flight.** Open pull requests (`gh pr list`, or the repository's Pull requests page) and the [plan](management/plan.md)'s Tracker (its **Who** column). If someone's already on it, talk to them first.
+2. **Claim it in the plan.** Every piece of work has a row in the Tracker, linked to its entry in an Epic: put your name in **Who** and set **Status** to In progress. A new idea goes into an Epic first, then into the Tracker. Keep the row current as you go, and include the plan change in your pull request.
+3. **Work on a branch.** Name it after you and the work: `yourname/short-topic`. Never push to `main` directly; it's protected.
+4. **Open a pull request early,** as a draft if it isn't done, so others can see it. Its description follows the template (`.github/pull_request_template.md`): what changed and why, how it's tested (the commands you ran; screenshots at desktop and phone width for anything people see), the risk (a migration? an API change? a new message format?), and which docs and plan rows it updates.
+5. **Checks and review.** CI runs every test on the pull request. The owner reviews it (`.github/CODEOWNERS`), and approval must come after your latest push. Fix what's asked on the same branch.
+6. **Merging.** The owner squash-merges it: one commit on `main`, with the pull request's title and description. Merging to `main` puts a release candidate on staging.
+7. **Releasing** is the owner's ([releasing.md](operations/releasing.md)): check staging, bump the version, and tag `server-v<version>`; only Admins can create release tags, and production deploys only from them.
 
 ## The rules that matter
 
@@ -174,8 +234,8 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 6. **Browser test**: a `tests/e2e/test_*.py` that does it the way a person would. Copy the shape of `test_profile.py`.
 7. **Run it**: `bash scripts/test-one.sh test_yours.py` while working; `bash scripts/test.sh` before you're done (also checks formatting: run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in `server/`).
 8. **Look at it**: open it yourself, at phone width (390 px) too. Tests print where their screenshots went.
-9. **Docs**: [api.md](spec/api.md) for any API change, the feature's doc if it has one, and mark it done in [plan.md](management/plan.md).
-10. **Ship** ([releasing.md](operations/releasing.md)): push to `main`, and CI puts your commit on staging; check it there (the corner shows the build). Then bump the version, push, and tag `server-v<version>`: the same binary goes to production, after a backup. Check that `/api/config` reports the new build and the server's log starts clean.
+9. **Docs**: [api.md](spec/api.md) for any API change, the feature's doc if it has one, and your row in [plan.md](management/plan.md).
+10. **Pull request** ([Working together](#working-together)): push your branch and open one with a real description. Once it's merged, the owner checks it on staging (the corner shows the build) and releases it: a `server-v<version>` tag sends the same binary to production, after a backup, and `/api/config` and the server's log are checked afterwards.
 
 ## When it doesn't work
 
@@ -183,7 +243,7 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 - **The browser console** shows everything the app reports as `[napsack] ...`, and the Network tab shows each API call and its answer.
 - **System → Logs** (`/admin#logs`, Admins) collects both, searchable, with a live tail. In production it holds the last 20,000 entries since the server started; older history is in the journal: `scripts/ssh.sh "sudo journalctl -u fade --since '1 hour ago'"`.
 - **Is production all right?** `curl https://napsack.io/api/health`; the Metrics tab's status and incidents; the `fade-health` SNS topic.
-- **Look at the database**: `sqlite3 server/fade.db` (`.tables`, then plain SQL; install it once with `sudo apt-get install -y sqlite3`). Read-only habits are good habits: production is always read-only (`?mode=ro`).
+- **Look at the database**: `sqlite3 server/fade.db` (`.tables`, then plain SQL). Read-only habits are good habits: production is always read-only (`?mode=ro`).
 - **A browser test fails**: it prints the failing check and the server's warnings, and leaves screenshots. Playwright refuses selectors that match more than one element, so be specific (`#friends-dialog [data-close]`, not `[data-close]`).
 
 ## Gotchas
@@ -191,7 +251,8 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
 - Changed `server/static/` and nothing happened: make sure you're on `cargo run` (a debug build). `cargo run --release` behaves like production and serves the compiled-in copies.
 - A brand-new file in `server/static/` needs a line in `server/src/web.rs` (and a restart) before it's served.
 - A new migration file isn't picked up: `touch server/src/db.rs`, then build (the migrations are compiled in).
-- From Git Bash, `wsl.exe` swallows `$VARIABLES` in a command; use the Ubuntu terminal directly, or a script file.
 - Emoji show as boxes in test screenshots: the test machine has no emoji font. Real devices are fine.
 - Notifications need HTTPS and a real device (or the browser test's stand-in); `localhost` won't get real pushes.
-- Terraform has two roots: `infra/` (production) and `infra/staging/`. Run plans in the one you mean.
+- Terraform has two roots: `infra/` (production) and `infra/staging/`. Run plans in the one you mean (the owner's; contributors don't need Terraform).
+- A new script needs its executable bit recorded (`git update-index --chmod=+x scripts/<name>.sh`) if your system doesn't keep it, and CI calls scripts through `bash` anyway.
+- Everything is LF line endings (`.gitattributes`). A CRLF boot script would stop the server from starting, so don't override it.

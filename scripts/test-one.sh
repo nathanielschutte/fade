@@ -5,7 +5,7 @@
 #   bash scripts/test-one.sh test_profile.py      (a file in tests/e2e/)
 #   bash scripts/test-one.sh smoke                (the API smoke test)
 #
-# Same setup as scripts/test.sh (run it in WSL here). Prints where the
+# Same setup as scripts/test.sh (docs/onboarding.md). Prints where the
 # screenshots went, and the server's warnings if the test fails.
 set -euo pipefail
 cd "$(dirname "$0")/.."

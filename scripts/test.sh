@@ -8,21 +8,20 @@
 #
 # Needs: cargo, Node.js 22+, python3 with tests/requirements.txt installed, and Chrome
 # (or E2E_CHROME=bundled after `python3 -m playwright install chromium`).
-# Works in WSL, Linux, macOS, and CI. On this Windows machine, Smart App Control
-# blocks freshly built binaries, so run it in WSL (setup: CLAUDE.md).
+# Works on Linux, macOS, and CI; on Windows, in WSL (setup: docs/onboarding.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BROWSER=1
 [ "${1:-}" = "--no-browser" ] && BROWSER=0
 PORT="${PORT:-8099}"
-# Python: $PYTHON, else the WSL test venv if it exists, else whatever python3 is on PATH.
+# Python: $PYTHON, else the test venv (~/.venvs/napsack-tests) if it exists, else whatever python3 is on PATH.
 VENV_PY="$HOME/.venvs/napsack-tests/bin/python"
 if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
 elif [ -x "$VENV_PY" ]; then PY="$VENV_PY"
 else PY="$(command -v python3 || command -v python)"; fi
 
-# Linux without Google Chrome (WSL): use Playwright's own Chromium. Its build for
+# Linux without Google Chrome: use Playwright's own Chromium. Its build for
 # Ubuntu 24.04 runs on newer Ubuntu releases Playwright doesn't recognize yet.
 if [ "$(uname -s)" = Linux ] && ! command -v google-chrome >/dev/null; then
   export E2E_CHROME="${E2E_CHROME:-bundled}"
@@ -45,7 +44,7 @@ echo "==> crypto vectors (independent implementation)"
 "$PY" tests/vectors/check_media6.py
 
 echo "==> shared crypto against the vectors (Node)"
-# WSL installs Node with nvm, which non-interactive shells don't load.
+# Node installed with nvm isn't loaded by non-interactive shells.
 if ! command -v node >/dev/null && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi
 command -v node >/dev/null || { echo "Node.js is required (see CLAUDE.md, Environment notes)"; exit 1; }
 node --test "shared/**/*.test.js"
@@ -56,7 +55,7 @@ echo "==> health monitor (decisions, with AWS faked)"
 echo "==> building server"
 (cd server && cargo build --quiet)
 BIN=server/target/debug/fade-server
-# server/target is shared by Windows and WSL builds, so choose by OS, not by what exists.
+# A folder shared by a Windows and a Linux build has both binaries, so choose by OS, not by what exists.
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) BIN="$BIN.exe" ;; esac
 
 TMP="$(mktemp -d)"

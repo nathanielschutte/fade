@@ -1,33 +1,42 @@
 
 # Plan
 
-Central task tracking doc for napsack. Divides into categories ("Epics"), and a Tracker at the top which is a table with tasks from the below Epics that are actively being worked on.
+Central task tracking doc for napsack, for everyone who works on it (and their Claude sessions). Divides into categories ("Epics"), and a Tracker at the top: the tasks from the Epics that are being worked on or are next, and who has them.
+
+## How to use it
+
+- **Before starting:** read the Tracker (who's on what) and the open pull requests (`gh pr list`). Don't start something someone else has; talk to them.
+- **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. A Claude session writes who it works for: "Claude for Nate".
+- **A new idea** goes into an Epic first (an entry with a short id, like `X38`: what was asked, by whom and when, and the decisions), then into the Tracker by priority.
+- **As you go:** keep your row's Status current, and add "Built (version): ..." notes to the Epic entry when it ships. The plan changes travel in the same pull request as the work.
+- **When it's done:** Status **Done**, with the version it shipped in. Done rows move to the Done table once the Tracker gets long.
 
 ## Tracker
 
-Work top to bottom. Each row links to its entry in the Epics below, which holds the details and design notes. When something finishes, mark it done here (and move it to Done once the table gets long); when a new idea comes up, add it to an Epic first and slot it into the Tracker by priority.
+Work top to bottom. Each row links to its entry in the Epics below, which holds the details and design notes.
 
-Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blocked on a choice, noted in the epic) · **Done**
+Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blocked on a choice, noted in the epic) · **On hold** · **Done**
 
-| # | Task | Epic | Status | Why it's here |
-|---|---|---|---|---|
-| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Done | Nate (2026-10-28); 0.34.0 |
-| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Done | Nate (2026-10-28); 0.35.0 |
-| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
-| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Done | Nate (2026-10-28); 0.37.0 |
-| 0p | [Change your username](#x30-change-your-username) | Features | Done | Nate (2026-10-28); 0.38.0 |
-| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Done | Nate (2026-10-28); 0.39.0 |
-| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Done | Nate (2026-10-28); 0.40.0 |
-| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Done | Nate (2026-10-29); 0.41.0 |
-| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Done | Nate (2026-10-29); 0.41.0 |
-| 0s | [Work through pull requests](#p5-pull-requests-and-repository-protection) | Process | Up next | Nate (2026-10-28); last, after all the features |
-| 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
-| 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
-| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 4 | [Disappearing texts](#f18-disappearing-texts) | Features | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 7 | [Move the repo into WSL](#p3-testing-in-wsl-and-moving-the-repo-there) | Process | Needs decision | Faster builds and no Windows/Linux file issues; see notes |
+**Who**: the person working on it (or "Claude for <person>"), or – if it's free to pick up.
+
+| # | Task | Epic | Who | Status | Why it's here |
+|---|---|---|---|---|---|
+| 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.34.0 |
+| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.35.0 |
+| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
+| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.37.0 |
+| 0p | [Change your username](#x30-change-your-username) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.38.0 |
+| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.39.0 |
+| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.40.0 |
+| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
+| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
+| 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Claude for Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
+| 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
+| 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
+| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 4 | [Disappearing texts](#f18-disappearing-texts) | Features | – | Needs decision | Conflicts with "data is never deleted"; see notes |
+| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 
 **Done**
 
@@ -100,6 +109,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Review (2026-10-29):
   - **One gap that matters: deployments trust the environment name, not the branch.** The AWS roles trust GitHub's OIDC subject `...:environment:staging` and `...:environment:production`. Branch protection guards `main`, but anyone with write access can push another branch whose workflow names `environment: staging` (or `production`) and get those credentials. Close it in GitHub → Settings → Environments: **staging** deploys from `main` only; **production** from tags matching `server-v*` only (tags are already protected, admins-only). Optionally, required reviewers on production. (Nate's to change; it's in GitHub's settings, not the repo.)
   - The rest is sound for outside collaborators: pull requests run `ci.yml` on `pull_request` (not `pull_request_target`), so a fork's code runs without secrets or credentials; CODEOWNERS (`*`) with review on the latest push means nothing merges without Nate seeing the final version; release tags are admins-only. Worth adding: make the CI jobs (`server`, `infra`) required status checks on `main`, with "branches up to date before merging".
+  - **Adopted (Nate, 2026-10-29)**, with the environment rules set (staging from `main`, production from `server-v*` tags). Contributor docs: [onboarding.md](../onboarding.md) (Your machine; Working together), `.github/pull_request_template.md`, CLAUDE.md (Shipping; Working together).
   - **Pull requests for our own releases: yes.** A branch per release, a PR whose description is the release notes, checks passing before it reaches `main` (today `main` can briefly be red), then squash-merge: one commit per release on `main`, and the same path collaborators take. The cost is CI running twice (on the PR, then on `main` for the staging candidate), about 15 more minutes per release. Hotfixes go the same way, as their own small PRs. Ready to switch whenever Nate says.
 
 #### P4. Faster test runs, same coverage
@@ -109,6 +119,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Not recommended: dropping overlapping checks between the smoke test and browser tests. They test different layers (the API directly, and the app as a person uses it), and the overlap is what catches a client and server drifting apart.
 
 #### P3. Testing in WSL (and moving the repo there)
+- **Dropped (2026-10-29):** the project no longer assumes anyone's machine; [onboarding.md](../onboarding.md) sets up macOS, Linux, or Windows through WSL (keeping the code on WSL's own disk). The notes below are kept as history.
 - **Recommendation: move the repo into WSL** (`~/code/fade`), after moving Terraform state into an encrypted, versioned S3 bucket.
   - Why: builds and tests on `/mnt/c` go through a slow bridge to the Windows disk; inside WSL they're several times faster. Smart App Control stops mattering, file modes and line endings are native Linux, and there's one environment for build, test, deploy, and Terraform.
   - What changes for you: open the project with VS Code's WSL extension (`code .` from WSL). Windows still sees the files at `\\wsl$\Ubuntu\home\nate\code\fade`.
@@ -143,9 +154,10 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### F1. iOS app
 - iOS app. This is the big one.
 - Plan and milestones: [mobile.md](../design/mobile.md). Push notifications are part of it.
-- Needs: Apple Developer Program (approved 2026-10-21), Expo account (done).
+- **Decided (Nate, 2026-10-29): native Swift**, in Xcode, instead of React Native and Expo; Android later as its own Kotlin port. The encryption is ported to each language and held to the pinned vectors. First milestone: the Swift crypto passing every vector.
+- Needs: a Mac with Xcode (no paid account to start: the Simulator, and a free Apple ID's Personal Team on Nate's iPhone); the Apple Developer Program for push notifications and TestFlight (waiting on Apple).
 - Getting it to early users: TestFlight (internal testers first, then an external group by public link, which needs a short Beta App Review).
-- Started (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` is an Expo SDK 58 app whose one screen runs every vector check on the phone. Next: `eas init`, register the iPhone, first development build, read the results. Status in [mobile.md](../design/mobile.md#first-milestones).
+- Earlier (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` became an Expo app whose one screen ran every vector check on a phone. Retired with the move to Swift; `mobile/` goes once `ios/` passes every vector.
 
 #### F2. Password reset and recovery
 - Password reset flow - email?  Admin recovery key for support.

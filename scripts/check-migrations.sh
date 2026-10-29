@@ -2,7 +2,7 @@
 # Runs the current server, and so its migrations, against a copy of the newest
 # production backup, then checks that no rows were lost and the database is
 # intact. Never touches production. Run before releasing any new migration
-# (CLAUDE.md). Needs: AWS CLI, terraform, cargo, python3, curl. Run in WSL.
+# (CLAUDE.md). The owner's: needs AWS CLI, terraform, cargo, python3, curl.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
