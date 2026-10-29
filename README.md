@@ -12,7 +12,7 @@ server/          Rust (axum + SQLite): the API, and the web app compiled into on
   static/        the web app: plain HTML, CSS, and JavaScript modules, no build step
   migrations/    the database schema, one numbered file per change
 shared/crypto/   the end-to-end encryption, shared by the web app and the iOS app
-mobile/          the iOS app (Expo)
+ios/             the iOS app (Swift, Xcode)
 tests/           API smoke test, browser tests (Playwright), pinned crypto vectors
 infra/           Terraform for AWS
 scripts/         test, deploy, rollback, ssh
@@ -45,6 +45,7 @@ Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute t
 | [health-monitor.md](docs/implementation/health-monitor.md) | The outside monitor that checks and repairs the server |
 | [roles.md](docs/implementation/roles.md) | User, PowerUser, Admin, and the System page |
 | [admin-users.md](docs/implementation/admin-users.md) | Admin tools for accounts: turning one off (nothing deleted), sign-in locks, announcements |
-| [mobile.md](docs/design/mobile.md) | The iOS app |
+| [mobile.md](docs/design/mobile.md) | The iOS app: the plan |
+| [ios-onboarding.md](docs/ios-onboarding.md) | The iOS app: setting up Xcode and an iPhone, building, testing |
 
 Docs are grouped by purpose: `docs/spec/` (the API), `docs/implementation/` (how built features work), `docs/operations/` (running it), `docs/design/` (proposals), `docs/management/` (the plan). Names are lowercase.

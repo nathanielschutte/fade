@@ -1,0 +1,32 @@
+// Settings every target shares, in Debug and Release. This machine's own
+// settings (your signing team) go in Local.xcconfig, which git ignores:
+// copy Local.xcconfig.example (docs/ios-onboarding.md).
+
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+TARGETED_DEVICE_FAMILY = 1
+// The oldest iOS supported is still an open decision (docs/design/mobile.md).
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+SWIFT_VERSION = 6.0
+CODE_SIGN_STYLE = Automatic
+ALWAYS_SEARCH_USER_PATHS = NO
+CLANG_ENABLE_MODULES = YES
+ENABLE_STRICT_OBJC_MSGSEND = YES
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+GCC_NO_COMMON_BLOCKS = YES
+LOCALIZATION_PREFERS_STRING_CATALOGS = YES
+
+// The app's version (SemVer, like the server's) and build number (one more for
+// every upload); the owner's to change (docs/design/mobile.md).
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// Permanent once the app is in App Store Connect. A free Apple ID's team
+// builds a .dev variant instead (Local.xcconfig), so it doesn't take this one.
+NAPSACK_BUNDLE_ID = com.getattr.napsack
+
+// The server a new install starts on (it can be changed in the app). Which
+// address shipped apps use is still an open decision (docs/design/mobile.md).
+NAPSACK_SERVER_URL = https:/$()/staging.napsack.io
+
+#include? "Local.xcconfig"

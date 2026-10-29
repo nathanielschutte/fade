@@ -1,0 +1,325 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4E5A00000000000000000015 /* NapsackCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = 4E5A00000000000000000014 /* NapsackCrypto */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4E5A00000000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4E5A00000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4E5A00000000000000000009;
+			remoteInfo = Napsack;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		4E5A00000000000000000007 /* Napsack.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Napsack.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4E5A00000000000000000008 /* NapsackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NapsackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4E5A00000000000000000016 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		4E5A00000000000000000017 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		4E5A00000000000000000018 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		4E5A00000000000000000019 /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+		4E5A0000000000000000001A /* Tests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Tests.xcconfig; sourceTree = "<group>"; };
+		4E5A0000000000000000001B /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Local.xcconfig.example; sourceTree = "<group>"; };
+		4E5A0000000000000000001C /* App-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "App-Info.plist"; sourceTree = "<group>"; };
+		4E5A00000000000000000026 /* NapsackCrypto */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = NapsackCrypto; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		4E5A00000000000000000005 /* Napsack */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Napsack;
+			sourceTree = "<group>";
+		};
+		4E5A00000000000000000006 /* NapsackTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NapsackTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4E5A0000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E5A00000000000000000015 /* NapsackCrypto in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4E5A0000000000000000000F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4E5A00000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				4E5A00000000000000000005 /* Napsack */,
+				4E5A00000000000000000006 /* NapsackTests */,
+				4E5A00000000000000000026 /* NapsackCrypto */,
+				4E5A00000000000000000004 /* Config */,
+				4E5A00000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4E5A00000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4E5A00000000000000000007 /* Napsack.app */,
+				4E5A00000000000000000008 /* NapsackTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4E5A00000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				4E5A00000000000000000016 /* Base.xcconfig */,
+				4E5A00000000000000000017 /* Debug.xcconfig */,
+				4E5A00000000000000000018 /* Release.xcconfig */,
+				4E5A00000000000000000019 /* App.xcconfig */,
+				4E5A0000000000000000001A /* Tests.xcconfig */,
+				4E5A0000000000000000001B /* Local.xcconfig.example */,
+				4E5A0000000000000000001C /* App-Info.plist */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4E5A00000000000000000009 /* Napsack */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4E5A0000000000000000001E /* Build configuration list for PBXNativeTarget "Napsack" */;
+			buildPhases = (
+				4E5A0000000000000000000B /* Sources */,
+				4E5A0000000000000000000C /* Frameworks */,
+				4E5A0000000000000000000D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4E5A00000000000000000005 /* Napsack */,
+			);
+			name = Napsack;
+			packageProductDependencies = (
+				4E5A00000000000000000014 /* NapsackCrypto */,
+			);
+			productName = Napsack;
+			productReference = 4E5A00000000000000000007 /* Napsack.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4E5A0000000000000000000A /* NapsackTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4E5A0000000000000000001F /* Build configuration list for PBXNativeTarget "NapsackTests" */;
+			buildPhases = (
+				4E5A0000000000000000000E /* Sources */,
+				4E5A0000000000000000000F /* Frameworks */,
+				4E5A00000000000000000010 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4E5A00000000000000000012 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4E5A00000000000000000006 /* NapsackTests */,
+			);
+			name = NapsackTests;
+			packageProductDependencies = (
+			);
+			productName = NapsackTests;
+			productReference = 4E5A00000000000000000008 /* NapsackTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4E5A00000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2710;
+				LastUpgradeCheck = 2710;
+				TargetAttributes = {
+					4E5A00000000000000000009 = {
+						CreatedOnToolsVersion = 27.1;
+					};
+					4E5A0000000000000000000A = {
+						CreatedOnToolsVersion = 27.1;
+						TestTargetID = 4E5A00000000000000000009;
+					};
+				};
+			};
+			buildConfigurationList = 4E5A0000000000000000001D /* Build configuration list for PBXProject "Napsack" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 4E5A00000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4E5A00000000000000000013 /* XCLocalSwiftPackageReference "NapsackCrypto" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4E5A00000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4E5A00000000000000000009 /* Napsack */,
+				4E5A0000000000000000000A /* NapsackTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4E5A0000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4E5A00000000000000000010 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4E5A0000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4E5A0000000000000000000E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4E5A00000000000000000012 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4E5A00000000000000000009 /* Napsack */;
+			targetProxy = 4E5A00000000000000000011 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		4E5A00000000000000000020 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A00000000000000000017 /* Debug.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4E5A00000000000000000021 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A00000000000000000018 /* Release.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		4E5A00000000000000000022 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A00000000000000000019 /* App.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4E5A00000000000000000023 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A00000000000000000019 /* App.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		4E5A00000000000000000024 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A0000000000000000001A /* Tests.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4E5A00000000000000000025 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E5A0000000000000000001A /* Tests.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4E5A0000000000000000001D /* Build configuration list for PBXProject "Napsack" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4E5A00000000000000000020 /* Debug */,
+				4E5A00000000000000000021 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4E5A0000000000000000001E /* Build configuration list for PBXNativeTarget "Napsack" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4E5A00000000000000000022 /* Debug */,
+				4E5A00000000000000000023 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4E5A0000000000000000001F /* Build configuration list for PBXNativeTarget "NapsackTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4E5A00000000000000000024 /* Debug */,
+				4E5A00000000000000000025 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4E5A00000000000000000013 /* XCLocalSwiftPackageReference "NapsackCrypto" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = NapsackCrypto;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4E5A00000000000000000014 /* NapsackCrypto */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NapsackCrypto;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4E5A00000000000000000001 /* Project object */;
+}

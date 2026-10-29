@@ -1,0 +1,17 @@
+// The app target (on top of Debug or Release.xcconfig).
+
+PRODUCT_NAME = Napsack
+PRODUCT_BUNDLE_IDENTIFIER = $(NAPSACK_BUNDLE_ID)
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_FILE = Config/App-Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = napsack
+INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
+INFOPLIST_KEY_UILaunchScreen_Generation = YES
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
+// Asked the first time the app reaches a development server on your network.
+INFOPLIST_KEY_NSLocalNetworkUsageDescription = napsack connects to a development server on your network.
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
+ENABLE_PREVIEWS = YES
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
+SWIFT_EMIT_LOC_STRINGS = YES

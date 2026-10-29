@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged with what Xcode generates from Config/App.xcconfig. -->
+	<key>NapsackServerURL</key>
+	<string>$(NAPSACK_SERVER_URL)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Plain http only to this network (a development server); everything else must be https. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

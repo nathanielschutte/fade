@@ -24,7 +24,7 @@ The cost, and how it's handled:
 server/            Rust server; also serves the web client
 shared/crypto/     crypto.js: the reference implementation (web), and vector-checks.js
 tests/vectors/     the pinned vectors every implementation must reproduce exactly
-ios/               the Swift app (Xcode project), from its first commit
+ios/               the Swift app: Napsack.xcodeproj, and NapsackCrypto (the formats, a Swift package)
 android/           the Kotlin app, later
 mobile/            the retired Expo prototype; removed once ios/ passes every vector
 ```
@@ -39,11 +39,13 @@ mobile/            the retired Expo prototype; removed once ios/ passes every ve
   | AES-256-GCM with associated data | CryptoKit (`AES.GCM`) |
 
   The formats to cover: texts (1, 2), pics (1, 2), videos and photos (4 to 7), group messages (3, 5, 7), edits, reactions, recovery keys, and safety codes ([how-napsack-works.md](../how-napsack-works.md)).
-- **The vectors run in the app's tests.** An XCTest target reads `tests/vectors/*.json` and makes every check `shared/crypto/vector-checks.js` makes. It runs on every build in CI, and on a real iPhone too, since that's where the 600,000-round PBKDF2 has to stay near a second.
+- **The vectors run in the app's tests.** `NapsackCrypto`'s tests (Swift Testing) read `tests/vectors/*.json` and makes every check `shared/crypto/vector-checks.js` makes. It runs on every build in CI, and on a real iPhone too, since that's where the 600,000-round PBKDF2 has to stay near a second.
 - **Keys on the phone.** The unwrapped private key goes in the Keychain, readable only while the phone is unlocked (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) and never synced to iCloud or other devices. Sign-in derives keys from the password exactly as on the web, so history works on the phone from day one.
 - **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this"; `/api/config` lists every format in use (`message_formats` for direct chats, `group_message_formats` for groups).
 
 ## Getting set up
+
+Step by step, for someone new to Xcode: [ios-onboarding.md](../ios-onboarding.md).
 
 - **A Mac with Xcode** (the current version, from the App Store).
 - **No paid account to start.** Without one, the app runs in the iOS Simulator, and on your own iPhone through a free Apple ID: in Xcode, add your Apple ID under Settings › Accounts, and choose its "Personal Team" for signing. The catch: an app signed that way stops opening after 7 days (build it again from Xcode), and it can't use push notifications.
@@ -88,7 +90,7 @@ Getting it to people:
 
 ## First milestones
 
-1. **The crypto, in Swift, passing every vector.** The riskiest part goes first: a Swift package with the formats above, and an XCTest target that runs every pinned vector, plus a timing check that 600,000-round PBKDF2 stays near a second on a real iPhone. Nothing ships until it's all green.
+1. **The crypto, in Swift, passing every vector.** The riskiest part goes first: a Swift package with the formats above, and tests that run every pinned vector, plus a timing check that 600,000-round PBKDF2 stays near a second on a real iPhone. Nothing ships until it's all green. Started (2026-10-29): `ios/NapsackCrypto` passes format 1's vectors, and the app's development screen times the key derivation on the phone.
 2. **Skeleton.** Sign in, chat list, chat screen, sending and reading texts, against a chosen server.
 3. **The camera.** Pics and short videos with AVFoundation: zoom, holding to record, the same compression and size limits as the web app, and the formats 6 and 7 envelopes with the caption's place.
 4. **Notifications.** APNs: the server's `push.rs` gains APNs delivery alongside Web Push (needs the paid program). The server can't read messages, so notifications say who sent something, never what.

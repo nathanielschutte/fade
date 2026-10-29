@@ -44,7 +44,7 @@ napsack builds and runs on macOS and Linux. On Windows, use WSL (Windows Subsyst
 | Node.js 24 LTS | the shared crypto's tests (`node --test`) |
 | Chromium, through Playwright | the browser tests |
 | sqlite3 (optional) | looking inside your local database |
-| Xcode (macOS only) | the iOS app ([mobile.md](design/mobile.md)) |
+| Xcode (macOS only) | the iOS app ([ios-onboarding.md](ios-onboarding.md)) |
 
 **macOS:**
 
@@ -144,7 +144,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 
 **Shared** (`shared/`): `crypto/crypto.js` is the whole encryption scheme as the web app runs it, and the reference the native apps' own implementations are held to; `vector-checks.js` proves a client gets the pinned bytes right. `graph/graph.js` is the friend map's math (clusters, layout).
 
-**iOS app**: native Swift, being started in `ios/` (`mobile/` holds a retired Expo prototype until then). An Android app in Kotlin comes later. Plan: [mobile.md](design/mobile.md).
+**iOS app**: native Swift in `ios/`; setting up Xcode and an iPhone, building, testing, and how it's put together are in [ios-onboarding.md](ios-onboarding.md). (`mobile/` holds a retired Expo prototype until `ios/` passes every vector.) An Android app in Kotlin comes later. Plan: [mobile.md](design/mobile.md).
 
 **Infrastructure** (`infra/`): Terraform for everything in AWS ([Production](#production) below). `infra/staging/` is a separate copy for testing.
 
