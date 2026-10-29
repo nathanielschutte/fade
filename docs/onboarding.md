@@ -54,6 +54,8 @@ brew install python node sqlite              # with Homebrew (https://brew.sh)
 curl https://sh.rustup.rs -sSf | sh          # Rust
 ```
 
+With Xcode installed, point the command line at it (`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`), and keep the separate Command Line Tools current too (System Settings › Software Update): Homebrew refuses to install anything while they trail Xcode, whichever one is selected.
+
 **Linux** (Debian or Ubuntu; other distributions have the same packages under similar names):
 
 ```sh
@@ -252,6 +254,7 @@ Several people (and their Claude sessions) can be working at once, so everyone w
 - A brand-new file in `server/static/` needs a line in `server/src/web.rs` (and a restart) before it's served.
 - A new migration file isn't picked up: `touch server/src/db.rs`, then build (the migrations are compiled in).
 - Emoji show as boxes in test screenshots: the test machine has no emoji font. Real devices are fine.
+- On a Mac, the Metrics tab's CPU, memory, and network charts stay empty locally: those readings come from Linux's `/proc`, and every deployed server is Linux. The tests expect only what each system can measure.
 - Notifications need HTTPS and a real device (or the browser test's stand-in); `localhost` won't get real pushes.
 - Terraform has two roots: `infra/` (production) and `infra/staging/`. Run plans in the one you mean (the owner's; contributors don't need Terraform).
 - A new script needs its executable bit recorded (`git update-index --chmod=+x scripts/<name>.sh`) if your system doesn't keep it, and CI calls scripts through `bash` anyway.

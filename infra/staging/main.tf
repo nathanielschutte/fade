@@ -18,12 +18,21 @@
 # so a change to the template fails loudly rather than silently.
 
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10" # use_lockfile
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+  }
+  # Production's state bucket, under its own key (../main.tf). Only the owner's
+  # credentials reach it; staging's server and deploy role can't.
+  backend "s3" {
+    bucket       = "fade-tfstate-705059992745-us-east-1"
+    key          = "fade-staging/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 

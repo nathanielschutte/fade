@@ -32,6 +32,8 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
 | 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
 | 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Claude for Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
+| 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Claude for Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
+| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Claude for Nate | In progress | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac |
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -102,6 +104,12 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### P1. Development standard
 - [CLAUDE.md](../../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
+
+#### P6. Development on a Mac
+- Nate (2026-10-29): development moves from the Windows machine to a MacBook Pro, which will mostly build the native iOS app. Confirm from the Mac that everything the owner does works: the test suite, Terraform, SSH to the servers, pull requests and merging, release tags, and GitHub Actions deploying staging and production. Test the pipeline with a change nobody sees ([group formats in `/api/config`](#f1-ios-app)).
+- **The tests assumed Linux.** The Metrics tab reads CPU, memory, and network from `/proc`, so a server run on a Mac has none of them, and the smoke test and `test_metrics.py` failed there. They now expect only what the system can measure; every deployed server is Linux. Homebrew also refuses to install anything while the Command Line Tools trail the installed Xcode (selecting Xcode isn't enough), so onboarding.md says to keep them current.
+- **Terraform state was only on the Windows machine** (`infra/` and `infra/staging/`, and staging's tfvars). **Decided (Nate):** copy it over, then move both roots' state to an S3 backend with locking, so it doesn't live on one laptop. Done (2026-10-29): `fade-tfstate-<account>-us-east-1` (versioned, encrypted, HTTPS-only, lock file), both roots migrated and planning as before ([operations.md](../operations/operations.md)); the local copies are kept off the repo on the Mac.
+- **The Mac's SSH key** is in `ssh_public_keys`, which the boot script writes, so adding it replaces the instance. **Decided (Nate):** staging now, through Terraform; production at a quiet time, with the data-volume checklist (CLAUDE.md, Rule 1). Staging done (2026-10-29): new instance, `scripts/ssh.sh` from the Mac works, data volume mounted, clean start. Production's apply is still to do; it also opens port 22 to Nate's address (`ssh_allowed_cidrs`, new in tfvars) and re-uploads the health monitor (the same code, zipped on a Mac).
 
 #### P5. Pull requests and repository protection
 - Nate (2026-10-28): branch protection is on: other collaborators reach `main` only through pull requests, reviewed by the code owner (Nate) on the latest push; release tags are protected, need the staging deploy to have succeeded, and only repository admins create them. Admins can bypass all of it.

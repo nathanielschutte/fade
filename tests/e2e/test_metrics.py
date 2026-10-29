@@ -2,7 +2,7 @@
 real readings of the test machine. Checks the status, the charts, hovering,
 the ranges, the table, and the layout on a phone. Settings come from the
 environment; see common.py."""
-import asyncio, re
+import asyncio, re, sys
 from playwright.async_api import async_playwright, expect
 
 from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
@@ -84,6 +84,12 @@ async def check_series(p):
         assert hour["series"][0][0] <= day_in_hour[0] + 60, (hour["series"][:3], day_in_hour[:3])
 
 
+# CPU, memory, and network come from Linux's /proc (metrics.rs), so a server
+# run on a Mac for development draws nothing there; every deployed server is Linux.
+PROC = REMOTE or sys.platform.startswith("linux")
+LINUX_ONLY = () if PROC else ("CPU", "Memory", "Server memory", "Network")
+
+
 async def check_metrics(p, phase):
     await expect(p.locator("#view-metrics")).to_be_visible()
     await expect(p.locator("#tab-metrics")).to_have_attribute("aria-current", "page")
@@ -100,7 +106,7 @@ async def check_metrics(p, phase):
     for _ in range(50):
         drawn = await p.evaluate(DRAWN)
         # Disk activity needs a real block device, which a test box may not have.
-        empty = [t for t, marks in drawn if marks == 0 and t != "Disk activity"]
+        empty = [t for t, marks in drawn if marks == 0 and t != "Disk activity" and t not in LINUX_ONLY]
         if not empty:
             break
         await asyncio.sleep(0.1)
@@ -132,7 +138,8 @@ async def main():
         # Hovering a chart shows the reading under the pointer.
         # (The charts redraw with each new reading; a redraw under a still
         # pointer can drop the tip, so move again if it isn't up yet.)
-        cpu = admin.locator(".mchart", has=admin.locator("h2", has_text=re.compile(r"^CPU$"))).first.locator(".mhit")
+        chart, label = ("CPU", "Machine:") if PROC else ("Requests", "Requests:")
+        cpu = admin.locator(".mchart", has=admin.locator("h2", has_text=re.compile(f"^{chart}$"))).first.locator(".mhit")
         await cpu.scroll_into_view_if_needed()  # (staging's incidents can push it below the fold)
         for attempt in range(3):
             box = await cpu.bounding_box()
@@ -144,7 +151,7 @@ async def main():
             except AssertionError:
                 if attempt == 2:
                     raise
-        assert "Machine:" in await admin.locator("#tip").inner_text()
+        assert label in await admin.locator("#tip").inner_text()
         await shot(admin, "metrics-desktop")
         await admin.mouse.move(5, 5)
         await expect(admin.locator("#tip")).to_be_hidden()
