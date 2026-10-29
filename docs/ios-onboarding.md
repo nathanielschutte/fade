@@ -1,0 +1,124 @@
+# iOS onboarding
+
+Building the napsack iPhone app: what's in `ios/`, setting up a Mac and an iPhone the first time, the daily loop, and how the pieces work. It assumes you know napsack ([onboarding.md](onboarding.md)) but not Xcode or iOS, so it explains the Xcode words as they come up. The plan for the app (why native Swift, milestones, TestFlight, releases) is in [mobile.md](design/mobile.md).
+
+Where things stand (2026-10-29): the app is a single development screen. It talks to a server and times the password's key derivation on the phone. The encryption is being ported to Swift one format at a time; format 1 passes its vectors.
+
+## The pieces
+
+```
+ios/
+├── Napsack.xcodeproj      the Xcode project: open this
+├── Napsack/               the app's code (SwiftUI)
+│   ├── NapsackApp.swift       where the app starts
+│   ├── ServerScreen.swift     the screen you see
+│   ├── Server.swift           talking to a napsack server
+│   └── Assets.xcassets        the icon and accent color
+├── NapsackTests/          the app's unit tests
+├── NapsackCrypto/         the encryption, as a Swift package (its own tests)
+└── Config/                build settings, as text files
+```
+
+The Xcode words, in the order you'll meet them:
+
+- **Project** (`Napsack.xcodeproj`): what Xcode opens. It lists the targets and where their files are. You rarely edit it by hand.
+- **Target**: one thing that gets built. There are two: **Napsack** (the app) and **NapsackTests** (its tests, which run inside the app).
+- **Scheme**: what the Run (⌘R) and Test (⌘U) buttons do. Use the **Napsack** scheme. Xcode also shows a **NapsackCrypto** scheme for the package.
+- **Destination**: where it runs, picked next to the scheme at the top of the window: a Simulator ("iPhone 17") or your own iPhone.
+- **Swift package** (`NapsackCrypto/`): a library with its own `Package.swift`. The app uses it like any library (`import NapsackCrypto`). Keeping the encryption in a package means its tests run on the Mac in seconds (`swift test`), without a simulator.
+- **Synchronized folders**: `Napsack/` and `NapsackTests/` are linked to their targets as folders. A file you add there, in Xcode or any editor, is part of the build. You don't add files to the project.
+- **Build settings and `.xcconfig` files**: everything about how the app is built (its name, iOS version, bundle id, signing) is in `Config/*.xcconfig`, plain text that reads well in a diff. `Base.xcconfig` holds what's shared, `Debug` and `Release` the two **build configurations** (Run uses Debug, an App Store build Release), and `App` and `Tests` each target's own settings. `Local.xcconfig` holds your machine's settings and isn't in git.
+- **Info.plist**: what the app tells iOS about itself (its name under the icon, permissions it asks for). Most of it is generated from `App.xcconfig` (the `INFOPLIST_KEY_...` lines); `Config/App-Info.plist` adds the rest.
+- **Bundle id**: the app's permanent identity with Apple, `com.getattr.napsack`.
+- **Signing and teams**: iOS runs only apps signed by a developer Apple knows. Your Apple ID is a **team**. A free Apple ID is a "Personal Team"; the paid Developer Program gives a team that can use TestFlight and the App Store.
+- **SwiftUI**: how the screens are written. A screen is a `struct` that's a `View`, describing what to show in `body`. When something marked `@State` changes, SwiftUI redraws what depends on it. The **canvas** (⌥⌘↩, the `#Preview` at the bottom of a file) shows a screen live while you edit it.
+
+## First time on a Mac
+
+1. **Xcode**, from the Mac App Store (this was set up with Xcode 27.1). Open it once so it installs its components, and add the iOS platform if it asks. Then point the command line at it and keep the separate Command Line Tools current (System Settings › General › Software Update):
+   ```sh
+   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+   ```
+2. **Your Apple ID in Xcode:** Xcode › Settings › Accounts, then **+** › Apple ID. Your "Personal Team" appears. Select it, click **Manage Certificates…**, then **+** › **Apple Development**. That certificate is what signs the builds you put on your phone.
+3. **Your team in `Local.xcconfig`:**
+   ```sh
+   cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig
+   # your team id (10 characters), from the certificate step 2 made:
+   security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject
+   ```
+   The id is the `OU=` part. Put it in `DEVELOPMENT_TEAM`. Keep the `.dev` bundle id line while you use a free Apple ID. A bundle id belongs to the first team that registers it, so the free team builds `com.getattr.napsack.dev` and leaves the real one for the Developer Program team. Don't choose a team in Xcode's Signing & Capabilities tab: Xcode writes it into the project file, which is shared. If that happens, put it in `Local.xcconfig` and undo the change to `project.pbxproj`.
+4. **Open** `ios/Napsack.xcodeproj` (double-click it, or `open ios/Napsack.xcodeproj`). Xcode loads the `NapsackCrypto` package on its own.
+5. **Try the Simulator:** choose the Napsack scheme and an iPhone simulator at the top, then ⌘R. The development screen opens. **Check** asks the server (staging, to start) about itself.
+
+### Your iPhone (a 16 Pro, here)
+
+1. Connect it with a USB-C cable and unlock it. Tap **Trust** when it asks about this computer.
+2. Turn on **Developer Mode**: Settings › Privacy & Security › Developer Mode (it appears once Xcode has seen the phone). The phone restarts and asks you to confirm.
+3. In Xcode, choose your iPhone as the destination and press ⌘R. The first time, Xcode prepares the phone, which takes a few minutes.
+4. If the phone says **Untrusted Developer**: Settings › General › VPN & Device Management, choose your Apple ID, then **Trust**.
+5. After that it also works without the cable, on the same Wi-Fi (Window › Devices and Simulators shows it as connected over the network).
+
+A free team's builds stop opening after **7 days**; run it from Xcode again. Push notifications and TestFlight wait for the paid Developer Program ([mobile.md](design/mobile.md)).
+
+## The daily loop
+
+- **Run** ⌘R, **stop** ⌘., **test** ⌘U. Test results show in the Test navigator (⌘6). A test's line in the editor gets a diamond you can click to run just that test.
+- **The canvas** (⌥⌘↩) shows the screen you're editing; fine for layout. Run it on the phone to see it for real.
+- **The encryption's tests**, on the Mac in a couple of seconds, from the repository root:
+  ```sh
+  swift test --package-path ios/NapsackCrypto
+  ```
+- **Everything the way CI will**, on a simulator (no signing needed):
+  ```sh
+  xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack -destination 'platform=iOS Simulator,name=iPhone 17'
+  ```
+  `xcrun simctl list devices available` lists the simulators there are.
+- **Logs:** the app's `print` output and crashes show in Xcode's console (⇧⌘C) while it runs from Xcode.
+
+### Pointing the app at your own server
+
+The app starts on staging (`NAPSACK_SERVER_URL`, `Config/Base.xcconfig`), and the address on its screen can be changed.
+
+- **Simulator:** run the server (`cd server && cargo run`), then use `http://127.0.0.1:8080`. The simulator shares the Mac's network.
+- **iPhone:** the server has to listen beyond the Mac itself, and the phone has to be on the same network. Find the Mac's name with `scutil --get LocalHostName`, then:
+  ```sh
+  cd server && FADE_BIND=0.0.0.0:8080 cargo run
+  ```
+  In the app, use `http://<that name>.local:8080`. iOS asks once to allow napsack on the local network; if you said no, turn it on in Settings › Privacy & Security › Local Network. Plain `http` is allowed only for the local network (`NSAllowsLocalNetworking` in `App-Info.plist`); anything else has to be `https`.
+- To start fresh installs somewhere else, set `NAPSACK_SERVER_URL` in your `Local.xcconfig`. The `$()` in `https:/$()/` keeps an xcconfig from reading `//` as a comment.
+
+## How it works
+
+- **`NapsackApp.swift`** is where the app starts (`@main`). It shows `ServerScreen`.
+- **`Server.swift`** talks to a napsack server. Every request says which app is asking (`X-Napsack-Client: ios/0.1.0+1`), so a server can turn away an app older than it supports. `ServerConfig` is `GET /api/config` ([api.md](spec/api.md)). `ClientVersion` compares versions the way the server does (`server/src/version.rs`).
+- **`ServerScreen.swift`** is the development screen. It checks a server, shows its version and formats, and warns when the server needs a newer app. It also times the 600,000-round key derivation a sign-in runs, which has to stay near a second on a phone. That's one of the first milestone's checks.
+- **`NapsackCrypto`** is the encryption. It implements the formats in `shared/crypto/crypto.js` (the reference) with Apple's CryptoKit and CommonCrypto, byte for byte ([how-napsack-works.md](how-napsack-works.md)). Its tests read the pinned vectors in `tests/vectors/` straight from the repository and make the same checks `shared/crypto/vector-checks.js` makes, under the same names. Format 1 is done.
+
+### Porting the next format
+
+The first milestone ([mobile.md](design/mobile.md)) is every format passing its vectors. For each one:
+1. Read its section of `crypto.js` and its checks in `vector-checks.js`.
+2. Add the functions to `NapsackCrypto` (a new file per area is fine), following `E2E.swift`.
+3. Add a test file like `Format1Tests.swift`: a `Decodable` struct for the vector file (in `Vectors.swift`), and one `@Test` per check in `vector-checks.js`, named the same.
+4. `swift test --package-path ios/NapsackCrypto` until it's green.
+
+A test that disagrees with a vector means the Swift is wrong. The vectors are never changed (CLAUDE.md, Code standards).
+
+The crypto tests find the vectors through the repository's folders, so they run on the Mac and in the Simulator, not on the phone. The app's own tests (NapsackTests) run anywhere, the phone included.
+
+## Working on it
+
+- **A branch and a pull request**, like everything else (`<name>/ios-...`; [onboarding.md](onboarding.md), Working together), with the plan row kept current.
+- **Check it on your Mac:** `swift test` for the package, then ⌘U, or the `xcodebuild test` line above, and run it on the phone for anything you can see.
+- **Server CI doesn't run** for a pull request that only changes `ios/` and the docs (`ci.yml` skips them), and there's nothing to merge into staging or tag. When the app needs something new from the server, that's a server change with its own pull request and release, and it ships first ([releasing.md](operations/releasing.md), rule 1).
+- **The app's CI** (`.github/workflows/ios.yml`) runs the same two steps on GitHub's Macs. It's off (`if: false`) while the app takes shape. Keep its commands matching the ones above, so turning it on is just deleting that line.
+- **Versions:** the app's version is `MARKETING_VERSION` and its build number `CURRENT_PROJECT_VERSION` (`Config/Base.xcconfig`). Releasing it (TestFlight, the App Store, `ios-v*` tags) comes later, with the paid Developer Program ([mobile.md](design/mobile.md)).
+
+## When it doesn't work
+
+- **"Signing for Napsack requires a development team":** `Config/Local.xcconfig` is missing or has no `DEVELOPMENT_TEAM` (First time, step 3).
+- **"No such module 'NapsackCrypto'":** File › Packages › Reset Package Caches, then build again.
+- **The phone isn't offered as a destination:** unlock it, check the cable, accept **Trust**, and check Developer Mode is on.
+- **"Could not launch Napsack":** the phone was locked; unlock it and run again. Or a free build is over 7 days old; run it again.
+- **The app can't reach your Mac's server:** the server is on `FADE_BIND=0.0.0.0:8080`, both are on the same Wi-Fi, and Local Network is allowed for napsack (Settings › Privacy & Security). In Safari on the phone, `http://<name>.local:8080/api/config` should show the server's settings.
+- **Xcode changed `project.pbxproj` and you didn't mean it to:** usually a team picked in Signing & Capabilities. Move the team to `Local.xcconfig` and `git checkout ios/Napsack.xcodeproj/project.pbxproj`.
