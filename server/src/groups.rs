@@ -90,11 +90,25 @@ pub struct GroupMessage {
     /// Format 3: the sender's public key, to unwrap with. Clients check it
     /// against the key they pinned for that person.
     pub sender_public_key: Option<String>,
+    /// The newest edit of an encrypted text (edits.rs): sealed with its own
+    /// message id, for the same members. `content` stays the original.
+    #[serde(skip)]
+    pub edit_id: Option<i64>,
+    pub edit_content: Option<String>,
+    pub edit_client_id: Option<String>,
+    pub edited_at: Option<i64>,
+    /// The viewer's own wrap of that edit's key.
+    #[sqlx(skip)]
+    pub edit_key: Option<String>,
 }
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
         gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to,
-        gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5) THEN u.public_key END AS sender_public_key
+        gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5) THEN u.public_key END AS sender_public_key,
+        (SELECT e.id FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_id,
+        (SELECT e.content FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_content,
+        (SELECT e.client_id FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_client_id,
+        (SELECT e.created_at FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edited_at
      FROM group_messages gm JOIN users u ON u.id = gm.sender_id";
 
 #[derive(Debug, Serialize, FromRow)]
@@ -332,6 +346,15 @@ pub async fn prepare_for(
         .bind(viewer)
         .fetch_optional(db)
         .await?;
+        if let Some(edit) = m.edit_id {
+            m.edit_key = sqlx::query_scalar(
+                "SELECT wrapped FROM group_edit_keys WHERE edit_id = ? AND user_id = ?",
+            )
+            .bind(edit)
+            .bind(viewer)
+            .fetch_optional(db)
+            .await?;
+        }
     }
     Ok(())
 }

@@ -37,6 +37,8 @@ const state = {
   invite: null,                // { token, inviter, problem } from an /i/<token> link
   pairKeys: new Map(),         // friend id -> AES key shared with them
   plaintext: new Map(),        // message id -> decrypted text, or null if it couldn't be
+  editText: new Map(),         // "<message id>:<edit ciphertext>" -> the newest edit's text, or null (X29)
+  editing: null,               // the text being edited in the composer: { group, id, m }
   config: null,
   chats: [],
   requests: { incoming: [], outgoing: [] },
@@ -425,8 +427,26 @@ async function decrypt(m) {
   }
   const body = state.plaintext.get(m.id);
   m.text = body?.text ?? null;
+  m.originalText = m.text;
   m.replyTo = body?.replyTo ?? null;
   m.beforeReset = m.text == null && beforeMyReset(m);
+  // Edited (X29): the newest version shows; the first stays in `originalText`.
+  if (m.edit_ciphertext && m.text != null) {
+    const key = `${m.id}:${m.edit_ciphertext}`; // unique per edit (two can share a second)
+    if (!state.editText.has(key)) {
+      let text = null;
+      try {
+        text = await withReadKey(friendOf(m), (k) => e2e.decryptEdit(k, m.edit_ciphertext, m.sender_id, m.recipient_id, m.id));
+      } catch (err) {
+        report("warn", "edit decrypt failed", { message_id: m.id, ...errorFields(err) });
+      }
+      state.editText.set(key, text);
+    }
+    if (state.editText.get(key) != null) {
+      m.text = state.editText.get(key);
+      m.edited = true;
+    }
+  }
   return m;
 }
 
@@ -824,6 +844,9 @@ function signOutLocally() {
   state.readUpTo.clear();
   state.pairKeys.clear();
   state.plaintext.clear();
+  state.editText.clear();
+  state.editing = null;
+  groupEdits.clear();
   state.activeId = null;
   state.messages.clear();
   state.history.clear();
@@ -1833,6 +1856,7 @@ async function upsertMessage(m) {
 $("#composer").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("#composer-input");
+  if (state.editing) return sendEdit(input);
   const text = input.value.trim();
   if (text && state.activeGroupId) return sendGroupText(state.activeGroupId, input, text);
   const friendId = state.activeId;
@@ -2017,6 +2041,9 @@ function bubble(m, mine, content) {
   const target = replyTarget(m);
   if (target != null) parts.push(quoteFor(m, target));
   parts.push(...content);
+  if (m.edited) {
+    parts.push(el("button", { type: "button", class: "edited-mark", "aria-label": "Edited. See every version", onclick: () => showEdits(m) }, "Edited"));
+  }
   const open = state.actionFor === key;
   const items = [el("li", {
     class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""}`,
@@ -2048,9 +2075,147 @@ function bubble(m, mine, content) {
         type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
         onclick: () => react(m, emoji),
       }, emoji)),
-      el("button", { type: "button", class: "reply-button", onclick: () => startReply(m) }, "Reply")));
+      el("button", { type: "button", class: "reply-button", onclick: () => startReply(m) }, "Reply"),
+      textOf(m) != null ? el("button", { type: "button", class: "text-action", onclick: () => copyText(m) }, "Copy") : null,
+      canEdit(m) ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(m) }, "Edit") : null));
   }
   return items;
+}
+
+// ---------- editing texts (X29) ----------
+// Your own texts, for 15 minutes after sending. Every version is kept: an
+// edit is a new encrypted row (edits.rs), and "Edited" shows them all.
+const EDIT_WINDOW_S = 15 * 60;
+
+/** The words a text shows now (its newest edit), or null for anything else. */
+function textOf(m) {
+  if (m.group_id) return m.kind === "text" && !m.pic && !m.undecryptable ? m.body : null;
+  return m.kind === "text" ? m.text : null;
+}
+
+function canEdit(m) {
+  if (m.sender_id !== state.me.id || textOf(m) == null) return false;
+  if (m.group_id && m.format !== e2e.GROUP_FORMAT) return false; // only encrypted group texts
+  return Date.now() / 1000 - m.created_at < EDIT_WINDOW_S;
+}
+
+async function copyText(m) {
+  state.actionFor = null;
+  renderMessages();
+  try {
+    await navigator.clipboard.writeText(textOf(m));
+    showToast("Copied.");
+  } catch {
+    showToast("Couldn't copy here. Select the text instead.");
+  }
+}
+
+function startEdit(m) {
+  state.actionFor = null;
+  setReply(null);
+  setEditing({ group: Boolean(m.group_id), id: m.id, m });
+  const input = $("#composer-input");
+  input.value = textOf(m);
+  fitComposer();
+  renderMessages();
+  input.focus();
+}
+
+function setEditing(editing) {
+  state.editing = editing;
+  $("#reply-bar").hidden = !editing && !state.replyTo;
+  $("#reply-bar").classList.toggle("editing", Boolean(editing));
+  if (editing) $("#reply-text").textContent = "Editing your message";
+  else if (!state.replyTo) $("#reply-text").textContent = "";
+}
+
+/** Sends the composer's text as a new version of the one being edited. */
+async function sendEdit(input) {
+  const { m } = state.editing;
+  const text = input.value.trim();
+  if (!text) return;
+  setEditing(null);
+  input.value = "";
+  fitComposer();
+  if (text === textOf(m)) return renderMessages(); // nothing changed
+  try {
+    if (m.group_id) {
+      const sealed = await sealEditFor(m, text);
+      const updated = await withRetries(() => getJSON(`/groups/${m.group_id}/messages/${m.id}/edit`, {
+        method: "PUT",
+        json: { format: e2e.GROUP_FORMAT, content: e2e.toB64(sealed.content), client_id: sealed.clientId, recipients: sealed.recipients, wraps: sealed.wraps },
+      }));
+      upsertGroupMessage(updated);
+    } else {
+      const fid = friendOf(m);
+      const ciphertext = await e2e.encryptEdit(await keyFor(fid), text, state.me.id, fid, m.id);
+      const clientId = newClientId(); // the same on every try, so a retry isn't a second edit
+      const updated = await withRetries(() => getJSON(`/chats/${fid}/messages/${m.id}/edit`, {
+        method: "PUT", json: { ciphertext, format: 2, client_id: clientId },
+      }));
+      await upsertMessage(updated);
+    }
+    report("info", "text edited", { group: Boolean(m.group_id) });
+  } catch (err) {
+    report("warn", "editing failed", errorFields(err));
+    input.value = text; // nothing lost: it's back in the box to try again
+    fitComposer();
+    showToast(retryable(err) ? "Couldn't save the edit: the connection dropped. Try again." : err.message);
+  }
+  renderMessages();
+}
+
+/** Seals a group edit for exactly the members the text went to. */
+async function sealEditFor(m, text) {
+  const members = await groupMembers(m.group_id);
+  const wrapKeys = new Map();
+  for (const id of m.recipients || []) {
+    const member = members.find((x) => x.id === id);
+    const pub = member ? await sendingKey(member) : id === state.me.id ? state.identity.publicKey : state.pins[id];
+    if (!pub) throw new Error("This text can't be edited: napsack doesn't have the key of everyone it went to.");
+    wrapKeys.set(id, await groupWrapKeyFor(id, pub));
+  }
+  return e2e.encryptGroupEdit(text, m.id, { groupId: m.group_id, senderId: state.me.id, wrapKeys });
+}
+
+/** Every version of an edited text, oldest first, each with when it was written. */
+async function showEdits(m) {
+  const list = $("#edits-list");
+  const row = (text, at, label) => el("li", {},
+    el("span", { class: "edit-when", text: `${label} · ${clockTime(at)}` }),
+    el("span", { class: "edit-text", text: text ?? "Couldn't decrypt this version." }));
+  list.replaceChildren(row(m.originalText, m.created_at, "Sent"), el("li", { class: "muted", text: "Loading…" }));
+  $("#edits-dialog").showModal();
+  try {
+    const versions = [];
+    if (m.group_id) {
+      const edits = await getJSON(`/groups/${m.group_id}/messages/${m.id}/edits`);
+      for (const e of edits) {
+        let text = null;
+        for (const pub of e.key ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
+          try {
+            text = await e2e.decryptGroupEdit(e2e.fromB64(e.content), e.key, m.id, {
+              groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: e.client_id, recipients: m.recipients || [],
+              wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
+            break;
+          } catch {}
+        }
+        versions.push({ text, at: e.created_at });
+      }
+    } else {
+      const fid = friendOf(m);
+      for (const e of await getJSON(`/chats/${fid}/messages/${m.id}/edits`)) {
+        let text = null;
+        try {
+          text = await withReadKey(fid, (k) => e2e.decryptEdit(k, e.ciphertext, m.sender_id, m.recipient_id, m.id));
+        } catch {}
+        versions.push({ text, at: e.created_at });
+      }
+    }
+    list.replaceChildren(row(m.originalText, m.created_at, "Sent"), ...versions.map((v) => row(v.text, v.at, "Edited")));
+  } catch (err) {
+    list.replaceChildren(row(m.originalText, m.created_at, "Sent"), el("li", { class: "form-note", text: `Couldn't load the edits. ${err.message}` }));
+  }
 }
 
 function quoteFor(m, targetId) {
@@ -2096,10 +2261,18 @@ function startReply(m) {
 
 function setReply(reply) {
   state.replyTo = reply;
-  $("#reply-bar").hidden = !reply;
+  if (reply && state.editing) setEditing(null);
+  $("#reply-bar").hidden = !reply && !state.editing;
   $("#reply-text").textContent = reply ? `Replying to ${reply.who === "You" ? "yourself" : reply.who}: ${reply.snippet}` : "";
 }
-$("#reply-cancel").addEventListener("click", () => setReply(null));
+$("#reply-cancel").addEventListener("click", () => {
+  if (state.editing) {
+    setEditing(null);
+    $("#composer-input").value = "";
+    fitComposer();
+  }
+  setReply(null);
+});
 
 // ---------- typing and active now ----------
 
@@ -2567,6 +2740,7 @@ const groupById = (id) => state.groups.find((g) => g.id === id);
 
 const groupWrapKeys = new Map();   // "<user id>:<public key>" -> wrap key with them
 const groupPlain = new Map();      // message id -> { text, replyTo }, or null if it couldn't be opened
+const groupEdits = new Map();      // "<message id>:<edit id>" -> the newest edit's text, or null (X29)
 const groupMemberKeys = new Map(); // group id -> [{ id, username, public_key }] from the server
 
 class KeyChangedError extends Error {}
@@ -2628,8 +2802,29 @@ async function openGroupMessage(m) {
   }
   const body = groupPlain.get(m.id);
   m.body = body?.text ?? "";
+  m.originalText = m.body;
   m.reply_to = body?.replyTo ?? null;
   m.undecryptable = !body;
+  // Edited (X29): the newest version, sealed for the same members with its own id.
+  if (body && m.edit_content && m.edit_key) {
+    const key = `${m.id}:${m.edit_client_id}`;
+    if (!groupEdits.has(key)) {
+      let text = null;
+      const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.edit_client_id, recipients: m.recipients || [] };
+      for (const pub of await readingKeys(m.sender_id, m.sender_public_key)) {
+        try {
+          text = await e2e.decryptGroupEdit(e2e.fromB64(m.edit_content), m.edit_key, m.id, { ...opts, wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
+          break;
+        } catch {}
+      }
+      if (text == null) report("warn", "group edit decrypt failed", { message_id: m.id, group_id: m.group_id });
+      groupEdits.set(key, text);
+    }
+    if (groupEdits.get(key) != null) {
+      m.body = groupEdits.get(key);
+      m.edited = true;
+    }
+  }
   return m;
 }
 
@@ -2808,12 +3003,15 @@ function upsertGroupMessage(m) {
   // message shows what it says: from what's already been opened, or by
   // opening it now and drawing again.
   if (m.format === e2e.GROUP_FORMAT && m.kind === "text" && !m.pic) {
+    // Already opened, and not edited since: what it says is known. An edit
+    // (X29) has to be opened too.
     if (groupPlain.has(m.id)) {
       const body = groupPlain.get(m.id);
-      m.body = body?.text ?? "";
+      m.body = m.originalText = body?.text ?? "";
       m.reply_to = body?.replyTo ?? null;
       m.undecryptable = !body;
-    } else {
+    }
+    if (!groupPlain.has(m.id) || m.edit_content) {
       openGroupMessage(m).then(() => { if (state.activeGroupId === m.group_id) renderMessages(); });
     }
   }

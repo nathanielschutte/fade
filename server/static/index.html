@@ -557,6 +557,18 @@
   </div>
 </dialog>
 
+<!-- Every version of an edited text (X29) -->
+<dialog id="edits-dialog" class="sheet" aria-labelledby="edits-title">
+  <header class="sheet-head">
+    <h2 id="edits-title">Edits</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <p class="sheet-text small">Every version of this text, oldest first.</p>
+  <ol class="edits-list" id="edits-list"></ol>
+</dialog>
+
 <!-- Who a pic goes to (X26): friends and groups, one or more -->
 <dialog id="send-to-dialog" class="sheet send-to" aria-labelledby="send-to-title">
   <header class="sheet-head">

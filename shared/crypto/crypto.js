@@ -403,6 +403,34 @@ export async function decryptGroupPic(content, wrapB64, opts) {
   return unpackPic(await decryptGroup(content, wrapB64, { ...opts, kind: "pic" }));
 }
 
+// ---------- edits to texts (plan X29) ----------
+// A new version of a text is the format 2 text envelope ({"t": "..."}),
+// sealed like the text: with the pair key in a direct chat, or the format 3
+// scheme in a group (content kind "edit/<message id>", wrapped for the
+// members the text went to). The associated data names the message it edits,
+// so the server can't move an edit onto another message. The text it edits
+// is never changed; every version is kept.
+
+const editAad = (senderId, recipientId, messageId) => `napsack/v2/edit/${senderId}/${recipientId}/${messageId}`;
+const editKind = (messageId) => `edit/${Number(messageId)}`;
+
+export async function encryptEdit(key, text, senderId, recipientId, messageId) {
+  return toB64(await seal(key, enc.encode(packText(text)), editAad(senderId, recipientId, messageId)));
+}
+
+export async function decryptEdit(key, b64, senderId, recipientId, messageId) {
+  return unpackText(dec.decode(await open(key, fromB64(b64), editAad(senderId, recipientId, messageId)))).text;
+}
+
+/** `opts` as for encryptGroup; its wrap keys are for the members the text went to. */
+export async function encryptGroupEdit(text, messageId, opts) {
+  return encryptGroup(enc.encode(packText(text)), { ...opts, kind: editKind(messageId) });
+}
+
+export async function decryptGroupEdit(content, wrapB64, messageId, opts) {
+  return unpackText(dec.decode(await decryptGroup(content, wrapB64, { ...opts, kind: editKind(messageId) }))).text;
+}
+
 // ---------- formats 4 and 5: videos ----------
 // A video travels in a media envelope:
 //   header length (2 bytes, big-endian) || header (UTF-8 JSON) || the video

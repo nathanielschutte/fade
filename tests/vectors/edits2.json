@@ -1,0 +1,27 @@
+{
+  "about": "napsack edits to texts (plan X29). Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "direct": {
+    "from": 7,
+    "to": 3,
+    "message_id": 42,
+    "text": "see you at 7, not 6 🙂",
+    "plaintext": "{\"t\":\"see you at 7, not 6 🙂\"}",
+    "ciphertext": "tThdsasYGCvINBbf8fYZ556LHi01ulVqxdgpGhDJUCWeDzpYMd+2POK+OUAbm3Ct6FeSeWRQ+TFgCynh"
+  },
+  "group": {
+    "group_id": 5,
+    "sender": 7,
+    "message_id": 77,
+    "text": "the dock, not the lake",
+    "client_id": "hVepTdcu8RbqzT0fvVJjjw==",
+    "recipients": [
+      3,
+      7
+    ],
+    "content": "euz63z1ooL0zDn/m/hf5PMBanVq05pu2a+kKCM9duDAQft4SHrjZmaC28o+3wFeoLyAmAORaWSGtgA==",
+    "wraps": {
+      "3": "BmQCLRbF5BdhrX4jUGhZ0OggBF3xnaBxOADJO+b+FvvUIhnyiD+wCbj5mSysvXgQcD3I9KYKcy1Kd/oY",
+      "7": "mQxu6Hh7KjUc4beHqiy95rDebc9bcfijsa8H+cJQtcECp38mCYl/ktUW+9bkZyGdK6KUKvn5hfDtC2Da"
+    }
+  }
+}

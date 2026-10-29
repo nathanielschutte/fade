@@ -7,6 +7,7 @@ mod aws;
 mod birthdays;
 mod chats;
 mod db;
+mod edits;
 mod error;
 mod friends;
 mod graph;
@@ -394,6 +395,22 @@ fn router(state: SharedState) -> Router {
         .route(
             "/chats/{friend_id}/messages/{message_id}/reaction",
             axum::routing::put(reactions::react),
+        )
+        .route(
+            "/chats/{friend_id}/messages/{message_id}/edit",
+            axum::routing::put(edits::edit_text),
+        )
+        .route(
+            "/chats/{friend_id}/messages/{message_id}/edits",
+            get(edits::text_history),
+        )
+        .route(
+            "/groups/{group_id}/messages/{message_id}/edit",
+            axum::routing::put(edits::edit_group_text),
+        )
+        .route(
+            "/groups/{group_id}/messages/{message_id}/edits",
+            get(edits::group_text_history),
         )
         .route(
             "/groups/{group_id}/messages/{message_id}/reaction",

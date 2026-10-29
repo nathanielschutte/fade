@@ -214,6 +214,10 @@ A reaction is one of six emoji, encrypted with the chat key and the associated s
 
 In group chats, a reply's link is sealed inside the encrypted text, as in direct chats. Reactions are the exception: in a group the server can see which emoji someone used (sealing them like messages is planned).
 
+### Editing a text
+
+For 15 minutes after sending, you can change a text. The new version is the same format 2 envelope, `{"t": "the new text"}`, encrypted with the same key as the text, but with associated data that names the message it changes: `napsack/v2/edit/<sender>/<recipient>/<message id>` in a direct chat, and in a group the format 3 scheme with the content kind `edit/<message id>`, sealed for exactly the members the text went to. So the server can't move an edit onto another message or pass it off as a new text. The original is never changed: every version is a row of its own, the newest shows with "Edited", and tapping that shows them all. The server sees that a text was edited and when, not what it says. Pinned vectors: `tests/vectors/edits2.json`.
+
 ## Notifications
 
 napsack can be installed as an app (on iPhone: Share, then Add to Home Screen) and send notifications with the standard Web Push protocol. The browser hands napsack an address at its push service (Apple, Google, Mozilla or Microsoft) and a public key. For each notification, the server encrypts a small message to that key (RFC 8291) and signs the request (VAPID, RFC 8292), so the push service only relays ciphertext.

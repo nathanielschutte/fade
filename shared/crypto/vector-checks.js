@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any, edits2?: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm, edits2: ve } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -221,6 +221,24 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
       const sealed = await e2e.encryptVideo(ctx.kb, new Uint8Array([9, 8, 7]), "video/mp4", "hi", v.alice.id, v.bob.id);
       const got = await e2e.decryptVideo(ctx.kb, sealed, v.alice.id, v.bob.id);
       return got.caption === "hi" && got.media.join() === "9,8,7" && e2e.VIDEO_FORMAT === 4 && e2e.GROUP_VIDEO_FORMAT === 5;
+    });
+  }
+
+  // Edits to texts: bound to the message they edit
+  if (ve) {
+    const d = ve.direct, g = ve.group;
+    await check("a direct edit decrypts like the vector", async () =>
+      (await e2e.decryptEdit(ctx.kb, d.ciphertext, d.from, d.to, d.message_id)) === d.text
+        && e2e.packText(d.text) === d.plaintext);
+    await check("an edit can't be moved to another message", () =>
+      fails(() => e2e.decryptEdit(ctx.kb, d.ciphertext, d.from, d.to, d.message_id + 1)));
+    await check("an edit can't be read as a text", () =>
+      fails(() => e2e.decryptAnyText(ctx.kb, d.ciphertext, 2, d.from, d.to)));
+    await check("a group edit decrypts like the vector", async () => {
+      const wrapKey = await e2e.groupWrapKey(await priv(v.bob), v.alice.spki, v.bob.id, v.alice.id);
+      const opts = { groupId: g.group_id, senderId: g.sender, myId: v.bob.id, clientId: g.client_id, recipients: g.recipients, wrapKey };
+      return (await e2e.decryptGroupEdit(e2e.fromB64(g.content), g.wraps[v.bob.id], g.message_id, opts)) === g.text
+        && (await fails(() => e2e.decryptGroupEdit(e2e.fromB64(g.content), g.wraps[v.bob.id], g.message_id + 1, opts)));
     });
   }
 

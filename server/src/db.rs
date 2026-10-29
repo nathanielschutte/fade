@@ -71,13 +71,21 @@ pub struct Message {
     pub read_at: Option<i64>,
     /// The id the sending app picked, so a retried send isn't stored twice.
     pub client_id: Option<String>,
+    /// The newest edit of a text, if it's been edited (edits.rs): sealed like
+    /// a text, bound to this message. `ciphertext` stays the original.
+    pub edit_ciphertext: Option<String>,
+    pub edit_format: Option<i64>,
+    pub edited_at: Option<i64>,
     /// Current reactions, encrypted (reactions.rs). Filled in where it matters.
     #[sqlx(skip)]
     pub reactions: Vec<crate::reactions::Reaction>,
 }
 
 pub const MESSAGE_COLS: &str =
-    "id, sender_id, recipient_id, kind, ciphertext, format, snap_state, created_at, read_at, client_id";
+    "id, sender_id, recipient_id, kind, ciphertext, format, snap_state, created_at, read_at, client_id,
+     (SELECT e.ciphertext FROM message_edits e WHERE e.message_id = messages.id ORDER BY e.id DESC LIMIT 1) AS edit_ciphertext,
+     (SELECT e.format FROM message_edits e WHERE e.message_id = messages.id ORDER BY e.id DESC LIMIT 1) AS edit_format,
+     (SELECT e.created_at FROM message_edits e WHERE e.message_id = messages.id ORDER BY e.id DESC LIMIT 1) AS edited_at";
 
 /// A client-chosen message id: short, and only base64/base64url characters.
 pub fn valid_client_id(s: &str) -> bool {

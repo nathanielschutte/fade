@@ -90,7 +90,9 @@ async def main():
         today = stats["messages"]["daily"][-1]
         assert today["texts"] >= 2 and today["signups"] >= 1, today
         names = [u["username"] for u in stats["users"]["list"]]
-        assert ADMIN in [x.lower() for x in names] and OTHER in names
+        # The list is the newest 500 accounts: a long-lived admin (staging's)
+        # may be older than that, but the account made just now is there.
+        assert OTHER in names and (ADMIN in [x.lower() for x in names] or stats["users"]["total"] > 500), names[:5]
         print("stats:", {k: stats["users"][k] for k in ("total", "active_24h", "online", "sockets")},
               "texts", stats["messages"]["texts"], "today", today)
         await expect(admin.locator("#t-users")).to_have_text(str(stats["users"]["total"]))

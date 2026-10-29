@@ -1180,6 +1180,65 @@ def check_guard(tag):
     print(f"  guard: robots, scanners refused, {'probers banned (local only)' if REMOTE else 'probers banned'}, 4 sessions per person")
 
 
+def check_edits(tag):
+    """Editing texts (edits.rs, plan X29): only the sender, only texts, for 15
+    minutes, at most 20 times; a resend isn't a second edit; every version is
+    kept; a group edit is sealed for the members the text went to, and each
+    gets only their own key."""
+    regs = [ok(register(f"ed{x}_{tag}")).json() for x in "abc"]
+    (a, a_tok), (b, b_tok), (c, c_tok) = [(r["user"], r["token"]) for r in regs]
+    befriend(a_tok, b, b_tok, a["id"])
+    ct = lambda: b64(os.urandom(48))
+    text = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct(), "format": 2})).json()
+    url = f"/chats/{b['id']}/messages/{text['id']}/edit"
+    first = {"ciphertext": ct(), "format": 2, "client_id": b64(os.urandom(12))}
+    m = ok(call("PUT", url, a_tok, json=first)).json()
+    assert m["edit_ciphertext"] == first["ciphertext"] and m["ciphertext"] == text["ciphertext"] and m["edited_at"], m
+    assert ok(call("PUT", url, a_tok, json=first)).json()["edited_at"] == m["edited_at"]          # a resend
+    ok(call("PUT", f"/chats/{a['id']}/messages/{text['id']}/edit", b_tok, json={"ciphertext": ct(), "format": 2}), 404)  # not theirs
+    ok(call("PUT", url, a_tok, json={"ciphertext": ct(), "format": 1}), 400)
+    ok(call("PUT", url, a_tok, json={"ciphertext": "not base64!", "format": 2}), 400)
+    history = ok(call("GET", f"/chats/{a['id']}/messages/{text['id']}/edits", b_tok)).json()
+    assert [e["ciphertext"] for e in history] == [first["ciphertext"]], history
+    ok(call("GET", f"/chats/{b['id']}/messages/{text['id']}/edits", c_tok), 404)                  # not in the chat
+    assert ok(call("GET", f"/chats/{a['id']}/messages", b_tok)).json()[-1]["edit_ciphertext"] == first["ciphertext"]
+    for _ in range(19):
+        ok(call("PUT", url, a_tok, json={"ciphertext": ct(), "format": 2}))
+    ok(call("PUT", url, a_tok, json={"ciphertext": ct(), "format": 2}), 400)                      # 20 is the most
+    pic = ok(call("POST", f"/chats/{b['id']}/snaps?format=2", a_tok, data=os.urandom(500))).json()
+    ok(call("PUT", f"/chats/{b['id']}/messages/{pic['id']}/edit", a_tok, json={"ciphertext": ct(), "format": 2}), 400)
+    if DB:
+        late = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": ct(), "format": 2})).json()
+        db = sqlite3.connect(DB)
+        db.execute("UPDATE messages SET created_at = created_at - 16 * 60 WHERE id = ?", (late["id"],))
+        db.commit()
+        ok(call("PUT", f"/chats/{b['id']}/messages/{late['id']}/edit", a_tok, json={"ciphertext": ct(), "format": 2}), 400)
+        assert db.execute("SELECT COUNT(*) FROM message_edits WHERE message_id = ?", (text["id"],)).fetchone()[0] == 20
+
+    # Groups: sealed for the members the text went to.
+    g = ok(call("POST", "/groups", a_tok, json={"name": f"edits {tag}", "member_ids": [b["id"]]})).json()
+    members = sorted([a["id"], b["id"]])
+
+    def sealed(**over):
+        body = {"format": 3, "content": b64(os.urandom(80)), "client_id": b64(os.urandom(16)),
+                "recipients": members, "wraps": {str(i): b64(os.urandom(60)) for i in members}}
+        body.update(over)
+        return body
+    gm = ok(call("POST", f"/groups/{g['id']}/messages", a_tok, json=sealed())).json()
+    edit = sealed()
+    gurl = f"/groups/{g['id']}/messages/{gm['id']}/edit"
+    ok(call("PUT", gurl, b_tok, json=sealed()), 404)                                                # not theirs
+    ok(call("PUT", gurl, a_tok, json=sealed(recipients=[a["id"]], wraps={str(a["id"]): b64(os.urandom(60))})), 409)
+    mine = ok(call("PUT", gurl, a_tok, json=edit)).json()
+    assert mine["edit_content"] == edit["content"] and mine["edit_key"] == edit["wraps"][str(a["id"])], mine
+    theirs = [x for x in ok(call("GET", f"/groups/{g['id']}/messages", b_tok)).json() if x["id"] == gm["id"]][0]
+    assert theirs["edit_key"] == edit["wraps"][str(b["id"])] and edit["wraps"][str(a["id"])] not in json.dumps(theirs)
+    versions = ok(call("GET", f"/groups/{g['id']}/messages/{gm['id']}/edits", b_tok)).json()
+    assert [(v["content"], v["key"]) for v in versions] == [(edit["content"], edit["wraps"][str(b["id"])])], versions
+    ok(call("GET", f"/groups/{g['id']}/messages/{gm['id']}/edits", c_tok), 404)                     # not a member
+    print("  edits: the sender's texts, 15 minutes, 20 at most, every version kept, own keys only")
+
+
 def check_videos(tag):
     """Videos (format 4, plan X28): opaque bytes like a pic, view-once, with
     their own larger cap; a pic's cap stays the same."""
@@ -1491,6 +1550,7 @@ async def main():
         await check_live(tag)
     check_invites(tag)
     check_videos(tag)
+    check_edits(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
     check_graph(tag)

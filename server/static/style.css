@@ -820,7 +820,7 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   color: var(--paper); font: inherit; font-size: 1.05rem; cursor: pointer;
 }
 .msg-actions button.is-mine { border-color: var(--sage); }
-.msg-actions .reply-button { font-size: var(--step--1); padding: 0 0.75rem; }
+.msg-actions .reply-button, .msg-actions .text-action { font-size: var(--step--1); padding: 0 0.75rem; }
 .reply-bar {
   flex: none; display: flex; align-items: center; gap: 0.5rem;
   margin: 0 var(--pad); padding: 0.35rem 0.25rem 0.35rem 0.75rem;
@@ -1513,3 +1513,15 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .viewer video { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; }
 .viewer video[hidden], .viewer img[hidden] { display: none; }
 .camera-stage video[hidden] { display: none; }
+
+/* ---------- editing texts (X29) ---------- */
+.edited-mark {
+  display: block; margin-top: 0.15rem; padding: 0; border: 0; background: none;
+  color: inherit; opacity: 0.7; font: inherit; font-size: 0.7rem; cursor: pointer;
+}
+.edited-mark:hover { text-decoration: underline; }
+.reply-bar.editing { border-left-color: var(--sage); }
+.edits-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.edits-list li { display: grid; gap: 0.15rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--rule); }
+.edit-when { color: var(--fixer); font-size: var(--step--1); }
+.edit-text { white-space: pre-wrap; overflow-wrap: anywhere; }
