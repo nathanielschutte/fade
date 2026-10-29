@@ -22,18 +22,18 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.34.0 |
-| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.35.0 |
-| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
-| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.37.0 |
-| 0p | [Change your username](#x30-change-your-username) | Features | Claude for Nate | Done | Nate (2026-10-28); 0.38.0 |
-| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.39.0 |
-| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Claude for Nate | Done | Nate (2026-10-28); 0.40.0 |
-| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
-| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Claude for Nate | Done | Nate (2026-10-29); 0.41.0 |
-| 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Claude for Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
-| 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Claude for Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
-| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Claude for Nate | Done | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac. 0.42.0 |
+| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Nate | Done | Nate (2026-10-28); 0.34.0 |
+| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Nate | Done | Nate (2026-10-28); 0.35.0 |
+| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Nate | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
+| 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Nate | Done | Nate (2026-10-28); 0.37.0 |
+| 0p | [Change your username](#x30-change-your-username) | Features | Nate | Done | Nate (2026-10-28); 0.38.0 |
+| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Nate | Done | Nate (2026-10-28); 0.39.0 |
+| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Nate | Done | Nate (2026-10-28); 0.40.0 |
+| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Nate | Done | Nate (2026-10-29); 0.41.0 |
+| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Nate | Done | Nate (2026-10-29); 0.41.0 |
+| 0s | [Work through pull requests; contributor docs](#p5-pull-requests-and-repository-protection) | Process | Nate | Done | Nate (2026-10-29); this is the first change made through a pull request |
+| 0v | [Development on a Mac](#p6-development-on-a-mac): tests, Terraform state in S3, the Mac's SSH key | Process | Nate | In progress | Nate (2026-10-29): moved off the Windows machine |
+| 0w | [Group formats in `/api/config`](#f1-ios-app) | Features | Nate | Done | Nate (2026-10-29): the iOS app needs them; also tests the pipeline from the Mac. 0.42.0 |
 | 0x | [Faster tests, same coverage](#p4-faster-test-runs-same-coverage) | Process | Nate | In progress | Nate (2026-10-29): development speed and CI minutes |
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
