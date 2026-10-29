@@ -182,21 +182,47 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
   </header>
-  <form id="add-friend-form" class="add-friend">
-    <label class="field">
-      <span>Add by username</span>
-      <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" required>
-    </label>
-    <button type="submit" class="button primary">Send request</button>
-    <p class="form-note" id="add-friend-note" role="status"></p>
-  </form>
+  <section id="incoming-section" hidden>
+    <h3>Wants to be friends</h3>
+    <ul class="people" id="incoming-list"></ul>
+  </section>
+  <section class="add-ways" aria-labelledby="add-ways-title">
+    <h3 id="add-ways-title">Add a friend</h3>
+    <p class="sheet-text small">Show them your code, send them your link, or type their username.</p>
+    <div class="my-code">
+      <div class="invite-qr" id="my-qr"></div>
+      <div class="my-code-side">
+        <p class="sheet-text small">They scan it with their phone's camera, or open your link. Someone new to napsack signs up with it and you're friends.</p>
+        <p class="invite-link" id="my-link"></p>
+        <div class="picture-row">
+          <button type="button" class="button" id="my-link-copy">Copy link</button>
+          <button type="button" class="button" id="my-link-share" hidden>Share</button>
+        </div>
+      </div>
+    </div>
+    <form id="add-friend-form" class="add-friend">
+      <label class="field">
+        <span>Add by username</span>
+        <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <button type="submit" class="button primary">Send request</button>
+      <p class="form-note" id="add-friend-note" role="status"></p>
+    </form>
+  </section>
+  <section id="outgoing-section" hidden>
+    <h3>Waiting on them</h3>
+    <ul class="people" id="outgoing-list"></ul>
+  </section>
   <button type="button" class="button graph-open" id="graph-open">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M10.2 10.6 6.6 7.3M13.9 11 17.2 8.1M10.3 13.6l-3 3M13.8 13.6l2.7 3"/></svg>
     See your friend map
   </button>
-  <section class="invite-section">
-    <h3>Invite someone</h3>
-    <p class="sheet-text small">A link that signs a friend up and makes you friends, no invite code needed. Each link works for 10 people for 7 days.</p>
+  <details class="invite-section more-invites">
+    <summary>More: one-time invite links, and resetting your link</summary>
+    <p class="sheet-text small">Your code and link keep working until you reset them. If one got out to someone it shouldn't have, reset it: the old one stops working at once.</p>
+    <button type="button" class="button" id="my-link-reset">Reset my link</button>
+    <p class="form-note" id="my-link-note" role="status"></p>
+    <p class="sheet-text small">Or make a one-time invite link: it works for 10 people for 7 days.</p>
     <button type="button" class="button" id="invite-make">Make an invite link</button>
     <div class="invite-made" id="invite-made" hidden>
       <div class="invite-qr" id="invite-qr"></div>
@@ -208,15 +234,7 @@
     </div>
     <ul class="people invite-list" id="invite-list"></ul>
     <p class="form-note" id="invite-note" role="status"></p>
-  </section>
-  <section id="incoming-section" hidden>
-    <h3>Wants to be friends</h3>
-    <ul class="people" id="incoming-list"></ul>
-  </section>
-  <section id="outgoing-section" hidden>
-    <h3>Waiting on them</h3>
-    <ul class="people" id="outgoing-list"></ul>
-  </section>
+  </details>
 </dialog>
 
 <!-- Friend map (docs/implementation/friend-graph.md) -->
@@ -298,6 +316,14 @@
   <footer class="profile-actions">
     <button type="button" class="button danger" id="leave-group">Leave group</button>
   </footer>
+</dialog>
+
+<!-- A profile or group picture, bigger (X24): tap outside it or × to close -->
+<dialog id="picture-viewer" class="picture-viewer" aria-label="Picture">
+  <button type="button" class="icon-button picture-close" data-close aria-label="Close">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  <span class="avatar picture-big" id="picture-big"></span>
 </dialog>
 
 <!-- Profile: yours, or a friend's -->

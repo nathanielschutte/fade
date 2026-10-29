@@ -190,6 +190,12 @@ async def main():
         await ana.evaluate(PICK_IMAGE, "#group-picture-input")
         await expect(ana.locator("#group-note")).to_have_text("Group picture updated.", timeout=10000)
         await expect(ana.locator("#group-avatar img")).to_be_visible(timeout=10000)
+        # Tapped, it shows bigger in its own rounded square (X24).
+        await ana.click("#group-avatar")
+        await expect(ana.locator("#picture-big img")).to_be_visible()
+        assert await ana.locator("#picture-big").evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "30%"
+        await ana.keyboard.press("Escape")
+        await expect(ana.locator("#picture-viewer")).to_be_hidden()
         await ana.click("#group-dialog [data-close]")
         await expect(ben.locator("#chat-avatar img")).to_be_visible(timeout=10000)
         await expect(group_item(ben).locator(".avatar img")).to_be_visible()

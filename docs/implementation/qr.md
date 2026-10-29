@@ -1,6 +1,6 @@
 # How qr.js works
 
-[`server/static/qr.js`](../../server/static/qr.js) turns an invite link into a QR code, entirely in the browser. It's about 300 lines and has no dependencies. This walks through it top to bottom; read it with the file open.
+[`server/static/qr.js`](../../server/static/qr.js) turns an invite link, or someone's personal add-me link, into a QR code, entirely in the browser. It's about 300 lines and has no dependencies. This walks through it top to bottom; read it with the file open.
 
 ## Why napsack has its own
 
@@ -95,7 +95,7 @@ Fifteen bits record the error correction level (M is `00`) and the mask number, 
 
 `qrSvg(text, label)` turns the grid into an SVG: a white square with a four-module quiet zone (the standard's margin; scanners need it) and one `<path>` containing a small square for every dark module. It's built with DOM calls, so it stays within the page's security policy, and it carries an `aria-label` for screen readers.
 
-**Watch out for the app's icon styles.** `style.css` styles every `<svg>` as a line icon (`fill: none; stroke: currentColor` with rounded joins). Applied to a QR code, that draws pale outlines instead of solid squares, and no phone can scan it. The rules under `.invite-qr svg` in `style.css` undo that. Any new place that shows a QR code needs the same.
+**Watch out for the app's icon styles.** `style.css` styles every `<svg>` as a line icon (`fill: none; stroke: currentColor` with rounded joins). Applied to a QR code, that draws pale outlines instead of solid squares, and no phone can scan it. The rules under `.invite-qr svg` in `style.css` undo that. Any new place that shows a QR code needs the same. Rounded corners must stay inside the quiet zone: the smaller code in the Friends sheet uses a 3px radius for that reason.
 
 ## How we know it's right
 

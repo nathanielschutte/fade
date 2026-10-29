@@ -1328,3 +1328,69 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .deactivated-note[hidden] { display: none; }
 #chat-title.no-profile { cursor: default; }
 .admin-tabs a[hidden] { display: none; }
+
+/* ---------- loading (X23) ----------
+   Shapes of what's coming, while it comes: never an empty state before the
+   server has answered. The shimmer stops for reduced motion. */
+.skeleton-row {
+  display: grid; grid-template-columns: 0.75rem 2rem minmax(0, 1fr); align-items: center; gap: 0.6rem;
+  padding: 0.8rem var(--pad); list-style: none;
+}
+.skeleton-dot { grid-column: 2; width: 2rem; height: 2rem; border-radius: 50%; }
+.skeleton-lines { display: grid; gap: 0.4rem; }
+.skeleton-lines span { height: 0.7rem; border-radius: 4px; }
+.skeleton-lines span:first-child { width: 45%; }
+.skeleton-lines span:last-child { width: 70%; }
+.msg-skeleton { list-style: none; height: 2.2rem; width: 55%; border-radius: 1rem; margin: 0.35rem 0; }
+.msg-skeleton.mine { width: 40%; margin-left: auto; }
+.skeleton-dot, .skeleton-lines span, .msg-skeleton {
+  background: linear-gradient(90deg, var(--wash) 25%, rgba(228, 236, 230, 0.08) 50%, var(--wash) 75%);
+  background-size: 300% 100%; animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-dot, .skeleton-lines span, .msg-skeleton { animation: none; }
+}
+.list-problem { list-style: none; display: grid; justify-items: center; gap: 0.6rem; padding: 1.5rem var(--pad); text-align: center; color: var(--fixer); font-size: var(--step--1); }
+.list-problem p { margin: 0; }
+
+/* ---------- a picture, bigger (X24) ---------- */
+.avatar.viewable { cursor: zoom-in; }
+.avatar.viewable:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
+.picture-viewer {
+  border: 0; padding: 0; background: transparent; overflow: visible;
+  max-width: none; max-height: none;
+}
+.picture-viewer::backdrop { background: rgba(8, 14, 11, 0.82); }
+.picture-viewer[open] { display: grid; place-items: center; }
+.picture-big {
+  width: min(80vw, 70vh, 26rem); height: min(80vw, 70vh, 26rem); font-size: 6rem;
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+}
+.picture-close {
+  position: fixed; z-index: 1;
+  top: calc(env(safe-area-inset-top, 0px) + 0.75rem); right: calc(env(safe-area-inset-right, 0px) + 0.75rem);
+  background: rgba(12, 20, 16, 0.7);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .picture-viewer[open] .picture-big { animation: picture-in 160ms ease-out; }
+}
+@keyframes picture-in { from { transform: scale(0.85); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- adding friends (X25) ---------- */
+.add-ways { display: grid; gap: 0.6rem; margin-bottom: 0.75rem; }
+.add-ways h3 { margin: 0; }
+.my-code { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.9rem; align-items: center; }
+.my-code .invite-qr { width: min(9.5rem, 38vw); }
+/* Smaller code, smaller corners: they stay inside the white quiet zone. */
+.my-code .invite-qr svg { border-radius: 3px; }
+.my-code-side { display: grid; gap: 0.4rem; min-width: 0; }
+.my-code-side .invite-link { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 420px) {
+  .my-code { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .my-code .invite-qr { width: min(13rem, 60vw); }
+  .my-code-side .picture-row { justify-content: center; }
+}
+.more-invites { margin-top: 0.75rem; display: grid; gap: 0.5rem; }
+.more-invites summary { cursor: pointer; color: var(--fixer); font-size: var(--step--1); }
+.more-invites[open] { gap: 0.6rem; }

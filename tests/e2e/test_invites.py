@@ -54,11 +54,11 @@ def png_pixels(data):
     return width, height, rows
 
 
-async def check_rendered(page, link):
+async def check_rendered(page, link, selector="#invite-qr svg"):
     """The QR on screen, pixel by pixel: every module dark or light as the code says,
     with a white quiet zone (what a phone camera actually needs)."""
     m = await page.evaluate("async (t) => (await import('/qr.js')).qrMatrix(t)", link)
-    width, height, rows = png_pixels(await page.locator("#invite-qr svg").screenshot())
+    width, height, rows = png_pixels(await page.locator(selector).screenshot())
     full = m["size"] + 8
     dark = lambda x, y: sum(rows[y][x]) / 3 < 128
     for my in range(-4, m["size"] + 4):
@@ -109,6 +109,22 @@ async def main():
         await ana.goto(BASE)
         await sign_up(ana, ANA)
         await ana.click("#friends-button")
+        # Her own add-me code is right there (X25), and it's a real QR of her link.
+        await expect(ana.locator("#my-qr svg")).to_be_visible(timeout=10000)
+        mine = await ana.locator("#my-link").text_content()
+        assert mine.startswith(f"{BASE}/i/") and len(mine) == len(f"{BASE}/i/") + 22, mine
+        await check_rendered(ana, mine, "#my-qr svg")
+        await shot(ana, "add-friend-ways", full_page=False)
+        size = ana.viewport_size
+        await ana.set_viewport_size({"width": 390, "height": 844})
+        await check_rendered(ana, mine, "#my-qr svg")
+        await shot(ana, "add-friend-ways-phone", full_page=False)
+        await ana.set_viewport_size(size)
+        await ana.click("#friends-dialog [data-close]")
+        await ana.click("#friends-button")
+        await expect(ana.locator("#my-link")).to_have_text(mine)  # the same link every time
+        # One-time invite links are one step further in.
+        await ana.locator(".more-invites summary").click()
         await ana.click("#invite-make")
         await expect(ana.locator("#invite-qr svg")).to_be_visible()
         link = await ana.locator("#invite-link").text_content()
@@ -137,7 +153,7 @@ async def main():
         await sign_up(ben, BEN)
         await ben.goto(link)
         await expect(ben.locator("#invite-dialog")).to_be_visible(timeout=10000)
-        await expect(ben.locator("#invite-text")).to_have_text(f"{ANA} invited you. Add them as a friend?")
+        await expect(ben.locator("#invite-text")).to_have_text(f"This is {ANA}'s napsack link. Add them as a friend?")
         await ben.click("#invite-accept")
         await expect(ben.locator("#chat-title")).to_have_text(ANA, timeout=10000)
         print("signed-in friend added through the link")
@@ -145,6 +161,8 @@ async def main():
         # Ana sees who joined, and can turn the link off.
         await ana.click("#friends-dialog [data-close]")
         await ana.click("#friends-button")
+        if not await ana.locator(".more-invites").evaluate("e => e.open"):
+            await ana.locator(".more-invites summary").click()
         row = ana.locator("#invite-list .person").first
         await expect(row).to_contain_text("2 of 10 used")
         await expect(row).to_contain_text(CAL)
@@ -156,6 +174,26 @@ async def main():
         await late.goto(link)
         await expect(late.locator("#invite-banner")).to_contain_text("expired, been used up, or been turned off")
         print("inviter sees who joined; a turned-off link stops working")
+
+        # Ana's personal link: someone signed in adds her with it, any number of times.
+        dee = await (await browser.new_context()).new_page()
+        await dee.goto(BASE)
+        await sign_up(dee, f"dee_{ANA[4:]}")
+        await dee.goto(mine)
+        await expect(dee.locator("#invite-dialog")).to_be_visible(timeout=10000)
+        await dee.click("#invite-accept")
+        await expect(dee.locator("#chat-title")).to_have_text(ANA, timeout=10000)
+        # Resetting it (two taps): the old one stops working, and there's a new one.
+        await ana.click("#my-link-reset")
+        await expect(ana.locator("#my-link-reset")).to_have_text("Tap again: your old code stops working")
+        await ana.click("#my-link-reset")
+        await expect(ana.locator("#my-link-note")).to_contain_text("The old ones don't work any more")
+        renewed = await ana.locator("#my-link").text_content()
+        assert renewed != mine and renewed.startswith(f"{BASE}/i/")
+        gone = await (await browser.new_context()).new_page()
+        await gone.goto(mine)
+        await expect(gone.locator("#invite-banner")).to_contain_text("expired, been used up, or been turned off")
+        print("a personal link adds friends until it's reset")
 
         await browser.close()
     print("INVITES TEST PASSED")

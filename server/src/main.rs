@@ -375,6 +375,8 @@ fn router(state: SharedState) -> Router {
         .route("/invites", get(invites::list).post(invites::create))
         .route("/invites/{invite_id}/revoke", post(invites::revoke))
         .route("/invites/lookup/{token}", get(invites::lookup))
+        .route("/friend-link", get(invites::friend_link))
+        .route("/friend-link/reset", post(invites::reset_friend_link))
         .route("/invites/accept", post(invites::accept))
         .route("/push/subscriptions", post(push::subscribe))
         .route("/push/subscriptions/remove", post(push::unsubscribe))

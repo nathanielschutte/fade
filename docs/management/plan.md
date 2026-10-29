@@ -12,12 +12,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Status | Why it's here |
 |---|---|---|---|---|
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | In progress | Nate (2026-10-28); release 1 |
+| 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Done | Nate (2026-10-28); 0.34.0 |
 | 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Up next | Nate (2026-10-28); release 2 |
 | 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Up next | Nate (2026-10-28); releases 3 and 4 |
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Up next | Nate (2026-10-28); release 5 |
 | 0p | [Change your username](#x30-change-your-username) | Features | Up next | Nate (2026-10-28); release 6 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
+| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Up next | Nate (2026-10-28); release 8, after the rest |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -190,7 +191,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Done (0.15.0): manifest, icons, a push-only service worker; VAPID key made once and kept in the database; RFC 8291 encryption checked against the RFC's worked example and decrypted independently in the tests; endpoints limited to known push services; no push while on screen; notifications for texts, pics, reactions, group messages, friend requests. Not yet: per-chat mute (X3).
 
 #### F11. Reactions and replies
-- Tap-and-hold a message to react (a small fixed set: ❤️ 😂 😮 😢 👍 👎, like iMessage), or swipe/tap to reply to it with a quote.
+- Tap-and-hold a message to react (a small fixed set: ❤️ 😂 😮 😢 👍 👎), or swipe/tap to reply to it with a quote.
 - **Design:** both are end-to-end encrypted in direct chats. This introduces **text format 2**: the encrypted plaintext becomes a small JSON envelope (`{"t": "hi", "re": <message id>}`) instead of bare text, so future fields (replies, mentions, edits) don't each need a new format. Reactions are their own message kind (`reaction`), encrypted, pointing at the message they react to (the server sees which message got a reaction and when, not which emoji).
 - Readers before writers ([releasing.md](../operations/releasing.md#compatibility-rules)): the web app ships both at once; the iOS app should read text format 2 from its first release. New pinned vectors (`tests/vectors/format2_text.json` or similar).
 - Group chats get the same (plaintext for now, like the rest of group messages).
@@ -218,7 +219,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Done (0.17.0): one link does both (sign up with no code, or add if signed in); 10 uses, 7 days, turn off any time; the Friends sheet shows a QR code and who joined. The QR encoder is our own (`server/static/qr.js`), checked module for module against Python's `qrcode` and pixel by pixel on screen.
 
 #### F15. Streaks
-- A 🔥 and a count next to a friend when you've both sent each other a pic every day for 3+ days, and an ⌛ when today's streak is about to run out. Snapchat's stickiest feature.
+- A 🔥 and a count next to a friend when you've both sent each other a pic every day for 3+ days, and an ⌛ when today's streak is about to run out.
 - Computed on the server from message metadata it already has (who sent a pic to whom, and when), in each person's own time zone (the client sends its offset). No content involved.
 - Also: your longest streak on your profile, and on a friend's profile, your streak together.
 - Done (0.23.0): `streaks.rs`. A day counts when both of you sent the other at least one direct pic that day, in the viewer's own time zone (`?tz=`). 🔥 and the count by a friend's name from 3 days; ⌛ when it stands through yesterday, today hasn't counted, and less than 6 hours are left. A friend's profile shows the streak and the longest; yours shows your longest with anyone. One query per list load, from when pics were sent (no content).
@@ -240,7 +241,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 - Done (0.20.0): birthday on your profile (month and day; year optional, 1900 to now; real dates only, Feb 29 fine without a year), shown to friends on your profile, and a 🎂 by your name in friends' chat lists on the day (their own time zone). `user_birthdays` (migration 0013), append-only. **Still to offer:** pronouns, a short "about" line.
 
 #### F18. Disappearing texts
-- Per-chat setting: texts disappear 24 hours after they're read (like Snapchat's default).
+- Per-chat setting: texts disappear 24 hours after they're read.
 - **Needs a decision:** this conflicts with Rule 1 ("data in our DB can never be deleted"). Options:
   1. **Hidden, not deleted:** the server keeps the ciphertext forever but stops serving it after the timer. Honest about it in the UI ("hidden from the chat; napsack keeps an encrypted copy"). The server still can't read it.
   2. **Real deletion for these only:** an explicit, narrow exception to Rule 1 for ciphertext the sender asked to disappear, like pic files today. Needs the user's sign-off on the rule change.
@@ -295,7 +296,7 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### X5. Composer grows to 4 lines
 - Requested (2026-10-21): the message box is one fixed line. While typing, it should grow to show 3–4 lines of the message, wrapped to the screen width (especially on phones), and scroll inside only after that.
 - The `<input>` becomes an auto-growing `<textarea>` (height follows the content, capped at about 4 lines). The pill shape becomes a rounded rectangle once it's taller than one line.
-- Enter: on a computer, Enter sends and Shift+Enter starts a new line. On a phone, Return starts a new line and the Send button sends (like iMessage). Messages already keep their line breaks when shown.
+- Enter: on a computer, Enter sends and Shift+Enter starts a new line. On a phone, Return starts a new line and the Send button sends. Messages already keep their line breaks when shown.
 - Applies to group chats too. Browser test: type a long message, check the box grows to 4 lines and stops, and that sending shrinks it back.
 - Done (0.18.0) as described (`tests/e2e/test_composer.py`).
 
@@ -392,13 +393,16 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X23. Clear loading and slow-network states
 - Requested (2026-10-28): before data arrives, the chat list says "No friends yet" and chats look empty, which isn't true. Show that things are loading (placeholders shaped like what's coming), say plainly when the connection is very slow or down, and never show an empty state until the server has answered.
 - Covers the chat list, a chat's messages, groups, the friends sheet, and profiles. A slow-network notice after a few seconds without an answer; an offline notice when requests fail.
+- Built (0.34.0): placeholder rows in the chat list and in chats until the server answers; "Slow connection: still loading…" after 4 seconds; "Can't reach napsack right now" and a **Try again** when requests fail. `tests/e2e/test_loading.py`.
 
 #### X24. Tap a picture to see it bigger
 - Requested (2026-10-28): tapping a profile picture (a friend's profile) or a group's picture (group info) shows it large in the middle of the screen, in the same circle or rounded square, over the page. Tap outside it or the × to close.
+- Built (0.34.0): `#picture-viewer`; Escape closes it too. Checked in `test_profile.py` and `test_groups.py`.
 
 #### X25. Adding friends: a personal QR and link
 - Requested (2026-10-28): keep adding by username, and make it obvious how else to add someone. Decided (Nate): each person gets one long-lived "add me" link and QR, unlimited uses, until they reset it (the old one then stops working). Someone with an account who opens it adds them in one tap; someone new can sign up with it, like an invite. It builds on invite links (`invites.rs`, `qr.js`); the 10-use, 7-day invite links stay for inviting new people.
 - The Friends sheet leads with the three ways: show my QR, share my link, add by username.
+- Built (0.34.0): `GET /api/friend-link`, `POST /api/friend-link/reset` (migration 0020 marks the invite row `personal`). The token is derived from a server key, so it can be shown again while only its hash is stored. One-time links and reset are under "More" in the Friends sheet. `test_invites.py`, smoke `check_invites`.
 
 #### X26. Tabs, a camera tab, and send to many
 - Requested (2026-10-28): on phones, tabs along the bottom: **Chats · Camera · Profile**. The profile and settings move out of the bottom-left button into their own tab (they're growing). Decided (Nate): phones only; computers keep the side-by-side layout, with Camera and Profile buttons in the list pane.
@@ -426,8 +430,15 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Plus smaller first loads (the newest messages first, the rest as you scroll; pictures on demand), sized to the connection when it's slow.
 
 #### X32. Small things from the production logs (2026-10-28)
-- Someone signed in with an email address as their username: say "username, not email" when the field holds an `@`.
+- Someone signed in with an email address as their username: say "username, not email" when the field holds an `@`. Done (0.34.0): the sign-in and sign-up forms say so before trying.
 - Favorites are capped at 10 (Nate hit it): consider raising it.
+
+#### X33. Captions anywhere on a pic
+- Requested (2026-10-28): tap anywhere on a pic or video (not just a strip at the bottom) and a caption line appears there to type into. Enter, or tapping elsewhere on the picture, finishes typing and leaves you looking at the pic with its caption; it never sends. Drag the caption up and down to place it. Only **Send to…** / **Send to <name>** sends.
+- The caption's height goes with the pic (inside the encrypted envelope, as a fraction of the height) so the receiver sees it where it was put. Older clients that don't know the field show it in the default place.
+
+#### X34. Add recipients from inside a chat
+- Requested (2026-10-28): taking a pic or video from inside a chat or group shows who it's going to next to the send button. Tapping that opens the same **Send to…** picker as the camera tab (X26), with the current chat already ticked, to add more friends or groups.
 
 #### X22. Team Napsack: messages from napsack itself
 - Requested (2026-10-24), queued: a system account, **Team Napsack**, that can message anyone without being their friend, for occasions: birthdays, holidays, and so on. No UI needed: an easy way to schedule them in code.

@@ -1203,10 +1203,28 @@ def check_invites(tag):
     ok(call("POST", f"/invites/{made['id']}/revoke", a_tok))
     ok(call("GET", f"/invites/lookup/{token}"), 404)
     ok(call("POST", "/auth/register", json=body(f"invy_{tag}", invite_token=token)), 400)
+
+    # The personal link (X25): the same one every time, past 10 uses, not in the
+    # invite list, until it's reset.
+    ok(call("GET", "/friend-link", None), 401)
+    ok(call("POST", "/friend-link/reset", None), 401)
+    personal = ok(call("GET", "/friend-link", a_tok)).json()["path"]
+    assert ok(call("GET", "/friend-link", a_tok)).json()["path"] == personal
+    assert ok(call("GET", "/friend-link", b_tok)).json()["path"] != personal
+    own = personal.rsplit("/", 1)[-1]
+    for i in range(11):
+        ok(call("POST", "/auth/register", json=body(f"inp{i}_{tag}", invite_token=own)))
+    assert ok(call("GET", "/friend-link", a_tok)).json()["uses"] == 11
+    assert all(i["max_uses"] == 10 for i in ok(call("GET", "/invites", a_tok)).json()), "personal links aren't listed"
+    renewed = ok(call("POST", "/friend-link/reset", a_tok)).json()["path"]
+    assert renewed != personal and ok(call("GET", "/friend-link", a_tok)).json()["path"] == renewed
+    ok(call("GET", f"/invites/lookup/{own}"), 404)
+    ok(call("POST", "/auth/register", json=body(f"inpx_{tag}", invite_token=own)), 400)
+    assert ok(call("GET", f"/invites/lookup/{renewed.rsplit('/', 1)[-1]}")).json()["inviter"]["id"] == a["id"]
     if DB:
         stored = [h for (h,) in sqlite3.connect(DB).execute("SELECT token_hash FROM invites WHERE created_by = ?", (a["id"],))]
-        assert stored and all(token not in h and used_up not in h for h in stored), "only hashes are stored"
-    print("  invites: sign up without the code, friends at once, 10 uses, turned off, hashed")
+        assert stored and all(t not in h for h in stored for t in (token, used_up, own)), "only hashes are stored"
+    print("  invites: sign up without the code, friends at once, 10 uses, turned off, hashed; personal link until reset")
 
 
 def check_rate_limits(tag):

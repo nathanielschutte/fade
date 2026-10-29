@@ -3,7 +3,13 @@
 //! with whoever made it; someone with an account adds that person in one tap.
 //!
 //! A link works for MAX_USES people within INVITE_DAYS, can be revoked, and
-//! still counts against the account cap (guard.rs). Only a hash of the token
+//! still counts against the account cap (guard.rs).
+//!
+//! Each person also has one personal "add me" link (plan X25), shown as a QR
+//! to people in person: it works any number of times until they reset it.
+//! Its token is derived (HMAC of a server key, the person, and how many
+//! they've had), so it can be shown again without the server keeping it;
+//! like every link, only its hash is stored. Only a hash of the token
 //! is stored, like session tokens. Lookups are rate-limited like sign-in, so
 //! links can't be guessed (and at 128 random bits, they couldn't anyway).
 
@@ -27,6 +33,9 @@ use crate::{
 };
 
 pub const INVITE_DAYS: i64 = 7;
+/// A personal link has no practical end: it lasts until it's reset.
+const PERSONAL_USES: i64 = 1_000_000_000;
+const PERSONAL_DAYS: i64 = 365 * 100;
 pub const MAX_USES: i64 = 10;
 /// Live links per person; making another retires the oldest.
 const MAX_LIVE: i64 = 10;
@@ -127,7 +136,8 @@ pub async fn create(
     // Keep the newest few live.
     sqlx::query(
         "UPDATE invites SET revoked_at = ? WHERE created_by = ? AND revoked_at IS NULL AND expires_at > ?
-           AND id NOT IN (SELECT id FROM invites WHERE created_by = ? AND revoked_at IS NULL
+           AND personal = 0
+           AND id NOT IN (SELECT id FROM invites WHERE created_by = ? AND revoked_at IS NULL AND personal = 0
                           ORDER BY id DESC LIMIT ?)",
     )
     .bind(at)
@@ -163,7 +173,7 @@ pub async fn list(
 ) -> AppResult<Json<Value>> {
     let invites: Vec<InviteRow> = sqlx::query_as(
         "SELECT id, created_at, expires_at, max_uses, revoked_at FROM invites
-         WHERE created_by = ? ORDER BY id DESC LIMIT 50",
+         WHERE created_by = ? AND personal = 0 ORDER BY id DESC LIMIT 50",
     )
     .bind(me.id)
     .fetch_all(&state.db)
@@ -216,6 +226,122 @@ pub async fn revoke(
 
 fn gone() -> AppError {
     AppError::not_found("This invite link has expired, been used up, or been turned off.")
+}
+
+// ---------- personal links (X25) ----------
+
+/// The token for someone's `n`th personal link (0, 1, ...): the same every
+/// time it's worked out, unguessable without the server's key.
+fn personal_token(key: &[u8], user: i64, n: i64) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    mac.update(format!("napsack/friend-link/{user}/{n}").as_bytes());
+    URL_SAFE_NO_PAD.encode(&mac.finalize().into_bytes()[..16])
+}
+
+async fn link_key(db: &SqlitePool) -> sqlx::Result<Vec<u8>> {
+    use base64::engine::general_purpose::STANDARD;
+    let fresh: [u8; 32] = rand::random();
+    sqlx::query(
+        "INSERT OR IGNORE INTO server_keys (name, value, created_at) VALUES ('friend_link', ?, ?)",
+    )
+    .bind(STANDARD.encode(fresh))
+    .bind(now())
+    .execute(db)
+    .await?;
+    let value: String =
+        sqlx::query_scalar("SELECT value FROM server_keys WHERE name = 'friend_link'")
+            .fetch_one(db)
+            .await?;
+    Ok(STANDARD.decode(value).unwrap_or_default())
+}
+
+/// Someone's personal link: the current one, or a new one if they have none.
+/// Returns (path, created_at, how many have used it).
+async fn personal_link(db: &SqlitePool, user: i64) -> sqlx::Result<(String, i64, i64)> {
+    let key = link_key(db).await?;
+    let current: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT id, created_at FROM invites WHERE created_by = ? AND personal = 1 AND revoked_at IS NULL
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user)
+    .fetch_optional(db)
+    .await?;
+    let (id, created_at, n) = match current {
+        Some((id, created_at)) => {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM invites WHERE created_by = ? AND personal = 1 AND id < ?",
+            )
+            .bind(user)
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+            (id, created_at, n)
+        }
+        None => {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM invites WHERE created_by = ? AND personal = 1",
+            )
+            .bind(user)
+            .fetch_one(db)
+            .await?;
+            let at = now();
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO invites (created_by, token_hash, created_at, expires_at, max_uses, personal)
+                 VALUES (?, ?, ?, ?, ?, 1) RETURNING id",
+            )
+            .bind(user)
+            .bind(hash_token(&personal_token(&key, user, n)))
+            .bind(at)
+            .bind(at + PERSONAL_DAYS * 86_400)
+            .bind(PERSONAL_USES)
+            .fetch_one(db)
+            .await?;
+            (id, at, n)
+        }
+    };
+    let uses: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invite_uses WHERE invite_id = ?")
+        .bind(id)
+        .fetch_one(db)
+        .await?;
+    Ok((
+        format!("/i/{}", personal_token(&key, user, n)),
+        created_at,
+        uses,
+    ))
+}
+
+/// `GET /api/friend-link`: my personal "add me" link (made the first time).
+pub async fn friend_link(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<Value>> {
+    let (path, created_at, uses) = personal_link(&state.db, me.id).await?;
+    Ok(Json(
+        json!({ "path": path, "created_at": created_at, "uses": uses }),
+    ))
+}
+
+/// `POST /api/friend-link/reset`: the old link stops working; a new one starts.
+pub async fn reset_friend_link(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<Value>> {
+    if !state.invite_create_limit.allow(&me.id.to_string()) {
+        return Err(AppError::TooManyRequests(
+            "That's a lot of new links for one day. Try again tomorrow.".into(),
+        ));
+    }
+    sqlx::query("UPDATE invites SET revoked_at = ? WHERE created_by = ? AND personal = 1 AND revoked_at IS NULL")
+        .bind(now())
+        .bind(me.id)
+        .execute(&state.db)
+        .await?;
+    let (path, created_at, uses) = personal_link(&state.db, me.id).await?;
+    tracing::info!(user_id = me.id, "personal link reset");
+    Ok(Json(
+        json!({ "path": path, "created_at": created_at, "uses": uses }),
+    ))
 }
 
 /// `GET /api/invites/lookup/{token}`: signed out or in. Who made the link,
@@ -271,6 +397,34 @@ pub async fn accept(
 mod tests {
     use super::*;
     use crate::db::tests::temp_db;
+
+    #[tokio::test]
+    async fn a_personal_link_lasts_until_reset() {
+        let db = temp_db().await;
+        sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (1, 'ana', 'h', 'k', 'w', 0)")
+            .execute(&db).await.unwrap();
+        let (first, _, _) = personal_link(&db, 1).await.unwrap();
+        assert_eq!(
+            personal_link(&db, 1).await.unwrap().0,
+            first,
+            "the same link each time"
+        );
+        let token = first.trim_start_matches("/i/").to_owned();
+        assert!(plausible(&token));
+        assert_eq!(find_valid(&db, &token).await.unwrap().unwrap().1.id, 1);
+        // Reset: the old one stops, a different one starts.
+        sqlx::query("UPDATE invites SET revoked_at = 1 WHERE created_by = 1 AND personal = 1")
+            .execute(&db)
+            .await
+            .unwrap();
+        let (second, _, _) = personal_link(&db, 1).await.unwrap();
+        assert_ne!(second, first);
+        assert!(find_valid(&db, &token).await.unwrap().is_none());
+        assert!(find_valid(&db, second.trim_start_matches("/i/"))
+            .await
+            .unwrap()
+            .is_some());
+    }
 
     #[tokio::test]
     async fn links_work_until_used_up_expired_or_revoked() {

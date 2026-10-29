@@ -22,6 +22,10 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   token: localStorage.getItem(TOKEN_KEY),
   me: null,
+  // Whether the chat and group lists have answered yet, so an empty list can
+  // say "loading" rather than "no friends" (X23); the last error loading them.
+  loaded: { chats: false, groups: false, error: null },
+  loadFailed: new Map(),       // "d:<friend>" or "g:<group>" -> why its first page didn't load
   identity: null,              // { userId, privateKey (non-extractable), publicKey }
   pins: {},                    // friend id -> public key first seen (trust on first use)
   pastPins: {},                // friend id -> keys they had before, accepted by me; still read old messages
@@ -95,6 +99,12 @@ async function api(path, { method = "GET", json, body, headers = {}, timeout, re
   const large = as === "bytes" || body instanceof Blob || body instanceof Uint8Array;
   const limit = timeout ?? (large ? 90_000 : 20_000);
   const tries = retries ?? (method === "GET" ? 2 : 0);
+  // Uploads and downloads of pics are slow by nature; the rest says when the
+  // connection is (netWatch).
+  const watched = !large;
+  if (watched) netWatch.started();
+  let ok = false;
+  try {
   for (let attempt = 0; ; attempt++) {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), limit);
@@ -121,9 +131,11 @@ async function api(path, { method = "GET", json, body, headers = {}, timeout, re
         throw new ApiError(msg, res.status);
       }
 
-      if (as === "json") return await res.json();
-      if (as === "bytes") return new Uint8Array(await res.arrayBuffer());
-      return res;
+      let out = res;
+      if (as === "json") out = await res.json();
+      else if (as === "bytes") out = new Uint8Array(await res.arrayBuffer());
+      ok = true;
+      return out;
     } catch (err) {
       // A body cut off mid-download counts as a dropped connection.
       const e = err instanceof ApiError ? err : lost();
@@ -131,12 +143,49 @@ async function api(path, { method = "GET", json, body, headers = {}, timeout, re
         await sleep(700 * 3 ** attempt);
         continue;
       }
+      if (watched && e.status === 0) netWatch.unreachable();
       throw e;
     } finally {
       clearTimeout(timer);
     }
   }
+  } finally {
+    if (watched) netWatch.ended(ok);
+  }
 }
+
+// ---------- slow and unreachable (X23) ----------
+// When something has been loading for a few seconds, the banner says the
+// connection is slow; when requests can't get through at all, it says so.
+// It never covers the socket's own news (offline, reconnecting), and clears
+// itself once requests are answered again.
+const SLOW_MS = 4000;
+const netWatch = {
+  pending: 0,
+  timer: null,
+  started() {
+    this.pending++;
+    if (!this.timer) this.timer = setTimeout(() => this.slow(), SLOW_MS);
+  },
+  ended(ok) {
+    this.pending = Math.max(0, this.pending - 1);
+    if (ok && ["slow", "down"].includes($("#conn-banner").dataset.kind)) setConnBanner(null);
+    if (!this.pending) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  },
+  slow() {
+    this.timer = null;
+    if (!this.pending || !state.token || !$("#conn-banner").hidden) return;
+    setConnBanner("Slow connection: still loading…", "slow");
+  },
+  unreachable() {
+    if (!state.token || !navigator.onLine) return;
+    const kind = $("#conn-banner").dataset.kind;
+    if ($("#conn-banner").hidden || kind === "slow") setConnBanner("Can't reach napsack right now. Check your connection.", "down");
+  },
+};
 
 /** Worth trying again: the connection dropped or timed out, or the server is briefly away. */
 function retryable(err) {
@@ -448,6 +497,14 @@ $("#auth-form").addEventListener("submit", async (e) => {
   const username = form.username.value.trim();
   const password = form.password.value;
   $("#auth-error").textContent = "";
+  // People type their email here (seen in the logs, plan X32). Usernames can't
+  // hold an @, so say so before spending a sign-in attempt on it.
+  if (username.includes("@")) {
+    $("#auth-error").textContent = register
+      ? "Pick a username, not an email address: letters, numbers, _ and . only."
+      : "That's an email address. Sign in with your napsack username instead.";
+    return;
+  }
   if (register && password.length < 8) {
     $("#auth-error").textContent = "Passwords need at least 8 characters.";
     return;
@@ -755,6 +812,8 @@ $("#recover-form").addEventListener("submit", async (e) => {
 function signOutLocally() {
   state.token = null;
   state.me = null;
+  state.loaded = { chats: false, groups: false, error: null };
+  state.loadFailed.clear();
   state.identity = null;
   state.pins = {};
   state.pastPins = {};
@@ -858,8 +917,12 @@ async function refreshChats() {
     await checkPins(chats);
     state.chats = chats;
     await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
+    state.loaded.chats = true;
+    state.loaded.error = null;
   } catch (err) {
     report("warn", "loading chats failed", errorFields(err));
+    state.loaded.error = err.message;
+    renderChatList();
     return;
   }
   if (!state.me) return; // signed out while it loaded (an ended session, an account turned off)
@@ -1203,7 +1266,20 @@ function renderChatList() {
   }
   rowSwipe.open = null;
   $("#chat-list").replaceChildren(...items);
-  $("#chat-empty").hidden = entries.length > 0;
+  // Until both lists have answered, an empty list means "not here yet", not "no friends".
+  const loaded = state.loaded.chats && state.loaded.groups;
+  $("#chat-empty").hidden = entries.length > 0 || !loaded;
+  if (!loaded && !entries.length) {
+    $("#chat-list").replaceChildren(...(state.loaded.error
+      ? [el("li", { class: "list-problem" },
+        el("p", { text: `Couldn't load your chats. ${state.loaded.error}` }),
+        el("button", { type: "button", class: "button", onclick: () => { state.loaded.error = null; renderChatList(); refreshChats(); refreshGroups(); } }, "Try again"))]
+      : Array.from({ length: 5 }, () => el("li", { class: "skeleton-row", "aria-hidden": "true" },
+        el("span", { class: "skeleton-dot" }), el("span", { class: "skeleton-lines" }, el("span"), el("span"))))));
+    $("#chat-list").setAttribute("aria-busy", state.loaded.error ? "false" : "true");
+    return;
+  }
+  $("#chat-list").setAttribute("aria-busy", "false");
   const unread = state.chats.reduce((n, c) => n + (c.hidden || c.muted ? 0 : c.unread), 0)
     + state.groups.reduce((n, g) => n + (g.muted ? 0 : g.unread), 0);
   document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
@@ -1500,6 +1576,10 @@ async function openChat(friendId) {
     markRead(friendId);
   } catch (err) {
     report("warn", "opening chat failed", { friend_id: friendId, ...errorFields(err) });
+    if (!state.messages.has(friendId)) {
+      state.loadFailed.set(`d:${friendId}`, err.message);
+      if (state.activeId === friendId) renderMessages();
+    }
   }
   if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
 }
@@ -1695,12 +1775,28 @@ function renderMessages() {
   }
   const sending = outboxItems(`d:${state.activeId}`, prevSender);
   items.push(...sending);
-  if (!msgs.length && !sending.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
+  if (!msgs.length && !sending.length) items.push(...emptyChat(state.messages.has(state.activeId), `d:${state.activeId}`));
   list.replaceChildren(...items);
   if (nearBottom || !list.dataset.scrolled) {
     list.scrollTop = list.scrollHeight;
     list.dataset.scrolled = "1";
   }
+}
+
+/** What an empty chat shows: placeholders while its first page loads, a way
+ * to try again if it couldn't, and "No messages yet." only once it's known. */
+function emptyChat(loaded, key) {
+  if (loaded) return [el("li", { class: "msg-meta", text: "No messages yet." })];
+  const failed = state.loadFailed.get(key);
+  if (failed) {
+    return [el("li", { class: "msg-meta list-problem" },
+      el("p", { text: `Couldn't load this chat. ${failed}` }),
+      el("button", { type: "button", class: "button", onclick: () => {
+        state.loadFailed.delete(key);
+        if (key.startsWith("g:")) openGroup(Number(key.slice(2))); else openChat(Number(key.slice(2)));
+      } }, "Try again"))];
+  }
+  return [0, 1, 2, 3].map((i) => el("li", { class: `msg-skeleton ${i % 2 ? "mine" : ""}`, "aria-hidden": "true" }));
 }
 
 async function upsertMessage(m) {
@@ -1845,7 +1941,7 @@ function fitComposer() {
 $("#composer-input").addEventListener("input", fitComposer);
 
 // On a computer, Enter sends and Shift+Enter starts a new line. On a phone,
-// Return starts a new line and the Send button sends, like iMessage.
+// Return starts a new line and the Send button sends, as phone keyboards expect.
 const touchFirst = matchMedia("(hover: none) and (pointer: coarse)");
 $("#composer-input").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" || e.shiftKey || e.isComposing || touchFirst.matches) return;
@@ -2262,9 +2358,11 @@ function reconnectNow() {
   connectSocket();
 }
 
-function setConnBanner(text) {
+/** `kind` says who set it ("slow", "down" from netWatch; none from the socket). */
+function setConnBanner(text, kind = "") {
   clearTimeout(conn.bannerTimer);
   $("#conn-banner").textContent = text ?? "";
+  $("#conn-banner").dataset.kind = text ? kind : "";
   $("#conn-banner").hidden = !text || !state.token;
 }
 
@@ -2543,8 +2641,11 @@ async function refreshGroups() {
     const groups = await getJSON("/groups");
     await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
     state.groups = groups;
+    state.loaded.groups = true;
   } catch (err) {
     report("warn", "loading groups failed", errorFields(err));
+    state.loaded.error = err.message;
+    renderChatList();
     return;
   }
   if (!state.me) return;
@@ -2653,6 +2754,10 @@ async function openGroup(groupId) {
     loadGroupReads(groupId);
   } catch (err) {
     report("warn", "opening group failed", { group_id: groupId, ...errorFields(err) });
+    if (!state.groupMessages.has(groupId)) {
+      state.loadFailed.set(`g:${groupId}`, err.message);
+      if (state.activeGroupId === groupId) renderGroupMessages();
+    }
   }
   if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
 }
@@ -2779,7 +2884,7 @@ function renderGroupMessages() {
   if (seen) items.push(el("li", { class: "msg-meta seen-by", text: seen }));
   const sending = outboxItems(`g:${state.activeGroupId}`, prevSender);
   items.push(...sending);
-  if (!msgs.length && !sending.length) items.push(el("li", { class: "msg-meta", text: "No messages yet." }));
+  if (!msgs.length && !sending.length) items.push(...emptyChat(state.groupMessages.has(state.activeGroupId), `g:${state.activeGroupId}`));
   list.replaceChildren(...items);
   if (nearBottom || !list.dataset.scrolled) {
     list.scrollTop = list.scrollHeight;
@@ -3170,6 +3275,45 @@ function paintAvatar(node, user) {
   return node;
 }
 
+// ---------- a picture, bigger (X24) ----------
+// A profile or group picture opens large over the page, in its own shape.
+// Only when there's a picture to see: an initial stays as it is.
+function viewPicture(node) {
+  const img = node.querySelector("img");
+  if (!img) return;
+  const big = $("#picture-big");
+  big.classList.toggle("group", node.classList.contains("group"));
+  big.replaceChildren(el("img", { src: img.src, alt: "" }));
+  $("#picture-viewer").setAttribute("aria-label", node.dataset.label || "Picture");
+  $("#picture-viewer").showModal();
+}
+for (const id of ["#profile-avatar", "#group-avatar"]) {
+  const node = $(id);
+  node.addEventListener("click", () => viewPicture(node));
+  node.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewPicture(node); }
+  });
+  // Tappable (and announced) only while it holds a picture.
+  new MutationObserver(() => {
+    const has = Boolean(node.querySelector("img"));
+    node.classList.toggle("viewable", has);
+    node.toggleAttribute("aria-hidden", !has);
+    if (has) {
+      node.setAttribute("role", "button");
+      node.tabIndex = 0;
+      node.setAttribute("aria-label", "See the picture bigger");
+    } else {
+      node.removeAttribute("role");
+      node.removeAttribute("tabindex");
+      node.removeAttribute("aria-label");
+    }
+  }).observe(node, { childList: true });
+}
+// Tapping outside the picture (the backdrop) closes it.
+$("#picture-viewer").addEventListener("click", (e) => {
+  if (e.target === $("#picture-viewer")) $("#picture-viewer").close();
+});
+
 function paintGroupAvatar(node, g) {
   paintInitial(node, g.name, g.id);
   node.classList.add("group");
@@ -3190,6 +3334,11 @@ async function openProfile(userId) {
   hideProfileEdit();
   $("#profile-people-section").hidden = true;
   msg.hidden = true;
+  // Never the last person's name while this one loads (X23).
+  const known = userId === state.me?.id ? state.me : chatById(userId);
+  $("#profile-name").textContent = known ? personName(userId, known.username) : "";
+  $("#profile-sub").textContent = "";
+  $("#profile-stats").replaceChildren(el("p", { class: "muted", text: "Loading…" }));
   if (!dialog.open) dialog.showModal();
 
   let p;
@@ -3446,10 +3595,64 @@ function openFriends() {
   $("#add-friend-note").textContent = "";
   $("#invite-made").hidden = true;
   $("#invite-note").textContent = "";
+  $("#my-link-note").textContent = "";
   $("#friends-dialog").showModal();
   refreshRequests();
   renderInvites();
+  loadMyLink();
 }
+
+// ---------- my personal link and code (X25) ----------
+// One "add me" link per person (invites.rs), shown as a QR to people in
+// person: it keeps working until reset.
+
+function showMyLink(path) {
+  const url = `${location.origin}${path}`;
+  $("#my-link").textContent = url;
+  $("#my-qr").replaceChildren(qrSvg(url, "Your add-me QR code"));
+  $("#my-link-share").hidden = !navigator.share;
+  $("#my-link-copy").textContent = "Copy link";
+}
+
+async function loadMyLink() {
+  if (!$("#my-link").textContent) $("#my-qr").replaceChildren(el("p", { class: "muted", text: "Making your code…" }));
+  try {
+    showMyLink((await getJSON("/friend-link")).path);
+  } catch (err) {
+    $("#my-qr").replaceChildren(el("p", { class: "form-note", text: `Couldn't load your code. ${err.message}` }));
+    report("warn", "loading my link failed", errorFields(err));
+  }
+}
+
+$("#my-link-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("#my-link").textContent);
+    $("#my-link-copy").textContent = "Copied";
+  } catch {
+    $("#my-link-copy").textContent = "Select it and copy";
+  }
+});
+$("#my-link-share").addEventListener("click", () => {
+  navigator.share({ title: "napsack", text: "Add me on napsack", url: $("#my-link").textContent }).catch(() => {});
+});
+// Two taps: the old link and code stop working for everyone.
+$("#my-link-reset").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again: your old code stops working";
+    return;
+  }
+  delete btn.dataset.confirm;
+  btn.textContent = "Reset my link";
+  try {
+    showMyLink((await getJSON("/friend-link/reset", { method: "POST" })).path);
+    $("#my-link-note").textContent = "Done: you have a new link and code. The old ones don't work any more.";
+    report("info", "personal link reset");
+  } catch (err) {
+    $("#my-link-note").textContent = err.message;
+  }
+});
 
 // ---------- invite links ----------
 // A link (/i/<token>) signs a new person up and makes them friends with
@@ -3498,7 +3701,7 @@ function offerInvite() {
     openChat(inv.inviter.id);
     return;
   }
-  $("#invite-text").textContent = `${inv.inviter.username} invited you. Add them as a friend?`;
+  $("#invite-text").textContent = `This is ${inv.inviter.username}'s napsack link. Add them as a friend?`;
   $("#invite-error").textContent = "";
   $("#invite-dialog").dataset.token = inv.token;
   $("#invite-dialog").showModal();
@@ -3728,7 +3931,7 @@ async function startStream() {
       return;
     }
     camera.stream = stream;
-    // Mirror whatever the browser says is a front camera, as Snapchat does, so the
+    // Mirror whatever the browser says is a front camera, so the
     // photo matches the preview. Laptop webcams report no facing; treat them as front.
     const facing = camera.stream.getVideoTracks()[0]?.getSettings?.().facingMode;
     camera.mirror = (facing || camera.facing) !== "environment";

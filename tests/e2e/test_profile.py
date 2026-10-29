@@ -103,6 +103,19 @@ async def main():
         await expect(ana.locator("#profile-avatar img")).to_be_visible()
         await expect(ana.locator("#my-avatar img")).to_be_visible()
         await shot(ana, "profile-edit", full_page=False)
+        # Tapping the picture shows it bigger, round; outside it or × closes it (X24).
+        await ana.click("#profile-avatar")
+        await expect(ana.locator("#picture-viewer")).to_be_visible()
+        await expect(ana.locator("#picture-big img")).to_be_visible()
+        assert await ana.locator("#picture-big").evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "50%"
+        await asyncio.sleep(0.3)
+        await shot(ana, "picture-bigger", full_page=False)
+        await ana.mouse.click(8, 400)  # the backdrop
+        await expect(ana.locator("#picture-viewer")).to_be_hidden()
+        await ana.click("#profile-avatar")
+        await ana.click("#picture-viewer [data-close]")
+        await expect(ana.locator("#picture-viewer")).to_be_hidden()
+        await expect(ana.locator("#profile-dialog")).to_be_visible()  # back where you were
         await ana.click("#profile-dialog [data-close]")
         ana_row = ben.locator(".chat-item", has_text="Ana Banana")
         await expect(ana_row).to_be_visible(timeout=10000)
@@ -130,6 +143,8 @@ async def main():
         await ana.click("#profile-picture-clear")
         await expect(ana.locator("#profile-edit-note")).to_have_text("Picture removed.", timeout=10000)
         await expect(ana.locator("#profile-avatar img")).to_have_count(0)
+        await ana.click("#profile-avatar")  # just an initial: nothing to see bigger
+        await expect(ana.locator("#picture-viewer")).to_be_hidden()
         await ana.click("#profile-dialog [data-close]")
         await expect(ben.locator(".chat-item", has_text="Sis").locator(".avatar img")).to_have_count(0, timeout=10000)
         await expect(ben.locator(".chat-item", has_text="Sis").locator(".avatar")).to_have_text("S")

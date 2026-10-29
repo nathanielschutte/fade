@@ -240,8 +240,11 @@ async def main():
             r.onsuccess = () => { const g = r.result.transaction('keys').objectStore('keys').get('identity');
                                   g.onsuccess = () => res(g.result === undefined); };
         })""")
-        await c.fill("input[name=username]", SAM)
+        await c.fill("input[name=username]", "sam@example.com")
         await c.fill("input[name=password]", "wrong password!")
+        await c.click("#auth-submit")
+        await expect(c.locator("#auth-error")).to_have_text("That's an email address. Sign in with your napsack username instead.")
+        await c.fill("input[name=username]", SAM)
         await c.click("#auth-submit")
         await expect(c.locator("#auth-error")).to_contain_text("Wrong username or password", timeout=20000)
         print("sign-out clears the key; wrong password rejected")

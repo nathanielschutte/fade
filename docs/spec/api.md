@@ -47,6 +47,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /invites` · `GET /invites` | Make an invite link (`{path: "/i/<token>"}`, shown once; 10 uses, 7 days) · mine, with who joined |
 | `POST /invites/{id}/revoke` | Turn a link off |
 | `GET  /invites/lookup/{token}` · `POST /invites/accept` | Who made a link (no sign-in needed) · signed in: become friends with them. `POST /auth/register` also takes `invite_token` in place of `invite_code` |
+| `GET  /friend-link` · `POST /friend-link/reset` | My personal add-me link, `{path, created_at, uses}`: the same each time, unlimited uses, works with lookup, accept and sign-up like an invite link, not listed in `GET /invites` · reset: the old one stops working and a new one is returned (shares the daily invite limit) |
 | `PUT  /me/settings` | `{share_activity}`: friends see when you're active or typing (mutual) |
 | `POST /push/subscriptions` · `/remove` | This browser's `PushSubscription.toJSON()`, tied to the session · stop. Only known push services are accepted |
 | `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, encrypted emoji; null takes it back. Comes back as `message_updated` |
