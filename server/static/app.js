@@ -4073,6 +4073,7 @@ $(".camera-stage").addEventListener("touchend", (e) => {
 // shows them, and the size stays small. The microphone is asked for the first
 // time, then kept while the camera is open, so it isn't asked again per video.
 const HOLD_MS = 350;
+const ZOOM_SLIDE_PX = 110; // was 60, which zoomed too fast (Nate, 2026-10-29)
 const VIDEO_EDGE = 1280;
 const rec = { timer: null, held: false, pointerId: null, startY: 0, startZoom: 1, suppressClick: false,
   recorder: null, chunks: [], started: 0, draw: 0, tick: 0, discard: false };
@@ -4099,7 +4100,8 @@ $("#shutter").addEventListener("pointerdown", (e) => {
 });
 $("#shutter").addEventListener("pointermove", (e) => {
   if (!rec.recorder || e.pointerId !== rec.pointerId) return;
-  setZoom(rec.startZoom + Math.max(0, rec.startY - e.clientY) / 60); // up zooms in; back down, out
+  // Up zooms in, back down zooms out: a full step (1×) for about a thumb's length of travel.
+  setZoom(rec.startZoom + Math.max(0, rec.startY - e.clientY) / ZOOM_SLIDE_PX);
 });
 function releaseShutter(e) {
   if (e.pointerId !== rec.pointerId) return;

@@ -112,6 +112,10 @@ async def main():
         await ana.fill("#snap-caption", "summit")
         await ana.click("#send-snap")
         await expect(ana.locator("#send-to-dialog")).to_be_visible()
+        # The list has room for its rows (Safari once drew it with no height at all).
+        listed = await ana.locator("#send-to-list").bounding_box()
+        assert listed["height"] >= 3 * 40, listed
+        assert await ana.locator("#send-to-list").evaluate("e => getComputedStyle(e).flexBasis") == "auto"
         names = await ana.locator("#send-to-list .send-to-name > span:first-child").all_text_contents()
         assert sorted(names) == sorted([BEN, CAL, GROUP]), names
         await expect(ana.locator("#send-to-go")).to_be_disabled()
