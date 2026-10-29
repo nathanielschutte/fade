@@ -19,8 +19,8 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0p | [Change your username](#x30-change-your-username) | Features | Done | Nate (2026-10-28); 0.38.0 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Done | Nate (2026-10-28); 0.39.0 |
 | 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Done | Nate (2026-10-28); 0.40.0 |
-| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Up next | Nate (2026-10-29); after X34 |
-| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Up next | Nate (2026-10-29); after X36 |
+| 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Done | Nate (2026-10-29); 0.41.0 |
+| 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Done | Nate (2026-10-29); 0.41.0 |
 | 0s | [Work through pull requests](#p5-pull-requests-and-repository-protection) | Process | Up next | Nate (2026-10-28); last, after all the features |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
@@ -484,12 +484,14 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X36. Opening a notification goes there and reads it
 - Requested (Nate, 2026-10-29): tapping a notification opens that chat or group, which marks the message read, and the notification clears. Partly there: a tap opens the chat (`sw.js`, `openFromLink`) and an open chat reads what's in it; 0.34.0 clears notifications when napsack opens. To check end to end, groups included, and when napsack was closed, in the background, or already open on another chat.
+- Done (0.41.0): checked end to end; `test_live.py` follows a notification's link into a chat (the sender sees "Seen") and a group (unread goes to 0). The service worker now hands the link over before bringing napsack forward, so a phone that refuses `focus()` still goes there.
 
 #### X37. Video: a cleaner ring, flip while recording, mute
 - Requested (Nate, 2026-10-29), from using it on a phone:
   - The recording ring (a conic gradient on the shutter, with its border made transparent) shows rough edges as it fills. Draw it cleanly, for example as an SVG circle's stroke.
   - Double-tap with another finger while holding to record switches cameras. Recording goes through a canvas (X28), so the camera feeding it can change mid-video.
   - A mute button on a recorded video, before sending. It must take the sound out of what's sent, not just ask the other phone to play it silent (the audio would still be in the file): record a silent copy alongside, or encode again on mute. Choose when building.
+- Built (0.41.0): the ring is an SVG stroke; a double tap while recording switches cameras without stopping (the canvas keeps drawing from the preview); with sound, a silent copy records alongside (instant mute, at the cost of a second encoder while recording), and the sound button swaps which file is sent. `test_video.py` checks a muted video decodes no audio.
 
 #### X34. Add recipients from inside a chat
 - Requested (2026-10-28): taking a pic or video from inside a chat or group shows who it's going to next to the send button. Tapping that opens the same **Send to…** picker as the camera tab (X26), with the current chat already ticked, to add more friends or groups.

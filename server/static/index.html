@@ -556,13 +556,18 @@
     </div>
     <p class="camera-message" id="camera-message" hidden></p>
     <p class="caption-hint" id="caption-hint" hidden>Tap the picture to add a caption</p>
+    <button type="button" class="icon-button video-sound" id="video-sound" aria-pressed="false" aria-label="Sound on. Tap to send it without sound" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="sound-on" d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="sound-off" d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 9.5l5 5M21 9.5l-5 5"/></svg>
+    </button>
     <button type="button" class="zoom-chip" id="zoom-chip" aria-label="Zoom: 1×" hidden>1×</button>
   </div>
   <div class="camera-controls" id="capture-controls">
     <button type="button" class="icon-button" data-close aria-label="Close camera">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
-    <button type="button" class="shutter" id="shutter" aria-label="Take photo. Hold for a video" title="Tap for a photo, hold for a video"></button>
+    <button type="button" class="shutter" id="shutter" aria-label="Take photo. Hold for a video" title="Tap for a photo, hold for a video">
+      <svg class="shutter-ring" viewBox="0 0 100 100" aria-hidden="true"><circle class="ring-track" cx="50" cy="50" r="47"/><circle class="ring-fill" cx="50" cy="50" r="47" pathLength="100"/></svg>
+    </button>
     <div class="camera-side">
       <button type="button" class="icon-button" id="flip-camera" aria-label="Switch camera">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M20 4v4h-4M4 20v-4h4"/></svg>

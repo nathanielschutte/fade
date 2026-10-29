@@ -4541,6 +4541,26 @@ async function startRecording() {
   }
   rec.recorder.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
   rec.recorder.onstop = finishRecording;
+  // With sound, a silent copy records alongside (X37), so "send without
+  // sound" leaves no sound in what's sent, and needs no waiting.
+  rec.silent = null;
+  rec.silentDone = null;
+  if (stream.getAudioTracks().length) {
+    try {
+      const silent = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: videoMime(), videoBitsPerSecond: 1_500_000 });
+      const chunks = [];
+      silent.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      // Its last piece comes with "stop", so the copy is whole only then.
+      rec.silentDone = new Promise((resolve) => {
+        silent.onstop = () => resolve(new Blob(chunks, { type: silent.mimeType || videoMime() }));
+      });
+      silent.start(250);
+      rec.silent = silent;
+    } catch (err) {
+      rec.silent = null; // the video can still go with its sound
+      report("debug", "silent copy not recorded", errorFields(err));
+    }
+  }
   rec.recorder.start(250);
   rec.started = Date.now();
   $("#shutter").classList.add("recording");
@@ -4561,8 +4581,31 @@ function recordingTick() {
 
 function stopRecording() {
   clearInterval(rec.tick);
+  if (rec.silent?.state === "recording") rec.silent.stop();
   if (rec.recorder?.state === "recording") rec.recorder.stop();
 }
+
+/** The sound button on a recorded video: shown when there's a silent copy to send instead. */
+function renderSound() {
+  const btn = $("#video-sound");
+  const muted = Boolean(camera.videoType) && camera.blob === camera.withoutSound && camera.withoutSound != null;
+  btn.hidden = !camera.videoType || !camera.withoutSound;
+  btn.setAttribute("aria-pressed", String(muted));
+  btn.setAttribute("aria-label", muted ? "Sound off. Tap to send it with sound" : "Sound on. Tap to send it without sound");
+  btn.classList.toggle("muted", muted);
+  $("#camera-preview-video").muted = muted;
+}
+
+$("#video-sound").addEventListener("click", () => {
+  if (!camera.videoType || !camera.withoutSound) return;
+  const mute = camera.blob !== camera.withoutSound;
+  // What's sent is a different file: one without any sound in it.
+  camera.blob = mute ? camera.withoutSound : camera.withSound;
+  camera.sends = new Map(); // a different video gets new ids, sealed afresh
+  camera.sent = new Set();
+  renderSound();
+  report("debug", mute ? "video muted" : "video unmuted");
+});
 
 function finishRecording() {
   const recorder = rec.recorder;
@@ -4590,6 +4633,16 @@ function finishRecording() {
   }
   report("debug", "video recorded", { seconds: Math.round(seconds * 10) / 10, bytes: blob.size, type: type.split(";")[0] });
   showPreview(blob, type);
+  camera.withSound = blob;
+  // The silent copy finishes a moment after; then the sound button shows.
+  const silentDone = rec.silentDone;
+  rec.silent = rec.silentDone = null;
+  silentDone?.then((quiet) => {
+    if (camera.withSound !== blob || !quiet.size) return; // retaken meanwhile, or nothing recorded
+    camera.withoutSound = quiet;
+    renderSound();
+  });
+  renderSound();
   // Said again over the preview, where it's decided whether to send it.
   if (!recorder.stream.getAudioTracks().length) cameraMessage("This video has no sound: napsack can't use the microphone.");
 }
@@ -4637,6 +4690,8 @@ function clearPreview() {
   camera.previewUrl = null;
   camera.blob = null;
   camera.videoType = null;
+  camera.withSound = camera.withoutSound = null;
+  $("#video-sound").hidden = true;
   const played = $("#camera-preview-video");
   played.pause();
   played.removeAttribute("src");
@@ -4744,13 +4799,48 @@ $("#camera-dialog").addEventListener("close", () => {
 
 $("#flip-camera").addEventListener("click", () => {
   camera.facing = camera.facing === "user" ? "environment" : "user";
-  startStream();
+  if (rec.recorder) switchWhileRecording();
+  else startStream();
 });
+
+/**
+ * Recording, a double tap (another finger) switches cameras without stopping
+ * (X37): recording draws frames from the preview, so it only needs the
+ * preview to show the other camera. The microphone and the recorder stay.
+ */
+async function switchWhileRecording() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: camera.facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+  } catch (err) {
+    report("info", "switching cameras while recording failed", errorFields(err));
+    return;
+  }
+  if (!rec.recorder || !camera.stream) {
+    stream.getTracks().forEach((t) => t.stop()); // stopped meanwhile
+    return;
+  }
+  const old = camera.stream;
+  camera.stream = stream;
+  const facing = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+  camera.mirror = (facing || camera.facing) !== "environment";
+  const video = $("#camera-video");
+  video.classList.toggle("mirrored", camera.mirror);
+  video.srcObject = stream;
+  old.getVideoTracks().forEach((t) => t.stop());
+  const range = stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
+  camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+  setZoom(camera.zoom);
+}
 
 // Double-tapping the live camera switches it, like the button. Counted from
 // clicks rather than `dblclick`, which phones don't reliably send.
 let lastStageTap = { at: 0, x: 0, y: 0 };
 $(".camera-stage").addEventListener("click", (e) => {
+  // While recording too: a second finger double-taps while the first holds the shutter.
   if ($("#camera-video").hidden || !camera.stream || e.target.closest("button, input, label")) return;
   const last = lastStageTap;
   if (e.timeStamp - last.at < DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) <= DOUBLE_TAP_PX) {

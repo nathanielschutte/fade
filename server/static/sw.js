@@ -34,8 +34,14 @@ self.addEventListener("notificationclick", (event) => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const w of windows) {
       if (new URL(w.url).origin === self.location.origin) {
-        await w.focus();
+        // The link first: on some phones focus() refuses, and the app should
+        // still go to the chat (and read it) when it's next on screen (X36).
         w.postMessage({ type: "open", url: target });
+        try {
+          await w.focus();
+        } catch {
+          // Already in front, or not allowed: the message is on its way either way.
+        }
         return;
       }
     }

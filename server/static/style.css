@@ -1495,13 +1495,25 @@ html[data-env] { --tabs-foot: 1.1rem; }
 /* ---------- short videos (X28) ---------- */
 .shutter { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform 120ms ease; }
 /* Recording: a red dot inside a ring that fills as the time runs out. */
+/* Recording: a red dot inside, and a ring drawn as an SVG stroke that fills
+   as the time runs out (a gradient ring showed rough edges on phones; X37). */
+.shutter { position: relative; }
+.shutter-ring {
+  position: absolute; inset: -9px; width: calc(100% + 18px); height: calc(100% + 18px);
+  transform: rotate(-90deg); opacity: 0; pointer-events: none;
+  fill: none; stroke-width: 6; overflow: visible;
+}
+.shutter-ring .ring-track { stroke: rgba(228, 236, 230, 0.25); }
+.shutter-ring .ring-fill {
+  stroke: var(--paper); stroke-linecap: round;
+  stroke-dasharray: 100; stroke-dashoffset: calc(100 - var(--progress, 0) * 100);
+}
 .shutter.recording {
   transform: scale(1.18);
   border-color: transparent;
-  background:
-    radial-gradient(circle, #d94848 0 34%, transparent 35%),
-    conic-gradient(var(--paper) calc(var(--progress, 0) * 1turn), rgba(228, 236, 230, 0.25) 0);
+  background: radial-gradient(circle, #d94848 0 34%, transparent 35%);
 }
+.shutter.recording .shutter-ring { opacity: 1; }
 #capture-controls.recording [data-close], #capture-controls.recording .camera-side { visibility: hidden; }
 .record-time {
   position: absolute; z-index: 3; top: 0.9rem; left: 50%; transform: translateX(-50%);
@@ -1579,3 +1591,9 @@ html.installed:has(#app:not([hidden])) body { overflow: hidden; overscroll-behav
     height: calc(var(--screen-h) - var(--tabs-h) - env(safe-area-inset-bottom, 0px) - var(--tabs-foot, 0px));
   }
 }
+
+/* ---------- sound on a recorded video (X37) ---------- */
+.video-sound { position: absolute; z-index: 3; top: 0.75rem; right: 0.75rem; background: rgba(12, 20, 16, 0.6); }
+.video-sound[hidden] { display: none; }
+.video-sound .sound-off, .video-sound.muted .sound-on { display: none; }
+.video-sound.muted .sound-off { display: inline; }

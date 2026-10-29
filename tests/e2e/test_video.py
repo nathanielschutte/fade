@@ -3,7 +3,7 @@ slide up to zoom while recording, stop at the server's limit, send to a
 friend (format 4) or a group (format 5), and watch it once. The camera and
 microphone are stubs: a canvas and a quiet tone. Settings come from the
 environment; see common.py."""
-import asyncio, json, uuid
+import asyncio, json, re, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import BASE, INVITE, launch, no_placeholders, save_recovery_key, shot
@@ -17,6 +17,7 @@ errors = []
 # window.__noMic: the microphone is refused.
 STUB = """
 window.__noMic = false;
+window.__cameras = [];  // the facing each camera request asked for
 navigator.mediaDevices.getUserMedia = async (want) => {
   if (want.audio && !want.video) {
     if (window.__noMic) throw new DOMException('denied', 'NotAllowedError');
@@ -25,6 +26,7 @@ navigator.mediaDevices.getUserMedia = async (want) => {
     tone.connect(out); tone.start();
     return out.stream;
   }
+  window.__cameras.push(want.video.facingMode);
   const c = document.createElement('canvas'); c.width = 720; c.height = 1280;
   const g = c.getContext('2d'); let n = 0;
   setInterval(() => { n++; g.fillStyle = n % 60 < 30 ? '#2b5' : '#25b'; g.fillRect(0, 0, 720, 1280); g.fillStyle = '#fff'; g.fillRect(260, 540, 200, 200); }, 33);
@@ -136,6 +138,37 @@ async def main():
         await no_placeholders(ben)
         print("the friend watches it once; the sender sees it opened")
 
+        # Sound off (X37): what's sent has no sound at all, not just a quiet player.
+        async def sound_decoded(page):
+            await expect(page.locator("#viewer-video")).to_be_visible(timeout=15000)
+            await page.wait_for_timeout(1200)
+            return await page.locator("#viewer-video").evaluate("v => v.webkitAudioDecodedByteCount")
+        await ana.click("#camera-button")
+        await ana.wait_for_timeout(500)
+        await hold_shutter(ana, 1600)
+        await expect(ana.locator("#video-sound")).to_be_visible(timeout=10000)
+        await expect(ana.locator("#video-sound")).to_have_attribute("aria-pressed", "false")
+        await ana.click("#video-sound")
+        await expect(ana.locator("#video-sound")).to_have_attribute("aria-pressed", "true")
+        assert await ana.locator("#camera-preview-video").evaluate("v => v.muted")
+        await shot(ana, "video-muted-phone", full_page=False)
+        await ana.click("#send-snap")
+        await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
+        await ben.locator("button.snap-chip", has_text="Tap to view video").click()
+        assert await sound_decoded(ben) == 0, "a muted video carries no sound"
+        await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
+        # With sound, it has some.
+        await ana.click("#camera-button")
+        await ana.wait_for_timeout(500)
+        await hold_shutter(ana, 1600)
+        await expect(ana.locator("#video-sound")).to_be_visible(timeout=10000)
+        await ana.click("#send-snap")
+        await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
+        await ben.locator("button.snap-chip", has_text="Tap to view video").click()
+        assert await sound_decoded(ben) > 0, "with sound, there's sound"
+        await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
+        print("sound off sends a video without any; the ring fills; double tap switches cameras mid-video")
+
         # Recording stops at the limit (3 seconds here) even while still held.
         await ana.click("#camera-button")
         await ana.wait_for_timeout(500)
@@ -143,9 +176,27 @@ async def main():
         await ana.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
         await ana.mouse.down()
         await expect(ana.locator("#record-time")).to_be_visible(timeout=5000)
+        await ana.wait_for_timeout(800)
+        # The ring is an SVG stroke, filling as the time runs out (X37).
+        offset = await ana.locator(".shutter-ring .ring-fill").evaluate("c => getComputedStyle(c).strokeDashoffset")
+        left = float(re.search(r"[\d.]+", offset).group())  # e.g. "calc(73.2px)": three quarters to go
+        assert 0 < left < 100, offset
         await shot(ana, "video-recording-phone", full_page=False)
+        # Another finger double-taps the picture: the other camera, still recording (X37).
+        asked = await ana.evaluate("window.__cameras.length")
+        was = await ana.evaluate("window.__cameras.at(-1)")
+        await ana.evaluate("""() => {
+          const stage = document.querySelector('.camera-stage'), r = stage.getBoundingClientRect();
+          const at = { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + 100, detail: 1 };
+          stage.dispatchEvent(new MouseEvent('click', at));
+          stage.dispatchEvent(new MouseEvent('click', at));
+        }""")
+        await ana.wait_for_function("(n) => window.__cameras.length > n", arg=asked)
+        assert await ana.evaluate("window.__cameras.at(-1)") != was, "switched to the other camera"
+        await expect(ana.locator("#record-time")).to_be_visible()  # still recording
         await expect(ana.locator("#camera-preview-video")).to_be_visible(timeout=8000)
         await ana.mouse.up()
+        await ana.evaluate("document.querySelector('#flip-camera').click()")  # and back again
         await ana.click("#retake")
 
         # No microphone: it records anyway, without sound, and says so.

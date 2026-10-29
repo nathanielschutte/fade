@@ -169,7 +169,7 @@ Group pics use this same envelope, caption included, sealed with format 3 (see [
 
 ### Formats 4 to 7: videos and photos
 
-Hold the shutter to record a video of up to 10 seconds (the server's `FADE_VIDEO_MAX_SECONDS`), with sound. The browser records it (MP4 where it can, WebM otherwise), then encrypts a *media envelope*:
+Hold the shutter to record a video of up to 10 seconds (the server's `FADE_VIDEO_MAX_SECONDS`), with sound. When it has sound, a silent copy records alongside, so turning the sound off before sending sends a file with no sound in it at all, rather than asking the other phone to play it quietly. The browser records it (MP4 where it can, WebM otherwise), then encrypts a *media envelope*:
 
 | Bytes | Contents |
 |---|---|

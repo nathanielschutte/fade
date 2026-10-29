@@ -210,6 +210,28 @@ async def main():
         assert left == 0, f"{left} notifications left after opening napsack"
         print("service worker shows it; the link opens the chat; opening napsack clears it")
 
+        # Tapping a notification while napsack is open (X36): the service worker
+        # hands its link to the app, which goes there and reads what's waiting.
+        tap = """(url) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { type: 'open', url } }))"""
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)  # still open from before
+        await ben.fill("#composer-input", "open me")
+        await ben.press("#composer-input", "Enter")
+        await expect(ana.locator(".chat-item", has_text=BEN).locator(".chat-status")).to_have_text("open me", timeout=10000)
+        await ana.evaluate(tap, f"{BASE}/#chat={ben_id}")
+        await expect(ana.locator("#chat-title")).to_have_text(BEN, timeout=10000)
+        await expect(ana.locator(".msg", has_text="open me")).to_be_visible()
+        await expect(ben.locator(".msg-meta", has_text="Seen")).to_be_visible(timeout=10000)
+        # A group's notification opens the group, read.
+        await ana.evaluate(tap, f"{BASE}/#group={group['id']}")
+        await expect(ana.locator("#chat-title")).to_have_text(f"live {tag}", timeout=10000)
+        for _ in range(50):
+            unread = [g for g in await api(ana, "/groups") if g["id"] == group["id"]][0]["unread"]
+            if unread == 0:
+                break
+            await asyncio.sleep(0.1)
+        assert unread == 0, unread
+        print("a notification's link opens its chat or group and reads it")
+
         # Installable: a manifest with icons.
         manifest = await ana.evaluate("fetch('/manifest.webmanifest').then((r) => r.json())")
         assert manifest["display"] == "standalone" and {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}
