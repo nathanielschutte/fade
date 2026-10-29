@@ -76,7 +76,7 @@ Pushes to `main` never cancel each other, so every commit gets its candidate. A 
 
 When staging looks good:
 1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), usually as part of the feature's pull request, or in a small one of its own (`server 1.4.0`). Once merged, that commit is a candidate too; it's the one you'll release, so let it reach staging.
-2. The owner tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags.
+2. The owner tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
 
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
