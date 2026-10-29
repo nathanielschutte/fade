@@ -179,7 +179,7 @@ async def main():
         # Tapped, it shows bigger in its own rounded square (X24).
         await ana.click("#group-avatar")
         await expect(ana.locator("#picture-big img")).to_be_visible()
-        assert await ana.locator("#picture-big").evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "30%"
+        await expect(ana.locator("#picture-big")).to_have_css("border-top-left-radius", "30%")
         await ana.keyboard.press("Escape")
         await expect(ana.locator("#picture-viewer")).to_be_hidden()
         await ana.click("#group-dialog [data-close]")

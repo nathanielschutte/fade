@@ -53,9 +53,9 @@ async def main():
         await expect(ana.locator("#chat-title")).to_have_text(GROUP)
         await expect(row(ben, GROUP)).to_be_visible(timeout=10000)
         # Groups have a rounded-square picture, friends a round one (X17).
-        group_radius = await row(ben, GROUP).locator(".avatar").evaluate("e => getComputedStyle(e).borderTopLeftRadius")
-        friend_radius = await row(ben, ANA).locator(".avatar").evaluate("e => getComputedStyle(e).borderTopLeftRadius")
-        assert (group_radius, friend_radius) == ("30%", "50%"), (group_radius, friend_radius)
+        # (Waits: the list may still be redrawing the row.)
+        await expect(row(ben, GROUP).locator(".avatar")).to_have_css("border-top-left-radius", "30%")
+        await expect(row(ben, ANA).locator(".avatar")).to_have_css("border-top-left-radius", "50%")
         await expect(row(ben, GROUP).locator(".visually-hidden")).to_have_text("Group: ")
         await shot(ben, "group-badge-phone")
 

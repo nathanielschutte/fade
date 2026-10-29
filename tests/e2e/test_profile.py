@@ -88,7 +88,7 @@ async def main():
         await ana.click("#profile-avatar")
         await expect(ana.locator("#picture-viewer")).to_be_visible()
         await expect(ana.locator("#picture-big img")).to_be_visible()
-        assert await ana.locator("#picture-big").evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "50%"
+        await expect(ana.locator("#picture-big")).to_have_css("border-top-left-radius", "50%")
         await asyncio.sleep(0.3)
         await shot(ana, "picture-bigger", full_page=False)
         await ana.mouse.click(8, 400)  # the backdrop

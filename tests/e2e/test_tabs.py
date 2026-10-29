@@ -86,7 +86,7 @@ async def main():
         # The list has room for its rows (Safari once drew it with no height at all).
         listed = await ana.locator("#send-to-list").bounding_box()
         assert listed["height"] >= 3 * 40, listed
-        assert await ana.locator("#send-to-list").evaluate("e => getComputedStyle(e).flexBasis") == "auto"
+        await expect(ana.locator("#send-to-list")).to_have_css("flex-basis", "auto")
         names = await ana.locator("#send-to-list .send-to-name > span:first-child").all_text_contents()
         assert sorted(names) == sorted([BEN, CAL, GROUP]), names
         await expect(ana.locator("#send-to-go")).to_be_disabled()
