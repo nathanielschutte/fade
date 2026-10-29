@@ -6,7 +6,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 
 | | |
 |---|---|
-| `GET  /config` | `{invite_required, snap_max_bytes, video_max_bytes, video_max_seconds, snap_ttl_hours, api_version, server_version, build, message_formats, min_client_versions, vapid_public_key, environment, started_at}` (no auth, never version-blocked). `environment` is null in production and names a non-production copy (`"staging"`): clients then mark every page and show the build (`server/static/env.js`). `started_at` is when the server started (unix seconds) |
+| `GET  /config` | `{invite_required, snap_max_bytes, video_max_bytes, video_max_seconds, snap_ttl_hours, api_version, server_version, build, message_formats, group_message_formats, min_client_versions, vapid_public_key, environment, started_at}` (no auth, never version-blocked). `message_formats` are the formats direct texts and pics can have, and `group_message_formats` those of group messages and pics (0 is plain text from before group encryption); a client that reads every listed format can show any history. `environment` is null in production and names a non-production copy (`"staging"`): clients then mark every page and show the build (`server/static/env.js`). `started_at` is when the server started (unix seconds) |
 | `POST /auth/register` | `{username, auth_key, public_key, wrapped_private_key, invite_code?}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |

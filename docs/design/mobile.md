@@ -41,7 +41,7 @@ mobile/            the retired Expo prototype; removed once ios/ passes every ve
   The formats to cover: texts (1, 2), pics (1, 2), videos and photos (4 to 7), group messages (3, 5, 7), edits, reactions, recovery keys, and safety codes ([how-napsack-works.md](../how-napsack-works.md)).
 - **The vectors run in the app's tests.** An XCTest target reads `tests/vectors/*.json` and makes every check `shared/crypto/vector-checks.js` makes. It runs on every build in CI, and on a real iPhone too, since that's where the 600,000-round PBKDF2 has to stay near a second.
 - **Keys on the phone.** The unwrapped private key goes in the Keychain, readable only while the phone is unlocked (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) and never synced to iCloud or other devices. Sign-in derives keys from the password exactly as on the web, so history works on the phone from day one.
-- **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this".
+- **Version handshake.** Every request carries `X-Napsack-Client: ios/<version>+<build>`. At launch the app reads `GET /api/config`. If the server's `min_client_versions.ios` is newer than the app, it shows an update screen that links to the App Store. A message whose `format` it doesn't know shows "Update napsack to read this"; `/api/config` lists every format in use (`message_formats` for direct chats, `group_message_formats` for groups).
 
 ## Getting set up
 

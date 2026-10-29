@@ -290,6 +290,7 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
         "server_version": version::SERVER_VERSION,
         "build": version::BUILD,
         "message_formats": version::MESSAGE_FORMATS,
+        "group_message_formats": crate::groups::MESSAGE_FORMATS,
         "min_client_versions": min_versions,
         // Non-production copies only ("staging"); null in production.
         "environment": state.config.environment,

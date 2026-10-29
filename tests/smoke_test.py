@@ -1429,7 +1429,7 @@ async def ws_events(token, bucket, ready):
 def check_versions(token):
     """/config describes the server; old native clients get 426 everywhere else."""
     cfg = ok(call("GET", "/config")).json()
-    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2, 4, 6] and cfg["snap_ttl_hours"] == 720, cfg
+    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2, 4, 6] and cfg["group_message_formats"] == [0, 3, 5, 7] and cfg["snap_ttl_hours"] == 720, cfg
     assert cfg["server_version"] and cfg["build"], cfg
     # Which copy this is: null in production (and here, locally); staging names itself.
     assert cfg["environment"] == ("staging" if REMOTE else None), cfg

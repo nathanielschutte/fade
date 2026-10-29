@@ -47,6 +47,15 @@ pub const FORMAT_E2E_IMAGE: i64 = 7;
 pub fn sealed(format: i64) -> bool {
     matches!(format, FORMAT_E2E | FORMAT_E2E_VIDEO | FORMAT_E2E_IMAGE)
 }
+/// Every format a group message or pic can have, for `/api/config`: plain
+/// text from clients that predate encryption, and the sealed ones. A client
+/// that reads all of these can show any group's history.
+pub const MESSAGE_FORMATS: &[i64] = &[
+    FORMAT_PLAINTEXT,
+    FORMAT_E2E,
+    FORMAT_E2E_VIDEO,
+    FORMAT_E2E_IMAGE,
+];
 /// A format 3 text's sealed content, decoded: the 2,000-character envelope
 /// with room for escapes, plus IV and tag.
 const MAX_E2E_CONTENT_BYTES: usize = 16 * 1024;
@@ -1130,6 +1139,14 @@ pub async fn reads(
 mod tests {
     use super::*;
     use crate::db::tests::temp_db;
+
+    #[test]
+    fn config_lists_every_group_format() {
+        for format in -1..16 {
+            let stored = format == FORMAT_PLAINTEXT || sealed(format);
+            assert_eq!(MESSAGE_FORMATS.contains(&format), stored, "format {format}");
+        }
+    }
 
     #[test]
     fn names_are_trimmed_and_bounded() {
