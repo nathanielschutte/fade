@@ -23,13 +23,11 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
-| 3 | [Voice notes](#f16-voice-notes) | Features | – | Planned | End-to-end encrypted audio; a new message kind |
-| 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
-| 6 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
-| 7 | [Disappearing texts](#f18-disappearing-texts) | Features | – | Needs decision | Conflicts with "data is never deleted"; see notes |
-| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 4 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
+| 5 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
+| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
