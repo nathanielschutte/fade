@@ -18,7 +18,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Done | Nate (2026-10-28); 0.37.0 |
 | 0p | [Change your username](#x30-change-your-username) | Features | Done | Nate (2026-10-28); 0.38.0 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Done | Nate (2026-10-28); 0.39.0 |
-| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Up next | Nate (2026-10-28); release 8, after the rest |
+| 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Done | Nate (2026-10-28); 0.40.0 |
 | 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Up next | Nate (2026-10-29); after X34 |
 | 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Up next | Nate (2026-10-29); after X36 |
 | 0s | [Work through pull requests](#p5-pull-requests-and-repository-protection) | Process | Up next | Nate (2026-10-28); last, after all the features |
@@ -474,6 +474,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X33. Captions anywhere on a pic
 - Requested (2026-10-28): tap anywhere on a pic or video (not just a strip at the bottom) and a caption line appears there to type into. Enter, or tapping elsewhere on the picture, finishes typing and leaves you looking at the pic with its caption; it never sends. Drag the caption up and down to place it. Only **Send to…** / **Send to <name>** sends.
 - The caption's height goes with the pic (inside the encrypted envelope, as a fraction of the height) so the receiver sees it where it was put. Older clients that don't know the field show it in the default place.
+- Built (0.40.0): photos are sent in the media envelope as formats 6 (direct) and 7 (group), with `y`; videos carry `y` too (same formats; readers ignore unknown keys). Format 2 pics still open. "Tap the picture to add a caption" shows until there is one; a tap on the photo while drawing or with a sticker picked puts that down first. Pinned vectors `tests/vectors/media6.json`. `test_captions.py`.
 
 #### X35. The installed app keeps asking for the camera
 - Reported (Nate, 2026-10-28): napsack on the Home Screen asks for camera permission again and again; the answer isn't remembered. With video (X28) it would ask for the microphone too.
@@ -492,6 +493,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X34. Add recipients from inside a chat
 - Requested (2026-10-28): taking a pic or video from inside a chat or group shows who it's going to next to the send button. Tapping that opens the same **Send to…** picker as the camera tab (X26), with the current chat already ticked, to add more friends or groups.
+- Built (0.40.0): "To Ben +" beside Send (which then just says Send). `test_captions.py`.
 
 #### X22. Team Napsack: messages from napsack itself
 - Requested (2026-10-24), queued: a system account, **Team Napsack**, that can message anyone without being their friend, for occasions: birthdays, holidays, and so on. No UI needed: an easy way to schedule them in code.

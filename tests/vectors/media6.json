@@ -1,0 +1,33 @@
+{
+  "about": "napsack photos in the media envelope: format 6 (direct) and 7 (group), with the caption place y. Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "direct": {
+    "format": 6,
+    "from": 7,
+    "to": 3,
+    "type": "image/jpeg",
+    "caption": "up here 👆",
+    "y": 0.25,
+    "media": "/9j/4AECAwQFBgcI/9k=",
+    "plaintext": "ADF7InR5cGUiOiJpbWFnZS9qcGVnIiwiYyI6InVwIGhlcmUg8J+RhiIsInkiOjAuMjV9/9j/4AECAwQFBgcI/9k=",
+    "ciphertext": "Qo36jBSVJvviss6e1K5lE+AeDTYh6EPMwrdINUhiXr9g6iIgZXoqCZT3P/yYWXE1+CFkbkqLKuUpmZo15jRhu20c4EpaCLLTRGgsXPJ7Lr+/YqqZd7OAbTiSZAzI"
+  },
+  "group": {
+    "format": 7,
+    "group_id": 5,
+    "sender": 7,
+    "type": "image/jpeg",
+    "caption": "no place given",
+    "y": null,
+    "media": "/9j/4AECAwQFBgcI/9k=",
+    "client_id": "eTwc0NkQwoF2Dtx+HbQUAA==",
+    "recipients": [
+      3,
+      7
+    ],
+    "content": "u2wBqWYljTps2k0JzGo8f1YCXQXFgYhFymaxOUEI78OemsDcM4c12FC9U+jNlyk03p+yve/+FC0WC+4Ue/jztFzdJif2onRfR7ym75Jl2W8VUTgvHyE=",
+    "wraps": {
+      "3": "WVgYNCBBMQuDs08sa1IilwcFGYin4/XOXi4VuFQxmh/tw+6W4yFeZBmWHjLZRH7H5ZC6Qqtfj6hpTBAd",
+      "7": "NMDvnAY+z7bp+I4BI0NO5UmVDafvgaYpRZD+swpMqj9fjTUFvV4uSW+51VqB0lGa0Sqtl1Fgi0UV/AYV"
+    }
+  }
+}

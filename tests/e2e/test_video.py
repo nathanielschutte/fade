@@ -113,7 +113,8 @@ async def main():
         await expect(ana.locator("#draw-tools")).to_be_hidden()  # drawing is for photos
         await expect(ana.locator("#zoom-chip")).to_be_hidden()
         assert await ana.locator("#camera-preview-video").evaluate("v => !v.paused && v.loop"), "the preview plays, looping"
-        await expect(ana.locator("#send-snap")).to_have_text(f"Send to {BEN}")
+        await expect(ana.locator("#send-who")).to_have_text(f"To {BEN} +")
+        await ana.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
         await ana.fill("#snap-caption", "listen")
         await shot(ana, "video-preview-phone", full_page=False)
         await ana.click("#send-snap")

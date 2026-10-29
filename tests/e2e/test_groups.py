@@ -168,7 +168,8 @@ async def main():
         await ana.click("#camera-button")
         await ana.wait_for_timeout(500)
         await ana.click("#shutter")
-        await expect(ana.locator("#send-snap")).to_have_text(f"Send to {GROUP}")
+        await expect(ana.locator("#send-who")).to_have_text(f"To {GROUP} +")
+        await ana.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
         await ana.fill("#snap-caption", "<i>road</i> ✨ trip")
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=10000)

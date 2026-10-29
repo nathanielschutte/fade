@@ -552,9 +552,10 @@
     <div class="sticker-tray" id="sticker-tray" role="group" aria-label="Stickers" hidden></div>
     <div class="snap-caption-box" id="snap-caption-box" hidden>
       <span class="caption-count" id="snap-caption-count" aria-live="polite" hidden></span>
-      <textarea id="snap-caption" class="snap-caption" rows="1" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" aria-describedby="snap-caption-count"></textarea>
+      <textarea id="snap-caption" class="snap-caption" rows="1" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="done" aria-label="Caption" aria-describedby="snap-caption-count"></textarea>
     </div>
     <p class="camera-message" id="camera-message" hidden></p>
+    <p class="caption-hint" id="caption-hint" hidden>Tap the picture to add a caption</p>
     <button type="button" class="zoom-chip" id="zoom-chip" aria-label="Zoom: 1×" hidden>1×</button>
   </div>
   <div class="camera-controls" id="capture-controls">
@@ -574,7 +575,10 @@
   </div>
   <div class="camera-controls" id="send-controls" hidden>
     <button type="button" class="button" id="retake">Retake</button>
-    <button type="button" class="button primary" id="send-snap">Send</button>
+    <div class="send-side">
+      <button type="button" class="button send-who" id="send-who" hidden></button>
+      <button type="button" class="button primary" id="send-snap">Send</button>
+    </div>
   </div>
 </dialog>
 

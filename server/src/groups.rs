@@ -39,10 +39,13 @@ pub const FORMAT_E2E: i64 = 3;
 /// `format` of an end-to-end encrypted group video: the same scheme, sealed
 /// as kind "video" around a media envelope (plan X28).
 pub const FORMAT_E2E_VIDEO: i64 = 5;
+/// `format` of an end-to-end encrypted group photo in the media envelope,
+/// with where its caption sits (plan X33): kind "image".
+pub const FORMAT_E2E_IMAGE: i64 = 7;
 
 /// End-to-end encrypted: content the server can't open, a key per member.
 pub fn sealed(format: i64) -> bool {
-    format == FORMAT_E2E || format == FORMAT_E2E_VIDEO
+    matches!(format, FORMAT_E2E | FORMAT_E2E_VIDEO | FORMAT_E2E_IMAGE)
 }
 /// A format 3 text's sealed content, decoded: the 2,000-character envelope
 /// with room for escapes, plus IV and tag.
@@ -104,7 +107,7 @@ pub struct GroupMessage {
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
         gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to,
-        gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5) THEN u.public_key END AS sender_public_key,
+        gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5, 7) THEN u.public_key END AS sender_public_key,
         (SELECT e.id FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_id,
         (SELECT e.content FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_content,
         (SELECT e.client_id FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_client_id,
@@ -434,7 +437,7 @@ pub async fn mark_encrypted_start(
     at: i64,
 ) -> sqlx::Result<Option<i64>> {
     let already: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM group_messages WHERE group_id = ? AND format IN (3, 5) LIMIT 1",
+        "SELECT id FROM group_messages WHERE group_id = ? AND format IN (3, 5, 7) LIMIT 1",
     )
     .bind(group)
     .fetch_optional(&mut *tx)

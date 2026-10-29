@@ -431,29 +431,44 @@ export async function decryptGroupEdit(content, wrapB64, messageId, opts) {
   return unpackText(dec.decode(await decryptGroup(content, wrapB64, { ...opts, kind: editKind(messageId) }))).text;
 }
 
-// ---------- formats 4 and 5: videos ----------
-// A video travels in a media envelope:
-//   header length (2 bytes, big-endian) || header (UTF-8 JSON) || the video
-// The header says what the bytes are and carries the caption:
-//   {"type": "video/mp4", "c": "the caption"}
+// ---------- formats 4 to 7: videos and photos in a media envelope ----------
+// A video (and, from format 6, a photo) travels in a media envelope:
+//   header length (2 bytes, big-endian) || header (UTF-8 JSON) || the bytes
+// The header says what the bytes are and carries the caption, and where on
+// the picture it sits (`y`, a fraction of the height from the top; plan X33):
+//   {"type": "video/mp4", "c": "the caption", "y": 0.62}
 // Readers ignore header keys they don't know, so later additions don't need a
-// new format. Format 4 seals the envelope with the pair key (a direct chat);
-// format 5 is the format 3 group scheme with the content kind "video". The
-// format number tells the server a video from a pic, as the size would anyway.
+// new format (`y` came after format 4, and older readers skip it). Formats 4
+// and 6 seal the envelope with the pair key (a direct chat); 5 and 7 are the
+// format 3 group scheme with the content kind "video" or "image". The format
+// number tells the server a video from a photo, as the size would anyway.
 
 export const VIDEO_FORMAT = 4;
 export const GROUP_VIDEO_FORMAT = 5;
+export const IMAGE_FORMAT = 6;
+export const GROUP_IMAGE_FORMAT = 7;
 const MAX_MEDIA_HEADER_BYTES = 8192;
-// What a sender may say the bytes are: a video type and its parameters, nothing else.
+// What a sender may say the bytes are: a video type and its parameters, or a
+// JPEG (photos are always made JPEG before sending), nothing else.
 const VIDEO_TYPE = /^video\/[a-z0-9.+-]+(;[a-z0-9 =.,+"-]*)?$/i;
+const IMAGE_TYPE = /^image\/jpeg$/;
+const mediaTypeOk = (type, kind) => typeof type === "string" && type.length <= 100
+  && (kind === "image" ? IMAGE_TYPE : VIDEO_TYPE).test(type);
 
 const videoAad = (senderId, recipientId) => `napsack/v4/snap/${senderId}/${recipientId}`;
+const imageAad = (senderId, recipientId) => `napsack/v6/snap/${senderId}/${recipientId}`;
 
-/** The plaintext of a video: exactly these bytes are encrypted. */
-export function packMedia(media, type, caption = "") {
-  if (!VIDEO_TYPE.test(type) || type.length > 100) throw new Error("That isn't a video napsack can send.");
+/**
+ * The plaintext of a video or photo: exactly these bytes are encrypted.
+ * `y`: where the caption sits (0 top to 1 bottom), or null for the default place.
+ */
+export function packMedia(media, type, caption = "", y = null) {
+  const kind = String(type).startsWith("image/") ? "image" : "video";
+  if (!mediaTypeOk(type, kind)) throw new Error(`That isn't a ${kind === "image" ? "photo" : "video"} napsack can send.`);
   if (enc.encode(caption).length > MAX_CAPTION_BYTES) throw new Error("That caption is too long.");
-  const header = enc.encode(JSON.stringify({ type, c: caption }));
+  const fields = { type, c: caption };
+  if (y != null) fields.y = Math.round(Math.min(1, Math.max(0, Number(y))) * 1000) / 1000;
+  const header = enc.encode(JSON.stringify(fields));
   if (header.length > MAX_MEDIA_HEADER_BYTES) throw new Error("That caption is too long.");
   const out = new Uint8Array(2 + header.length + media.length);
   out[0] = header.length >> 8;
@@ -463,31 +478,52 @@ export function packMedia(media, type, caption = "") {
   return out;
 }
 
-/** -> { type, caption, media }. Throws unless it's a well-formed video envelope. */
-export function unpackMedia(body) {
+/**
+ * -> { type, caption, y, media }. Throws unless it's a well-formed envelope
+ * of the `kind` expected ("video" or "image"): a photo can't pass as a video.
+ */
+export function unpackMedia(body, kind = "video") {
   const n = (body[0] << 8) | body[1];
-  if (body.length < 2 + n || n > MAX_MEDIA_HEADER_BYTES) throw new Error("malformed video");
+  if (body.length < 2 + n || n > MAX_MEDIA_HEADER_BYTES) throw new Error(`malformed ${kind}`);
   const header = JSON.parse(dec.decode(body.subarray(2, 2 + n)));
-  const type = header?.type;
-  if (typeof type !== "string" || !VIDEO_TYPE.test(type) || type.length > 100) throw new Error("malformed video");
-  return { type, caption: typeof header.c === "string" ? header.c : "", media: body.subarray(2 + n) };
+  if (!mediaTypeOk(header?.type, kind)) throw new Error(`malformed ${kind}`);
+  const y = typeof header.y === "number" && header.y >= 0 && header.y <= 1 ? header.y : null;
+  return { type: header.type, caption: typeof header.c === "string" ? header.c : "", y, media: body.subarray(2 + n) };
 }
 
-export async function encryptVideo(key, media, type, caption, senderId, recipientId) {
-  return seal(key, packMedia(media, type, caption), videoAad(senderId, recipientId));
+export async function encryptVideo(key, media, type, caption, senderId, recipientId, y = null) {
+  return seal(key, packMedia(media, type, caption, y), videoAad(senderId, recipientId));
 }
 
 export async function decryptVideo(key, bytes, senderId, recipientId) {
-  return unpackMedia(await open(key, bytes, videoAad(senderId, recipientId)));
+  return unpackMedia(await open(key, bytes, videoAad(senderId, recipientId)), "video");
 }
 
 /** A group video: the media envelope, sealed with the format 3 scheme as kind "video". */
-export async function encryptGroupVideo(media, type, caption, opts) {
-  return encryptGroup(packMedia(media, type, caption), { ...opts, kind: "video" });
+export async function encryptGroupVideo(media, type, caption, opts, y = null) {
+  return encryptGroup(packMedia(media, type, caption, y), { ...opts, kind: "video" });
 }
 
 export async function decryptGroupVideo(content, wrapB64, opts) {
-  return unpackMedia(await decryptGroup(content, wrapB64, { ...opts, kind: "video" }));
+  return unpackMedia(await decryptGroup(content, wrapB64, { ...opts, kind: "video" }), "video");
+}
+
+/** Format 6: a photo (JPEG) with its caption and where the caption sits. */
+export async function encryptImage(key, jpeg, caption, senderId, recipientId, y = null) {
+  return seal(key, packMedia(jpeg, "image/jpeg", caption, y), imageAad(senderId, recipientId));
+}
+
+export async function decryptImage(key, bytes, senderId, recipientId) {
+  return unpackMedia(await open(key, bytes, imageAad(senderId, recipientId)), "image");
+}
+
+/** Format 7: a group photo, the format 3 scheme as kind "image". */
+export async function encryptGroupImage(jpeg, caption, opts, y = null) {
+  return encryptGroup(packMedia(jpeg, "image/jpeg", caption, y), { ...opts, kind: "image" });
+}
+
+export async function decryptGroupImage(content, wrapB64, opts) {
+  return unpackMedia(await decryptGroup(content, wrapB64, { ...opts, kind: "image" }), "image");
 }
 
 /**

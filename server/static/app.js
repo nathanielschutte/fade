@@ -3319,7 +3319,7 @@ function groupPicChip(m, mine) {
 async function loadGroupPic(m) {
   const url = `/groups/${m.group_id}/pics/${m.pic.id}`;
   const from = `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`;
-  if (m.format === e2e.GROUP_FORMAT || m.format === e2e.GROUP_VIDEO_FORMAT) {
+  if ([e2e.GROUP_FORMAT, e2e.GROUP_VIDEO_FORMAT, e2e.GROUP_IMAGE_FORMAT].includes(m.format)) {
     const sealed = await api(url, { as: "bytes" });
     const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.client_id, recipients: m.recipients || [] };
     for (const pub of m.key ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
@@ -3327,7 +3327,11 @@ async function loadGroupPic(m) {
         const wrapKey = await groupWrapKeyFor(m.sender_id, pub);
         if (isVideo(m)) {
           const v = await e2e.decryptGroupVideo(sealed, m.key, { ...opts, wrapKey });
-          return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, from };
+          return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, y: v.y, from };
+        }
+        if (m.format === e2e.GROUP_IMAGE_FORMAT) {
+          const p = await e2e.decryptGroupImage(sealed, m.key, { ...opts, wrapKey });
+          return { blob: new Blob([p.media], { type: "image/jpeg" }), caption: p.caption, y: p.y, from };
         }
         const pic = await e2e.decryptGroupPic(sealed, m.key, { ...opts, wrapKey });
         return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from };
@@ -4302,6 +4306,7 @@ const camera = {
   sends: new Map(),            // per recipient: the pic's id (friends) or sealed copy (groups), kept for retries
   sent: new Set(),             // recipients that have it, so Send again skips them
   videoType: null,             // set when `blob` is a recorded video (X28)
+  captionY: null,              // where the caption sits, 0 (top) to 1, once placed (X33)
   audio: null,                 // the microphone, once asked for, while the camera is open
   zoom: 1,                     // 1 = no zoom (X27)
   hwZoom: null,                // the camera's own zoom range, where the browser offers one
@@ -4667,8 +4672,8 @@ function showPreview(blob, videoType = null) {
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
   $("#zoom-chip").hidden = true;
-  $("#send-snap").textContent = sendLabel();
-  $("#snap-caption-box").hidden = false;
+  renderSendWho();
+  $("#caption-hint").hidden = false; // until there's a caption
   fitCaption();
 }
 
@@ -4816,16 +4821,108 @@ function fitCaption() {
 function clearCaption() {
   $("#snap-caption").value = "";
   $("#snap-caption-box").hidden = true;
+  $("#snap-caption-box").classList.remove("editing");
+  $("#caption-hint").hidden = true;
+  camera.captionY = null;
   fitCaption();
 }
 $("#snap-caption").addEventListener("input", fitCaption);
 
+// ---------- captions anywhere on the picture (X33) ----------
+// Tap the picture where the caption should go, and type. Enter, or a tap
+// anywhere else, finishes typing: the caption stays on the picture, nothing
+// is sent (only the send buttons send). Drag it up or down to move it. Where
+// it sits travels with the picture, sealed in with it (formats 4 to 7).
+const CAPTION_EDGE = 0.08; // never so close to an edge it's cut off
+
+/** Where the picture is drawn in the stage (it's letterboxed): `y` is a fraction of that, as the viewer shows it. */
+function previewRect() {
+  const media = camera.videoType ? $("#camera-preview-video") : $("#camera-preview");
+  const box = media.getBoundingClientRect();
+  const w = media.naturalWidth || media.videoWidth || box.width, h = media.naturalHeight || media.videoHeight || box.height;
+  const scale = Math.min(box.width / w, box.height / h);
+  return { top: box.top + (box.height - h * scale) / 2, height: h * scale };
+}
+
+function placeCaption(y) {
+  camera.captionY = Math.min(1 - CAPTION_EDGE, Math.max(CAPTION_EDGE, y));
+  const pic = previewRect();
+  const stage = $(".camera-stage").getBoundingClientRect();
+  $("#snap-caption-box").style.top = `${pic.top - stage.top + camera.captionY * pic.height}px`;
+}
+
+function editCaption() {
+  const box = $("#snap-caption-box");
+  box.hidden = false;
+  box.classList.add("editing");
+  $("#caption-hint").hidden = true;
+  const input = $("#snap-caption");
+  input.focus();
+  fitCaption();
+}
+
+/** Typing's done: the caption stays where it is, or goes away if it's empty. */
+function finishCaption() {
+  const box = $("#snap-caption-box");
+  box.classList.remove("editing");
+  if (!$("#snap-caption").value.trim()) {
+    $("#snap-caption").value = "";
+    box.hidden = true;
+    camera.captionY = null;
+    $("#caption-hint").hidden = $("#send-controls").hidden;
+  }
+}
+
 $("#snap-caption").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.isComposing) {
     e.preventDefault();
-    $("#send-snap").click();
+    $("#snap-caption").blur(); // finishes typing; never sends
   }
 });
+let captionBlurAt = 0;
+$("#snap-caption").addEventListener("blur", () => {
+  captionBlurAt = Date.now();
+  finishCaption();
+});
+
+// A tap on the picture: places a caption there, or (while typing) finishes it.
+$(".camera-stage").addEventListener("click", (e) => {
+  if ($("#send-controls").hidden || e.target.closest("button, input, label, textarea, .snap-caption-box, .sticker, .draw-tools, .sticker-tray")) return;
+  if (Date.now() - captionBlurAt < 400) return; // that tap ended the typing
+  if (drawing.busy()) {
+    drawing.settle(); // first, put the sticker down or close the tray
+    return;
+  }
+  if (!$("#snap-caption-box").hidden) return; // one caption; drag it to move it
+  const pic = previewRect();
+  placeCaption((e.clientY - pic.top) / pic.height);
+  editCaption();
+});
+
+// Dragging the caption up and down; a tap on it (no drag) edits it.
+const captionDrag = { id: null, startY: 0, from: 0, moved: false };
+$("#snap-caption-box").addEventListener("pointerdown", (e) => {
+  if ($("#snap-caption-box").classList.contains("editing")) return;
+  captionDrag.id = e.pointerId;
+  captionDrag.startY = e.clientY;
+  captionDrag.from = camera.captionY ?? 0.7;
+  captionDrag.moved = false;
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  e.preventDefault();
+});
+$("#snap-caption-box").addEventListener("pointermove", (e) => {
+  if (captionDrag.id !== e.pointerId) return;
+  const dy = e.clientY - captionDrag.startY;
+  if (Math.abs(dy) > 6) captionDrag.moved = true;
+  if (captionDrag.moved) placeCaption(captionDrag.from + dy / previewRect().height);
+});
+const endCaptionDrag = (e) => {
+  if (captionDrag.id !== e.pointerId) return;
+  captionDrag.id = null;
+  if (!captionDrag.moved && e.type === "pointerup") editCaption();
+};
+$("#snap-caption-box").addEventListener("pointerup", endCaptionDrag);
+$("#snap-caption-box").addEventListener("pointercancel", endCaptionDrag);
 
 $("#retake").addEventListener("click", () => {
   showCapture();
@@ -4862,6 +4959,20 @@ function sendLabel() {
 }
 
 /**
+ * From inside a chat (X34), a button beside Send says who it's going to; a
+ * tap opens Send to… with them ticked, to add friends or groups.
+ */
+function renderSendWho() {
+  const who = $("#send-who");
+  who.hidden = !camera.to.length || camera.picked;
+  who.textContent = `To ${listNames(camera.to)} +`;
+  who.setAttribute("aria-label", `Sending to ${listNames(camera.to)}. Add more people or groups`);
+  // The button beside it says who; this one just sends.
+  $("#send-snap").textContent = who.hidden ? sendLabel() : "Send";
+}
+$("#send-who").addEventListener("click", openSendTo);
+
+/**
  * Sends the pic to each recipient in turn, each its own end-to-end encrypted
  * copy (format 2 to a friend, format 3 to a group). Send again after a
  * failure skips whoever has it and resends the same pic to the rest, so a
@@ -4877,6 +4988,7 @@ async function sendPics(to) {
       ? { video: new Uint8Array(await camera.blob.arrayBuffer()), type: camera.videoType }
       : { photo: await finalPhoto() };
     const caption = $("#snap-caption").value.trim();
+    media.y = caption ? camera.captionY : null;
     for (const r of to) {
       if (camera.sent.has(recipientKey(r))) continue;
       try {
@@ -4921,11 +5033,11 @@ async function sendDirectPicTo(friendId, media, caption) {
   // Format 2 (a photo) or 4 (a video): the caption is sealed in with it, so only the friend sees it.
   const key = await keyFor(friendId);
   const sealed = media.video
-    ? await e2e.encryptVideo(key, media.video, media.type, caption, state.me.id, friendId)
-    : await e2e.encryptPic(key, media.photo, caption, state.me.id, friendId);
+    ? await e2e.encryptVideo(key, media.video, media.type, caption, state.me.id, friendId, media.y)
+    : await e2e.encryptImage(key, media.photo, caption, state.me.id, friendId, media.y);
   const max = media.video ? state.config?.video_max_bytes : state.config?.snap_max_bytes;
   if (max && sealed.length > max) throw new Error(`That ${media.video ? "video" : "photo"} is too large to send.`);
-  const format = media.video ? e2e.VIDEO_FORMAT : e2e.SNAP_FORMAT;
+  const format = media.video ? e2e.VIDEO_FORMAT : e2e.IMAGE_FORMAT;
   const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${format}&client_id=${clientId}`, {
     method: "POST",
     body: sealed,
@@ -4940,9 +5052,10 @@ async function sendGroupPicTo(groupId, media, caption) {
   // Sealed once per pic and group, so Send again after a dropped connection
   // resends the same one (the server keeps one copy).
   if (!camera.sends.has(key)) {
-    const format = media.video ? e2e.GROUP_VIDEO_FORMAT : e2e.GROUP_FORMAT;
+    const format = media.video ? e2e.GROUP_VIDEO_FORMAT : e2e.GROUP_IMAGE_FORMAT;
     camera.sends.set(key, groupSender(groupId,
-      (opts) => (media.video ? e2e.encryptGroupVideo(media.video, media.type, caption, opts) : e2e.encryptGroupPic(media.photo, caption, opts)),
+      (opts) => (media.video ? e2e.encryptGroupVideo(media.video, media.type, caption, opts, media.y)
+        : e2e.encryptGroupImage(media.photo, caption, opts, media.y)),
       (s) => getJSON(`/groups/${groupId}/pics?format=${format}`, {
         method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
       })));
@@ -5147,7 +5260,7 @@ function nextPic() {
 
 /** Fetches and decrypts one direct pic or video: { blob, video, caption, from }. */
 async function loadSnap(m) {
-  if (![1, 2, e2e.VIDEO_FORMAT].includes(m.format ?? 1)) {
+  if (![1, 2, e2e.VIDEO_FORMAT, e2e.IMAGE_FORMAT].includes(m.format ?? 1)) {
     throw new PicProblem(`This ${mediaWord(m)} was sent from a newer version of napsack. Reload to open it.`);
   }
   const sealed = await api(`/snaps/${m.id}`, { as: "bytes" });
@@ -5155,7 +5268,11 @@ async function loadSnap(m) {
   try {
     if (isVideo(m)) {
       const v = await withReadKey(m.sender_id, (k) => e2e.decryptVideo(k, sealed, m.sender_id, m.recipient_id));
-      return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, from };
+      return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, y: v.y, from };
+    }
+    if (m.format === e2e.IMAGE_FORMAT) {
+      const p = await withReadKey(m.sender_id, (k) => e2e.decryptImage(k, sealed, m.sender_id, m.recipient_id));
+      return { blob: new Blob([p.media], { type: "image/jpeg" }), caption: p.caption, y: p.y, from };
     }
     const pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
     return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from };
@@ -5206,7 +5323,7 @@ function showOpening(m) {
 }
 
 /** Shows a loaded pic (or plays a video) and starts its timer. True once it's on screen. */
-async function showInViewer({ blob, video = false, from, caption = "" }) {
+async function showInViewer({ blob, video = false, from, caption = "", y = null }) {
   viewer.url = URL.createObjectURL(blob);
   const v = $("#viewer");
   const img = $("#viewer-image");
@@ -5242,6 +5359,8 @@ async function showInViewer({ blob, video = false, from, caption = "" }) {
   $("#viewer-from").textContent = from;
   $("#viewer-caption").textContent = caption;
   $("#viewer-caption").hidden = !caption;
+  // Where the sender put it, on the picture itself (X33); else the lower third.
+  placeViewerCaption(y);
   const left = updateCount();
   $("#viewer-hint").textContent = left ? "Tap for the next one" : "Tap to close";
   v.style.setProperty("--view-ms", `${ms}ms`);
@@ -5250,6 +5369,25 @@ async function showInViewer({ blob, video = false, from, caption = "" }) {
   viewer.timer = setTimeout(nextPic, video ? ms + 3000 : ms);
   viewer.shownAt = Date.now();
   return true;
+}
+
+/** Puts the caption at `y` (0 top to 1 bottom) of the picture as shown, or the default place. */
+function placeViewerCaption(y) {
+  const cap = $("#viewer-caption");
+  cap.classList.toggle("placed", y != null);
+  if (y == null) {
+    cap.style.top = "";
+    return;
+  }
+  const media = $("#viewer-video").hidden ? $("#viewer-image") : $("#viewer-video");
+  const box = media.getBoundingClientRect();
+  const stage = $("#viewer").getBoundingClientRect();
+  // The picture is letterboxed (object-fit: contain): find where it's drawn.
+  const natW = media.naturalWidth || media.videoWidth || box.width;
+  const natH = media.naturalHeight || media.videoHeight || box.height;
+  const scale = Math.min(box.width / natW, box.height / natH);
+  const drawnTop = box.top + (box.height - natH * scale) / 2;
+  cap.style.top = `${drawnTop - stage.top + y * natH * scale}px`;
 }
 
 /** Loads a video far enough to play. False if it can't be played here. */
@@ -5291,6 +5429,7 @@ function clearViewer() {
   player.load();
   player.hidden = true;
   v.classList.remove("is-video");
+  placeViewerCaption(null);
   if (viewer.url) URL.revokeObjectURL(viewer.url);
   viewer.url = null;
 }

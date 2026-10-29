@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any, edits2?: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any, edits2?: any, media6?: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm, edits2: ve } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm, edits2: ve, media6: vp } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -222,6 +222,27 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
       const got = await e2e.decryptVideo(ctx.kb, sealed, v.alice.id, v.bob.id);
       return got.caption === "hi" && got.media.join() === "9,8,7" && e2e.VIDEO_FORMAT === 4 && e2e.GROUP_VIDEO_FORMAT === 5;
     });
+  }
+
+  // Photos in the media envelope (formats 6 and 7), with the caption's place
+  if (vp) {
+    const d = vp.direct, g = vp.group;
+    await check("a format 6 photo decrypts like the vector, caption and place", async () => {
+      const got = await e2e.decryptImage(ctx.kb, e2e.fromB64(d.ciphertext), d.from, d.to);
+      return got.type === "image/jpeg" && got.caption === d.caption && got.y === d.y && e2e.toB64(got.media) === d.media
+        && e2e.toB64(e2e.packMedia(e2e.fromB64(d.media), "image/jpeg", d.caption, d.y)) === d.plaintext;
+    });
+    await check("a photo can't be read as a video or a format 2 pic", async () =>
+      (await fails(() => e2e.decryptVideo(ctx.kb, e2e.fromB64(d.ciphertext), d.from, d.to)))
+        && (await fails(() => e2e.decryptPic(ctx.kb, e2e.fromB64(d.ciphertext), 2, d.from, d.to))));
+    await check("a format 7 group photo decrypts like the vector, with no place", async () => {
+      const wrapKey = await e2e.groupWrapKey(await priv(v.bob), v.alice.spki, v.bob.id, v.alice.id);
+      const opts = { groupId: g.group_id, senderId: g.sender, myId: v.bob.id, clientId: g.client_id, recipients: g.recipients, wrapKey };
+      const got = await e2e.decryptGroupImage(e2e.fromB64(g.content), g.wraps[v.bob.id], opts);
+      return got.caption === g.caption && got.y === null && e2e.toB64(got.media) === g.media
+        && (await fails(() => e2e.decryptGroupVideo(e2e.fromB64(g.content), g.wraps[v.bob.id], opts)));
+    });
+    await check("only JPEGs travel as photos", () => fails(() => e2e.packMedia(new Uint8Array([1]), "image/svg+xml", "")));
   }
 
   // Edits to texts: bound to the message they edit

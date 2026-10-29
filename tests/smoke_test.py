@@ -640,6 +640,13 @@ def check_group_e2e(tag, a, a_tok, b, b_tok):
     theirs = [x for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["id"] == vm["id"]][0]
     assert theirs["key"] == vkeys["wraps"][str(b["id"])] and vkeys["wraps"][str(a["id"])] not in json.dumps(theirs)
     assert ok(call("GET", f"/groups/{gid}/pics/{vm['pic']['id']}", b_tok)).content == clip
+    # Photos in the media envelope (format 7): the same, at a pic's size cap.
+    ok(call("POST", f"/groups/{gid}/pics?format=7", a_tok, data=clip,
+            headers={"X-Napsack-Keys": json.dumps(video_keys())}), 413)
+    pkeys = video_keys()
+    p7 = ok(call("POST", f"/groups/{gid}/pics?format=7", a_tok, data=os.urandom(2000),
+                 headers={"X-Napsack-Keys": json.dumps(pkeys)})).json()
+    assert p7["format"] == 7 and p7["pic"] and p7["key"] == pkeys["wraps"][str(a["id"])] and p7["sender_public_key"], p7
 
     ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "an old client"}))         # format 0 still works
     if DB:
@@ -1299,7 +1306,12 @@ def check_videos(tag):
     ok(call("GET", f"/snaps/{video['id']}", b_tok), 410)                                          # view once
     ok(call("POST", f"/chats/{b['id']}/snaps?format=4", a_tok, data=os.urandom(config["video_max_bytes"] + 1)), 413)
     ok(call("POST", f"/chats/{b['id']}/snaps?format=5", a_tok, data=clip), 400)                    # a group format
-    print("  videos: their own cap, view-once, not a group format")
+    # Photos in the media envelope (format 6, plan X33): a pic's cap.
+    photo = ok(call("POST", f"/chats/{b['id']}/snaps?format=6", a_tok, data=os.urandom(2000))).json()
+    assert photo["format"] == 6 and photo["snap_state"] == "pending", photo
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=6", a_tok, data=clip), 413)
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=7", a_tok, data=os.urandom(2000)), 400)         # a group format
+    print("  videos and photos: their own caps, view-once, not group formats")
 
 
 def check_invites(tag):
@@ -1412,7 +1424,7 @@ async def ws_events(token, bucket, ready):
 def check_versions(token):
     """/config describes the server; old native clients get 426 everywhere else."""
     cfg = ok(call("GET", "/config")).json()
-    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2, 4] and cfg["snap_ttl_hours"] == 720, cfg
+    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2, 4, 6] and cfg["snap_ttl_hours"] == 720, cfg
     assert cfg["server_version"] and cfg["build"], cfg
     # Which copy this is: null in production (and here, locally); staging names itself.
     assert cfg["environment"] == ("staging" if REMOTE else None), cfg

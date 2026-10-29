@@ -140,6 +140,7 @@ async def main():
         await expect(a.locator("#send-snap")).to_be_visible()
         # A long caption wraps and grows (it used to scroll sideways, looking cut
         # off), shows how much room is left, and stops at 200 characters.
+        await a.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
         one_line = (await a.locator("#snap-caption").bounding_box())["height"]
         await expect(a.locator("#snap-caption-count")).to_be_hidden()
         await a.locator("#snap-caption").press_sequentially("so many words about this lake " * 8)  # 240 characters
@@ -152,7 +153,9 @@ async def main():
         await a.fill("#snap-caption", "first light over the lake")
         await expect(a.locator("#snap-caption-count")).to_be_hidden()
         await shot(a, "caption-compose")
-        await a.press("#snap-caption", "Enter")  # Enter sends
+        await a.press("#snap-caption", "Enter")  # Enter finishes the caption; only Send sends
+        await expect(a.locator("#camera-dialog")).to_be_visible()
+        await a.click("#send-snap")
         await expect(a.locator("#camera-dialog")).not_to_be_visible(timeout=10000)
         await expect(a.locator("#snap-caption")).to_have_value("")
 
@@ -194,8 +197,8 @@ async def main():
             formats = sqlite3.connect(DB).execute(
                 "SELECT DISTINCT m.format FROM messages m JOIN users u ON u.id = m.sender_id"
                 " WHERE m.kind = 'snap' AND u.username IN (?, ?)", (ALEX, SAM)).fetchall()
-            assert formats == [(2,)], formats
-            print("caption is end-to-end encrypted; pics wait on disk as ciphertext, format 2")
+            assert formats == [(6,)], formats
+            print("caption is end-to-end encrypted; pics wait on disk as ciphertext, format 6")
 
         # Sam taps the first and sees both, back to back: each decrypts and shows,
         # then it's gone. Closing the first opens the second straight away.

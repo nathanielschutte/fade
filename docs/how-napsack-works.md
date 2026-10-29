@@ -167,7 +167,7 @@ The associated string says `v2` (`napsack/v2/snap/7/3`), so a format 2 pic can't
 
 Group pics use this same envelope, caption included, sealed with format 3 (see [Group chats](#group-chats)), and wait on disk the same way, view-once for each member.
 
-### Formats 4 and 5: videos
+### Formats 4 to 7: videos and photos
 
 Hold the shutter to record a video of up to 10 seconds (the server's `FADE_VIDEO_MAX_SECONDS`), with sound. The browser records it (MP4 where it can, WebM otherwise), then encrypts a *media envelope*:
 
@@ -177,7 +177,9 @@ Hold the shutter to record a video of up to 10 seconds (the server's `FADE_VIDEO
 | that many | The header, UTF-8 JSON: `{"type": "video/mp4", "c": "the caption"}` |
 | the rest | The video |
 
-Only video types are accepted in `type`, by sender and receiver alike. Readers ignore header keys they don't know, so later additions don't need a new format. In a direct chat it's **format 4**: the same chat key, associated string `napsack/v4/snap/<sender>/<recipient>`. In a group it's **format 5**: the format 3 scheme with the content kind `video`. Either way the server stores opaque bytes, view-once, like a pic, with its own size cap (`FADE_VIDEO_MAX_KB`, 4 MB). The format number tells the server a video from a pic, which the size would show anyway. Pinned vectors: `tests/vectors/media4.json`.
+Since 0.40.0, photos travel in the same envelope too, so the caption can say where it sits on the picture: `"y"`, a fraction of the picture's height from the top (tap the picture to place a caption, drag it to move it). A photo is **format 6** in a direct chat (associated string `napsack/v6/snap/<sender>/<recipient>`) and **format 7** in a group (content kind `image`); its `type` is always `image/jpeg`. Format 2 pics stay readable, and an envelope without `y` shows its caption in the default place. Pinned vectors: `tests/vectors/media6.json`.
+
+Only video types are accepted in `type` for formats 4 and 5, and only `image/jpeg` for 6 and 7, by sender and receiver alike. Readers ignore header keys they don't know, so later additions don't need a new format. In a direct chat it's **format 4**: the same chat key, associated string `napsack/v4/snap/<sender>/<recipient>`. In a group it's **format 5**: the format 3 scheme with the content kind `video`. Either way the server stores opaque bytes, view-once, like a pic, with its own size cap (`FADE_VIDEO_MAX_KB`, 4 MB). The format number tells the server a video from a pic, which the size would show anyway. Pinned vectors: `tests/vectors/media4.json`.
 
 View-once is a server promise, not a cryptographic one. The recipient's screen shows the decrypted photo for ten seconds, and nothing stops a screenshot or a second camera.
 

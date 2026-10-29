@@ -1531,6 +1531,38 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .username-form[hidden] { display: none; }
 .rename-note { align-self: center; text-align: center; }
 
+/* ---------- captions anywhere, adding recipients (X33, X34) ---------- */
+/* The caption sits where it was put (`top`, set from the tap), across the
+   picture; while it isn't being typed in, it's a strip you can drag. */
+.snap-caption-box { top: 70%; bottom: auto; transform: translateY(-50%); touch-action: none; cursor: grab; }
+.snap-caption-box:not(.editing) .snap-caption { pointer-events: none; border-color: transparent; resize: none; }
+.snap-caption-box.editing { cursor: auto; }
+.caption-hint {
+  position: absolute; z-index: 2; bottom: 1rem; left: 50%; transform: translateX(-50%);
+  margin: 0; padding: 0.3rem 0.8rem; border-radius: 999px;
+  background: rgba(12, 20, 16, 0.6); color: var(--fixer); font-size: var(--step--1);
+  pointer-events: none; white-space: nowrap;
+}
+.caption-hint[hidden] { display: none; }
+.viewer-caption.placed { bottom: auto; transform: translateY(-50%); }
+.send-side { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.send-who {
+  min-width: 0; max-width: 55vw; padding: 0 0.9rem;
+  font-size: var(--step--1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#send-snap { flex: none; }
+.send-who[hidden] { display: none; }
+#send-controls { gap: 0.5rem; }
+#send-controls #retake { flex: none; }
+/* A long name shortens with "…" rather than wrapping the button. */
+#send-snap { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Placed on the picture, the caption looks as the friend will see it: a strip
+   across, words in the middle. While typing it's the usual field. */
+.snap-caption-box:not(.editing) { left: 0; right: 0; }
+.snap-caption-box:not(.editing) .snap-caption {
+  border-radius: 0; text-align: center; background: rgba(12, 20, 16, 0.6); padding-inline: 1rem;
+}
+
 /* ---------- installed on an iPhone's Home Screen ----------
    `html.installed` and --screen-h come from app.js (fitInstalledScreen): there,
    Safari can size the page short of the screen while drawing it from the top,

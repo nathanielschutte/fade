@@ -17,13 +17,16 @@ pub const API_VERSION: u32 = 1;
 /// so this just stops a client from writing a format no released client reads.
 /// All are described in docs/how-napsack-works.md: format 1 is the original
 /// scheme; format 2 is the second generation: texts are a JSON envelope (replies),
-/// pics carry a caption sealed inside; format 4 is a video (plan X28). Group
-/// formats (3, and 5 for videos) are in groups.rs.
-pub const MESSAGE_FORMATS: &[i64] = &[1, 2, 4];
+/// pics carry a caption sealed inside; format 4 is a video (plan X28), and
+/// format 6 a photo in the same media envelope, with where its caption sits
+/// (plan X33). Group formats (3, 5 for videos, 7 for photos) are in groups.rs.
+pub const MESSAGE_FORMATS: &[i64] = &[1, 2, 4, 6];
 const TEXT_FORMATS: &[i64] = &[1, 2];
-const SNAP_FORMATS: &[i64] = &[1, 2, VIDEO_FORMAT];
+const SNAP_FORMATS: &[i64] = &[1, 2, VIDEO_FORMAT, IMAGE_FORMAT];
 /// A direct video: opaque bytes like a pic, with its own size cap.
 pub const VIDEO_FORMAT: i64 = 4;
+/// A direct photo in the media envelope: a pic's size cap.
+pub const IMAGE_FORMAT: i64 = 6;
 
 pub fn default_format() -> i64 {
     1
@@ -174,9 +177,15 @@ mod tests {
     #[test]
     fn videos_are_a_pic_format_not_a_text_format() {
         assert!(check_snap_format(VIDEO_FORMAT).is_ok());
+        assert!(check_snap_format(IMAGE_FORMAT).is_ok());
+        assert!(check_text_format(IMAGE_FORMAT).is_err());
         assert!(check_text_format(VIDEO_FORMAT).is_err());
         // Group formats go to group routes only.
-        for group in [crate::groups::FORMAT_E2E, crate::groups::FORMAT_E2E_VIDEO] {
+        for group in [
+            crate::groups::FORMAT_E2E,
+            crate::groups::FORMAT_E2E_VIDEO,
+            crate::groups::FORMAT_E2E_IMAGE,
+        ] {
             assert!(check_snap_format(group).is_err());
             assert!(crate::groups::sealed(group));
         }

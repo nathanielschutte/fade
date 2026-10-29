@@ -109,6 +109,7 @@ async def main():
         await expect(ana.locator("#tab-camera")).to_have_attribute("aria-current", "page")
         await ana.evaluate(PICK_IMAGE)
         await expect(ana.locator("#send-snap")).to_have_text("Send to…", timeout=10000)
+        await ana.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
         await ana.fill("#snap-caption", "summit")
         await ana.click("#send-snap")
         await expect(ana.locator("#send-to-dialog")).to_be_visible()
@@ -164,7 +165,7 @@ async def main():
         await row(ana, CAL).click()
         await ana.click("#camera-button")
         await ana.evaluate(PICK_IMAGE)
-        await expect(ana.locator("#send-snap")).to_have_text(f"Send to {CAL}", timeout=10000)
+        await expect(ana.locator("#send-who")).to_have_text(f"To {CAL} +", timeout=10000)
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
         await expect(cal.locator("button.snap-chip")).to_have_count(1, timeout=15000)

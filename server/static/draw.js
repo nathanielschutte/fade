@@ -282,6 +282,13 @@ export function createDrawing(els) {
       redraw();
     },
     hasMarks: () => s.strokes.length > 0 || s.stickers.length > 0,
+    /** Drawing, or a sticker picked: a tap on the photo is theirs, not a caption's. */
+    busy: () => s.pen || Boolean(s.selected) || !els.stickerTray.hidden,
+    /** Puts down the picked sticker and closes the tray. */
+    settle() {
+      select(null);
+      els.stickerTray.hidden = true;
+    },
     /** The photo with everything drawn on it, at the photo's own size. */
     flatten() {
       const out = document.createElement("canvas");
