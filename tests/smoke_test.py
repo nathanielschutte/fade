@@ -1137,12 +1137,17 @@ def check_metrics(not_admin):
     host = data["hosts"][0]
     latest = host["latest"]
     assert latest, "readings arrive within 20 seconds"
-    for key in ("cpu", "mem", "app_mem", "requests", "disk_data", "sockets"):
+    # CPU and memory come from Linux's /proc (metrics.rs), so a server run on a
+    # Mac for development has none; every deployed server is Linux.
+    proc = REMOTE or sys.platform.startswith("linux")
+    for key in ("requests", "disk_data", "sockets") + (("cpu", "mem", "app_mem") if proc else ()):
         assert key in latest and len(latest[key]) == 3, (key, latest)
-    assert 0 <= latest["cpu"][1] <= 100 and 0 < latest["mem"][1] < 100
+    if proc:
+        assert 0 <= latest["cpu"][1] <= 100 and 0 < latest["mem"][1] < 100
+        assert host["info"]["mem_total"] > 0
     assert latest["requests"][1] > 0, "this test's own requests are counted"
     assert host["status"] in ("ok", "watch", "red") and isinstance(host["reasons"], list)
-    assert host["info"]["vcpus"] >= 1 and host["info"]["mem_total"] > 0
+    assert host["info"]["vcpus"] >= 1
     # Each reading overlaps the hour: a minute that ends inside it counts (its start may be before).
     assert host["series"] and all(p["t"] + p["s"] > data["generated_at"] - 3600 for p in host["series"])
     if not REMOTE:  # (a deployed server is on AWS)
