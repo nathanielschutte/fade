@@ -35,6 +35,7 @@ Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute t
 | [onboarding.md](docs/onboarding.md) | Start here if you're new to the code |
 | [CLAUDE.md](CLAUDE.md) | How we work: the rules (data is never deleted), testing, shipping, code standards |
 | [plan.md](docs/management/plan.md) | What's done, what's next |
+| [plan-ios.md](docs/management/plan-ios.md) | The iOS app's tasks |
 | [how-napsack-works.md](docs/how-napsack-works.md) | The encryption, pics, notifications, and what the server can and can't see |
 | [api.md](docs/spec/api.md) | Every endpoint and socket event |
 | [security.md](docs/security.md) | Protections, limits, and what to do if something looks wrong |

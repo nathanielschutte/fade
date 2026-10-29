@@ -2,7 +2,7 @@
 
 Building the napsack iPhone app: what's in `ios/`, setting up a Mac and an iPhone the first time, the daily loop, and how the pieces work. It assumes you know napsack ([onboarding.md](onboarding.md)) but not Xcode or iOS, so it explains the Xcode words as they come up. The plan for the app (why native Swift, milestones, TestFlight, releases) is in [mobile.md](design/mobile.md).
 
-Where things stand (2026-10-29): the app is a single development screen. It talks to a server and times the password's key derivation on the phone. The encryption is being ported to Swift one format at a time; format 1 passes its vectors.
+Where things stand (2026-10-29): every encryption format is in Swift and passes the pinned vectors, on the Mac and on the phone. The app is still a development screen: it talks to a server and runs the encryption's checks on the phone. What's next is in [plan-ios.md](management/plan-ios.md).
 
 ## The pieces
 
@@ -12,10 +12,11 @@ ios/
 ├── Napsack/               the app's code (SwiftUI)
 │   ├── NapsackApp.swift       where the app starts
 │   ├── ServerScreen.swift     the screen you see
+│   ├── VectorScreen.swift     the encryption's checks, run on the phone
 │   ├── Server.swift           talking to a napsack server
 │   └── Assets.xcassets        the icon and accent color
 ├── NapsackTests/          the app's unit tests
-├── NapsackCrypto/         the encryption, as a Swift package (its own tests)
+├── NapsackCrypto/         the encryption, and its checks, as a Swift package
 └── Config/                build settings, as text files
 ```
 
@@ -91,20 +92,21 @@ The app starts on staging (`NAPSACK_SERVER_URL`, `Config/Base.xcconfig`), and th
 
 - **`NapsackApp.swift`** is where the app starts (`@main`). It shows `ServerScreen`.
 - **`Server.swift`** talks to a napsack server. Every request says which app is asking (`X-Napsack-Client: ios/0.1.0+1`), so a server can turn away an app older than it supports. `ServerConfig` is `GET /api/config` ([api.md](spec/api.md)). `ClientVersion` compares versions the way the server does (`server/src/version.rs`).
-- **`ServerScreen.swift`** is the development screen. It checks a server, shows its version and formats, and warns when the server needs a newer app. It also times the 600,000-round key derivation a sign-in runs, which has to stay near a second on a phone. That's one of the first milestone's checks.
-- **`NapsackCrypto`** is the encryption. It implements the formats in `shared/crypto/crypto.js` (the reference) with Apple's CryptoKit and CommonCrypto, byte for byte ([how-napsack-works.md](how-napsack-works.md)). Its tests read the pinned vectors in `tests/vectors/` straight from the repository and make the same checks `shared/crypto/vector-checks.js` makes, under the same names. Format 1 is done.
+- **`ServerScreen.swift`** is the development screen. It checks a server, shows its version and formats, and warns when the server needs a newer app. **Run every encryption check** opens `VectorScreen.swift`.
+- **`VectorScreen.swift`** runs every encryption check on the phone, against the vectors Xcode copies into the app from `tests/vectors/` (the project's blue `vectors` folder), and shows how long the 600,000-round key derivation a sign-in runs takes there. It has to stay near a second.
+- **`NapsackCrypto`** is the encryption. It implements the formats in `shared/crypto/crypto.js` (the reference) with Apple's CryptoKit and CommonCrypto, byte for byte ([how-napsack-works.md](how-napsack-works.md)). A file per area, like `crypto.js`'s sections: `E2E.swift` (the password, the identity, format 1), `Recovery`, `Texts` (format 2 texts, reactions, edits), `Pics`, `Groups` (format 3), `Media` (formats 4 to 7), `SafetyCode`, and `JSJSON`, which writes and reads the envelopes' JSON exactly as JavaScript does (their bytes are sealed, so they must match). Its second module, **`NapsackCryptoChecks`**, is `shared/crypto/vector-checks.js` in Swift: the same 64 checks, in the same order, under the same names. `swift test` runs them on the Mac (`VectorTests.swift`, which also fails if the list drifts from JavaScript's), and the app runs them on the phone.
 
-### Porting the next format
+### When a new format comes
 
-The first milestone ([mobile.md](design/mobile.md)) is every format passing its vectors. For each one:
-1. Read its section of `crypto.js` and its checks in `vector-checks.js`.
-2. Add the functions to `NapsackCrypto` (a new file per area is fine), following `E2E.swift`.
-3. Add a test file like `Format1Tests.swift`: a `Decodable` struct for the vector file (in `Vectors.swift`), and one `@Test` per check in `vector-checks.js`, named the same.
-4. `swift test --package-path ios/NapsackCrypto` until it's green.
+A new message format lands in `crypto.js` first, with a new vector file and new checks in `vector-checks.js` (CLAUDE.md, Code standards). Then, in Swift:
+1. Add the functions to `NapsackCrypto`, in the file for its area, following what's there.
+2. Add the vector file to `Vectors.swift` (a `Decodable` struct, and its name in `Vectors.files`) and the checks to `VectorChecks.swift`, in the same order and with the same names as `vector-checks.js`.
+3. Copy the new names into `VectorTests.javaScript`. Until then `sameChecksAsJavaScript` fails, which is how a missing check gets noticed.
+4. `swift test --package-path ios/NapsackCrypto` until it's green, then ⌘U on the phone.
 
-A test that disagrees with a vector means the Swift is wrong. The vectors are never changed (CLAUDE.md, Code standards).
+A check that disagrees with a vector means the Swift is wrong. The vectors are never changed.
 
-The crypto tests find the vectors through the repository's folders, so they run on the Mac and in the Simulator, not on the phone. The app's own tests (NapsackTests) run anywhere, the phone included.
+`swift test` reads the vectors straight from the repository. The app gets its own copy each time it builds, so its tests (`VectorsOnDeviceTests`) run every check wherever they run, the phone included.
 
 ## Working on it
 
