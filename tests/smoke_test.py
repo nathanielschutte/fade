@@ -395,7 +395,9 @@ def check_account(tag):
 
 
 async def socket(tok):
-    ws = await websockets.connect(BASE.replace("http", "ws") + "/api/ws")
+    # Keep every event (max_queue=None): the checks read only the ones they want,
+    # and a full queue stops the socket reading, so its close would wait out a timeout.
+    ws = await websockets.connect(BASE.replace("http", "ws") + "/api/ws", max_queue=None)
     await ws.send(json.dumps({"type": "auth", "token": tok}))
     assert json.loads(await ws.recv())["type"] == "ready"
     return ws
@@ -565,6 +567,7 @@ async def check_live(tag):
 
     for ws in (wa, wb, wc):
         await ws.close()
+        assert ws.close_code == 1000, f"the server answers a close cleanly, not {ws.close_code}"
     rx.server.shutdown()
     print("  live: presence, typing, push (encrypted, signed, who-not-what), reactions, replies")
 
@@ -1463,7 +1466,6 @@ async def main():
     check_versions(b_tok)
     ok(call("GET", "/admin/logs", b_tok), 404)   # not an admin
     ok(call("GET", "/admin/logs"), 401)
-    check_metrics(b_tok)
     # Client diagnostics: accepted signed in or not, size-capped, rate-limited per user.
     entry = {"level": "info", "message": "smoke", "fields": {"status": 1}}
     assert call("POST", "/logs", json={"entries": [entry]}).status_code == 204
@@ -1619,6 +1621,8 @@ async def main():
     check_admin_users(tag)
     check_team(tag)
     check_health()
+    # Late, so the server's first reading (every 10 seconds) is already there.
+    check_metrics(b_tok)
     check_guard(tag)
     check_rate_limits(tag)
     check_sensitive_paths()
