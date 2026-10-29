@@ -10,7 +10,7 @@ import qrcode
 from qrcode.util import MODE_8BIT_BYTE, QRData
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, INVITE, launch, save_recovery_key, no_placeholders, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -114,6 +114,7 @@ async def main():
         mine = await ana.locator("#my-link").text_content()
         assert mine.startswith(f"{BASE}/i/") and len(mine) == len(f"{BASE}/i/") + 22, mine
         await check_rendered(ana, mine, "#my-qr svg")
+        await no_placeholders(ana, "#friends-dialog")
         await shot(ana, "add-friend-ways", full_page=False)
         size = ana.viewport_size
         await ana.set_viewport_size({"width": 390, "height": 844})

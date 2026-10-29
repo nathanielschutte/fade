@@ -65,6 +65,7 @@ Every account, friendship, message, and the data volume that holds them must sur
 3. **Look at it.** For anything a person sees, drive the change in a browser against the local server (`tests/e2e/` shows how) and look at screenshots at desktop and phone width (390px). Tests prove behavior; screenshots catch layout.
 4. **CI must pass** before anything ships: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `scripts/test.sh`, `terraform fmt -check`, `terraform validate`. Run fmt and clippy locally first.
 5. **Keep tests with the code.** New browser tests go in `tests/e2e/test_*.py` using `common.py`. New API behavior gets a check in `tests/smoke_test.py`.
+6. **Loading states end.** Anything that shows a placeholder while it loads ("Loading…", skeleton rows) replaces it with what arrives, never adds beside it. Its browser test calls `no_placeholders(page, scope)` (`common.py`) after checking the loaded data, so a placeholder left on screen fails the test.
 
 ## Shipping
 

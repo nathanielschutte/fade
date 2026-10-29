@@ -3353,6 +3353,7 @@ async function openProfile(userId) {
   } catch (err) {
     $("#profile-name").textContent = "";
     $("#profile-sub").textContent = "";
+    $("#profile-stats").replaceChildren(); // not "Loading…" under the problem
     msg.textContent = err.status === 404 ? "There's no profile to show." : err.message;
     msg.hidden = false;
     return;
@@ -3369,7 +3370,7 @@ async function openProfile(userId) {
   if (p.kind === "me") {
     const s = p.stats;
     $("#profile-sub").textContent = [...id, `joined ${longDate(p.joined_at)}`].join(" · ");
-    $("#profile-stats").append(
+    $("#profile-stats").replaceChildren(
       ...stat("Texts sent", s.texts_sent),
       ...stat("Texts received", s.texts_received),
       ...stat("Pics sent", s.pics_sent),
@@ -3384,7 +3385,7 @@ async function openProfile(userId) {
   } else {
     const t = p.together;
     $("#profile-sub").textContent = [...id, `friends since ${longDate(p.friends_since)}`].join(" · ");
-    $("#profile-stats").append(
+    $("#profile-stats").replaceChildren(
       ...stat("Texts between you", t.texts),
       ...stat("Pics between you", t.pics),
       ...stat("First message", t.first_message_at ? longDate(t.first_message_at) : "—"),

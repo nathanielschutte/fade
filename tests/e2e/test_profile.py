@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, datetime, re, sqlite3, time, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, DB, INVITE, launch, save_recovery_key, shot
+from common import BASE, DB, INVITE, launch, save_recovery_key, no_placeholders, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -74,6 +74,9 @@ async def main():
         await expect(stat(ana, "Texts sent")).to_have_text("2")
         await expect(stat(ana, "Friends")).to_have_text("2")
         await expect(ana.locator("#profile-people .person-name")).to_have_text([BEN, CAL])
+        await no_placeholders(ana, "#profile-dialog")
+        # The stats are only label and value pairs: nothing else in the grid.
+        assert await ana.locator("#profile-stats > :not(dt, dd)").count() == 0
         await shot(ana, "profile-mine", full_page=False)
 
         # Click through to Ben's profile.
@@ -84,6 +87,8 @@ async def main():
         await expect(stat(ana, "Their friends")).to_have_text("2")
         await expect(ana.locator("#profile-people-title")).to_have_text("Friends you share")
         await expect(ana.locator("#profile-people .person-name")).to_have_text([CAL])
+        await no_placeholders(ana, "#profile-dialog")
+        assert await ana.locator("#profile-stats > :not(dt, dd)").count() == 0
         await shot(ana, "profile-friend", full_page=False)
 
         # "Message" opens the chat.

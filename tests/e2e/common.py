@@ -46,3 +46,30 @@ async def shot(page, name, full_page=True):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
         await page.screenshot(path=os.path.join(SHOTS, f"{name}.png"), full_page=full_page)
+
+
+# Words a loading placeholder shows until its data arrives (app.js).
+PLACEHOLDERS = ("Loading…", "Opening…", "Making your code…")
+
+
+async def no_placeholders(page, scope="body"):
+    """Once what was loading has arrived, nothing still says it's loading: no
+    placeholder words and no skeleton rows, anywhere visible in `scope`. A
+    placeholder is replaced by what loads, never left beside it (0.34.0 left
+    "Loading…" above a loaded profile). Call this after checking the loaded
+    data is there, in every test of something that shows a placeholder."""
+    left = await page.evaluate("""([scope, words]) => {
+      const root = document.querySelector(scope);
+      if (!root) return [];
+      const seen = [];
+      const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        const text = n.textContent.trim();
+        if (words.includes(text) && n.parentElement.checkVisibility()) seen.push(text);
+      }
+      for (const el of root.querySelectorAll('.skeleton-row, .msg-skeleton')) {
+        if (el.checkVisibility()) seen.push(el.className);
+      }
+      return seen;
+    }""", [scope, list(PLACEHOLDERS)])
+    assert not left, f"still showing a loading placeholder in {scope}: {left}"

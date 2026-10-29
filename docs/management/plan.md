@@ -260,6 +260,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 ### Debug
 
+#### D6. "Loading…" stayed above a loaded profile (fixed in 0.35.0)
+- Reported (Nate, 2026-10-29), in production: the profile's stats showed "Loading…" in the first row after everything had loaded, pushing the grid out of line. 0.34.0 (X23) put the placeholder in, and the loaded stats were added after it instead of replacing it. Fixed, and `common.no_placeholders` now checks after every load in `test_profile.py`, `test_loading.py`, and `test_invites.py`; CLAUDE.md asks the same of any new loading state.
+
 #### D5. "Seen" sometimes never showed (fixed in 0.35.0)
 - Found from a CI failure in `test_chat.py` (2026-10-28): when a friend read a text before the sender's own copy came back from the server, the "read" event found nothing to mark, and the copy arrived unread. Now the app remembers how far each friend has read and applies it to copies that arrive later. `test_resilience.py` holds the response back to force that order.
 

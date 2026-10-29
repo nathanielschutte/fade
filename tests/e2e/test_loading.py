@@ -7,7 +7,7 @@ from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, INVITE, launch, save_recovery_key, no_placeholders, shot
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
@@ -65,6 +65,7 @@ async def main():
         gate.set()
         await expect(ana.locator("#chat-list .chat-name", has_text=BEN)).to_be_visible(timeout=10000)
         await expect(ana.locator("#chat-list .skeleton-row")).to_have_count(0)
+        await no_placeholders(ana)
         await expect(ana.locator("#conn-banner")).to_be_hidden(timeout=5000)
         await ana.unroute("**/api/friends?*", slow)
 
@@ -81,6 +82,7 @@ async def main():
         await shot(ana, "loading-chat-phone", full_page=False)
         chat_gate.set()
         await expect(ana.locator("#messages")).to_contain_text("No messages yet.", timeout=10000)
+        await no_placeholders(ana)
         await ana.unroute("**/api/chats/*/messages?*", slow_chat)
 
         # Can't reach the server at all: says so, and offers to try again.
