@@ -88,6 +88,8 @@ Signing in on a new device:
 
 That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it.
 
+**What the app keeps between visits.** So napsack opens at once, even on a slow connection, the browser also keeps the server's last answers in a separate IndexedDB database (`napsack-cache`): your chat list, your groups, the newest page of each chat you've opened, and the settings. They're kept exactly as the server sent them, so message text stays encrypted there and is decrypted only when shown, the same as when it arrives. Pics and videos are never kept (they're view-once). The server's fresh answer replaces what was kept as soon as it arrives, and signing out deletes it all. Names, usernames, and group names are kept too; the server stores those in the clear anyway.
+
 **Changing your password** keeps the same key pair. Your browser unlocks the private key with the old password and locks it again with the new one, then sends the new auth key and the newly locked copy. History stays readable, and every other signed-in device is signed out.
 
 ## Forgot your password?

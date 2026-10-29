@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, re, json, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, INVITE, REMOTE, launch, save_recovery_key, shot
 
 ADMIN_PW = "correct horse battery"
 OTHER = f"bob_{uuid.uuid4().hex[:5]}"
@@ -99,8 +99,11 @@ async def main():
         await expect(admin.locator("#t-users")).to_have_text(re.compile(rf"^{stats['users']['total']:,}$|^{stats['users']['total']}$"))
         # Looking at the admin page counts as being online (the other user's
         # app tab is on a non-admin page now, so it's just the admin).
-        await expect(admin.locator("#t-online")).to_have_text("1", timeout=10000)
-        await expect(admin.locator("#t-online-sub")).to_have_text("1 open connection")
+        if REMOTE:  # staging is shared: others may be online too
+            await expect(admin.locator("#t-online")).to_have_text(re.compile(r"^[1-9]"), timeout=10000)
+        else:
+            await expect(admin.locator("#t-online")).to_have_text("1", timeout=10000)
+            await expect(admin.locator("#t-online-sub")).to_have_text("1 open connection")
         # The people list lives in the Users tab now (Admins only).
         await admin.goto(f"{BASE}/admin#users")
         await expect(admin.locator("#users tr")).to_have_count(len(names), timeout=10000)

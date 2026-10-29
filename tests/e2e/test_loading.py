@@ -26,6 +26,12 @@ async def sign_up(p, name):
     await save_recovery_key(p)
 
 
+async def forget_kept(page):
+    """What the app kept on this device (cache.js) would show at once; these
+    checks are about the first load, before anything was kept."""
+    await page.evaluate("import('/cache.js').then((c) => c.clear())")
+
+
 async def befriend(asker, asked, name_of_asked, name_of_asker):
     await asker.click("#friends-button")
     await asker.fill("#add-friend-form input[name=username]", name_of_asked)
@@ -57,6 +63,7 @@ async def main():
             await gate.wait()
             await route.continue_()
         await ana.route("**/api/friends?*", slow)
+        await forget_kept(ana)  # a first visit: nothing kept to show yet (test_cache.py covers that)
         await ana.reload()
         await expect(ana.locator("#chat-list .skeleton-row").first).to_be_visible(timeout=10000)
         await expect(ana.locator("#chat-empty")).to_be_hidden()
@@ -76,6 +83,7 @@ async def main():
             await chat_gate.wait()
             await route.continue_()
         await ana.route("**/api/chats/*/messages?*", slow_chat)
+        await forget_kept(ana)
         await ana.locator("#chat-list .chat-item", has_text=BEN).click()
         await expect(ana.locator("#messages .msg-skeleton").first).to_be_visible(timeout=5000)
         assert "No messages yet" not in await ana.locator("#messages").inner_text()
@@ -90,6 +98,7 @@ async def main():
             await route.abort()
         await ana.route("**/api/friends?*", down)
         await ana.route("**/api/groups", down)
+        await forget_kept(ana)
         await ana.reload()
         await expect(ana.locator("#chat-list .list-problem")).to_contain_text("Couldn't load your chats", timeout=20000)
         await expect(ana.locator("#conn-banner")).to_contain_text("Can't reach napsack right now")

@@ -49,6 +49,8 @@ const STYLE_CSS: Asset = asset!("../static/style.css");
 // Shared with the iOS app; see shared/crypto/crypto.js.
 const CRYPTO_JS: Asset = asset!("../../shared/crypto/crypto.js");
 const KEYSTORE_JS: Asset = asset!("../static/keystore.js");
+// Server answers kept on the device, still encrypted (plan X31).
+const CACHE_JS: Asset = asset!("../static/cache.js");
 const FAVICON_SVG: Asset = asset!("../static/favicon.svg");
 const ADMIN_HTML: Asset = asset!("../static/admin.html");
 const ADMIN_JS: Asset = asset!("../static/admin.js");
@@ -82,6 +84,7 @@ pub fn routes() -> Router<SharedState> {
         .route("/app.js", get(|| async { script(APP_JS.text()) }))
         .route("/crypto.js", get(|| async { script(CRYPTO_JS.text()) }))
         .route("/keystore.js", get(|| async { script(KEYSTORE_JS.text()) }))
+        .route("/cache.js", get(|| async { script(CACHE_JS.text()) }))
         .route("/style.css", get(style_css))
         .route("/admin", get(admin))
         .route("/favicon.svg", get(favicon))
@@ -251,6 +254,7 @@ mod dev {
             &APP_JS,
             &CRYPTO_JS,
             &KEYSTORE_JS,
+            &CACHE_JS,
             &ADMIN_HTML,
             &ADMIN_JS,
             &QR_JS,

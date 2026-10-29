@@ -4,6 +4,7 @@
 
 import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
+import * as cache from "/cache.js";
 import { qrSvg } from "/qr.js";
 import { markEnvironment, withEnvironment } from "/env.js";
 import { createDrawing } from "/draw.js";
@@ -233,6 +234,12 @@ function clockTime(ts) {
 }
 
 const PAGE = 50;               // messages per request when opening a chat or scrolling back
+const SLOW_PAGE = 20;          // the same, when the connection says it's slow or saving data (X31)
+/** Messages to ask for at once: fewer when the browser says the connection is slow. */
+function pageSize() {
+  const c = navigator.connection;
+  return c && (c.saveData || ["slow-2g", "2g"].includes(c.effectiveType)) ? SLOW_PAGE : PAGE;
+}
 
 
 // ---------- diagnostics ----------
@@ -895,6 +902,7 @@ function signOutLocally() {
   state.token = null;
   state.me = null;
   clearNotifications(); // they name friends; not for whoever uses the device next
+  cache.clear(); // what was kept on this device goes too
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   state.loaded = { chats: false, groups: false, error: null };
   state.loadFailed.clear();
@@ -944,12 +952,12 @@ function enterApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
   renderAccountBar();
-  // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
-  $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
-  $("#profile-admin-link").hidden = $("#admin-link").hidden;
   showTab("chats");
   syncPush();
   clearNotifications();
+  // Kept, so the next open starts at once (X31).
+  const me = state.me;
+  tokenTag(state.token).then((tag) => cache.put("me", { tag, me }));
   if (location.hash) openFromLink(location.hash);
   refreshChats();
   refreshGroups();
@@ -985,6 +993,10 @@ $("#announcement-close").addEventListener("click", () => {
 });
 
 function renderAccountBar() {
+  // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
+  // Here, not once at start: the app may open from a kept "me" with an older role (X31).
+  $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
+  $("#profile-admin-link").hidden = $("#admin-link").hidden;
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
   paintAvatar($("#tab-avatar"), state.me);
@@ -1004,8 +1016,10 @@ async function refreshMe() {
 }
 
 async function refreshChats() {
+  if (!state.loaded.chats && !state.chats.length) await showKeptChats();
   try {
     const chats = await getJSON(`/friends?tz=${tzOffset()}`);
+    cache.put(`${state.me.id}:friends`, structuredClone(chats)); // as sent: still encrypted
     await checkPins(chats);
     state.chats = chats;
     await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
@@ -1022,6 +1036,45 @@ async function refreshChats() {
   renderChatHeader();
   if (state.activeId && !chatById(state.activeId)) closeChat(); // unfriended
   else if (state.activeId) renderMessages(); // sender names follow renames
+}
+
+// ---------- what was kept on this device (cache.js, X31) ----------
+// The chat list, groups, and each chat's newest page show from the device at
+// once, decrypted as they're shown, while the server's answer is on its way.
+
+async function showKeptChats() {
+  const me = state.me;
+  const chats = await cache.get(`${me.id}:friends`);
+  if (!chats?.length || state.loaded.chats || state.me !== me) return;
+  await checkPins(chats);
+  for (const c of chats) c.active_now = null; // who's around now isn't something to keep
+  // In place first: decrypting looks up each friend's key in the chat list.
+  state.chats = chats;
+  await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
+  if (state.loaded.chats || state.me !== me) return; // the server answered first
+  state.loaded.chats = true;
+  renderChatList();
+}
+
+async function showKeptGroups() {
+  const me = state.me;
+  const groups = await cache.get(`${me.id}:groups`);
+  if (!groups?.length || state.loaded.groups || state.me !== me) return;
+  await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
+  if (state.loaded.groups || state.me !== me) return;
+  state.groups = groups;
+  state.loaded.groups = true;
+  renderChatList();
+}
+
+/** A chat's newest page as kept, while it loads (nothing if it's already showing). */
+async function showKeptPage(key, decryptOne, isOpen, set) {
+  const page = await cache.get(`${state.me.id}:${key}`);
+  if (!page?.length) return;
+  await Promise.all(page.map(decryptOne));
+  if (!isOpen()) return;
+  set(page);
+  renderMessages();
 }
 
 let refreshTimer = null;
@@ -1651,8 +1704,17 @@ async function openChat(friendId) {
   renderChatHeader();
   renderChatList();
   renderMessages();
+  if (!state.messages.has(friendId)) {
+    await showKeptPage(`chat:${friendId}`, decrypt, () => state.activeId === friendId && !state.messages.has(friendId), (page) => {
+      state.messages.set(friendId, page);
+      // A page shorter than any page size is the whole chat; otherwise there may be more.
+      state.history.set(friendId, { hasMore: page.length >= SLOW_PAGE, loading: false });
+    });
+  }
   try {
-    const page = await getJSON(`/chats/${friendId}/messages?limit=${PAGE}`);
+    const size = pageSize();
+    const page = await getJSON(`/chats/${friendId}/messages?limit=${size}`);
+    cache.put(`${state.me.id}:chat:${friendId}`, structuredClone(page)); // as sent: still encrypted
     await Promise.all(page.map(decrypt));
     if (state.activeId !== friendId) return;
     const loaded = state.messages.get(friendId);
@@ -1663,7 +1725,7 @@ async function openChat(friendId) {
       for (const m of page) await upsertMessage(m);
     } else {
       state.messages.set(friendId, page);
-      state.history.set(friendId, { hasMore: page.length === PAGE, loading: false });
+      state.history.set(friendId, { hasMore: page.length === size, loading: false });
     }
     renderMessages();
     fillViewport(friendId);
@@ -1768,11 +1830,12 @@ async function loadOlder(friendId) {
   h.loading = true;
   renderMessages();
   try {
-    const page = await getJSON(`/chats/${friendId}/messages?before=${msgs[0].id}&limit=${PAGE}`);
+    const size = pageSize();
+    const page = await getJSON(`/chats/${friendId}/messages?before=${msgs[0].id}&limit=${size}`);
     await Promise.all(page.map(decrypt));
     const have = new Set(msgs.map((m) => m.id));
     msgs.unshift(...page.filter((m) => !have.has(m.id)));
-    h.hasMore = page.length === PAGE;
+    h.hasMore = page.length === size;
   } catch (err) {
     report("warn", "loading older messages failed", { friend_id: friendId, ...errorFields(err) });
   } finally {
@@ -2940,8 +3003,10 @@ function groupSender(groupId, seal, post) {
 const keysHeader = (s) => JSON.stringify({ client_id: s.clientId, recipients: s.recipients, wraps: s.wraps });
 
 async function refreshGroups() {
+  if (!state.loaded.groups && !state.groups.length) await showKeptGroups();
   try {
     const groups = await getJSON("/groups");
+    cache.put(`${state.me.id}:groups`, structuredClone(groups)); // as sent: still encrypted
     await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
     state.groups = groups;
     state.loaded.groups = true;
@@ -3042,8 +3107,16 @@ async function openGroup(groupId) {
   }
   renderChatList();
   renderMessages();
+  if (!state.groupMessages.has(groupId)) {
+    await showKeptPage(`group:${groupId}`, openGroupMessage, () => state.activeGroupId === groupId && !state.groupMessages.has(groupId), (page) => {
+      state.groupMessages.set(groupId, page);
+      state.groupHistory.set(groupId, { hasMore: page.length >= SLOW_PAGE, loading: false });
+    });
+  }
   try {
-    const page = await getJSON(`/groups/${groupId}/messages?limit=${PAGE}`);
+    const size = pageSize();
+    const page = await getJSON(`/groups/${groupId}/messages?limit=${size}`);
+    cache.put(`${state.me.id}:group:${groupId}`, structuredClone(page)); // as sent: still encrypted
     await Promise.all(page.map(openGroupMessage));
     if (state.activeGroupId !== groupId) return;
     const loaded = state.groupMessages.get(groupId);
@@ -3051,7 +3124,7 @@ async function openGroup(groupId) {
       for (const m of page) upsertGroupMessage(m);
     } else {
       state.groupMessages.set(groupId, page);
-      state.groupHistory.set(groupId, { hasMore: page.length === PAGE, loading: false });
+      state.groupHistory.set(groupId, { hasMore: page.length === size, loading: false });
     }
     renderMessages();
     fillGroupViewport(groupId);
@@ -3099,11 +3172,12 @@ async function loadOlderGroup(groupId) {
   h.loading = true;
   renderMessages();
   try {
-    const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${PAGE}`);
+    const size = pageSize();
+    const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${size}`);
     await Promise.all(page.map(openGroupMessage));
     const have = new Set(msgs.map((m) => m.id));
     msgs.unshift(...page.filter((m) => !have.has(m.id)));
-    h.hasMore = page.length === PAGE;
+    h.hasMore = page.length === size;
   } catch (err) {
     report("warn", "loading older group messages failed", { group_id: groupId, ...errorFields(err) });
   } finally {
@@ -5213,19 +5287,57 @@ setInterval(() => { if (state.me) renderChatList(); }, 60_000);
 
 // ---------- boot ----------
 
+/** A short, one-way tag of the session token: which session the kept "me" belongs to. */
+async function tokenTag(token) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+  return [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Signs in from what was kept, if this device still holds that account's key. */
+async function loadIdentityFor(me) {
+  state.me = me;
+  if (await loadIdentity()) return true;
+  state.me = null;
+  return false;
+}
+
 (async function boot() {
+  // The settings as kept last time (X31), if the server is slow to say.
+  const keptConfig = await cache.get("config");
+  const fresh = fetch("/api/config").then((r) => r.json()).then((c) => {
+    cache.put("config", c);
+    state.config = c; // the server's, whenever it arrives
+    return c;
+  });
+  fresh.catch(() => {});
   try {
-    state.config = await (await fetch("/api/config")).json();
+    state.config = keptConfig ? await Promise.race([fresh, sleep(1500).then(() => keptConfig)]) : await fresh;
   } catch {
-    state.config = { invite_required: false };
+    state.config = keptConfig ?? { invite_required: false };
   }
   APP_NAME = withEnvironment(APP_NAME, state.config);
   document.title = APP_NAME;
   markEnvironment(state.config);
   await readInviteLink();
   if (state.token) {
+    // Opened before: start from who you were, as kept, while the server
+    // confirms (an ended session still signs out when it answers).
+    const tag = await tokenTag(state.token);
+    const kept = await cache.get("me");
+    if (kept?.tag === tag && kept.me && await loadIdentityFor(kept.me)) {
+      enterApp();
+      offerInvite();
+      getJSON("/me").then((me) => {
+        if (!state.me || state.me.id !== me.id) return;
+        state.me = me;
+        cache.put("me", { tag, me });
+        renderAccountBar();
+      }).catch((err) => report("debug", "confirming me failed", errorFields(err)));
+      return;
+    }
     try {
       state.me = await getJSON("/me");
+      cache.put("me", { tag, me: state.me });
       // A session without its key (cleared site data, another account) can't
       // read anything, so start over with the password.
       if (await loadIdentity()) {

@@ -17,7 +17,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Done | Nate (2026-10-28); 0.37.0 |
 | 0p | [Change your username](#x30-change-your-username) | Features | Done | Nate (2026-10-28); 0.38.0 |
-| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
+| 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Done | Nate (2026-10-28); 0.39.0 |
 | 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Up next | Nate (2026-10-28); release 8, after the rest |
 | 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Up next | Nate (2026-10-29); after X34 |
 | 0u | [Video: a cleaner ring, flip while recording, mute](#x37-video-a-cleaner-ring-flip-while-recording-mute) | Features | Up next | Nate (2026-10-29); after X36 |
@@ -462,6 +462,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Requested (2026-10-28): as more people join, load more incrementally, suited to bad connections, possibly adapting to the connection.
 - Decided (Nate): keep the server's responses on the device as they arrive, still encrypted, and decrypt on open, so the chat list and recent messages show at once and refresh in the background. Cleared on sign-out. No readable text is stored beyond what the device already holds (the key).
 - Plus smaller first loads (the newest messages first, the rest as you scroll; pictures on demand), sized to the connection when it's slow.
+- Built (0.39.0): `cache.js` keeps the server's answers in their own IndexedDB database, as sent (a copy taken before decrypting): the chat list, groups, each opened chat's newest page, who you are, and the settings. The app opens from them while the server answers (the settings wait 1.5 s at most), then the server's answers take over; an ended session still signs out when the server says so. Presence isn't kept. Pages are 20 messages instead of 50 when the browser says the connection is slow or saving data. Signing out clears it. `test_cache.py` holds every request back, and checks no message text is kept.
 
 #### X32. Small things from the production logs (2026-10-28)
 - Someone signed in with an email address as their username: say "username, not email" when the field holds an `@`. Done (0.34.0): the sign-in and sign-up forms say so before trying.
