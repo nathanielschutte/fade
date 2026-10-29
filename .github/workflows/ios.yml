@@ -1,0 +1,38 @@
+name: iOS app
+
+# The iOS app (ios/, docs/ios-onboarding.md): the Swift crypto against the
+# pinned vectors, then the app's build and unit tests on a simulator. Off for
+# now (`if: false`): the app is checked on the owner's Mac while it takes
+# shape. To turn it on, delete the `if:` line and check the runner's Xcode is
+# at least the one in docs/ios-onboarding.md.
+#
+# Runs only when something the app depends on changes; ci.yml skips changes
+# that are only in ios/.
+
+on:
+  pull_request:
+    paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]
+  push:
+    branches: [main]
+    paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  app:
+    name: iOS app
+    if: false
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - name: Xcode
+        run: xcodebuild -version
+      - name: Crypto against the pinned vectors
+        run: swift test --package-path ios/NapsackCrypto
+      - name: Build and unit tests (simulator)
+        run: >
+          xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
+          -destination "platform=iOS Simulator,name=iPhone 17"
+          CODE_SIGNING_ALLOWED=NO

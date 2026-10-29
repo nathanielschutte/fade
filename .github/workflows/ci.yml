@@ -1,9 +1,14 @@
 name: CI
 
+# Changes only to the iOS app or the docs (the plan included) don't touch the
+# server, the web app, or the infrastructure, so they skip all of this; ios.yml
+# checks the app. Anything else in the change runs everything.
 on:
   pull_request:
+    paths-ignore: ["ios/**", "docs/**", "*.md"]
   push:
     branches: [main]
+    paths-ignore: ["ios/**", "docs/**", "*.md"]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -129,33 +134,6 @@ jobs:
       - name: Update staging
         if: env.SKIP != '1'
         run: bash scripts/release.sh update "$STAGING_APP" "$STAGING_URL" "$BUILD"
-
-  mobile:
-    name: iOS app
-    # temp disable
-    if: false
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: mobile
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-      - run: npm ci
-      - name: Typecheck
-        run: npx tsc --noEmit
-      - name: Dependencies match the Expo SDK
-        run: npx expo-doctor
-      # Bundles the JavaScript the way a build would, including shared/crypto,
-      # without building or signing the native app (that's EAS, in the cloud).
-      - name: Bundle for iOS
-        run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/ios-bundle"
-        env:
-          EXPO_NO_TELEMETRY: "1"
 
   infra:
     name: Terraform
