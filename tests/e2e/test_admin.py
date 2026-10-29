@@ -168,6 +168,13 @@ async def main():
         overflow = await phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"page scrolls sideways by {overflow}px"
         await shot(phone, "admin-phone")
+        # The tabs take a second row on a phone: the header grows around them,
+        # and its border (and the page) starts below them, not across them.
+        bar = await phone.locator(".admin-bar").bounding_box()
+        tabs_row = await phone.locator(".admin-tabs").bounding_box()
+        first = await phone.locator("#view-overview .tiles").bounding_box()
+        assert tabs_row["y"] + tabs_row["height"] <= bar["y"] + bar["height"], (tabs_row, bar)
+        assert first["y"] >= bar["y"] + bar["height"] - 1, (first, bar)
         phone_spots = await phone.evaluate(BAR_SPOTS)
         await phone.click("#tab-logs")
         await expect(phone.locator("#log-rows tr").first).to_be_visible()

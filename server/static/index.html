@@ -509,6 +509,8 @@
   <div class="camera-stage">
     <video id="camera-video" playsinline muted autoplay></video>
     <img id="camera-preview" alt="Your pic" hidden>
+    <video id="camera-preview-video" playsinline loop hidden></video>
+    <p class="record-time" id="record-time" role="timer" hidden></p>
     <canvas class="draw-layer" id="draw-layer" hidden></canvas>
     <div class="sticker-layer" id="sticker-layer" hidden></div>
     <div class="draw-tools" id="draw-tools" hidden>
@@ -532,12 +534,13 @@
       <textarea id="snap-caption" class="snap-caption" rows="1" maxlength="200" placeholder="Add a caption" autocomplete="off" enterkeyhint="send" aria-label="Caption" aria-describedby="snap-caption-count"></textarea>
     </div>
     <p class="camera-message" id="camera-message" hidden></p>
+    <button type="button" class="zoom-chip" id="zoom-chip" aria-label="Zoom: 1×" hidden>1×</button>
   </div>
   <div class="camera-controls" id="capture-controls">
     <button type="button" class="icon-button" data-close aria-label="Close camera">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
-    <button type="button" class="shutter" id="shutter" aria-label="Take photo"></button>
+    <button type="button" class="shutter" id="shutter" aria-label="Take photo. Hold for a video" title="Tap for a photo, hold for a video"></button>
     <div class="camera-side">
       <button type="button" class="icon-button" id="flip-camera" aria-label="Switch camera">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M20 4v4h-4M4 20v-4h4"/></svg>
@@ -573,6 +576,7 @@
 <!-- Pic viewer -->
 <div id="viewer" class="viewer" hidden role="dialog" aria-label="Pic">
   <img id="viewer-image" alt="Pic" draggable="false">
+  <video id="viewer-video" playsinline hidden></video>
   <div class="viewer-tint" aria-hidden="true"></div>
   <div class="viewer-timer" aria-hidden="true"><span id="viewer-bar"></span></div>
   <p class="viewer-from" id="viewer-from"></p>

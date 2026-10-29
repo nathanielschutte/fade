@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -187,6 +187,40 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
       const got = await e2e.decryptGroupText(m.content, m.wraps[v.bob.id], {
         groupId: 9, senderId: v.alice.id, myId: v.bob.id, clientId: m.clientId, recipients: m.recipients, wrapKey: ctx.gb });
       return got.text === "new" && e2e.GROUP_FORMAT === 3 && Object.keys(m.wraps).length === 2;
+    });
+  }
+
+  // Videos: format 4 (direct) and 5 (group), the media envelope
+  if (vm) {
+    const d = vm.direct, g = vm.group;
+    await check("a format 4 video decrypts like the vector, caption and all", async () => {
+      const got = await e2e.decryptVideo(ctx.kb, e2e.fromB64(d.ciphertext), d.from, d.to);
+      return got.type === d.type && got.caption === d.caption && e2e.toB64(got.media) === d.media
+        && e2e.toB64(e2e.packMedia(e2e.fromB64(d.media), d.type, d.caption)) === d.plaintext;
+    });
+    await check("a video can't be read as a pic", () =>
+      fails(() => e2e.decryptPic(ctx.kb, e2e.fromB64(d.ciphertext), 2, d.from, d.to)));
+    await check("a format 5 group video decrypts like the vector", async () => {
+      const wrapKey = await e2e.groupWrapKey(await priv(v.bob), v.alice.spki, v.bob.id, v.alice.id);
+      const got = await e2e.decryptGroupVideo(e2e.fromB64(g.content), g.wraps[v.bob.id], {
+        groupId: g.group_id, senderId: g.sender, myId: v.bob.id, clientId: g.client_id, recipients: g.recipients, wrapKey });
+      return got.type === g.type && got.caption === g.caption && e2e.toB64(got.media) === g.media;
+    });
+    await check("a group video can't be read as a group pic", async () => {
+      const wrapKey = await e2e.groupWrapKey(await priv(v.bob), v.alice.spki, v.bob.id, v.alice.id);
+      return fails(() => e2e.decryptGroupPic(e2e.fromB64(g.content), g.wraps[v.bob.id], {
+        groupId: g.group_id, senderId: g.sender, myId: v.bob.id, clientId: g.client_id, recipients: g.recipients, wrapKey }));
+    });
+    await check("only video types travel in the envelope", async () => {
+      const header = new TextEncoder().encode(JSON.stringify({ type: "text/html", c: "" }));
+      const forged = new Uint8Array([0, header.length, ...header, 1, 2, 3]);
+      return (await fails(() => e2e.packMedia(new Uint8Array([1]), "text/html", "")))
+        && (await fails(() => e2e.unpackMedia(forged)));
+    });
+    await check("a video round-trips", async () => {
+      const sealed = await e2e.encryptVideo(ctx.kb, new Uint8Array([9, 8, 7]), "video/mp4", "hi", v.alice.id, v.bob.id);
+      const got = await e2e.decryptVideo(ctx.kb, sealed, v.alice.id, v.bob.id);
+      return got.caption === "hi" && got.media.join() === "9,8,7" && e2e.VIDEO_FORMAT === 4 && e2e.GROUP_VIDEO_FORMAT === 5;
     });
   }
 

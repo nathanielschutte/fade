@@ -59,6 +59,10 @@ pub struct Config {
     /// How long an unopened snap is held in RAM before it's dropped.
     pub snap_ttl: Duration,
     pub snap_max_bytes: usize,
+    /// Hard cap per encrypted video (formats 4 and 5), and the longest a
+    /// client records (plan X28).
+    pub video_max_bytes: usize,
+    pub video_max_seconds: u64,
     /// Ceiling on disk used by all unopened direct pics combined.
     pub snap_disk_bytes: usize,
     pub session_days: i64,
@@ -131,6 +135,9 @@ impl Config {
             snap_ttl: Duration::from_secs(env_or::<u64>("FADE_SNAP_TTL_HOURS", 24 * 30)? * 3600),
             // Clients compress to ~200 KB; this is the hard ceiling on what the server accepts.
             snap_max_bytes: env_or::<usize>("FADE_SNAP_MAX_KB", 512)? * 1024,
+            // Clients record about 1.5 Mbit/s, so 10 seconds is about 2 MB.
+            video_max_bytes: env_or::<usize>("FADE_VIDEO_MAX_KB", 4096)? * 1024,
+            video_max_seconds: env_or::<u64>("FADE_VIDEO_MAX_SECONDS", 10)?.clamp(1, 60),
             snap_disk_bytes: env_or::<usize>("FADE_SNAP_DISK_MB", 256)? * 1024 * 1024,
             session_days: env_or("FADE_SESSION_DAYS", 90)?,
             admins: roles::parse_list(&std::env::var("FADE_ADMINS").unwrap_or_default()),
@@ -321,7 +328,11 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn router(state: SharedState) -> Router {
-    let snap_limit = state.config.snap_max_bytes;
+    // Pic routes take videos too, so their bodies may be as large as either.
+    let snap_limit = state
+        .config
+        .snap_max_bytes
+        .max(state.config.video_max_bytes);
 
     // Everything except /config goes through the client version check, so an
     // outdated app can still read /config and learn that it needs updating.

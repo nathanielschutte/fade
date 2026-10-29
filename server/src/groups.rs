@@ -36,6 +36,14 @@ const MAX_TEXT_CHARS: usize = 2000;
 pub const FORMAT_PLAINTEXT: i64 = 0;
 /// `format` of an end-to-end encrypted group message (docs/implementation/group-encryption.md).
 pub const FORMAT_E2E: i64 = 3;
+/// `format` of an end-to-end encrypted group video: the same scheme, sealed
+/// as kind "video" around a media envelope (plan X28).
+pub const FORMAT_E2E_VIDEO: i64 = 5;
+
+/// End-to-end encrypted: content the server can't open, a key per member.
+pub fn sealed(format: i64) -> bool {
+    format == FORMAT_E2E || format == FORMAT_E2E_VIDEO
+}
 /// A format 3 text's sealed content, decoded: the 2,000-character envelope
 /// with room for escapes, plus IV and tag.
 const MAX_E2E_CONTENT_BYTES: usize = 16 * 1024;
@@ -86,7 +94,7 @@ pub struct GroupMessage {
 
 const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
         gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to,
-        gm.client_id, gm.recipients, CASE WHEN gm.format = 3 THEN u.public_key END AS sender_public_key
+        gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5) THEN u.public_key END AS sender_public_key
      FROM group_messages gm JOIN users u ON u.id = gm.sender_id";
 
 #[derive(Debug, Serialize, FromRow)]
@@ -277,7 +285,7 @@ pub async fn audience(db: &SqlitePool, group: i64, message_id: i64) -> sqlx::Res
 /// includes it (`audience`). A format 3 message goes to each with their own key.
 pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
     let ids = audience(&state.db, message.group_id, message.id).await?;
-    if message.format != FORMAT_E2E {
+    if !sealed(message.format) {
         state.hub.send_many(
             &ids,
             &Event::GroupMessage {
@@ -309,7 +317,7 @@ pub async fn prepare_for(
     viewer: i64,
     messages: &mut [GroupMessage],
 ) -> sqlx::Result<()> {
-    for m in messages.iter_mut().filter(|m| m.format == FORMAT_E2E) {
+    for m in messages.iter_mut().filter(|m| sealed(m.format)) {
         if m.content.is_none() && m.pic_id.is_none() {
             m.content = Some(std::mem::take(&mut m.body));
         }
@@ -403,7 +411,7 @@ pub async fn mark_encrypted_start(
     at: i64,
 ) -> sqlx::Result<Option<i64>> {
     let already: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM group_messages WHERE group_id = ? AND format = 3 LIMIT 1",
+        "SELECT id FROM group_messages WHERE group_id = ? AND format IN (3, 5) LIMIT 1",
     )
     .bind(group)
     .fetch_optional(&mut *tx)

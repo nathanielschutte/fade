@@ -15,12 +15,15 @@ pub const API_VERSION: u32 = 1;
 
 /// Encryption formats the server will store. The server can't read messages,
 /// so this just stops a client from writing a format no released client reads.
-/// Both are described in docs/how-napsack-works.md: format 1 is the original
+/// All are described in docs/how-napsack-works.md: format 1 is the original
 /// scheme; format 2 is the second generation: texts are a JSON envelope (replies),
-/// pics carry a caption sealed inside.
-pub const MESSAGE_FORMATS: &[i64] = &[1, 2];
+/// pics carry a caption sealed inside; format 4 is a video (plan X28). Group
+/// formats (3, and 5 for videos) are in groups.rs.
+pub const MESSAGE_FORMATS: &[i64] = &[1, 2, 4];
 const TEXT_FORMATS: &[i64] = &[1, 2];
-const SNAP_FORMATS: &[i64] = &[1, 2];
+const SNAP_FORMATS: &[i64] = &[1, 2, VIDEO_FORMAT];
+/// A direct video: opaque bytes like a pic, with its own size cap.
+pub const VIDEO_FORMAT: i64 = 4;
 
 pub fn default_format() -> i64 {
     1
@@ -166,5 +169,18 @@ mod tests {
         );
         assert!(parse_min_versions("ios").is_err());
         assert!(parse_min_versions("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn videos_are_a_pic_format_not_a_text_format() {
+        assert!(check_snap_format(VIDEO_FORMAT).is_ok());
+        assert!(check_text_format(VIDEO_FORMAT).is_err());
+        // Group formats go to group routes only.
+        for group in [crate::groups::FORMAT_E2E, crate::groups::FORMAT_E2E_VIDEO] {
+            assert!(check_snap_format(group).is_err());
+            assert!(crate::groups::sealed(group));
+        }
+        assert!(!crate::groups::sealed(crate::groups::FORMAT_PLAINTEXT));
+        assert!(MESSAGE_FORMATS.contains(&VIDEO_FORMAT));
     }
 }

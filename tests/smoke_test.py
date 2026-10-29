@@ -624,12 +624,29 @@ def check_group_e2e(tag, a, a_tok, b, b_tok):
     ok(call("POST", f"/groups/{gid}/pics/{pm['pic']['id']}/opened", b_tok))
     ok(call("GET", f"/groups/{gid}/pics/{pm['pic']['id']}", b_tok), 410)                     # view once
 
+    # Videos (format 5): the same scheme and keys, a larger cap; not a text format.
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json=sealed(format=5)), 400)
+    clip = os.urandom(600 * 1024)
+
+    def video_keys():
+        return {"client_id": b64(os.urandom(16)), "recipients": members,
+                "wraps": {str(i): b64(os.urandom(60)) for i in members}}
+    ok(call("POST", f"/groups/{gid}/pics?format=3", a_tok, data=clip,
+            headers={"X-Napsack-Keys": json.dumps(video_keys())}), 413)                       # too big for a pic
+    vkeys = video_keys()
+    vm = ok(call("POST", f"/groups/{gid}/pics?format=5", a_tok, data=clip,
+                 headers={"X-Napsack-Keys": json.dumps(vkeys)})).json()
+    assert vm["format"] == 5 and vm["pic"] and vm["key"] == vkeys["wraps"][str(a["id"])] and vm["sender_public_key"]
+    theirs = [x for x in ok(call("GET", f"/groups/{gid}/messages", b_tok)).json() if x["id"] == vm["id"]][0]
+    assert theirs["key"] == vkeys["wraps"][str(b["id"])] and vkeys["wraps"][str(a["id"])] not in json.dumps(theirs)
+    assert ok(call("GET", f"/groups/{gid}/pics/{vm['pic']['id']}", b_tok)).content == clip
+
     ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "an old client"}))         # format 0 still works
     if DB:
         db = sqlite3.connect(DB)
         assert db.execute("SELECT COUNT(*) FROM group_message_keys WHERE message_id = ?", (m["id"],)).fetchone()[0] == 2
         assert db.execute("SELECT body FROM group_messages WHERE id = ?", (m["id"],)).fetchone()[0] == first["content"]
-    print("  groups, encrypted: exact member lists, own keys only, replays refused, sealed pics")
+    print("  groups, encrypted: exact member lists, own keys only, replays refused, sealed pics and videos")
 
 
 def check_streaks(tag, a, a_tok, b, b_tok):
@@ -1163,6 +1180,26 @@ def check_guard(tag):
     print(f"  guard: robots, scanners refused, {'probers banned (local only)' if REMOTE else 'probers banned'}, 4 sessions per person")
 
 
+def check_videos(tag):
+    """Videos (format 4, plan X28): opaque bytes like a pic, view-once, with
+    their own larger cap; a pic's cap stays the same."""
+    ra, rb = ok(register(f"vida_{tag}")).json(), ok(register(f"vidb_{tag}")).json()
+    (a, a_tok), (b, b_tok) = (ra["user"], ra["token"]), (rb["user"], rb["token"])
+    befriend(a_tok, b, b_tok, a["id"])
+    config = ok(call("GET", "/config")).json()
+    assert config["video_max_seconds"] == 10 and config["video_max_bytes"] >= 2 * 1024 * 1024, config
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=2", a_tok, data=os.urandom(600 * 1024)), 413)   # too big for a pic
+    clip = os.urandom(600 * 1024)
+    video = ok(call("POST", f"/chats/{b['id']}/snaps?format=4", a_tok, data=clip)).json()
+    assert video["format"] == 4 and video["snap_state"] == "pending", video
+    assert ok(call("GET", f"/snaps/{video['id']}", b_tok)).content == clip
+    ok(call("POST", f"/snaps/{video['id']}/opened", b_tok))
+    ok(call("GET", f"/snaps/{video['id']}", b_tok), 410)                                          # view once
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=4", a_tok, data=os.urandom(config["video_max_bytes"] + 1)), 413)
+    ok(call("POST", f"/chats/{b['id']}/snaps?format=5", a_tok, data=clip), 400)                    # a group format
+    print("  videos: their own cap, view-once, not a group format")
+
+
 def check_invites(tag):
     """Invite links (invites.rs): stand in for the invite code, make friends,
     work 10 times, can be turned off; only a hash is stored."""
@@ -1273,7 +1310,7 @@ async def ws_events(token, bucket, ready):
 def check_versions(token):
     """/config describes the server; old native clients get 426 everywhere else."""
     cfg = ok(call("GET", "/config")).json()
-    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2] and cfg["snap_ttl_hours"] == 720, cfg
+    assert cfg["api_version"] == 1 and cfg["message_formats"] == [1, 2, 4] and cfg["snap_ttl_hours"] == 720, cfg
     assert cfg["server_version"] and cfg["build"], cfg
     # Which copy this is: null in production (and here, locally); staging names itself.
     assert cfg["environment"] == ("staging" if REMOTE else None), cfg
@@ -1453,6 +1490,7 @@ async def main():
     else:
         await check_live(tag)
     check_invites(tag)
+    check_videos(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
     check_graph(tag)

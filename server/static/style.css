@@ -64,6 +64,8 @@ svg {
   font-weight: 600;
 }
 .button:hover { background: var(--wash); }
+/* A link that looks like a button: centered like one, in the button's colors, visited or not. */
+a.button { display: inline-flex; align-items: center; justify-content: center; color: var(--paper); text-decoration: none; }
 .button.primary { background: var(--sage); color: var(--on-sage); border-color: var(--sage); }
 .button.primary:hover { background: var(--sage-hover); border-color: var(--sage-hover); }
 .button:disabled { opacity: 0.5; cursor: default; }
@@ -142,7 +144,10 @@ svg {
 
 /* ---------- app layout ---------- */
 
-.app { height: 100dvh; display: flex; }
+/* Pinned to the screen, not sized from 100dvh: an installed iPhone app works
+   out dvh wrong when a page first opens (and again after coming back to it),
+   leaving the tabs floating above the bottom until something scrolls. */
+.app { position: fixed; inset: 0; display: flex; }
 .bar {
   height: var(--bar-h);
   flex: none;
@@ -327,7 +332,8 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 /* ---------- camera ---------- */
 
 .camera {
-  width: 100vw; height: 100dvh; max-width: none; max-height: none;
+  /* Pinned to the screen's edges rather than 100dvh, for the same reason as .app. */
+  position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
   margin: 0; padding: 0; border: 0;
   background: #000;
   display: none; flex-direction: column;
@@ -879,9 +885,15 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .sheet {
   max-height: min(40rem, calc(100dvh - 2 * max(env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) - 1rem));
 }
+/* At least a bar's height below the status bar, and taller when the tabs
+   take a second row on a phone, so the bar's border stays under them. */
 .admin-bar {
   padding-top: env(safe-area-inset-top, 0px);
-  height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
+  height: auto;
+  min-height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
+}
+@media (max-width: 520px) {
+  .admin-bar { padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem); }
 }
 
 /* ---------- invite links ---------- */
@@ -1462,3 +1474,37 @@ html[data-env] { --tabs-foot: 1.1rem; }
   color: var(--fixer); font-size: var(--step--1);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ---------- camera zoom (X27) ---------- */
+.camera-stage video { touch-action: none; } /* two fingers zoom the camera, not the page */
+.zoom-chip {
+  position: absolute; z-index: 3; bottom: 0.9rem; left: 50%; transform: translateX(-50%);
+  min-width: 2.75rem; height: 2.75rem; padding: 0 0.6rem;
+  border: 0; border-radius: 999px;
+  background: rgba(12, 20, 16, 0.6); color: var(--paper);
+  font: inherit; font-size: var(--step--1); font-weight: 600; font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.zoom-chip[hidden] { display: none; }
+
+/* ---------- short videos (X28) ---------- */
+.shutter { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform 120ms ease; }
+/* Recording: a red dot inside a ring that fills as the time runs out. */
+.shutter.recording {
+  transform: scale(1.18);
+  border-color: transparent;
+  background:
+    radial-gradient(circle, #d94848 0 34%, transparent 35%),
+    conic-gradient(var(--paper) calc(var(--progress, 0) * 1turn), rgba(228, 236, 230, 0.25) 0);
+}
+#capture-controls.recording [data-close], #capture-controls.recording .camera-side { visibility: hidden; }
+.record-time {
+  position: absolute; z-index: 3; top: 0.9rem; left: 50%; transform: translateX(-50%);
+  margin: 0; padding: 0.2rem 0.65rem; border-radius: 999px;
+  background: #b83b3b; color: #fff;
+  font-size: var(--step--1); font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.record-time[hidden] { display: none; }
+.viewer video { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; }
+.viewer video[hidden], .viewer img[hidden] { display: none; }
+.camera-stage video[hidden] { display: none; }

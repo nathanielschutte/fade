@@ -113,7 +113,11 @@ pub async fn upload(
     if body.len() < MIN_SNAP_BYTES {
         return Err(AppError::bad("That pic wasn't encrypted correctly."));
     }
-    if body.len() > state.config.snap_max_bytes {
+    if params.format == version::VIDEO_FORMAT {
+        if body.len() > state.config.video_max_bytes {
+            return Err(AppError::PayloadTooLarge("That video is too large.".into()));
+        }
+    } else if body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
     }
     crate::guard::check_upload_room(&state)?;
@@ -184,7 +188,12 @@ pub async fn upload(
         friend_id,
         crate::push::Note {
             title: crate::people::name_for(&state.db, friend_id, me.id).await?,
-            body: "Sent you a pic".into(),
+            body: if params.format == version::VIDEO_FORMAT {
+                "Sent you a video"
+            } else {
+                "Sent you a pic"
+            }
+            .into(),
             tag: format!("dm-{}", me.id),
             url: format!("/#chat={}", me.id),
         },

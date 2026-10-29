@@ -155,6 +155,8 @@ Phase 1, in 0.21.0 (2026-10-22):
 - Web app: every group text and pic is sealed; members' keys are pinned on first sight like friends' (a changed key blocks sending to that group); a 409 refetches the members and seals again once.
 - **Readers and writers shipped together.** The web app is the only client and loads the new version on reload (the update banner asks); there's no iOS build in use yet, and the iOS app reads format 3 from its first build (the vectors run on the phone). A tab left open from before shows a format 3 message as an empty line until it reloads.
 
+Videos, in 0.36.0: **format 5** is this scheme with the content kind `video` around the media envelope ([how-napsack-works.md](../how-napsack-works.md#formats-4-and-5-videos)), so a video can't be opened as a pic. The server treats formats 3 and 5 alike (`groups::sealed`): each member gets only their own wrap.
+
 Not yet:
 
 - **Group reactions** are still plain emoji the server can see (the group sheet says so). Next: seal them like messages (kind `reaction`, the target message id in the associated data).

@@ -22,6 +22,7 @@ test("every vector check passes", async () => {
     recovery: load("recovery.json"),
     texts2: load("texts2.json"),
     group3: load("group3.json"),
+    media4: load("media4.json"),
   });
   for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name} (${r.ms} ms)${r.error ? `: ${r.error}` : ""}`);
   assert.ok(results.length >= 20, `only ${results.length} checks ran`);

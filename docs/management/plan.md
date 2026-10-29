@@ -14,7 +14,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Done | Nate (2026-10-28); 0.34.0 |
 | 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Done | Nate (2026-10-28); 0.35.0 |
-| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Up next | Nate (2026-10-28); releases 3 and 4, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) |
+| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Up next | Nate (2026-10-28); release 5 |
 | 0p | [Change your username](#x30-change-your-username) | Features | Up next | Nate (2026-10-28); release 6 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
@@ -260,6 +260,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 ### Debug
 
+#### D7. Three layout bugs from 0.35.0 (fixed in 0.36.0)
+- Reported (Nate, 2026-10-29). **System button at the foot of the profile:** a link styled as a button stayed inline, so its words sat high, and took the visited-link purple; `a.button` now centers like a button, in the button's colors (`test_roles.py` compares it with Sign out). **System tabs on a phone:** the header kept a fixed height when its tabs took a second row, so they spilled onto the page; it grows now (`test_admin.py`). **Tabs on the installed iPhone app:** the bar sat above the bottom edge until the page was scrolled, and again after coming back from System: the app was sized with `100dvh`, which an installed iPhone app works out wrong when a page opens. The app and the camera are now pinned to the screen's edges (`position: fixed; inset: 0`); `test_installed.py` checks the tabs sit on the bottom edge, though Chromium can't reproduce the iPhone's own mistake, so check it on a phone after release.
+
 #### D6. "Loading…" stayed above a loaded profile (fixed in 0.35.0)
 - Reported (Nate, 2026-10-29), in production: the profile's stats showed "Loading…" in the first row after everything had loaded, pushing the grid out of line. 0.34.0 (X23) put the placeholder in, and the loaded stats were added after it instead of replacing it. Fixed, and `common.no_placeholders` now checks after every load in `test_profile.py`, `test_loading.py`, and `test_invites.py`; CLAUDE.md asks the same of any new loading state.
 
@@ -431,10 +434,13 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### X27. Camera zoom
 - Requested (2026-10-28): zoom while taking a pic, with the back camera, on phones (pinch, and a zoom control). Desktop doesn't matter. Uses the camera's own zoom where the browser offers it, else a crop of the frame.
+- Built (0.36.0): pinch the camera view, or tap the 1× button (1×, 2×, then up to 5×). Where the camera reports a zoom range, napsack asks the camera (up to 10×); otherwise the preview enlarges its middle and the photo is cropped to match (up to 3×, past which a crop looks poor). Every camera opens at 1×. `test_camera_zoom.py`.
 
 #### X28. Short videos
 - Requested (2026-10-28): press and hold the shutter to record, up to 10 seconds (a setting); while recording, sliding the finger up zooms in. Decided (Nate): with sound (asks for the microphone the first time), view-once like pics, in direct chats and groups, end-to-end encrypted.
 - A new message format for the envelope (the media type with the bytes; readers before writers), a size cap and disk budget for videos (`guard.rs`, security.md), and the same open-once confirmation as pics.
+- Built (0.36.0): formats 4 (direct) and 5 (group), a media envelope with a JSON header (room for later fields, such as X33's caption position), described in how-napsack-works.md; pinned vectors `tests/vectors/media4.json` with an independent check. Recorded through a canvas, so zoom crops and mirroring come out as previewed, at about 1.5 Mbit/s; MP4 where the browser can, WebM otherwise. `FADE_VIDEO_MAX_KB` (4 MB) and `FADE_VIDEO_MAX_SECONDS` (10). Drawing and stickers stay photo-only. `test_video.py`.
+- The format number tells the server a video from a pic (as the size would anyway); recorded in how-napsack-works.md.
 
 #### X29. Edit sent texts
 - Requested (2026-10-28): tap your own text for an **Edit** option. Later, on the phone app: tap and hold shows the reaction row and a menu below it (Edit, Copy, Reply, ...).
@@ -462,6 +468,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Reported (Nate, 2026-10-28): napsack on the Home Screen asks for camera permission again and again; the answer isn't remembered. With video (X28) it would ask for the microphone too.
 - Findings (2026-10-28): a known WebKit limit, not fixed as of the last reports. An installed web app doesn't keep camera answers across launches (Safari tabs do); within a launch, iOS can ask again after the page's address changes (WebKit bug 215884: hash changes in standalone mode), and napsack changes the hash when links open chats. Each camera open also starts a fresh stream.
 - Plan, done with X27 and X28 (same code): stop changing the address while the app runs where it isn't needed; ask for camera and microphone together once for video; consider keeping the stream briefly after the camera closes (a privacy trade-off: the camera light stays on; Nate decides). Asking once per launch is likely the floor on iOS.
+- Done in 0.36.0: the microphone is asked for once per camera opening, at the first video, and kept until the camera closes, so several videos in a row ask once. Still to do: the address changes, and the keep-warm question for Nate.
 
 #### X34. Add recipients from inside a chat
 - Requested (2026-10-28): taking a pic or video from inside a chat or group shows who it's going to next to the send button. Tapping that opens the same **Send to…** picker as the camera tab (X26), with the current chat already ticked, to add more friends or groups.

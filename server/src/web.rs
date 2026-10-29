@@ -279,6 +279,8 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
     Json(json!({
         "invite_required": state.config.invite_code.is_some(),
         "snap_max_bytes": state.config.snap_max_bytes,
+        "video_max_bytes": state.config.video_max_bytes,
+        "video_max_seconds": state.config.video_max_seconds,
         "snap_ttl_hours": state.config.snap_ttl.as_secs() / 3600,
         "api_version": version::API_VERSION,
         "server_version": version::SERVER_VERSION,

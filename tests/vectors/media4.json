@@ -1,0 +1,31 @@
+{
+  "about": "napsack videos: format 4 (direct) and 5 (group). Keys are format1.json. Generated once from shared/crypto/crypto.js; never regenerate.",
+  "direct": {
+    "format": 4,
+    "from": 7,
+    "to": 3,
+    "type": "video/mp4",
+    "caption": "the lake 🌊",
+    "media": "AAAAGGZ0eXBpc29tAQIDBAUGBwg=",
+    "plaintext": "ACh7InR5cGUiOiJ2aWRlby9tcDQiLCJjIjoidGhlIGxha2Ug8J+MiiJ9AAAAGGZ0eXBpc29tAQIDBAUGBwg=",
+    "ciphertext": "1BkmJ0DjwWipFRlu344wuCzhzE+nHIQwY2UK4YMKuMd7jRXLNSVdp/bokIhzXKB/yNXinxTbEny/sT05pFYn1v60nbgA8/OFZ6/wax1czfLPmfK0clbwTQwA"
+  },
+  "group": {
+    "format": 5,
+    "group_id": 5,
+    "sender": 7,
+    "type": "video/webm;codecs=vp8,opus",
+    "caption": "",
+    "media": "AAAAGGZ0eXBpc29tAQIDBAUGBwg=",
+    "client_id": "6fTaQMZhwIkbHS2TKHfVNA==",
+    "recipients": [
+      3,
+      7
+    ],
+    "content": "lNPrQEneEjAUL7yM2rJ7anQgr9qLSxsiFYJZ0ortkTOHNfqOx4L2GnfQVI0RmRxkUVI3WvCN19oZF/UY6EE15wpFVyFBgkKw+ZtdLuuou5F2G1hhsierRl8cBOW85w==",
+    "wraps": {
+      "3": "Jr8h6j8SOLa9LATuIiEpJLF8r5PYIUKmLjvDvRvOgmzwVGSct7R71euLW4dXBvuRFAKvmk4xeFu0iPzV",
+      "7": "lvLVOnu/8r55FE5wCuPzbtL01/xGEpTJGgnMBWdM98/GRAu0YpS2TXftgl42YkJgwOXfshPVfZdpBMP2"
+    }
+  }
+}

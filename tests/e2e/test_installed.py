@@ -69,6 +69,10 @@ async def main():
         assert await top_of(ana, ".list-pane .bar") >= TOP
         assert await top_of(ana, "#friends-button") >= TOP
         assert await bottom_of(ana, "#tabs") <= 852, "tabs off screen"
+        # Pinned to the screen, not sized from 100dvh, which an installed iPhone
+        # app gets wrong when a page first opens: the tabs sit on the bottom edge.
+        assert await ana.evaluate("getComputedStyle(document.querySelector('.app')).position") == "fixed"
+        assert await bottom_of(ana, "#tabs") == 852, "tabs not on the bottom edge"
         for tab in ("#tab-chats", "#tab-camera", "#tab-profile"):
             assert await bottom_of(ana, tab) <= 852 - BOTTOM, f"{tab} under the home indicator"
         await shot(ana, "installed-list", full_page=False)

@@ -73,6 +73,15 @@ async def main():
         admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
         await sign_up_or_in(admin, ADMIN)
         await expect(admin.locator("#admin-link")).to_contain_text("System")
+        # System also sits at the foot of their own profile, as a button like
+        # Sign out beside it: the same height, colors, and centered words.
+        await admin.click("#my-profile")
+        await expect(admin.locator("#profile-admin-link")).to_be_visible(timeout=10000)
+        link, out = admin.locator("#profile-admin-link"), admin.locator("#profile-sign-out")
+        assert (await link.bounding_box())["height"] == (await out.bounding_box())["height"]
+        style = "e => [getComputedStyle(e).color, getComputedStyle(e).alignItems]"
+        assert await link.evaluate(style) == [(await out.evaluate(style))[0], "center"], await link.evaluate(style)
+        await admin.click("#profile-dialog [data-close]")
         await admin.goto(f"{BASE}/admin#roles")
         await expect(admin.locator("#tab-logs")).to_be_visible()
         await admin.fill("#r-search", PWR)

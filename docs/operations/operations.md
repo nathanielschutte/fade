@@ -56,6 +56,8 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_INVITE_CODE` | unset (open signup) | Required to register when set |
 | `FADE_SNAP_TTL_HOURS` | `720` | Unopened direct pics expire after this (30 days) |
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted pic. The client compresses every photo to 200 KB or less |
+| `FADE_VIDEO_MAX_KB` | `4096` | Hard cap per encrypted video. Clients record about 1.5 Mbit/s, so 10 seconds is about 2 MB |
+| `FADE_VIDEO_MAX_SECONDS` | `10` | The longest video a client records (1 to 60) |
 | `FADE_SNAP_DISK_MB` | `256` | Disk ceiling for all unopened direct pics |
 | `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |

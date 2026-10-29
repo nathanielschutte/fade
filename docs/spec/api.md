@@ -6,7 +6,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 
 | | |
 |---|---|
-| `GET  /config` | `{invite_required, snap_max_bytes, snap_ttl_hours, api_version, server_version, build, message_formats, min_client_versions, vapid_public_key, environment, started_at}` (no auth, never version-blocked). `environment` is null in production and names a non-production copy (`"staging"`): clients then mark every page and show the build (`server/static/env.js`). `started_at` is when the server started (unix seconds) |
+| `GET  /config` | `{invite_required, snap_max_bytes, video_max_bytes, video_max_seconds, snap_ttl_hours, api_version, server_version, build, message_formats, min_client_versions, vapid_public_key, environment, started_at}` (no auth, never version-blocked). `environment` is null in production and names a non-production copy (`"staging"`): clients then mark every page and show the build (`server/static/env.js`). `started_at` is when the server started (unix seconds) |
 | `POST /auth/register` | `{username, auth_key, public_key, wrapped_private_key, invite_code?}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/login` | `{username, auth_key}` → `{token, user, public_key, wrapped_private_key}` |
 | `POST /auth/logout` | |
@@ -24,7 +24,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /chats/{friend}/messages?before=&limit=` | Oldest first |
 | `POST /chats/{friend}/messages` | `{ciphertext, format?, client_id?}`: base64 of IV ‖ AES-GCM output; `format` defaults to 1. `client_id` (8–64 base64/base64url characters, picked by the app) makes a retry safe: sending again with the same one returns the message already stored, not a copy. Messages carry their `client_id` |
 | `POST /chats/{friend}/read` | Marks their texts as read |
-| `POST /chats/{friend}/snaps?format=2&client_id=` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted. `client_id` as for texts: a retried upload returns the pic already stored |
+| `POST /chats/{friend}/snaps?format=2&client_id=` | Encrypted caption + image (IV ‖ AES-GCM output). Format 1 (image only) is still accepted; `format=4` is a video (up to `video_max_bytes`). `client_id` as for texts: a retried upload returns the pic already stored |
 | `GET  /snaps/{id}` | The encrypted bytes (recipient only). Fetching doesn't open it, so a dropped download can be fetched again |
 | `POST /snaps/{id}/opened` | The recipient's app has shown the pic: now it's opened and discarded (a repeat is fine). A pic fetched but never confirmed counts as opened 15 minutes after the first fetch |
 | `GET  /groups` | Your groups: `[{id, name, role, member_count, last_message, unread, favorite, encrypted: false}]` (`encrypted` predates format 3 and stays false; messages say their own `format`). Also `muted`, `muted_until`. `GET /groups/{id}` members include `public_key`, for encrypting to them |
@@ -57,7 +57,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |
 | `PUT  /me/birthday` | `{month, day, year?}`: your birthday, for friends (profile, and `birthday: "MM-DD"` in their `/friends`). Real dates only; the year is optional (1900 to this year). `{}` clears it |
 | `PUT  /friends/{id}/nickname` | `{name}`: a nickname for a friend that only you see. Empty clears it |
-| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic: `?format=3` with the sealed bytes as the body and `X-Napsack-Keys: {client_id, recipients, wraps}` (the caption is sealed inside); or (old clients) a raw JPEG/PNG/WebP body, re-encoded by the server, with `?caption=`; a resend with the same `client_id` returns the pic already stored · fetch it (members, not the sender): format 3 comes back as the sealed bytes (`application/octet-stream`); old ones as an image with the caption in `X-Napsack-Caption`. Fetching doesn't open it |
+| `POST /groups/{id}/pics` · `GET /groups/{id}/pics/{pic_id}` | Send a pic: `?format=3` (or `?format=5`, a video, up to `video_max_bytes`) with the sealed bytes as the body and `X-Napsack-Keys: {client_id, recipients, wraps}` (the caption is sealed inside); or (old clients) a raw JPEG/PNG/WebP body, re-encoded by the server, with `?caption=`; a resend with the same `client_id` returns the pic already stored · fetch it (members, not the sender): format 3 comes back as the sealed bytes (`application/octet-stream`); old ones as an image with the caption in `X-Napsack-Caption`. Fetching doesn't open it |
 | `POST /groups/{id}/pics/{pic_id}/opened` | This member's app has shown the pic: it counts as opened for them (a repeat is fine; unconfirmed fetches count after 15 minutes). Gone once everyone has opened it, or after 30 days |
 | `POST /groups/{id}/avatar` · `GET /groups/{id}/avatar/{avatar_id}` | Set the group picture (any member; re-encoded) · fetch it, members only. Every past picture is kept |
 | `GET  /admin/stats` | Counts for the System overview. PowerUsers and Admins ([roles.md](../implementation/roles.md)); 404 for anyone else. `users.list` (the users table) is `null` except for Admins |

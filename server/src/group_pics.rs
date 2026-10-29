@@ -221,8 +221,8 @@ pub async fn upload(
     headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<GroupMessage>> {
-    if params.format == groups::FORMAT_E2E {
-        return upload_e2e(state, me.id, group, &headers, body).await;
+    if groups::sealed(params.format) {
+        return upload_e2e(state, me.id, group, params.format, &headers, body).await;
     }
     if params.format != groups::FORMAT_PLAINTEXT {
         return Err(AppError::bad("Unknown pic format."));
@@ -318,9 +318,11 @@ async fn upload_e2e(
     state: SharedState,
     me: i64,
     group: i64,
+    format: i64,
     headers: &axum::http::HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<GroupMessage>> {
+    let video = format == groups::FORMAT_E2E_VIDEO;
     groups::require_member(&state.db, group, me).await?;
     let keys: groups::E2eKeys = headers
         .get(KEYS_HEADER)
@@ -330,7 +332,10 @@ async fn upload_e2e(
     if body.len() < MIN_E2E_PIC_BYTES {
         return Err(AppError::bad("That pic was empty."));
     }
-    if body.len() > state.config.snap_max_bytes {
+    if video && body.len() > state.config.video_max_bytes {
+        return Err(AppError::PayloadTooLarge("That video is too large.".into()));
+    }
+    if !video && body.len() > state.config.snap_max_bytes {
         return Err(AppError::PayloadTooLarge("That photo is too large.".into()));
     }
     crate::guard::check_upload_room(&state)?;
@@ -364,13 +369,14 @@ async fn upload_e2e(
     let started = groups::mark_encrypted_start(&mut tx, group, me, at).await?;
     let pic: i64 = sqlx::query_scalar(
         "INSERT INTO group_pics (group_id, sender_id, bytes, mime, caption, created_at, expires_at, format)
-         VALUES (?, ?, ?, 'application/octet-stream', NULL, ?, ?, 3) RETURNING id",
+         VALUES (?, ?, ?, 'application/octet-stream', NULL, ?, ?, ?) RETURNING id",
     )
     .bind(group)
     .bind(me)
     .bind(body.len() as i64)
     .bind(at)
     .bind(at + state.config.group_pic_ttl.as_secs() as i64)
+    .bind(format)
     .fetch_one(&mut *tx)
     .await?;
     let path = pic_path(&state, pic);
@@ -383,10 +389,11 @@ async fn upload_e2e(
         .map_err(|e| AppError::Internal(format!("saving pic: {e}")))?;
     let inserted: Result<i64, AppError> = sqlx::query_scalar(
         "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at, pic_id, client_id, recipients)
-         VALUES (?, ?, 'text', '', 3, ?, ?, ?, ?) RETURNING id",
+         VALUES (?, ?, 'text', '', ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(group)
     .bind(me)
+    .bind(format)
     .bind(at)
     .bind(pic)
     .bind(&keys.client_id)
@@ -412,6 +419,7 @@ async fn upload_e2e(
         pic_id = pic,
         from = me,
         bytes = body.len(),
+        video,
         "group pic sent, encrypted"
     );
     if let Some(event) = started {
@@ -420,7 +428,13 @@ async fn upload_e2e(
     }
     let message = groups::get_message(&state.db, id).await?;
     groups::broadcast(&state, message.clone()).await?;
-    groups::notify_members(&state, group, me, "sent a pic").await?;
+    groups::notify_members(
+        &state,
+        group,
+        me,
+        if video { "sent a video" } else { "sent a pic" },
+    )
+    .await?;
     let mut mine = message;
     groups::prepare_for(&state.db, me, std::slice::from_mut(&mut mine)).await?;
     Ok(Json(mine))

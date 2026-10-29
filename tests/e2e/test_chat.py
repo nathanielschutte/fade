@@ -190,7 +190,10 @@ async def main():
             pics = os.path.join(os.path.dirname(DB), "pics", "direct")
             held = [open(os.path.join(pics, f), "rb").read() for f in os.listdir(pics)]
             assert held and all("first light over the lake".encode() not in h for h in held)
-            formats = sqlite3.connect(DB).execute("SELECT DISTINCT format FROM messages WHERE kind = 'snap'").fetchall()
+            # This test's pics only: the database is shared with the other tests (videos are format 4).
+            formats = sqlite3.connect(DB).execute(
+                "SELECT DISTINCT m.format FROM messages m JOIN users u ON u.id = m.sender_id"
+                " WHERE m.kind = 'snap' AND u.username IN (?, ?)", (ALEX, SAM)).fetchall()
             assert formats == [(2,)], formats
             print("caption is end-to-end encrypted; pics wait on disk as ciphertext, format 2")
 
@@ -207,7 +210,7 @@ async def main():
             assert max(dims) <= 1280
             if i == 0:
                 await expect(b.locator("#viewer-caption")).to_have_text("first light over the lake")
-                await expect(b.locator("#viewer-hint")).to_have_text("Tap for the next pic")
+                await expect(b.locator("#viewer-hint")).to_have_text("Tap for the next one")
                 await shot(b, "4-viewer")
             else:
                 await expect(b.locator("#viewer-caption")).to_be_hidden()

@@ -6,7 +6,7 @@
 // here; key storage lives with each client.
 //
 // Changing bytes on the wire means a new message format (docs/operations/releasing.md).
-// tests/vectors/format1.json and format2.json pin the exact output, and every
+// The files in tests/vectors/ pin the exact output of each format, and every
 // client is tested against them.
 //
 //
@@ -401,6 +401,65 @@ export async function encryptGroupPic(photo, caption, opts) {
 
 export async function decryptGroupPic(content, wrapB64, opts) {
   return unpackPic(await decryptGroup(content, wrapB64, { ...opts, kind: "pic" }));
+}
+
+// ---------- formats 4 and 5: videos ----------
+// A video travels in a media envelope:
+//   header length (2 bytes, big-endian) || header (UTF-8 JSON) || the video
+// The header says what the bytes are and carries the caption:
+//   {"type": "video/mp4", "c": "the caption"}
+// Readers ignore header keys they don't know, so later additions don't need a
+// new format. Format 4 seals the envelope with the pair key (a direct chat);
+// format 5 is the format 3 group scheme with the content kind "video". The
+// format number tells the server a video from a pic, as the size would anyway.
+
+export const VIDEO_FORMAT = 4;
+export const GROUP_VIDEO_FORMAT = 5;
+const MAX_MEDIA_HEADER_BYTES = 8192;
+// What a sender may say the bytes are: a video type and its parameters, nothing else.
+const VIDEO_TYPE = /^video\/[a-z0-9.+-]+(;[a-z0-9 =.,+"-]*)?$/i;
+
+const videoAad = (senderId, recipientId) => `napsack/v4/snap/${senderId}/${recipientId}`;
+
+/** The plaintext of a video: exactly these bytes are encrypted. */
+export function packMedia(media, type, caption = "") {
+  if (!VIDEO_TYPE.test(type) || type.length > 100) throw new Error("That isn't a video napsack can send.");
+  if (enc.encode(caption).length > MAX_CAPTION_BYTES) throw new Error("That caption is too long.");
+  const header = enc.encode(JSON.stringify({ type, c: caption }));
+  if (header.length > MAX_MEDIA_HEADER_BYTES) throw new Error("That caption is too long.");
+  const out = new Uint8Array(2 + header.length + media.length);
+  out[0] = header.length >> 8;
+  out[1] = header.length & 0xff;
+  out.set(header, 2);
+  out.set(media, 2 + header.length);
+  return out;
+}
+
+/** -> { type, caption, media }. Throws unless it's a well-formed video envelope. */
+export function unpackMedia(body) {
+  const n = (body[0] << 8) | body[1];
+  if (body.length < 2 + n || n > MAX_MEDIA_HEADER_BYTES) throw new Error("malformed video");
+  const header = JSON.parse(dec.decode(body.subarray(2, 2 + n)));
+  const type = header?.type;
+  if (typeof type !== "string" || !VIDEO_TYPE.test(type) || type.length > 100) throw new Error("malformed video");
+  return { type, caption: typeof header.c === "string" ? header.c : "", media: body.subarray(2 + n) };
+}
+
+export async function encryptVideo(key, media, type, caption, senderId, recipientId) {
+  return seal(key, packMedia(media, type, caption), videoAad(senderId, recipientId));
+}
+
+export async function decryptVideo(key, bytes, senderId, recipientId) {
+  return unpackMedia(await open(key, bytes, videoAad(senderId, recipientId)));
+}
+
+/** A group video: the media envelope, sealed with the format 3 scheme as kind "video". */
+export async function encryptGroupVideo(media, type, caption, opts) {
+  return encryptGroup(packMedia(media, type, caption), { ...opts, kind: "video" });
+}
+
+export async function decryptGroupVideo(content, wrapB64, opts) {
+  return unpackMedia(await decryptGroup(content, wrapB64, { ...opts, kind: "video" }));
 }
 
 /**

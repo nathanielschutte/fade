@@ -1050,11 +1050,12 @@ function chatStatus(chat) {
   if (!m) return { text: "Say hi" };
   const mine = m.sender_id === state.me.id;
   if (m.kind === "snap") {
-    if (!mine && m.snap_state === "pending") return { text: "New pic", marker: "snap" };
+    const w = mediaWord(m), W = capitalize(w);
+    if (!mine && m.snap_state === "pending") return { text: `New ${w}`, marker: "snap" };
     const label = mine
-      ? { pending: "Sent a pic", opened: "Pic opened", expired: "Pic expired unopened" }
-      : { opened: "Pic viewed", expired: "Pic expired" };
-    return { text: label[m.snap_state] || "Pic" };
+      ? { pending: `Sent a ${w}`, opened: `${W} opened`, expired: `${W} expired unopened` }
+      : { opened: `${W} viewed`, expired: `${W} expired` };
+    return { text: label[m.snap_state] || W };
   }
   const body = m.text ?? "Encrypted message";
   if (!mine && !m.read_at) return { text: body, marker: "text" };
@@ -1726,10 +1727,15 @@ async function markRead(friendId) {
 
 function snapLabel(m, mine) {
   if (mine) {
-    return { pending: "Pic sent", opened: "Opened", expired: "Expired unopened" }[m.snap_state];
+    return { pending: `${capitalize(mediaWord(m))} sent`, opened: "Opened", expired: "Expired unopened" }[m.snap_state];
   }
   return { opened: "Viewed", expired: "Expired" }[m.snap_state];
 }
+
+// Videos (plan X28) travel like pics, in their own formats: 4 direct, 5 in groups.
+const isVideo = (m) => m.format === e2e.VIDEO_FORMAT || m.format === e2e.GROUP_VIDEO_FORMAT;
+const mediaWord = (m) => (isVideo(m) ? "video" : "pic");
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function renderMessages() {
   if (state.activeGroupId) return renderGroupMessages();
@@ -1776,7 +1782,7 @@ function renderMessages() {
       const canOpen = !mine && m.snap_state === "pending";
       const chip = canOpen
         ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
-            el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic")
+            el("span", { class: "marker snap", "aria-hidden": "true" }), `Tap to view ${mediaWord(m)}`)
         : el("span", { class: "snap-chip done" },
             el("span", { class: "marker", "aria-hidden": "true" }), snapLabel(m, mine));
       items.push(...bubble(m, mine, [chip]));
@@ -1992,7 +1998,7 @@ function whoSent(m) {
 }
 
 function snippetOf(m) {
-  if (m.kind === "snap" || m.pic) return "Pic";
+  if (m.kind === "snap" || m.pic) return capitalize(mediaWord(m));
   const text = m.group_id ? m.body : m.text;
   return text ? Array.from(text).slice(0, 80).join("") : "Message";
 }
@@ -2715,7 +2721,8 @@ function groupStatus(g) {
   if (m.pic) {
     const mine = m.sender_id === state.me.id;
     const waiting = !mine && !m.pic.discard_reason && !m.pic.viewers.includes(state.me.id);
-    return { text: mine ? "You sent a pic" : `${personName(m.sender_id, m.sender_name)} sent a pic`, marker: waiting ? "snap" : g.unread ? "text" : null };
+    const what = `sent a ${mediaWord(m)}`;
+    return { text: mine ? `You ${what}` : `${personName(m.sender_id, m.sender_name)} ${what}`, marker: waiting ? "snap" : g.unread ? "text" : null };
   }
   const text = m.kind === "event"
     ? groupEventText(m)
@@ -2930,42 +2937,51 @@ function groupPicChip(m, mine) {
   const seen = p.viewers.includes(state.me.id);
   if (!mine && !seen && !p.discard_reason) {
     return el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
-      el("span", { class: "marker snap", "aria-hidden": "true" }), "Tap to view pic");
+      el("span", { class: "marker snap", "aria-hidden": "true" }), `Tap to view ${mediaWord(m)}`);
   }
   const label = mine
     ? p.discard_reason === "opened" ? "Opened by everyone"
       : p.discard_reason === "expired" ? "Expired"
-      : p.viewers.length ? `Opened by ${p.viewers.length}` : "Pic sent"
+      : p.viewers.length ? `Opened by ${p.viewers.length}` : `${capitalize(mediaWord(m))} sent`
     : seen ? "Viewed" : "Expired";
   return el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), label);
 }
 
-/** Fetches (and for format 3, decrypts) one group pic: { blob, caption, from }. */
+/** Fetches (and for formats 3 and 5, decrypts) one group pic or video: { blob, video, caption, from }. */
 async function loadGroupPic(m) {
   const url = `/groups/${m.group_id}/pics/${m.pic.id}`;
   const from = `${personName(m.sender_id, m.sender_name)} · ${groupById(m.group_id)?.name ?? ""}`;
-  if (m.format === e2e.GROUP_FORMAT) {
+  if (m.format === e2e.GROUP_FORMAT || m.format === e2e.GROUP_VIDEO_FORMAT) {
     const sealed = await api(url, { as: "bytes" });
     const opts = { groupId: m.group_id, senderId: m.sender_id, myId: state.me.id, clientId: m.client_id, recipients: m.recipients || [] };
     for (const pub of m.key ? await readingKeys(m.sender_id, m.sender_public_key) : []) {
       try {
-        const pic = await e2e.decryptGroupPic(sealed, m.key, { ...opts, wrapKey: await groupWrapKeyFor(m.sender_id, pub) });
+        const wrapKey = await groupWrapKeyFor(m.sender_id, pub);
+        if (isVideo(m)) {
+          const v = await e2e.decryptGroupVideo(sealed, m.key, { ...opts, wrapKey });
+          return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, from };
+        }
+        const pic = await e2e.decryptGroupPic(sealed, m.key, { ...opts, wrapKey });
         return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from };
       } catch {}
     }
-    report("warn", "group pic decrypt failed", { message_id: m.id, group_id: m.group_id });
-    throw new PicProblem("This pic couldn't be decrypted.");
+    report("warn", "group pic decrypt failed", { message_id: m.id, group_id: m.group_id, video: isVideo(m) });
+    throw new PicProblem(`This ${mediaWord(m)} couldn't be decrypted.`);
   }
+  if (m.format !== groupsPlainFormat) throw new PicProblem(`This ${mediaWord(m)} was sent from a newer version of napsack. Reload to open it.`);
   const res = await api(url);
   let caption = "";
   try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
   return { blob: await res.blob(), caption, from };
 }
 
+/** Format 0: group pics from before a group's messages were encrypted. */
+const groupsPlainFormat = 0;
+
 /** What to say when a pic couldn't be sent. */
 function sendProblem(err) {
   return retryable(err)
-    ? "Couldn't send: the connection dropped. Your pic is still here; tap Send to try again."
+    ? `Couldn't send: the connection dropped. Your ${camera.videoType ? "video" : "pic"} is still here; tap Send to try again.`
     : err.message;
 }
 
@@ -3913,6 +3929,10 @@ const camera = {
   picked: false,               // `to` came from Send to…
   sends: new Map(),            // per recipient: the pic's id (friends) or sealed copy (groups), kept for retries
   sent: new Set(),             // recipients that have it, so Send again skips them
+  videoType: null,             // set when `blob` is a recorded video (X28)
+  audio: null,                 // the microphone, once asked for, while the camera is open
+  zoom: 1,                     // 1 = no zoom (X27)
+  hwZoom: null,                // the camera's own zoom range, where the browser offers one
 };
 
 function cameraMessage(text) {
@@ -3949,6 +3969,10 @@ async function startStream() {
     const video = $("#camera-video");
     video.classList.toggle("mirrored", camera.mirror);
     video.srcObject = camera.stream;
+    const range = camera.stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
+    camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+    setZoom(1);
+    $("#zoom-chip").hidden = !$("#camera-preview").hidden;
   } catch (err) {
     if (attempt !== camera.attempt) return;
     cameraProblem(err?.name === "NotFoundError" || err?.name === "OverconstrainedError"
@@ -3965,9 +3989,230 @@ function cameraProblem(text) {
 
 function stopStream() {
   camera.attempt = (camera.attempt ?? 0) + 1; // any answer still on its way is out of date
+  if (rec.recorder) {
+    rec.discard = true; // closed while recording: nothing to show
+    stopRecording();
+  }
   camera.stream?.getTracks().forEach((t) => t.stop());
   camera.stream = null;
+  camera.audio?.getTracks().forEach((t) => t.stop());
+  camera.audio = null;
   $("#camera-video").srcObject = null;
+  camera.hwZoom = null;
+  setZoom(1);
+  $("#zoom-chip").hidden = true;
+}
+
+// ---------- zoom (X27) ----------
+// Pinch the camera view, or tap the 1× button for the next step. The camera's
+// own zoom where the browser offers it (sharper, and it's what phones' back
+// cameras do); otherwise the middle of the frame, enlarged in the preview and
+// cropped when the photo is taken.
+const CROP_ZOOM_MAX = 3; // past this, a cropped photo gets too small to look good
+const zoomMax = () => (camera.hwZoom ? Math.min(camera.hwZoom.max, 10) : CROP_ZOOM_MAX);
+const zoomText = (z) => `${z < 10 ? Math.round(z * 10) / 10 : Math.round(z)}×`;
+let zoomApplying = null; // the camera takes a moment per change: send only the newest
+
+function setZoom(z) {
+  camera.zoom = Math.min(zoomMax(), Math.max(1, z));
+  const chip = $("#zoom-chip");
+  chip.textContent = zoomText(camera.zoom);
+  chip.setAttribute("aria-label", `Zoom: ${zoomText(camera.zoom)}`);
+  const video = $("#camera-video");
+  if (camera.hwZoom) {
+    video.style.transform = "";
+    const track = camera.stream?.getVideoTracks()[0];
+    if (!track || zoomApplying) return;
+    zoomApplying = (async () => {
+      let sent = null;
+      while (sent !== camera.zoom && camera.stream?.getVideoTracks()[0] === track) {
+        sent = camera.zoom;
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: sent }] });
+        } catch (err) {
+          report("debug", "camera zoom failed", errorFields(err));
+          break;
+        }
+      }
+      zoomApplying = null;
+    })();
+  } else {
+    // In the preview: enlarged about the middle (a mirrored view stays mirrored).
+    video.style.transform = camera.zoom === 1 ? "" : `${camera.mirror ? "scaleX(-1) " : ""}scale(${camera.zoom})`;
+  }
+}
+
+/** The steps the button goes through: 1×, 2×, then the most there is (up to 5×). */
+function nextZoomStep() {
+  const steps = [...new Set([1, 2, Math.min(5, zoomMax())])].filter((s) => s <= zoomMax()).sort((a, b) => a - b);
+  return steps.find((s) => s > camera.zoom + 0.05) ?? 1;
+}
+
+$("#zoom-chip").addEventListener("click", () => setZoom(nextZoomStep()));
+
+const pinch = { start: 0, zoom: 1 };
+const touchGap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+$(".camera-stage").addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 2 || !camera.stream || $("#camera-video").hidden) return;
+  pinch.start = touchGap(e.touches);
+  pinch.zoom = camera.zoom;
+}, { passive: true });
+$(".camera-stage").addEventListener("touchmove", (e) => {
+  if (e.touches.length !== 2 || !pinch.start || $("#camera-video").hidden) return;
+  e.preventDefault(); // the camera zooms, not the page
+  setZoom(pinch.zoom * (touchGap(e.touches) / pinch.start));
+}, { passive: false });
+$(".camera-stage").addEventListener("touchend", (e) => {
+  if (e.touches.length < 2) pinch.start = 0;
+});
+
+// ---------- short videos (X28) ----------
+// Press and hold the shutter to record, up to the server's limit (10 seconds
+// by default); slide the finger up to zoom in. Frames go through a canvas, so
+// the zoom's crop and a front camera's mirroring come out as the preview
+// shows them, and the size stays small. The microphone is asked for the first
+// time, then kept while the camera is open, so it isn't asked again per video.
+const HOLD_MS = 350;
+const VIDEO_EDGE = 1280;
+const rec = { timer: null, held: false, pointerId: null, startY: 0, startZoom: 1, suppressClick: false,
+  recorder: null, chunks: [], started: 0, draw: 0, tick: 0, discard: false };
+
+function videoMime() {
+  if (typeof MediaRecorder === "undefined") return null;
+  // MP4 where the browser can make it (Safari, newer Chrome): it plays everywhere.
+  return ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm"]
+    .find((t) => MediaRecorder.isTypeSupported(t)) ?? null;
+}
+
+$("#shutter").addEventListener("pointerdown", (e) => {
+  rec.suppressClick = false;
+  if (!camera.stream || e.button > 0 || !videoMime()) return;
+  rec.held = true;
+  rec.pointerId = e.pointerId;
+  rec.startY = e.clientY;
+  $("#shutter").setPointerCapture?.(e.pointerId);
+  clearTimeout(rec.timer);
+  rec.timer = setTimeout(() => {
+    rec.timer = null;
+    startRecording();
+  }, HOLD_MS);
+});
+$("#shutter").addEventListener("pointermove", (e) => {
+  if (!rec.recorder || e.pointerId !== rec.pointerId) return;
+  setZoom(rec.startZoom + Math.max(0, rec.startY - e.clientY) / 60); // up zooms in; back down, out
+});
+function releaseShutter(e) {
+  if (e.pointerId !== rec.pointerId) return;
+  rec.held = false;
+  if (rec.timer) {
+    clearTimeout(rec.timer); // a tap: the click takes a photo
+    rec.timer = null;
+  } else if (rec.recorder) {
+    stopRecording();
+  }
+}
+$("#shutter").addEventListener("pointerup", releaseShutter);
+$("#shutter").addEventListener("pointercancel", releaseShutter);
+$("#shutter").addEventListener("contextmenu", (e) => e.preventDefault()); // a long press records
+
+async function startRecording() {
+  const video = $("#camera-video");
+  if (!camera.stream || !video.videoWidth || rec.recorder) return;
+  rec.suppressClick = true;
+  if (!camera.audio) {
+    try {
+      camera.audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      cameraMessage("Recording without sound: napsack can't use the microphone.");
+      report("info", "video without sound", errorFields(err));
+    }
+    // Let go while the microphone was being asked for: no video this time.
+    if (!rec.held || !camera.stream) return;
+  }
+  const scale = Math.min(1, VIDEO_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(video.videoWidth * scale / 2) * 2; // even sizes, for the encoder
+  canvas.height = Math.round(video.videoHeight * scale / 2) * 2;
+  const g = canvas.getContext("2d");
+  const draw = () => {
+    const crop = camera.hwZoom ? 1 : camera.zoom;
+    const w = video.videoWidth / crop, h = video.videoHeight / crop;
+    g.save();
+    if (camera.mirror) {
+      g.translate(canvas.width, 0);
+      g.scale(-1, 1);
+    }
+    g.drawImage(video, (video.videoWidth - w) / 2, (video.videoHeight - h) / 2, w, h, 0, 0, canvas.width, canvas.height);
+    g.restore();
+    rec.draw = requestAnimationFrame(draw);
+  };
+  draw();
+  const stream = canvas.captureStream(30);
+  for (const t of camera.audio?.getAudioTracks() ?? []) stream.addTrack(t);
+  rec.chunks = [];
+  rec.discard = false;
+  rec.startZoom = camera.zoom;
+  try {
+    rec.recorder = new MediaRecorder(stream, { mimeType: videoMime(), videoBitsPerSecond: 1_500_000, audioBitsPerSecond: 64_000 });
+  } catch (err) {
+    cancelAnimationFrame(rec.draw);
+    cameraMessage("This browser can't record video here. Tap for a photo instead.");
+    report("warn", "video recorder failed", errorFields(err));
+    return;
+  }
+  rec.recorder.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
+  rec.recorder.onstop = finishRecording;
+  rec.recorder.start(250);
+  rec.started = Date.now();
+  $("#shutter").classList.add("recording");
+  $("#shutter").setAttribute("aria-label", "Recording. Let go to stop");
+  $("#capture-controls").classList.add("recording");
+  recordingTick();
+  rec.tick = setInterval(recordingTick, 100);
+}
+
+function recordingTick() {
+  const max = state.config?.video_max_seconds ?? 10;
+  const s = (Date.now() - rec.started) / 1000;
+  $("#shutter").style.setProperty("--progress", String(Math.min(1, s / max)));
+  $("#record-time").textContent = `0:${String(Math.min(max, Math.floor(s))).padStart(2, "0")}`;
+  $("#record-time").hidden = false;
+  if (s >= max) stopRecording(); // the longest a video can be
+}
+
+function stopRecording() {
+  clearInterval(rec.tick);
+  if (rec.recorder?.state === "recording") rec.recorder.stop();
+}
+
+function finishRecording() {
+  const recorder = rec.recorder;
+  const type = recorder.mimeType || videoMime();
+  const seconds = (Date.now() - rec.started) / 1000;
+  cancelAnimationFrame(rec.draw);
+  rec.recorder = null;
+  $("#shutter").classList.remove("recording");
+  $("#shutter").style.removeProperty("--progress");
+  $("#shutter").setAttribute("aria-label", "Take photo. Hold for a video");
+  $("#capture-controls").classList.remove("recording");
+  $("#record-time").hidden = true;
+  if (rec.discard) return;
+  const blob = new Blob(rec.chunks, { type });
+  rec.chunks = [];
+  if (seconds < 0.5 || !blob.size) {
+    cameraMessage("Hold the button a little longer to record a video.");
+    return;
+  }
+  // The envelope and encryption add a little; leave room for them.
+  if (state.config?.video_max_bytes && blob.size > state.config.video_max_bytes - 16 * 1024) {
+    cameraMessage("That video is too large to send. Try a shorter one.");
+    report("warn", "video too large", { bytes: blob.size, seconds: Math.round(seconds) });
+    return;
+  }
+  report("debug", "video recorded", { seconds: Math.round(seconds * 10) / 10, bytes: blob.size, type: type.split(";")[0] });
+  showPreview(blob, type);
+  // Said again over the preview, where it's decided whether to send it.
+  if (!recorder.stream.getAudioTracks().length) cameraMessage("This video has no sound: napsack can't use the microphone.");
 }
 
 // Drawing on the pic before it's sent (draw.js).
@@ -3999,6 +4244,7 @@ function showCapture() {
   if (!camera.stream && camera.problem) cameraMessage(camera.problem);
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
+  $("#zoom-chip").hidden = !camera.stream;
   clearCaption();
   // A new pic from the camera tab: pick who it's for again.
   if (camera.picked) {
@@ -4011,6 +4257,12 @@ function clearPreview() {
   if (camera.previewUrl) URL.revokeObjectURL(camera.previewUrl);
   camera.previewUrl = null;
   camera.blob = null;
+  camera.videoType = null;
+  const played = $("#camera-preview-video");
+  played.pause();
+  played.removeAttribute("src");
+  played.load();
+  played.hidden = true;
   camera.sends = new Map(); // a new pic gets new ids and is sealed afresh...
   camera.sent = new Set();   // ...and hasn't gone to anyone
   const img = $("#camera-preview");
@@ -4019,18 +4271,28 @@ function clearPreview() {
   showDrawing(false);
 }
 
-function showPreview(blob) {
+function showPreview(blob, videoType = null) {
   clearPreview();
   camera.blob = blob;
+  camera.videoType = videoType;
   camera.previewUrl = URL.createObjectURL(blob);
-  const img = $("#camera-preview");
-  img.src = camera.previewUrl;
-  img.hidden = false;
-  showDrawing(true);
+  if (videoType) {
+    // Drawing and stickers are for photos; a video loops, with its sound.
+    const played = $("#camera-preview-video");
+    played.src = camera.previewUrl;
+    played.hidden = false;
+    played.play().catch(() => { played.muted = true; played.play().catch(() => {}); });
+  } else {
+    const img = $("#camera-preview");
+    img.src = camera.previewUrl;
+    img.hidden = false;
+    showDrawing(true);
+  }
   $("#camera-video").hidden = true;
   cameraMessage("");
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
+  $("#zoom-chip").hidden = true;
   $("#send-snap").textContent = sendLabel();
   $("#snap-caption-box").hidden = false;
   fitCaption();
@@ -4121,11 +4383,19 @@ $(".camera-stage").addEventListener("click", (e) => {
 });
 
 $("#shutter").addEventListener("click", async () => {
+  if (rec.suppressClick) {
+    rec.suppressClick = false; // the end of a long press: that was a video
+    return;
+  }
   const video = $("#camera-video");
   if (!camera.stream || !video.videoWidth) return;
   try {
-    // Freeze the frame first; the video keeps moving while we compress.
-    const frame = await createImageBitmap(video);
+    // Freeze the frame first; the video keeps moving while we compress. Zoomed
+    // without the camera's help: just the middle, as the preview shows it.
+    const crop = camera.hwZoom ? 1 : camera.zoom;
+    const w = video.videoWidth / crop, h = video.videoHeight / crop;
+    const frame = crop === 1 ? await createImageBitmap(video)
+      : await createImageBitmap(video, (video.videoWidth - w) / 2, (video.videoHeight - h) / 2, w, h);
     const blob = await compressPhoto(frame, frame.width, frame.height, camera.mirror);
     frame.close();
     showPreview(blob);
@@ -4229,13 +4499,15 @@ async function sendPics(to) {
   cameraMessage("Sending…");
   const failed = [];
   try {
-    const photo = await finalPhoto();
+    const media = camera.videoType
+      ? { video: new Uint8Array(await camera.blob.arrayBuffer()), type: camera.videoType }
+      : { photo: await finalPhoto() };
     const caption = $("#snap-caption").value.trim();
     for (const r of to) {
       if (camera.sent.has(recipientKey(r))) continue;
       try {
-        if (r.kind === "group") await sendGroupPicTo(r.id, photo, caption);
-        else await sendDirectPicTo(r.id, photo, caption);
+        if (r.kind === "group") await sendGroupPicTo(r.id, media, caption);
+        else await sendDirectPicTo(r.id, media, caption);
         camera.sent.add(recipientKey(r));
       } catch (err) {
         failed.push({ r, err });
@@ -4257,26 +4529,30 @@ async function sendPics(to) {
     return;
   }
   const picked = camera.picked;
+  const what = camera.videoType ? "Video" : "Pic";
   $("#camera-dialog").close();
   if (picked) {
-    showToast(`Pic sent to ${listNames(to)}.`);
+    showToast(`${what} sent to ${listNames(to)}.`);
     refreshChats();
     refreshGroups();
   }
 }
 
-async function sendDirectPicTo(friendId, photo, caption) {
-  const key = `d:${friendId}`;
+async function sendDirectPicTo(friendId, media, caption) {
+  const slot = `d:${friendId}`;
   // The same id on every try (and on Send again), so a retry after a dropped
   // response isn't a second pic.
-  if (!camera.sends.has(key)) camera.sends.set(key, newClientId());
-  const clientId = camera.sends.get(key);
-  // Format 2: the caption is sealed in with the photo, so only the friend sees it.
-  const sealed = await e2e.encryptPic(await keyFor(friendId), photo, caption, state.me.id, friendId);
-  if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
-    throw new Error("That photo is too large to send.");
-  }
-  const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}&client_id=${clientId}`, {
+  if (!camera.sends.has(slot)) camera.sends.set(slot, newClientId());
+  const clientId = camera.sends.get(slot);
+  // Format 2 (a photo) or 4 (a video): the caption is sealed in with it, so only the friend sees it.
+  const key = await keyFor(friendId);
+  const sealed = media.video
+    ? await e2e.encryptVideo(key, media.video, media.type, caption, state.me.id, friendId)
+    : await e2e.encryptPic(key, media.photo, caption, state.me.id, friendId);
+  const max = media.video ? state.config?.video_max_bytes : state.config?.snap_max_bytes;
+  if (max && sealed.length > max) throw new Error(`That ${media.video ? "video" : "photo"} is too large to send.`);
+  const format = media.video ? e2e.VIDEO_FORMAT : e2e.SNAP_FORMAT;
+  const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${format}&client_id=${clientId}`, {
     method: "POST",
     body: sealed,
     headers: { "Content-Type": "application/octet-stream" },
@@ -4285,14 +4561,15 @@ async function sendDirectPicTo(friendId, photo, caption) {
   if (state.activeId === friendId) renderMessages();
 }
 
-async function sendGroupPicTo(groupId, photo, caption) {
+async function sendGroupPicTo(groupId, media, caption) {
   const key = `g:${groupId}`;
   // Sealed once per pic and group, so Send again after a dropped connection
   // resends the same one (the server keeps one copy).
   if (!camera.sends.has(key)) {
+    const format = media.video ? e2e.GROUP_VIDEO_FORMAT : e2e.GROUP_FORMAT;
     camera.sends.set(key, groupSender(groupId,
-      (opts) => e2e.encryptGroupPic(photo, caption, opts),
-      (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
+      (opts) => (media.video ? e2e.encryptGroupVideo(media.video, media.type, caption, opts) : e2e.encryptGroupPic(media.photo, caption, opts)),
+      (s) => getJSON(`/groups/${groupId}/pics?format=${format}`, {
         method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
       })));
   }
@@ -4494,17 +4771,23 @@ function nextPic() {
   openPic(next);
 }
 
-/** Fetches and decrypts one direct pic: { blob, caption, from }. */
+/** Fetches and decrypts one direct pic or video: { blob, video, caption, from }. */
 async function loadSnap(m) {
-  if (![1, 2].includes(m.format ?? 1)) throw new PicProblem("This pic was sent from a newer version of napsack. Reload to open it.");
-  const sealed = await api(`/snaps/${m.id}`, { as: "bytes" });
-  let pic;
-  try {
-    pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
-  } catch {
-    throw new PicProblem("This pic couldn't be decrypted.");
+  if (![1, 2, e2e.VIDEO_FORMAT].includes(m.format ?? 1)) {
+    throw new PicProblem(`This ${mediaWord(m)} was sent from a newer version of napsack. Reload to open it.`);
   }
-  return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from: personName(m.sender_id, "") };
+  const sealed = await api(`/snaps/${m.id}`, { as: "bytes" });
+  const from = personName(m.sender_id, "");
+  try {
+    if (isVideo(m)) {
+      const v = await withReadKey(m.sender_id, (k) => e2e.decryptVideo(k, sealed, m.sender_id, m.recipient_id));
+      return { blob: new Blob([v.media], { type: v.type }), video: true, caption: v.caption, from };
+    }
+    const pic = await withReadKey(m.sender_id, (k) => e2e.decryptPic(k, sealed, m.format ?? 1, m.sender_id, m.recipient_id));
+    return { blob: new Blob([pic.photo], { type: "image/jpeg" }), caption: pic.caption, from };
+  } catch {
+    throw new PicProblem(`This ${mediaWord(m)} couldn't be decrypted.`);
+  }
 }
 
 /**
@@ -4548,29 +4831,66 @@ function showOpening(m) {
   v.hidden = false;
 }
 
-/** Shows a loaded pic and starts its timer. True once it's on screen. */
-async function showInViewer({ blob, from, caption = "" }) {
+/** Shows a loaded pic (or plays a video) and starts its timer. True once it's on screen. */
+async function showInViewer({ blob, video = false, from, caption = "" }) {
   viewer.url = URL.createObjectURL(blob);
   const v = $("#viewer");
   const img = $("#viewer-image");
-  img.src = viewer.url;
-  try {
-    await img.decode();
-  } catch {
-    return false;
+  const player = $("#viewer-video");
+  let ms = VIEW_MS;
+  if (video) {
+    if (!await loadVideo(player, viewer.url)) return false;
+    if (!viewer.url) return false; // closed while it loaded
+    img.hidden = true;
+    player.hidden = false;
+    // A recorded video may not say how long it is: then it runs to its end,
+    // or to the longest a video can be.
+    const longest = (state.config?.video_max_seconds ?? 10) * 1000;
+    ms = Number.isFinite(player.duration) && player.duration > 0 ? Math.min(player.duration * 1000, longest) : longest;
+    player.onended = () => { if (viewer.url) nextPic(); };
+    try {
+      await player.play();
+    } catch {
+      player.muted = true; // the browser wants a tap for sound; plays silent rather than not at all
+      await player.play().catch(() => {});
+    }
+  } else {
+    img.src = viewer.url;
+    try {
+      await img.decode();
+    } catch {
+      return false;
+    }
+    if (!viewer.url) return false; // closed while it decoded
   }
-  if (!viewer.url) return false; // closed while it decoded
   v.classList.remove("opening");
+  v.classList.toggle("is-video", video);
   $("#viewer-from").textContent = from;
   $("#viewer-caption").textContent = caption;
   $("#viewer-caption").hidden = !caption;
   const left = updateCount();
-  $("#viewer-hint").textContent = left ? "Tap for the next pic" : "Tap to close";
-  v.style.setProperty("--view-ms", `${VIEW_MS}ms`);
+  $("#viewer-hint").textContent = left ? "Tap for the next one" : "Tap to close";
+  v.style.setProperty("--view-ms", `${ms}ms`);
   v.classList.add("running");
-  viewer.timer = setTimeout(nextPic, VIEW_MS);
+  // A video moves on when it ends; this is the backstop if it stalls.
+  viewer.timer = setTimeout(nextPic, video ? ms + 3000 : ms);
   viewer.shownAt = Date.now();
   return true;
+}
+
+/** Loads a video far enough to play. False if it can't be played here. */
+function loadVideo(player, url) {
+  return new Promise((resolve) => {
+    const done = (ok) => {
+      player.oncanplay = player.onerror = null;
+      resolve(ok);
+    };
+    player.oncanplay = () => done(true);
+    player.onerror = () => done(false);
+    player.muted = false;
+    player.src = url;
+    player.load();
+  });
 }
 
 /** Something went wrong: say so in the viewer; a tap closes it, and the pic stays unopened. */
@@ -4589,6 +4909,14 @@ function clearViewer() {
   $("#viewer-error").hidden = true;
   const img = $("#viewer-image");
   img.removeAttribute("src");
+  img.hidden = false;
+  const player = $("#viewer-video");
+  player.onended = null;
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  player.hidden = true;
+  v.classList.remove("is-video");
   if (viewer.url) URL.revokeObjectURL(viewer.url);
   viewer.url = null;
 }
