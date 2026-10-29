@@ -17,7 +17,8 @@ Two kinds of file can't overlap with others, and say so themselves:
     E2E_JOBS=1 python run.py         one at a time (default: up to 4 at once)
 
 Settings come from the environment, like the tests themselves (common.py).
-Prints each file's output when it finishes, then every file's time.
+Prints each file's output when it finishes (each line stamped with when it
+came), then every file's time.
 """
 import ast, asyncio, glob, os, sys, time
 
@@ -44,20 +45,28 @@ async def run_file(name, results):
     start = time.perf_counter()
     proc = await asyncio.create_subprocess_exec(
         sys.executable, name, cwd=HERE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    # Each line stamped with when it came (seconds into the file), since the
+    # output is printed only once the file is done.
+    lines = []
+
+    async def read():
+        async for raw in proc.stdout:
+            lines.append(f"{time.perf_counter() - start:6.1f}s  {raw.decode(errors='replace').rstrip()}")
+        await proc.wait()
+
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), TIMEOUT)
+        await asyncio.wait_for(read(), TIMEOUT)
         ok = proc.returncode == 0
     except asyncio.TimeoutError:
         proc.kill()
-        out, _ = await proc.communicate()
-        out += f"\nstopped after {TIMEOUT}s".encode()
+        await proc.wait()
+        lines.append(f"stopped after {TIMEOUT}s")
         ok = False
     secs = time.perf_counter() - start
     results.append((name, secs, ok))
     print(f"==> {name}  {secs:.1f}s{'' if ok else '  FAILED'}", flush=True)
-    text = out.decode(errors="replace").rstrip()
-    if text:
-        print(text, flush=True)
+    if lines:
+        print("\n".join(lines), flush=True)
 
 
 async def main(names):
