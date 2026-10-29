@@ -1,13 +1,21 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10" # use_lockfile
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
   }
-  # For a team or CI, move state to S3:
-  # backend "s3" { bucket = "...", key = "fade/terraform.tfstate", region = "us-east-1", use_lockfile = true }
+  # State lives in S3, not on whichever machine ran terraform: versioned,
+  # encrypted, and locked while a plan or apply runs. The bucket is made by
+  # hand, outside this state (docs/operations/operations.md).
+  backend "s3" {
+    bucket       = "fade-tfstate-705059992745-us-east-1"
+    key          = "fade/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

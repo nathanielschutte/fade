@@ -4,7 +4,7 @@ A second, separate napsack at <https://staging.napsack.io>, for running the brow
 
 ## What it is
 
-- **Its own Terraform root**, `infra/staging/`, with its own state file. It never manages a production resource. It only *looks up* production's VPC and subnet (by their `Name` tags), the artifacts bucket, and the Route 53 zone.
+- **Its own Terraform root**, `infra/staging/`, with its own state (its own key in the state bucket; [operations.md](operations.md)). It never manages a production resource. It only *looks up* production's VPC and subnet (by their `Name` tags), the artifacts bucket, and the Route 53 zone.
 - **Its own resources**, all tagged `App=fade-staging`: a t4g.nano (same size as production, so load numbers mean something), an Elastic IP, a security group, a 1 GB data volume, the settings parameter `/fade-staging/env`, an instance role, and the DNS record `staging.napsack.io`.
 - **The same boot script as production** (`infra/user_data.sh.tftpl`), with two exact substitutions: the backup timer isn't enabled, and the server comes from `releases/main/fade-server`, the newest release candidate, instead of production's release. Preconditions on the instance fail the plan if the template changes so that either substitution would miss.
 - **Its own accounts.** Its own invite code (in `infra/staging/terraform.tfvars`, gitignored) and admin list (`e2e_admin`, `smoke_admin`, the test accounts). Nobody's real data is on it.
