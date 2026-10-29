@@ -91,6 +91,12 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 #### P1. Development standard
 - [CLAUDE.md](../../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
 
+#### P4. Faster test runs, same coverage
+- Asked (2026-10-28): can local test runs be trimmed or reorganized without losing any coverage or feedback?
+- Already in place: while building, only the affected test runs (one browser test, the unit tests); the full suite runs once per release, and releases group related features (2026-10-28: nine features in seven releases).
+- Opportunity, no coverage lost: run the browser tests a few at a time instead of one after another (`scripts/test.sh` runs 25 files in sequence; each uses its own accounts). Tests that change things every page sees (announcements in `test_admin_users.py`, Team Napsack in `test_team.py`, metrics and roles) would still run alone, before or after the rest. Expected: several minutes less per run. Watch for timing flakes under load before adopting it.
+- Not recommended: dropping overlapping checks between the smoke test and browser tests. They test different layers (the API directly, and the app as a person uses it), and the overlap is what catches a client and server drifting apart.
+
 #### P3. Testing in WSL (and moving the repo there)
 - **Recommendation: move the repo into WSL** (`~/code/fade`), after moving Terraform state into an encrypted, versioned S3 bucket.
   - Why: builds and tests on `/mnt/c` go through a slow bridge to the Windows disk; inside WSL they're several times faster. Smart App Control stops mattering, file modes and line endings are native Linux, and there's one environment for build, test, deploy, and Terraform.
@@ -248,6 +254,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
   3. **Skip it.**
 
 ### Debug
+
+#### D4. Notifications stayed after opening napsack (fixed in 0.34.0)
+- Reported (2026-10-28): "Notis don't clear after you open the app?" Confirmed: only a tapped notification closed itself (`sw.js`); opening napsack any other way left the rest on the lock screen. Now napsack closes its notifications when it opens or comes back on screen, and on sign-out. `test_live.py` delivers a push and checks it's gone after opening.
 
 #### D1. Log viewer
 - Log viewer (also for admins only). Central view of server logs with search features. Along with this, take a pass at the server code and improve logging. Debug logging can be verbose.

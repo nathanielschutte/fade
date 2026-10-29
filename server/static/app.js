@@ -812,6 +812,7 @@ $("#recover-form").addEventListener("submit", async (e) => {
 function signOutLocally() {
   state.token = null;
   state.me = null;
+  clearNotifications(); // they name friends; not for whoever uses the device next
   state.loaded = { chats: false, groups: false, error: null };
   state.loadFailed.clear();
   state.identity = null;
@@ -859,6 +860,7 @@ function enterApp() {
   // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
   $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
   syncPush();
+  clearNotifications();
   if (location.hash) openFromLink(location.hash);
   refreshChats();
   refreshGroups();
@@ -2279,6 +2281,22 @@ async function openFromLink(hash) {
 
 // A link to #chat=... on an open page only changes the hash.
 window.addEventListener("hashchange", () => { if (state.me) openFromLink(location.hash); });
+
+// Notifications stay on the lock screen until something closes them. Tapping
+// one closes it (sw.js), but opening napsack any other way left the rest
+// behind (bug report, 2026-10-28). Once napsack is on screen, they've done
+// their job: the chat list shows what's new.
+async function clearNotifications() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    for (const n of (await reg?.getNotifications?.()) ?? []) n.close();
+  } catch (err) {
+    report("debug", "clearing notifications failed", errorFields(err));
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.me) clearNotifications();
+});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch((err) => report("warn", "service worker failed", errorFields(err)));

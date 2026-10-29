@@ -197,7 +197,18 @@ async def main():
         await expect(ana.locator("#chat-title")).to_have_text(BEN, timeout=20000)
         await expect(ana.locator(".msg", has_text="are you there?")).to_be_visible()
         assert await ana.evaluate("location.hash") == ""
-        print("service worker shows it; the link opens the chat")
+        # Opening napsack clears what's waiting on the lock screen (bug report, 2026-10-28).
+        assert await ana.evaluate("async () => (await (await navigator.serviceWorker.ready).getNotifications()).length") == 1
+        await ana.reload()
+        await expect(ana.locator("#app")).to_be_visible(timeout=20000)
+        left = None
+        for _ in range(50):
+            left = await ana.evaluate("async () => (await (await navigator.serviceWorker.ready).getNotifications()).length")
+            if left == 0:
+                break
+            await asyncio.sleep(0.1)
+        assert left == 0, f"{left} notifications left after opening napsack"
+        print("service worker shows it; the link opens the chat; opening napsack clears it")
 
         # Installable: a manifest with icons.
         manifest = await ana.evaluate("fetch('/manifest.webmanifest').then((r) => r.json())")
