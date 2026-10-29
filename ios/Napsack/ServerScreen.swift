@@ -1,16 +1,13 @@
-import NapsackCrypto
 import SwiftUI
 
 /// The development screen, until the real app has screens: which server this
-/// app talks to and what it says about itself, and how long a sign-in's key
-/// derivation takes on this phone (it has to stay near a second; mobile.md).
+/// app talks to and what it says about itself, and the encryption's checks
+/// run on this phone (VectorScreen).
 struct ServerScreen: View {
     @AppStorage("server") private var address = AppInfo.defaultServer
     @State private var config: ServerConfig?
     @State private var problem: String?
     @State private var checking = false
-    @State private var derivation: Duration?
-    @State private var deriving = false
 
     var body: some View {
         NavigationStack {
@@ -41,15 +38,11 @@ struct ServerScreen: View {
                     LabeledContent("Says it is", value: AppInfo.clientHeader)
                 }
                 Section {
-                    Button(deriving ? "Deriving…" : "Time a sign-in's key derivation") { Task { await timeDerivation() } }
-                        .disabled(deriving)
-                    if let derivation {
-                        LabeledContent("600,000 rounds of PBKDF2", value: derivation.formatted(.units(allowed: [.seconds, .milliseconds])))
-                    }
+                    NavigationLink("Run every encryption check") { VectorScreen() }
                 } header: {
                     Text("Encryption")
                 } footer: {
-                    Text("Made up credentials; nothing is sent anywhere.")
+                    Text("Every format against the pinned vectors, on this phone, and how long a sign-in's key derivation takes here. Nothing is sent anywhere.")
                 }
             }
             .navigationTitle("napsack")
@@ -70,17 +63,6 @@ struct ServerScreen: View {
             config = nil
             problem = error.localizedDescription
         }
-    }
-
-    private func timeDerivation() async {
-        deriving = true
-        defer { deriving = false }
-        // Off the main thread: it's slow on purpose.
-        derivation = await Task.detached(priority: .userInitiated) {
-            ContinuousClock().measure {
-                _ = try? E2E.deriveFromPassword(username: "timing", password: "correct horse battery")
-            }
-        }.value
     }
 }
 

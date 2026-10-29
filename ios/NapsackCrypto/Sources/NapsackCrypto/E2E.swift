@@ -8,8 +8,9 @@
 // Each account has a P-256 key pair. Two friends' keys give them a shared
 // AES-GCM key (ECDH + HKDF) that encrypts every text and pic between them.
 //
-// Done so far: format 1 (the password, the identity, texts and pics). The other
-// formats follow the same pattern (docs/design/mobile.md, First milestones).
+// Every format so far is here, a file per area: this one (the password, the
+// identity, format 1), Recovery, Texts (format 2 texts, reactions, edits), Pics
+// (format 2), Groups (format 3), Media (formats 4 to 7), and SafetyCode.
 
 import CommonCrypto
 import CryptoKit
@@ -18,9 +19,37 @@ import Foundation
 public enum E2E {
     static let pbkdf2Iterations: UInt32 = 600_000
 
-    public enum Failure: Error, Equatable {
+    /// Message formats (server/src/version.rs, docs/how-napsack-works.md). New
+    /// texts and pics are format 2; format 1 stays readable forever.
+    public static let format = 1
+    public static let textFormat = 2
+    public static let snapFormat = 2
+    public static let groupFormat = 3
+    public static let videoFormat = 4
+    public static let groupVideoFormat = 5
+    public static let imageFormat = 6
+    public static let groupImageFormat = 7
+
+    public enum Failure: Error, Equatable, LocalizedError {
         case notBase64
         case passwordDerivation(Int32)
+        case malformed(String)
+        case unknownFormat(Int)
+        case captionTooLong
+        case notSendable(String)
+        case notARecoveryKey
+        case notSentToMe
+        case senderMustWrapForThemselves
+
+        // The ones a person can cause say what to do, in crypto.js's words.
+        public var errorDescription: String? {
+            switch self {
+            case .captionTooLong: "That caption is too long."
+            case .notSendable(let kind): "That isn't a \(kind) napsack can send."
+            case .notARecoveryKey: "That doesn't look like a recovery key. It's 32 letters and numbers."
+            default: "\(self)"
+            }
+        }
     }
 
     /// What a password gives: the auth key (base64) the server checks instead
@@ -89,10 +118,71 @@ public enum E2E {
 
     static let wrapAAD = "napsack/v1/identity"
 
+    /// A new account's key pair: the public key (SPKI, base64) for the server,
+    /// and the private key (PKCS#8) going there only wrapped.
+    public struct NewIdentity: Sendable {
+        public let publicKey: String
+        public let wrappedPrivateKey: String
+        public let privateKey: P256.KeyAgreement.PrivateKey
+    }
+
+    public static func createIdentity(wrapKey: SymmetricKey) throws -> NewIdentity {
+        let key = P256.KeyAgreement.PrivateKey()
+        return NewIdentity(
+            publicKey: toB64(key.publicKey.derRepresentation),
+            wrappedPrivateKey: toB64(try seal(wrapKey, key.derRepresentation, aad: wrapAAD)),
+            privateKey: key)
+    }
+
     /// Throws if the wrap key is wrong (wrong password, or the server swapped the blob).
     public static func unwrapIdentity(wrapKey: SymmetricKey, wrapped b64: String) throws -> P256.KeyAgreement.PrivateKey {
         let pkcs8 = try open(wrapKey, fromB64(b64), aad: wrapAAD)
         return try P256.KeyAgreement.PrivateKey(derRepresentation: pkcs8)
+    }
+
+    /// The private key, unwrapped with one key and wrapped with another, never
+    /// leaving this function as a usable key.
+    static func rewrap(_ from: SymmetricKey, _ wrapped: String, fromAAD: String, to: SymmetricKey, toAAD: String) throws -> String {
+        var pkcs8 = try open(from, fromB64(wrapped), aad: fromAAD)
+        defer { pkcs8.resetBytes(in: 0..<pkcs8.count) }
+        return toB64(try seal(to, pkcs8, aad: toAAD))
+    }
+
+    /// Changing the password: the same private key, wrapped by the new password's wrap key.
+    public static func rewrapIdentity(oldWrapKey: SymmetricKey, wrapped: String, newWrapKey: SymmetricKey) throws -> String {
+        try rewrap(oldWrapKey, wrapped, fromAAD: wrapAAD, to: newWrapKey, toAAD: wrapAAD)
+    }
+
+    // ---------- helpers the formats share ----------
+
+    static func sha256B64(_ data: Data) -> String {
+        toB64(Data(SHA256.hash(data: data)))
+    }
+
+    static func randomBytes(_ count: Int) -> Data {
+        var generator = SystemRandomNumberGenerator()  // the system's cryptographic generator
+        return Data((0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
+    }
+
+    /// Big-endian 2-byte length || header || rest: the pic and media envelopes.
+    static func lengthPrefixed(_ header: Data, _ rest: Data) -> Data {
+        var out = Data([UInt8(header.count >> 8), UInt8(header.count & 0xff)])
+        out.append(header)
+        out.append(rest)
+        return out
+    }
+
+    /// Splits a length-prefixed envelope, or nil if it's malformed or the header is over `max`.
+    static func splitLengthPrefixed(_ body: Data, max: Int) -> (header: Data, rest: Data)? {
+        let bytes = [UInt8](body)
+        guard bytes.count >= 2 else { return nil }
+        let n = Int(bytes[0]) << 8 | Int(bytes[1])
+        guard bytes.count >= 2 + n, n <= max else { return nil }
+        return (Data(bytes[2..<2 + n]), Data(bytes[(2 + n)...]))
+    }
+
+    static func utf8(_ data: Data) -> String {
+        String(decoding: data, as: UTF8.self)  // like TextDecoder: bad bytes become U+FFFD
     }
 
     // ---------- a friend's chat key ----------
