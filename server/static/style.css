@@ -1530,3 +1530,20 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .username-form { display: grid; gap: 0.6rem; margin-top: 0.5rem; }
 .username-form[hidden] { display: none; }
 .rename-note { align-self: center; text-align: center; }
+
+/* ---------- installed on an iPhone's Home Screen ----------
+   `html.installed` and --screen-h come from app.js (fitInstalledScreen): there,
+   Safari can size the page short of the screen while drawing it from the top,
+   so the full-screen layers are sized from the top by the screen's own
+   height, and the page itself never scrolls while the app shows. */
+html.installed .app,
+html.installed .camera,
+html.installed .viewer { bottom: auto; height: var(--screen-h); }
+html.installed:has(#app:not([hidden])),
+html.installed:has(#app:not([hidden])) body { overflow: hidden; overscroll-behavior: none; }
+@media not all and (min-width: 760px) {
+  html.installed #profile-dialog.as-tab {
+    bottom: auto;
+    height: calc(var(--screen-h) - var(--tabs-h) - env(safe-area-inset-bottom, 0px) - var(--tabs-foot, 0px));
+  }
+}

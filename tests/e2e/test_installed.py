@@ -27,7 +27,10 @@ def watch(page, who):
 
 
 async def installed_page(browser):
-    page = watch(await (await browser.new_context(**IPHONE)).new_page(), "installed")
+    context = await browser.new_context(**IPHONE, screen={"width": 393, "height": 852})
+    # What an iPhone's Home Screen app says about itself (app.js, fitInstalledScreen).
+    await context.add_init_script("Object.defineProperty(navigator, 'standalone', { get: () => true })")
+    page = watch(await context.new_page(), "installed")
     cdp = await page.context.new_cdp_session(page)
     await cdp.send("Emulation.setSafeAreaInsetsOverride", {"insets": {"top": TOP, "bottom": BOTTOM, "left": 0, "right": 0}})
     await page.goto(BASE)
@@ -73,6 +76,21 @@ async def main():
         # app gets wrong when a page first opens: the tabs sit on the bottom edge.
         assert await ana.evaluate("getComputedStyle(document.querySelector('.app')).position") == "fixed"
         assert await bottom_of(ana, "#tabs") == 852, "tabs not on the bottom edge"
+        # Installed, the app is the screen's height, measured from the top, whatever
+        # height Safari lays the page out at (it can be short by the status bar),
+        # and the page itself can't scroll.
+        assert await ana.evaluate("document.documentElement.classList.contains('installed')")
+        assert await ana.evaluate("document.querySelector('.app').getBoundingClientRect().height") == 852
+        assert await ana.evaluate("getComputedStyle(document.body).overflow") == "hidden"
+        # Safari's mistake, imitated: the page laid out 59 px short of the screen.
+        # The app still takes the whole screen, down to the bottom edge.
+        short_ctx = await browser.new_context(**{**IPHONE, "viewport": {"width": 393, "height": 852 - TOP}},
+                                              screen={"width": 393, "height": 852})
+        await short_ctx.add_init_script("Object.defineProperty(navigator, 'standalone', { get: () => true })")
+        short = await short_ctx.new_page()
+        await short.goto(BASE)
+        assert await short.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--screen-h')") == "852px"
+        await short_ctx.close()
         for tab in ("#tab-chats", "#tab-camera", "#tab-profile"):
             assert await bottom_of(ana, tab) <= 852 - BOTTOM, f"{tab} under the home indicator"
         await shot(ana, "installed-list", full_page=False)

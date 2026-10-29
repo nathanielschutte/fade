@@ -262,6 +262,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 ### Debug
 
+#### D9. The installed app's tabs sat above the bottom edge (fixed in 0.39.0)
+- Reported (Nate, 2026-10-29), after 0.36.0 pinned the app with `position: fixed; inset: 0`: on the Home Screen, a sizeable gap stayed under the tabs. With a black-translucent status bar and viewport-fit=cover, Safari can lay the page out as the screen minus the status bar while drawing it from the top, so anything pinned to the bottom stops short. Now, when installed on an iPhone (`navigator.standalone`) and full screen, app.js measures the screen and the app, camera, viewer, and Profile tab are sized from the top by that height; the page itself can't scroll while the app shows. `test_installed.py` checks the app takes the screen's height even when the page is laid out 59 px short. Chromium can't reproduce Safari's mistake, so check it on a phone after release.
+
 #### D8. Send to… looked empty on iPhones (fixed in 0.36.0)
 - Reported (Nate, 2026-10-29): the picker showed no friends or groups, and searching showed nothing either, not even "Nobody by that name". Safari gave the list (`flex: 1` in a column) no height when the sheet's height wasn't fixed, which Chromium handles, so the tests passed. The picker is plain blocks now and the list sets its own height; `test_tabs.py` checks the list has room for its rows and isn't flex-sized. Chromium can't show Safari's mistake, so check it on a phone after release. Also: sliding up while recording zooms about half as fast (Nate: a bit too sensitive).
 

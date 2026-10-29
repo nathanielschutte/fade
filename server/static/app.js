@@ -5,6 +5,31 @@
 import * as e2e from "/crypto.js";
 import * as keystore from "/keystore.js";
 import * as cache from "/cache.js";
+
+// ---------- installed on an iPhone's Home Screen ----------
+// There (black-translucent status bar, viewport-fit=cover), Safari can lay
+// the page out as the screen minus the status bar while drawing it from the
+// very top, so anything pinned to the bottom stops short of the screen's
+// bottom edge: the tabs floated above it (Nate, 2026-10-29). In that mode
+// the full-screen layers take the screen's own height instead (style.css,
+// `html.installed`). iPhones only (`navigator.standalone`), and only when
+// napsack fills the screen; Android sizes installed apps correctly.
+function fitInstalledScreen() {
+  if (navigator.standalone !== true) return;
+  const landscape = innerWidth > innerHeight;
+  const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+  const [fullW, fullH] = landscape ? [long, short] : [short, long];
+  const root = document.documentElement;
+  if (Math.abs(innerWidth - fullW) > 2) { // not full screen (an iPad side by side): leave it to the browser
+    root.classList.remove("installed");
+    return;
+  }
+  root.classList.add("installed");
+  root.style.setProperty("--screen-h", `${Math.max(fullH, innerHeight)}px`);
+}
+fitInstalledScreen();
+addEventListener("resize", fitInstalledScreen);
+addEventListener("orientationchange", () => setTimeout(fitInstalledScreen, 300));
 import { qrSvg } from "/qr.js";
 import { markEnvironment, withEnvironment } from "/env.js";
 import { createDrawing } from "/draw.js";
