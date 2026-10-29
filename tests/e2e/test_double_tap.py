@@ -4,12 +4,10 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import launch, shot, PHONE, befriend, row, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
-
 # Headless Chrome has no camera here; stand in a canvas stream, and remember
 # which way each request asked the camera to face.
 CAMERA = """window.__facing = [];
@@ -20,36 +18,6 @@ navigator.mediaDevices.getUserMedia = async (want) => {
   setInterval(() => { g.fillStyle = '#3a6'; g.fillRect(0, 0, 1280, 720); }, 30);
   return c.captureStream(30);
 };"""
-
-
-async def sign_up(browser, name, **ctx):
-    context = await browser.new_context(**ctx)
-    await context.add_init_script(CAMERA)
-    page = await context.new_page()
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
 async def double_tap(page, locator, gap=0.12):
@@ -72,8 +40,8 @@ async def until(page, js, timeout=10):
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana = await sign_up(browser, ANA)
-        ben = await sign_up(browser, BEN, **PHONE)
+        ana = await sign_up(browser, ANA, init=CAMERA)
+        ben = await sign_up(browser, BEN, init=CAMERA, **PHONE)
         await befriend(ana, ben, BEN, ANA)
         await expect(row(ben, ANA)).to_be_visible(timeout=10000)
 

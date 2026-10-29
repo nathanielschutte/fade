@@ -6,11 +6,10 @@ is all white. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import launch, shot, PHONE, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 # window.__zoom: the camera's own zoom range to report, or null for none.
@@ -42,22 +41,6 @@ PHOTO = """async () => {
 }"""
 
 
-async def sign_up(browser, name):
-    ctx = await browser.new_context(**PHONE)
-    await ctx.add_init_script(STUB)
-    page = await ctx.new_page()
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", "correct horse battery")
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
 async def pinch(page, cdp, spread_from, spread_to):
     """Two fingers on the middle of the camera, moving apart (or together)."""
     box = await page.locator(".camera-stage").bounding_box()
@@ -75,7 +58,7 @@ async def pinch(page, cdp, spread_from, spread_to):
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana = await sign_up(browser, ANA)
+        ana = await sign_up(browser, ANA, errors=errors, init=STUB, **PHONE)
         cdp = await ana.context.new_cdp_session(ana)
 
         # No zoom from the camera: the preview enlarges, and the photo is cropped.

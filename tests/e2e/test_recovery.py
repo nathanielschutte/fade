@@ -8,35 +8,10 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, launch, save_recovery_key, shot, PASSWORD, befriend, open_page, fill_sign_up, sign_in, sign_up_or_in, PHONE
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
-PW = "correct horse battery"
-
-
-async def open_page(browser, **ctx):
-    page = await (await browser.new_context(**ctx)).new_page()
-    await page.goto(BASE)
-    return page
-
-
-async def sign_up(page, name, password=PW):
-    await page.click("#auth-toggle")
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", password)
-    await page.fill("#auth-form input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-
-
-async def sign_in(page, name, password):
-    await page.fill("#auth-form input[name=username]", name)
-    await page.fill("#auth-form input[name=password]", password)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-
-
 async def sign_out(page):
     await page.click("#sign-out")
     await expect(page.locator("#auth")).to_be_visible()
@@ -49,17 +24,6 @@ async def recover(page, name, secret, password):
     await page.fill("#recover-form input[name=new_password]", password)
     await page.fill("#recover-form input[name=new_confirm]", password)
     await page.click("#recover-submit")
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
 
 
 async def send(page, friend, text):
@@ -75,7 +39,7 @@ async def main():
 
         # Sign-up shows the recovery key once, and won't go away until it's saved.
         ana = await open_page(browser)
-        await sign_up(ana, ANA)
+        await fill_sign_up(ana, ANA, save_key=False)
         await expect(ana.locator("#recovery-dialog")).to_be_visible(timeout=20000)
         await expect(ana.locator("#recovery-done")).to_be_disabled()
         await ana.keyboard.press("Escape")
@@ -87,10 +51,10 @@ async def main():
         await expect(ana.locator("#recovery-nudge")).to_be_hidden()
 
         ben = await open_page(browser)
-        await sign_up(ben, BEN)
+        await fill_sign_up(ben, BEN, save_key=False)
         await save_recovery_key(ben)
-        cal = await open_page(browser, viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-        await sign_up(cal, CAL)
+        cal = await open_page(browser, **PHONE)
+        await fill_sign_up(cal, CAL, save_key=False)
         await save_recovery_key(cal)
         await befriend(ana, ben, BEN, ANA)
         await befriend(cal, ben, BEN, CAL)
@@ -111,7 +75,7 @@ async def main():
         await expect(ana.locator(".msg", has_text="before the reset")).to_be_visible(timeout=10000)
         await sign_out(ana)
         await ana.fill("#auth-form input[name=username]", ANA)
-        await ana.fill("#auth-form input[name=password]", PW)
+        await ana.fill("#auth-form input[name=password]", PASSWORD)
         await ana.click("#auth-submit")
         await expect(ana.locator("#auth-error")).to_contain_text("Wrong username or password", timeout=20000)
         await sign_in(ana, ANA, "first new password")
@@ -144,14 +108,7 @@ async def main():
 
         # Ben loses everything: an admin issues a reset code.
         admin = await open_page(browser)
-        await admin.fill("#auth-form input[name=username]", ADMIN)
-        await admin.fill("#auth-form input[name=password]", PW)
-        await admin.click("#auth-submit")
-        try:
-            await expect(admin.locator("#app")).to_be_visible(timeout=15000)
-        except AssertionError:
-            await sign_up(admin, ADMIN)
-            await save_recovery_key(admin)
+        await sign_up_or_in(admin, ADMIN)
         await admin.goto(f"{BASE}/admin#users")
         await admin.locator("#users tr", has_text=BEN).locator(".u-open").click()
         await expect(admin.locator("#u-detail-title")).to_have_text(BEN, timeout=10000)

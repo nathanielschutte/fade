@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import launch, shot, sign_up
 
 tag = uuid.uuid4().hex[:5]
 SENDER, READER = f"ola_{tag}", f"rio_{tag}"
@@ -32,24 +32,11 @@ SEND_MANY = """async ([friendName, count]) => {
 TEXTS = "() => [...document.querySelectorAll('#messages .msg')].map(e => e.textContent)"
 
 
-async def register(browser, name):
-    page = await (await browser.new_context(viewport={"width": 900, "height": 700})).new_page()
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("input[name=username]", name)
-    await page.fill("input[name=password]", "correct horse battery")
-    await page.fill("input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        sender = await register(browser, SENDER)
-        reader = await register(browser, READER)
+        sender = await sign_up(browser, SENDER, viewport={"width": 900, "height": 700})
+        reader = await sign_up(browser, READER, viewport={"width": 900, "height": 700})
         await sender.click("#friends-button")
         await sender.fill("#add-friend-form input[name=username]", READER)
         await sender.click("#add-friend-form button[type=submit]")

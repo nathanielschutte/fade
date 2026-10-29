@@ -5,10 +5,8 @@ read-only. Settings come from the environment; see common.py."""
 import asyncio
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, launch, shot, PHONE, row, sign_up_or_in
 
-PW = "correct horse battery"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 TRY = """async (id) => {
@@ -16,26 +14,6 @@ TRY = """async (id) => {
     { method: 'POST', headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } });
   return [r.status, await r.json()];
 }"""
-
-
-async def sign_up_or_in(p, name):
-    await p.fill("#auth-form input[name=username]", name)
-    await p.fill("#auth-form input[name=password]", PW)
-    await p.click("#auth-submit")
-    try:
-        await expect(p.locator("#app")).to_be_visible(timeout=15000)
-    except AssertionError:
-        await p.click("#auth-toggle")
-        await p.fill("#auth-form input[name=username]", name)
-        await p.fill("#auth-form input[name=password]", PW)
-        await p.fill("#auth-form input[name=invite_code]", INVITE)
-        await p.click("#auth-submit")
-        await expect(p.locator("#app")).to_be_visible(timeout=20000)
-        await save_recovery_key(p)
-
-
-def row(page, name):
-    return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
 async def main():

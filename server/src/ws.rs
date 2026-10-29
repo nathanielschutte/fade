@@ -319,10 +319,15 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
     let mut ping = tokio::time::interval(Duration::from_secs(25));
     ping.tick().await;
 
+    let mut client_closed = false;
     loop {
         tokio::select! {
             incoming = socket.recv() => match incoming {
-                Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(WsMessage::Close(_))) => {
+                    client_closed = true;
+                    break;
+                }
+                Some(Err(_)) | None => break,
                 Some(Ok(WsMessage::Text(text))) => match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::Visibility { visible }) => state.hub.set_visible(user.id, conn_id, visible),
                     Ok(ClientFrame::Typing { to, group }) => {
@@ -354,6 +359,12 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
                 }
             }
         }
+    }
+    // Answer the client's close: reading the close frame only queues the reply,
+    // and one more read sends it (then ends at once). Without it the client sees
+    // an abnormal closure (1006) instead of a clean one.
+    if client_closed {
+        let _ = tokio::time::timeout(Duration::from_secs(1), socket.recv()).await;
     }
 
     if state.hub.unregister(user.id, conn_id) {

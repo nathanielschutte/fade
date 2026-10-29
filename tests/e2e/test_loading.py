@@ -7,40 +7,17 @@ from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, no_placeholders, shot
+from common import BASE, launch, no_placeholders, shot, PHONE, befriend, fill_sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
-PW = "correct horse battery"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
-
-
-async def sign_up(p, name):
-    await p.click("#auth-toggle")
-    await p.fill("#auth-form input[name=username]", name)
-    await p.fill("#auth-form input[name=password]", PW)
-    await p.fill("#auth-form input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
 
 
 async def forget_kept(page):
     """What the app kept on this device (cache.js) would show at once; these
     checks are about the first load, before anything was kept."""
     await page.evaluate("import('/cache.js').then((c) => c.clear())")
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
 
 
 async def main():
@@ -50,10 +27,10 @@ async def main():
         ana = await ctx.new_page()
         ana.on("pageerror", lambda e: errors.append(str(e)))
         await ana.goto(BASE)
-        await sign_up(ana, ANA)
+        await fill_sign_up(ana, ANA)
         ben = await (await browser.new_context(**PHONE)).new_page()
         await ben.goto(BASE)
-        await sign_up(ben, BEN)
+        await fill_sign_up(ben, BEN)
         await befriend(ana, ben, BEN, ANA)
 
         # A slow chat list: placeholders and a slow-connection notice, not "No friends yet".
@@ -113,7 +90,7 @@ async def main():
         # Someone with no friends at all does see the empty state, once it's known.
         new = await (await browser.new_context(**PHONE)).new_page()
         await new.goto(BASE)
-        await sign_up(new, f"cal_{tag}")
+        await fill_sign_up(new, f"cal_{tag}")
         await expect(new.locator("#chat-empty")).to_be_visible(timeout=10000)
 
         assert not errors, errors

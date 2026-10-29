@@ -4,8 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, base64, os, re, sqlite3, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, DB, INVITE, launch, save_recovery_key, shot
-PASSWORD = "correct horse battery"
+from common import BASE, DB, launch, shot, PASSWORD, fill_sign_up, sign_in
 tag = uuid.uuid4().hex[:5]
 ALEX, SAM = f"alex_{tag}", f"sam_{tag}"
 SECRET = f"meet at the usual place {tag} 🌿"
@@ -42,23 +41,6 @@ async def new_page(browser, label):
     return page
 
 
-async def register(page, name):
-    await page.click("#auth-toggle")
-    await page.fill("input[name=username]", name)
-    await page.fill("input[name=password]", PASSWORD)
-    await page.fill("input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-
-
-async def login(page, name):
-    await page.fill("input[name=username]", name)
-    await page.fill("input[name=password]", PASSWORD)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-
-
 async def open_chat(page, name):
     await page.locator(".chat-item", has_text=name).click()
     await expect(page.locator("#chat-title")).to_have_text(name)
@@ -82,8 +64,8 @@ async def main():
         b = await new_page(browser, "sam")
         await shot(a, "1-signin")
 
-        await register(a, ALEX)
-        await register(b, SAM)
+        await fill_sign_up(a, ALEX)
+        await fill_sign_up(b, SAM)
         print("registered both")
 
         # Friend request, accepted in the UI.
@@ -233,7 +215,7 @@ async def main():
 
         # New device: password alone recovers the key and history.
         c = await new_page(browser, "sam-2")
-        await login(c, SAM.upper())
+        await sign_in(c, SAM.upper())
         await open_chat(c, ALEX)
         await expect(c.locator(".msg", has_text=SECRET)).to_be_visible(timeout=10000)
         print("fresh profile + password decrypts history")

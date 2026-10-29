@@ -5,12 +5,10 @@ phone layout. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
+from common import ADMIN, BASE, launch, shot, PHONE, befriend, sign_up_or_in, fill_sign_up, open_page
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL, DEE = (f"{n}_{tag}" for n in ("ana", "ben", "cal", "dee"))
-PW = "correct horse battery"
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 # SVG nodes inside the friend map, by kind.
@@ -27,54 +25,15 @@ MAKE_GROUP = """async ([name, usernames]) => {
 }"""
 
 
-async def page_for(browser, label, **ctx):
-    p = await (await browser.new_context(**ctx)).new_page()
-    p.on("pageerror", lambda e: errors.append(f"{label}: {e}"))
-    p.on("console", lambda m: m.type == "error" and "status of 4" not in m.text and errors.append(f"{label}: {m.text}"))
-    await p.goto(BASE)
-    return p
-
-
-async def sign_up(p, name):
-    await p.click("#auth-toggle")
-    await p.fill("#auth-form input[name=username]", name)
-    await p.fill("#auth-form input[name=password]", PW)
-    await p.fill("#auth-form input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
-
-
-async def sign_up_or_in(p, name):
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", PW)
-    await p.click("#auth-submit")
-    try:
-        await expect(p.locator("#app")).to_be_visible(timeout=15000)
-    except AssertionError:
-        await sign_up(p, name)
-
-
-async def befriend(asker, asked, name_of_asked, name_of_asker):
-    await asker.click("#friends-button")
-    await asker.fill("#add-friend-form input[name=username]", name_of_asked)
-    await asker.click("#add-friend-form button[type=submit]")
-    await expect(asker.locator("#add-friend-note")).to_contain_text("Request sent")
-    await asker.click("#friends-dialog [data-close]")
-    await asked.click("#friends-button")
-    await asked.locator("#incoming-list li", has_text=name_of_asker).locator("button", has_text="Accept").click()
-    await asked.click("#friends-dialog [data-close]")
-
-
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana = await page_for(browser, "ana", viewport={"width": 1200, "height": 900})
-        ben = await page_for(browser, "ben", **PHONE)
-        cal = await page_for(browser, "cal")
-        dee = await page_for(browser, "dee")
+        ana = await open_page(browser, errors, "ana", console=True, viewport={"width": 1200, "height": 900})
+        ben = await open_page(browser, errors, "ben", console=True, **PHONE)
+        cal = await open_page(browser, errors, "cal", console=True)
+        dee = await open_page(browser, errors, "dee", console=True)
         for p, n in ((ana, ANA), (ben, BEN), (cal, CAL), (dee, DEE)):
-            await sign_up(p, n)
+            await fill_sign_up(p, n)
         await befriend(ana, ben, BEN, ANA)
         await befriend(ana, cal, CAL, ANA)
         await befriend(ben, cal, CAL, BEN)
@@ -170,7 +129,7 @@ async def main():
         await shot(ben, "graph-chats-phone", full_page=False)
 
         # Admin: you by default; everyone with the switch; chosen people; depth.
-        admin = await page_for(browser, "admin", viewport={"width": 1200, "height": 900})
+        admin = await open_page(browser, errors, "admin", console=True, viewport={"width": 1200, "height": 900})
         await sign_up_or_in(admin, ADMIN)
         await admin.goto(f"{BASE}/admin#graph")
         await expect(admin.locator("#tab-graph")).to_have_attribute("aria-current", "page")

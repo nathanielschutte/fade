@@ -3,7 +3,7 @@ Settings come from the environment; see common.py."""
 import asyncio, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import launch, shot, sign_up, PHONE
 tag = uuid.uuid4().hex[:5]
 
 # A frame that's red on the left, blue on the right. The stub reports the facing
@@ -32,22 +32,6 @@ LEFT_PIXEL = """async () => {
 }"""
 
 
-async def register(browser, name, mobile=False):
-    opts = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True} if mobile else {}
-    ctx = await browser.new_context(**opts)
-    await ctx.add_init_script(STUB)
-    p = await ctx.new_page()
-    await p.goto(BASE)
-    await p.click("#auth-toggle")
-    await p.fill("input[name=username]", name)
-    await p.fill("input[name=password]", "correct horse battery")
-    await p.fill("input[name=invite_code]", INVITE)
-    await p.click("#auth-submit")
-    await expect(p.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(p)
-    return p
-
-
 async def capture(p, facing):
     await p.evaluate(f"window.__facing = {facing!r}")
     await p.click("#camera-button")
@@ -65,8 +49,8 @@ async def capture(p, facing):
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        a = await register(browser, f"mia_{tag}", mobile=True)
-        b = await register(browser, f"leo_{tag}")
+        a = await sign_up(browser, f"mia_{tag}", init=STUB, **PHONE)
+        b = await sign_up(browser, f"leo_{tag}", init=STUB)
         await a.click("#friends-button")
         await a.fill("#add-friend-form input[name=username]", f"leo_{tag}")
         await a.click("#add-friend-form button[type=submit]")

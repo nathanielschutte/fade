@@ -4,7 +4,7 @@ see common.py."""
 import asyncio, re, sqlite3, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, DB, INVITE, launch, save_recovery_key, shot
+from common import DB, launch, shot, sign_up, PHONE
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL, DEE = (f"{n}_{tag}" for n in ("ana", "ben", "cal", "dee"))
@@ -35,21 +35,6 @@ PICK_IMAGE = """async (selector) => {
 }"""
 
 
-async def register(browser, name, **ctx):
-    context = await browser.new_context(**ctx)
-    await context.add_init_script(CAMERA)
-    page = await context.new_page()
-    await page.goto(BASE)
-    await page.click("#auth-toggle")
-    await page.fill("input[name=username]", name)
-    await page.fill("input[name=password]", "correct horse battery")
-    await page.fill("input[name=invite_code]", INVITE)
-    await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
-    await save_recovery_key(page)
-    return page
-
-
 async def friends(a, b, b_name):
     assert await a.evaluate(REQUEST, b_name) == 200
     a_name = await a.evaluate("document.querySelector('#my-name').textContent")
@@ -63,10 +48,10 @@ def group_item(page, name=GROUP):
 async def main():
     async with async_playwright() as pw:
         browser = await launch(pw)
-        ana = await register(browser, ANA)
-        ben = await register(browser, BEN)
-        cal = await register(browser, CAL)
-        dee = await register(browser, DEE, viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        ana = await sign_up(browser, ANA, init=CAMERA)
+        ben = await sign_up(browser, BEN, init=CAMERA)
+        cal = await sign_up(browser, CAL, init=CAMERA)
+        dee = await sign_up(browser, DEE, init=CAMERA, **PHONE)
         for other, name in ((ben, BEN), (cal, CAL), (dee, DEE)):
             await friends(ana, other, name)
 
@@ -194,7 +179,7 @@ async def main():
         # Tapped, it shows bigger in its own rounded square (X24).
         await ana.click("#group-avatar")
         await expect(ana.locator("#picture-big img")).to_be_visible()
-        assert await ana.locator("#picture-big").evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "30%"
+        await expect(ana.locator("#picture-big")).to_have_css("border-top-left-radius", "30%")
         await ana.keyboard.press("Escape")
         await expect(ana.locator("#picture-viewer")).to_be_hidden()
         await ana.click("#group-dialog [data-close]")

@@ -10,9 +10,8 @@ from playwright.async_api import async_playwright, expect
 
 import uuid
 
-from common import BASE, INVITE, REMOTE, launch, save_recovery_key, shot
+from common import BASE, INVITE, REMOTE, launch, save_recovery_key, shot, PHONE
 
-PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 errors = []
 
 
@@ -34,7 +33,7 @@ async def check_marked(p, env, config):
     await expect(p.locator(".env-band")).to_have_count(1)
     build = p.locator(".env-build")
     await expect(build).to_contain_text(f"{env} · v{config['server_version']} · {config['build']} · up ")
-    assert await build.evaluate("e => getComputedStyle(e).pointerEvents") == "none", "never in the way of a tap"
+    await expect(build).to_have_css("pointer-events", "none")  # never in the way of a tap
     assert await p.locator('meta[name="theme-color"]').get_attribute("content") == "#e8a33d"
     overflow = await p.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
     assert overflow <= 0, f"scrolls sideways by {overflow}px"
