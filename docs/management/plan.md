@@ -266,6 +266,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 ### Debug
 
+#### D10. 0.39.0's fix for D9 cut the bottom off (undone in 0.41.1)
+- Reported (Nate, 2026-10-29), on an iPhone 16 Pro and a friend's phone, both from the Home Screen: the composer and tab bar were half off the bottom, and a chat couldn't scroll to its newest messages (pics there couldn't be tapped). 0.39.0 sized the app to the screen's height as the phone reported it, which was taller than what's visible. Undone: the app is pinned to the visible edges again (0.36.0 to 0.38.0), which may leave a gap under the tabs but never hides anything. Nate: a gap is acceptable; nothing may be cut off. The gap needs a real iPhone to diagnose, not a guess (D9 stays open).
+
 #### D9. The installed app's tabs sat above the bottom edge (fixed in 0.39.0)
 - Reported (Nate, 2026-10-29), after 0.36.0 pinned the app with `position: fixed; inset: 0`: on the Home Screen, a sizeable gap stayed under the tabs. With a black-translucent status bar and viewport-fit=cover, Safari can lay the page out as the screen minus the status bar while drawing it from the top, so anything pinned to the bottom stops short. Now, when installed on an iPhone (`navigator.standalone`) and full screen, app.js measures the screen and the app, camera, viewer, and Profile tab are sized from the top by that height; the page itself can't scroll while the app shows. `test_installed.py` checks the app takes the screen's height even when the page is laid out 59 px short. Chromium can't reproduce Safari's mistake, so check it on a phone after release.
 
