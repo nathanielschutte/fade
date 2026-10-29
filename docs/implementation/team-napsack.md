@@ -22,7 +22,7 @@ text = "Merry Christmas, {name}! 🎄"
 |---|---|
 | `when` | `"birthday"`: on each person's birthday, from their profile. `"yearly MM-DD"`: every year that day. `"once YYYY-MM-DD"`: just that day |
 | `hour` | 0 to 23, UTC. It sends at or after that hour, that day only. A day the server is down all day isn't made up |
-| `to` | `"everyone"`: every account that's on. `"birthday person"` and `"birthday friends"` (with `"birthday"`): the person whose birthday it is, or their friends. A list: those usernames |
+| `to` | `"everyone"`: every account that's on. `"birthday person"` and `"birthday friends"` (with `"birthday"`): the person whose birthday it is, or their friends. A list: those usernames (an old username still means its owner) |
 | `only` | Narrows any of the above to these usernames: the way to try something on yourself first |
 | `text` | Up to 1,000 characters. `{name}` is the recipient's name as they set it; `{birthday_name}` (birthday only) is whose birthday it is, as the recipient knows them |
 

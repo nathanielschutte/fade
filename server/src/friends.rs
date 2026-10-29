@@ -79,6 +79,10 @@ pub struct ChatSummary {
     /// Team Napsack (team.rs): napsack's own account, not a friend. Its chat
     /// is listed once it has sent you something, and it's read-only.
     system: bool,
+    /// Their username before they changed it, and when, for 30 days after
+    /// (usernames.rs): the chat says so.
+    was: Option<String>,
+    renamed_at: Option<i64>,
 }
 
 /// The home screen: every friend, with their latest message, newest chats first.
@@ -117,6 +121,11 @@ pub async fn list_chats(
             Some(id) => db::get_message(&state.db, id).await?,
             None => None,
         };
+        let renamed = crate::usernames::past_of(&state.db, row.id)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|(_, at)| now() - at < crate::usernames::SHOW_RENAME_SECS);
         chats.push(ChatSummary {
             id: row.id,
             username: row.username,
@@ -143,6 +152,8 @@ pub async fn list_chats(
             unread: row.unread,
             deactivated: row.deactivated,
             system: row.system,
+            was: renamed.as_ref().map(|(name, _)| name.clone()),
+            renamed_at: renamed.map(|(_, at)| at),
         });
     }
     chats.sort_by(|a, b| {
@@ -258,8 +269,11 @@ pub async fn send_request(
         ));
     }
     // A turned-off account can't be found (admin_users.rs).
+    // By their username, or one they had: an old name still finds them (usernames.rs).
     let target = sqlx::query_as::<_, UserPublic>(&format!(
-        "SELECT id, username FROM users u WHERE username = ? AND NOT {DEACTIVATED} AND NOT {SYSTEM}"
+        "SELECT id, username FROM users u
+         WHERE (username = ?1 OR id IN (SELECT user_id FROM past_usernames WHERE username = ?1))
+           AND NOT {DEACTIVATED} AND NOT {SYSTEM}"
     ))
     .bind(req.username.trim())
     .fetch_optional(&state.db)

@@ -34,6 +34,7 @@ mod streaks;
 mod sysinfo;
 mod team;
 mod text;
+mod usernames;
 mod version;
 mod web;
 mod ws;
@@ -346,6 +347,7 @@ fn router(state: SharedState) -> Router {
         .route("/auth/reset", post(account::reset_with_code))
         .route("/auth/unlock", post(account::unlock))
         .route("/me/password", post(account::change_password))
+        .route("/me/username", post(account::rename))
         .route("/me/recovery", axum::routing::put(account::set_recovery))
         .route("/me/security", get(account::security))
         .route("/me/sessions/end-others", post(account::end_other_sessions))

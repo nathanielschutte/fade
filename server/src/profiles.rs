@@ -59,6 +59,11 @@ pub enum Profile {
         stats: MyStats,
         /// Your longest pic streak with anyone (streaks.rs).
         longest_streak: i64,
+        /// Usernames you had before, newest first (usernames.rs).
+        past_usernames: Vec<String>,
+        /// When you can change your username again, if not now (once a
+        /// week; Admins any time).
+        next_rename_at: Option<i64>,
     },
     Friend {
         id: i64,
@@ -75,6 +80,8 @@ pub enum Profile {
         together: Together,
         /// Your pic streak together: now, whether it's about to run out, and the longest.
         streak: Streak,
+        /// Usernames they had before, newest first: old names still lead to them.
+        past_usernames: Vec<String>,
     },
 }
 
@@ -172,6 +179,11 @@ pub async fn get(
     if id == me.id {
         let (username, joined_at) = joined(db, me.id).await?.ok_or(AppError::Unauthorized)?;
         let (display_name, avatar_id) = crate::people::own_profile(db, me.id).await?;
+        let admin = crate::usernames::is_listed_admin(db, &state.admins, me.id, &username).await?;
+        let next_rename_at = crate::usernames::last_rename(db, me.id)
+            .await?
+            .map(|last| last + crate::usernames::RENAME_EVERY_SECS)
+            .filter(|at| !admin && *at > crate::db::now());
         tracing::debug!(user_id = me.id, "viewed own profile");
         return Ok(Json(Profile::Me {
             id: me.id,
@@ -183,6 +195,8 @@ pub async fn get(
             friends: friends_of(db, me.id).await?,
             stats: my_stats(db, me.id).await?,
             longest_streak: streaks.values().map(|s| s.longest).max().unwrap_or(0),
+            past_usernames: past_names(db, me.id).await?,
+            next_rename_at,
         }));
     }
 
@@ -221,7 +235,16 @@ pub async fn get(
         mutual_friends: mutual_friends(db, me.id, id).await?,
         together: together(db, me.id, id).await?,
         streak: streaks.get(&id).copied().unwrap_or_default(),
+        past_usernames: past_names(db, id).await?,
     }))
+}
+
+async fn past_names(db: &SqlitePool, user: i64) -> sqlx::Result<Vec<String>> {
+    Ok(crate::usernames::past_of(db, user)
+        .await?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
 }
 
 #[cfg(test)]

@@ -71,6 +71,8 @@ Because the two keys come out of HKDF with different labels, knowing the auth ke
 
 Usernames are case-insensitive, so the username is lowercased before it's used as the salt. `Nate` and `nate` derive the same keys.
 
+**Changing your username** works like changing your password, because the username is the salt: with your password, your browser derives the keys under the old name (proving the password) and under the new one, unlocks your private key, and locks it again under the new wrap key. The server stores the new auth key and wrapped key, keeping the old ones in its history like a password change. The private key itself doesn't change, so messages, safety codes, and friends' pins stay the same. Your old username is kept and reserved for you forever: nobody else can take it, signing in with it says it changed (without saying to what), and a friend request to it reaches you. Once a week, except for Admins.
+
 ## Your keys, and where they live
 
 When you create an account, your browser makes a key pair on the P-256 curve. The **public key** is safe to share; friends use it to set up a shared key with you. The **private key** is what lets you read messages.

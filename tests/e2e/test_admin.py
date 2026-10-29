@@ -1,7 +1,7 @@
 """Signs up (or in) as the configured admin and a throwaway non-admin, then
 checks the admin panel: access control, no content in the stats, layout on a phone.
 Settings come from the environment; see common.py."""
-import asyncio, json, sys, uuid
+import asyncio, re, json, sys, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import ADMIN, BASE, INVITE, launch, save_recovery_key, shot
@@ -95,7 +95,8 @@ async def main():
         assert OTHER in names and (ADMIN in [x.lower() for x in names] or stats["users"]["total"] > 500), names[:5]
         print("stats:", {k: stats["users"][k] for k in ("total", "active_24h", "online", "sockets")},
               "texts", stats["messages"]["texts"], "today", today)
-        await expect(admin.locator("#t-users")).to_have_text(str(stats["users"]["total"]))
+        # Shown with a thousands separator once there are that many (staging).
+        await expect(admin.locator("#t-users")).to_have_text(re.compile(rf"^{stats['users']['total']:,}$|^{stats['users']['total']}$"))
         # Looking at the admin page counts as being online (the other user's
         # app tab is on a non-admin page now, so it's just the admin).
         await expect(admin.locator("#t-online")).to_have_text("1", timeout=10000)

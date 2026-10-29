@@ -172,6 +172,90 @@ pub async fn change_password(
 }
 
 #[derive(Deserialize)]
+pub struct Rename {
+    username: String,
+    /// The password, proven under the current username.
+    auth_key: String,
+    /// The same password under the new username (it's the salt), and the
+    /// private key locked again with it.
+    new_auth_key: String,
+    new_wrapped_private_key: String,
+}
+
+/// `POST /api/me/username`: a new username (plan X30). It works like a
+/// password change, because the username salts the password. The old name
+/// is kept, reserved for this person forever (usernames.rs). Once a week,
+/// except for Admins. Sessions stay signed in.
+pub async fn rename(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<Rename>,
+) -> AppResult<Json<Value>> {
+    use crate::usernames;
+    let username = req.username.trim().to_owned();
+    auth::validate_username(&username)?;
+    if username.eq_ignore_ascii_case(&me.username) {
+        return Err(AppError::bad("That's already your username."));
+    }
+    require_password(&state, &me, &req.auth_key).await?;
+    validate_auth_key(&req.new_auth_key)?;
+    check_wrapped(&req.new_wrapped_private_key)?;
+    let admin = usernames::is_listed_admin(&state.db, &state.admins, me.id, &me.username).await?;
+    let at = now();
+    if let Some(last) = usernames::last_rename(&state.db, me.id).await? {
+        if !admin && at - last < usernames::RENAME_EVERY_SECS {
+            let days = (usernames::RENAME_EVERY_SECS - (at - last) + 86_399) / 86_400;
+            return Err(AppError::bad(format!(
+                "You can change your username once a week. Try again in {days} {}.",
+                if days == 1 { "day" } else { "days" }
+            )));
+        }
+    }
+    if !usernames::available_to(&state.db, me.id, &username).await? {
+        return Err(AppError::bad("That username is taken."));
+    }
+    let hash = hash_secret(req.new_auth_key).await?;
+    let mut tx = state.db.begin().await?;
+    // The credentials change exactly as in a password change (the username
+    // is the password's salt), and past_usernames records the rename itself.
+    // credential_history's reasons are fixed by a CHECK in its table.
+    keep_history(&mut tx, me.id, "password_changed").await?;
+    // Going back to one of your own old names: it's already reserved for you.
+    sqlx::query("INSERT OR IGNORE INTO past_usernames (user_id, username, until) VALUES (?, ?, ?)")
+        .bind(me.id)
+        .bind(&me.username)
+        .bind(at)
+        .execute(&mut *tx)
+        .await?;
+    let renamed = sqlx::query(
+        "UPDATE users SET username = ?, auth_hash = ?, wrapped_private_key = ? WHERE id = ?",
+    )
+    .bind(&username)
+    .bind(&hash)
+    .bind(&req.new_wrapped_private_key)
+    .bind(me.id)
+    .execute(&mut *tx)
+    .await;
+    match renamed {
+        Ok(_) => tx.commit().await?,
+        // Someone took it in the moment between the check and now.
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(AppError::bad("That username is taken."))
+        }
+        Err(e) => return Err(e.into()),
+    }
+    tracing::info!(user_id = me.id, from = ?me.username, to = ?username, admin, "username changed");
+    let mut ids: Vec<i64> = crate::profiles::friends_of(&state.db, me.id)
+        .await?
+        .into_iter()
+        .map(|f| f.id)
+        .collect();
+    ids.push(me.id);
+    state.hub.send_many(&ids, &Event::FriendsChanged);
+    Ok(Json(json!({ "username": username })))
+}
+
+#[derive(Deserialize)]
 pub struct SetRecovery {
     auth_key: String,
     recovery_auth_key: String,

@@ -16,7 +16,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Done | Nate (2026-10-28); 0.35.0 |
 | 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Done | Nate (2026-10-28); 0.36.0, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) in part |
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Done | Nate (2026-10-28); 0.37.0 |
-| 0p | [Change your username](#x30-change-your-username) | Features | Up next | Nate (2026-10-28); release 6 |
+| 0p | [Change your username](#x30-change-your-username) | Features | Done | Nate (2026-10-28); 0.38.0 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
 | 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Up next | Nate (2026-10-28); release 8, after the rest |
 | 0t | [Opening a notification reads the message](#x36-opening-a-notification-goes-there-and-reads-it) | Experience | Up next | Nate (2026-10-29); after X34 |
@@ -456,6 +456,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Requested (2026-10-28): change your username itself, so it seems completely changed: you're found by the new one, and everything shows it.
 - Decided (Nate): old usernames are **reserved forever**: they keep leading to the person ("now @newname", noted as a past username) and nobody else can take them, so no one can be mistaken for a friend under their old name. Renames at most **once every 7 days** (Admins exempt); friends see a note in the chat.
 - Encryption: the username salts the password (PBKDF2), so a rename asks for the password and re-locks the private key under the new name, like a password change (old credentials kept in `credential_history`). Safety codes and message encryption use keys and ids, not usernames, so nothing else changes.
+- Built (0.38.0): Profile → Username → Change username (with the password). `POST /api/me/username`, migration 0022 (`past_usernames`, unique: reserved forever), `usernames.rs`. Sign-up with an old name says taken; sign-in with one says it changed (not to what); friend requests and Team Napsack's occasions find the owner; an Admin listed by an old name stays an Admin. Friends see "was @old" under the name and a note in the chat for 30 days; profiles list past usernames. Sessions stay signed in. `test_username.py`, smoke `check_rename`.
 
 #### X31. Load in pieces, and keep encrypted data on the device
 - Requested (2026-10-28): as more people join, load more incrementally, suited to bad connections, possibly adapting to the connection.

@@ -288,7 +288,7 @@ pub async fn deactivate(
     if user.id == me.id {
         return Err(AppError::bad("You can't turn off your own account."));
     }
-    if state.admins.contains(&user.username) {
+    if crate::usernames::is_listed_admin(&state.db, &state.admins, user.id, &user.username).await? {
         return Err(AppError::bad(
             "Admins come from settings: remove them from the admin list first.",
         ));

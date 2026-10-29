@@ -386,6 +386,27 @@
   </form>
   <p class="form-note" id="profile-edit-note" role="status"></p>
   <section class="profile-security" id="profile-security" hidden>
+    <h3>Username</h3>
+    <p class="field-hint" id="username-status"></p>
+    <div class="picture-row">
+      <button type="button" class="button" id="username-change">Change username</button>
+    </div>
+    <form id="username-form" class="username-form" novalidate hidden>
+      <label class="field">
+        <span>New username</span>
+        <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20">
+      </label>
+      <label class="field">
+        <span>Your password</span>
+        <input name="password" type="password" autocomplete="current-password">
+      </label>
+      <p class="field-hint">Your old username stays yours: anyone who uses it still finds you, and nobody else can take it. You can change it once a week.</p>
+      <div class="picture-row">
+        <button type="submit" class="button primary" id="username-submit">Change username</button>
+        <button type="button" class="button" id="username-cancel">Cancel</button>
+      </div>
+      <p class="form-error" id="username-error" role="alert"></p>
+    </form>
     <h3>Account security</h3>
     <p class="field-hint" id="security-status"></p>
     <div class="picture-row">

@@ -723,6 +723,67 @@ function showSecurityNote(text) {
   }
 }
 
+// ---------- changing your username (X30) ----------
+// The username salts the password, so a new one locks the private key again
+// under it, like a password change. Old names stay yours (usernames.rs).
+
+function renderUsername(p) {
+  const later = p.next_rename_at && p.next_rename_at * 1000 > Date.now();
+  $("#username-status").textContent = [
+    `Your username is @${p.username}.`,
+    later ? `You can change it again on ${longDate(p.next_rename_at)}.` : "",
+  ].filter(Boolean).join(" ");
+  $("#username-change").hidden = Boolean(later);
+  $("#username-form").hidden = true;
+}
+
+$("#username-change").addEventListener("click", () => {
+  const form = $("#username-form");
+  form.reset();
+  $("#username-error").textContent = "";
+  form.hidden = false;
+  $("#username-change").hidden = true;
+  form.username.focus();
+});
+$("#username-cancel").addEventListener("click", () => {
+  $("#username-form").hidden = true;
+  $("#username-change").hidden = false;
+});
+
+$("#username-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const btn = $("#username-submit");
+  const username = form.username.value.trim();
+  $("#username-error").textContent = "";
+  if (!/^[A-Za-z0-9_.]{3,20}$/.test(username)) {
+    $("#username-error").textContent = "Usernames are 3 to 20 characters: letters, numbers, dots, and underscores.";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Locking your keys…";
+  try {
+    const password = form.password.value;
+    const current = await unlockWithPassword(password);
+    const next = await e2e.deriveFromPassword(username, password);
+    const rewrapped = await e2e.rewrapIdentity(current.wrapKey, current.wrapped, next.wrapKey);
+    const res = await getJSON("/me/username", {
+      method: "POST",
+      json: { username, auth_key: current.authKey, new_auth_key: next.authKey, new_wrapped_private_key: rewrapped },
+    });
+    report("info", "username changed");
+    state.me.username = res.username;
+    await refreshMe();
+    await openProfile(state.me.id);
+    showSecurityNote(`Your username is now @${res.username}. Sign in with it from now on.`);
+  } catch (err) {
+    $("#username-error").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Change username";
+  }
+});
+
 async function renderSecurity() {
   $("#share-activity").checked = Boolean(state.me.share_activity);
   renderPushStatus();
@@ -1635,7 +1696,8 @@ function renderChatHeader() {
   $("#chat-title").textContent = chatName(chat);
   $("#chat-title").setAttribute("aria-label", `${chatName(chat)}: view profile`);
   // The username is the identity; show it whenever the name on screen differs.
-  const sub = [activeText(chat), chatName(chat) !== chat.username ? `@${chat.username}` : ""].filter(Boolean);
+  const sub = [activeText(chat), chatName(chat) !== chat.username || chat.was ? `@${chat.username}` : "",
+    chat.was ? `was @${chat.was}` : ""].filter(Boolean);
   $("#chat-sub").textContent = sub.join(" · ");
   $("#chat-sub").hidden = sub.length === 0;
   paintAvatar($("#chat-avatar"), chat);
@@ -1778,7 +1840,15 @@ function renderMessages() {
     else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of your chat with ${chat ? chatName(chat) : "them"}.` }));
   }
   let prevSender = null;
+  // A friend's new username (X30): said where it happened in the chat.
+  let renameNote = chat?.was && chat.renamed_at
+    ? el("li", { class: "msg-meta rename-note", text: `${chat.was} is now @${chat.username}` }) : null;
   for (const m of msgs) {
+    if (renameNote && m.created_at > chat.renamed_at) {
+      items.push(renameNote);
+      renameNote = null;
+      prevSender = null;
+    }
     const mine = m.sender_id === state.me.id;
     if (m.sender_id !== prevSender) {
       items.push(el("li", {
@@ -1811,6 +1881,7 @@ function renderMessages() {
       items.push(...bubble(m, mine, [chip]));
     }
   }
+  if (renameNote && msgs.length) items.push(renameNote);
   const sending = outboxItems(`d:${state.activeId}`, prevSender);
   items.push(...sending);
   if (!msgs.length && !sending.length) items.push(...emptyChat(state.messages.has(state.activeId), `d:${state.activeId}`));
@@ -3578,6 +3649,7 @@ async function openProfile(userId) {
   renderProfileEdit(p);
   // Usernames are the identity, so they're always shown; and their own name, if I renamed them.
   const id = [`@${p.username}`];
+  if (p.past_usernames?.length) id.push(`was ${p.past_usernames.map((n) => `@${n}`).join(", ")}`);
   if (p.kind === "friend" && p.nickname && p.display_name) id.push(`goes by “${p.display_name}”`);
 
   let people = [];
@@ -3649,6 +3721,7 @@ function renderProfileEdit(p) {
   $("#profile-security").hidden = !mine;
   $("#security-note").textContent = "";
   if (mine) renderSecurity();
+  if (mine) renderUsername(p);
   $("#profile-picture-clear").hidden = !p.avatar_id;
   $("#profile-birthday-form").hidden = !mine;
   if (mine) {
@@ -4098,9 +4171,11 @@ $("#add-friend-form").addEventListener("submit", async (e) => {
   if (!username) return;
   try {
     const res = await getJSON("/friends/requests", { method: "POST", json: { username } });
+    // An old username still finds them (X30): say what they're called now.
+    const was = res.user.username.toLowerCase() !== username.toLowerCase() ? ` (was @${username})` : "";
     note.textContent = res.status === "friends"
-      ? `You and ${res.user.username} are now friends.`
-      : `Request sent to ${res.user.username}.`;
+      ? `You and ${res.user.username}${was} are now friends.`
+      : `Request sent to ${res.user.username}${was}.`;
     form.reset();
   } catch (err) {
     note.textContent = err.message;

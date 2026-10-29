@@ -1239,6 +1239,49 @@ def check_edits(tag):
     print("  edits: the sender's texts, 15 minutes, 20 at most, every version kept, own keys only")
 
 
+def check_rename(tag):
+    """Changing a username (account.rs, usernames.rs; plan X30): needs the
+    password, once a week; the old name stays the person's: nobody can sign
+    up with it, signing in with it says it changed, and it still finds them."""
+    old, new = f"rna_{tag}", f"rnb_{tag}"
+    ra, rb = ok(register(old)).json(), ok(register(f"rnc_{tag}")).json()
+    (a, a_tok), (b, b_tok) = (ra["user"], ra["token"]), (rb["user"], rb["token"])
+    befriend(a_tok, b, b_tok, a["id"])
+    new_key = b64(os.urandom(32))
+    body = lambda **over: {"username": new, "auth_key": AUTH_KEY, "new_auth_key": new_key,
+                           "new_wrapped_private_key": b64(os.urandom(166)), **over}
+    ok(call("POST", "/me/username", None, json=body()), 401)
+    ok(call("POST", "/me/username", a_tok, json=body(auth_key=b64(os.urandom(32)))), 400)          # wrong password
+    ok(call("POST", "/me/username", a_tok, json=body(username="no spaces")), 400)
+    ok(call("POST", "/me/username", a_tok, json=body(username=old.upper())), 400)                  # already theirs
+    ok(call("POST", "/me/username", a_tok, json=body(username=b["username"])), 400)                # taken
+    assert ok(call("POST", "/me/username", a_tok, json=body())).json() == {"username": new}
+    assert ok(call("GET", "/me", a_tok)).json()["username"] == new, "the session stays signed in"
+    mine = ok(call("GET", f"/users/{a['id']}/profile", a_tok)).json()
+    assert mine["past_usernames"] == [old] and mine["next_rename_at"], mine
+    theirs = ok(call("GET", f"/users/{a['id']}/profile", b_tok)).json()
+    assert theirs["username"] == new and theirs["past_usernames"] == [old]
+    chat = [c for c in ok(call("GET", "/friends", b_tok)).json() if c["id"] == a["id"]][0]
+    assert chat["username"] == new and chat["was"] == old and chat["renamed_at"], chat
+    # Once a week.
+    r = ok(call("POST", "/me/username", a_tok, json=body(username=f"rnd_{tag}", auth_key=new_key)), 400)
+    assert "once a week" in r.json()["error"], r.text
+    # Signing in: the old name says it changed (and doesn't say the new one); the new one works.
+    r = ok(call("POST", "/auth/login", json={"username": old, "auth_key": new_key}), 400)
+    assert "changed" in r.json()["error"] and new not in r.text, r.text
+    ok(call("POST", "/auth/login", json={"username": new, "auth_key": AUTH_KEY}), 400)              # the old key is gone
+    ok(call("POST", "/auth/login", json={"username": new, "auth_key": new_key}))
+    # The old name is reserved, and still finds them.
+    ok(register(old.upper()), 400)
+    rc = ok(register(f"rne_{tag}")).json()
+    found = ok(call("POST", "/friends/requests", rc["token"], json={"username": old})).json()
+    assert found["user"] == {"id": a["id"], "username": new}, found
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM credential_history WHERE user_id = ?", (a["id"],)).fetchone()[0] == 1
+    print("  renames: the password, once a week, old names reserved and still found")
+
+
 def check_videos(tag):
     """Videos (format 4, plan X28): opaque bytes like a pic, view-once, with
     their own larger cap; a pic's cap stays the same."""
@@ -1551,6 +1594,7 @@ async def main():
     check_invites(tag)
     check_videos(tag)
     check_edits(tag)
+    check_rename(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
     check_graph(tag)

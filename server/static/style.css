@@ -1525,3 +1525,8 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .edits-list li { display: grid; gap: 0.15rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--rule); }
 .edit-when { color: var(--fixer); font-size: var(--step--1); }
 .edit-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------- changing your username (X30) ---------- */
+.username-form { display: grid; gap: 0.6rem; margin-top: 0.5rem; }
+.username-form[hidden] { display: none; }
+.rename-note { align-self: center; text-align: center; }

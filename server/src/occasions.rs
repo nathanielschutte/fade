@@ -241,12 +241,22 @@ pub async fn due(db: &SqlitePool, o: &Occasion, t: i64) -> sqlx::Result<Vec<Due>
         return Ok(Vec::new());
     }
     let people = active_people(db).await?;
+    // An old username still names its owner (usernames.rs).
+    let past: Vec<(i64, String)> = sqlx::query_as(&format!(
+        "SELECT p.user_id, lower(p.username) FROM past_usernames p JOIN users u ON u.id = p.user_id WHERE {ACTIVE}"
+    ))
+    .fetch_all(db)
+    .await?;
     let named = |list: &[String]| -> Vec<i64> {
-        people
+        let mut ids: Vec<i64> = people
             .iter()
+            .chain(past.iter())
             .filter(|(_, u)| list.contains(u))
             .map(|(id, _)| *id)
-            .collect()
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
     };
     let mut out = Vec::new();
     match &o.when {

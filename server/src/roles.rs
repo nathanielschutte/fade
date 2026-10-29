@@ -115,7 +115,8 @@ async fn granted_power(db: &SqlitePool, user_id: i64) -> sqlx::Result<bool> {
 
 /// Someone's role. Being listed as an Admin beats a PowerUser grant.
 pub async fn role_of(state: &SharedState, user: &UserPublic) -> sqlx::Result<Role> {
-    if state.admins.contains(&user.username) {
+    // By the name they have now, or one they had (usernames.rs).
+    if crate::usernames::is_listed_admin(&state.db, &state.admins, user.id, &user.username).await? {
         return Ok(Role::Admin);
     }
     Ok(if granted_power(&state.db, user.id).await? {
@@ -209,11 +210,12 @@ pub async fn list(
         ids.push(me.id);
         Some(ids)
     };
+    let admin_ids = crate::usernames::admin_ids(&state.db, &state.admins).await?;
     let people: Vec<Value> = rows
         .into_iter()
         .filter(|p| visible.as_ref().is_none_or(|ids| ids.contains(&p.id)))
         .map(|p| {
-            let their_role = if state.admins.contains(&p.username) {
+            let their_role = if admin_ids.contains(&p.id) {
                 Role::Admin
             } else if p.granted_at.is_some() {
                 Role::Power

@@ -217,7 +217,7 @@ pub fn validate_auth_key(key: &str) -> AppResult<()> {
     }
 }
 
-fn validate_username(name: &str) -> AppResult<()> {
+pub(crate) fn validate_username(name: &str) -> AppResult<()> {
     let ok_len = (3..=20).contains(&name.len());
     let ok_chars = name
         .chars()
@@ -272,6 +272,13 @@ pub async fn register(
 
     let username = req.username.trim().to_string();
     validate_username(&username)?;
+    // Someone's old username stays theirs (usernames.rs).
+    if crate::usernames::past_holder(&state.db, &username)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::bad("That username is taken."));
+    }
     if crate::guard::accounts_full(&state.db, state.config.limits.max_accounts).await? {
         tracing::warn!(ip = %who.ip, max = state.config.limits.max_accounts, "sign-up refused: account cap reached");
         return Err(AppError::Unavailable(
@@ -352,6 +359,18 @@ pub async fn login(
     .fetch_optional(&state.db)
     .await?;
     let Some((id, username, stored, public_key, wrapped_private_key)) = row else {
+        // An old username: its owner signs in with the new one (which isn't
+        // said here; they know it).
+        if crate::usernames::past_holder(&state.db, req.username.trim())
+            .await?
+            .is_some()
+        {
+            state.login_fail_limit.allow(&account);
+            tracing::info!(ip = %who.ip, username = ?account, "sign-in with an old username");
+            return Err(AppError::bad(
+                "That username was changed. Sign in with the new one.",
+            ));
+        }
         return Err(failed("no such user"));
     };
 
