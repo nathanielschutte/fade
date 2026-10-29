@@ -79,6 +79,9 @@
   <aside class="list-pane" aria-label="Chats">
     <header class="bar">
       <span class="wordmark small" aria-hidden="true">napsack</span>
+      <button type="button" class="icon-button wide-only" id="list-camera" aria-label="Camera" title="Camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </button>
       <button type="button" class="icon-button" id="friends-button" aria-label="Friends" title="Friends">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M17 5.5a3 3 0 0 1 0 5.6M18.5 14.3c1.6.8 2.6 2.6 3 5.2"/></svg>
         <span class="badge" id="request-badge" hidden></span>
@@ -124,6 +127,20 @@
       </a>
       <button type="button" class="account-link" id="sign-out">Sign out</button>
     </footer>
+    <nav class="tabs" id="tabs" aria-label="napsack">
+      <button type="button" class="tab" id="tab-chats" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5H4.5z"/></svg>
+        <span>Chats</span>
+      </button>
+      <button type="button" class="tab" id="tab-camera" aria-current="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        <span>Camera</span>
+      </button>
+      <button type="button" class="tab" id="tab-profile" aria-current="false">
+        <span class="avatar tiny" id="tab-avatar" aria-hidden="true"></span>
+        <span>Profile</span>
+      </button>
+    </nav>
   </aside>
 
   <section class="chat-pane" id="chat-pane" aria-label="Conversation">
@@ -391,6 +408,10 @@
     <ul class="people" id="profile-people"></ul>
   </section>
   <footer class="profile-actions" id="profile-actions"></footer>
+  <footer class="profile-account" id="profile-account" hidden>
+    <a class="button" id="profile-admin-link" href="/admin" hidden>System</a>
+    <button type="button" class="button" id="profile-sign-out">Sign out</button>
+  </footer>
 </dialog>
 
 <!-- Safety code -->
@@ -530,6 +551,22 @@
   <div class="camera-controls" id="send-controls" hidden>
     <button type="button" class="button" id="retake">Retake</button>
     <button type="button" class="button primary" id="send-snap">Send</button>
+  </div>
+</dialog>
+
+<!-- Who a pic goes to (X26): friends and groups, one or more -->
+<dialog id="send-to-dialog" class="sheet send-to" aria-labelledby="send-to-title">
+  <header class="sheet-head">
+    <h2 id="send-to-title">Send to…</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <input type="search" class="send-to-search" id="send-to-search" placeholder="Search" aria-label="Search friends and groups" autocomplete="off">
+  <ul class="send-to-list" id="send-to-list"></ul>
+  <div class="send-to-foot">
+    <p class="send-to-picked" id="send-to-picked"></p>
+    <button type="button" class="button primary" id="send-to-go" disabled>Send</button>
   </div>
 </dialog>
 

@@ -108,6 +108,27 @@ async def main():
         await expect(ana.locator("#messages .msg.pending")).to_have_count(0, timeout=10000)
         await expect(bubbles(ana, "sent while offline")).to_have_count(1)
 
+        # Ben reads a text before Ana's own copy is back from the server (her
+        # answer is slow): it still says "Seen" once it lands.
+        gate = asyncio.Event()
+
+        async def slow_answer(route):
+            if route.request.method != "POST":
+                return await route.continue_()
+            res = await route.fetch()
+            await gate.wait()
+            await route.fulfill(response=res)
+        await ana.route("**/api/chats/*/messages", slow_answer)
+        await send_text(ana, "read before it landed")
+        await expect(bubbles(ben, "read before it landed")).to_have_count(1, timeout=15000)
+        await asyncio.sleep(1.5)  # Ben's page marks it read, and Ana hears so first
+        gate.set()
+        await expect(ana.locator("#messages .msg.pending")).to_have_count(0, timeout=15000)
+        await expect(ana.locator("#messages > li").last).to_have_text("Seen", timeout=5000)
+        items = await ana.locator("#messages > li").all_text_contents()
+        assert "read before it landed" in items[-2], items[-4:]
+        await ana.unroute("**/api/chats/*/messages", slow_answer)
+
         # A pic whose upload response is lost: tried again with the same id, sent once.
         lost = await lose_first_response(ana, "**/api/chats/*/snaps*")
         await ana.click("#camera-button")

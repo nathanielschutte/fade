@@ -65,10 +65,12 @@ async def main():
         assert await top_of(ana, ".wordmark") >= TOP, "sign-in screen under the status bar"
         await sign_up(ana, ANA)
 
-        # The chat list header, and the account bar above the home indicator.
+        # The chat list header, and the tabs above the home indicator.
         assert await top_of(ana, ".list-pane .bar") >= TOP
         assert await top_of(ana, "#friends-button") >= TOP
-        assert await bottom_of(ana, ".account-bar") <= 852, "account bar off screen"
+        assert await bottom_of(ana, "#tabs") <= 852, "tabs off screen"
+        for tab in ("#tab-chats", "#tab-camera", "#tab-profile"):
+            assert await bottom_of(ana, tab) <= 852 - BOTTOM, f"{tab} under the home indicator"
         await shot(ana, "installed-list", full_page=False)
 
         # In a chat: the back button and the title are tappable.
@@ -93,12 +95,17 @@ async def main():
         await ana.click("#back-button")
         await expect(ana.locator(".chat-item", has_text=BEN)).to_be_visible()
 
-        # Sheets: the profile's close button stays below the status bar.
-        await ana.click("#my-profile")
+        # The Profile tab starts below the status bar and ends above the tabs.
+        await ana.click("#tab-profile")
         await expect(ana.locator("#profile-dialog")).to_be_visible()
-        assert await top_of(ana, "#profile-dialog [data-close]") >= TOP, "profile close button under the status bar"
+        assert await top_of(ana, "#profile-name") >= TOP, "profile under the status bar"
+        assert await bottom_of(ana, "#profile-dialog") <= await top_of(ana, "#tabs") + 1, "profile over the tabs"
         await shot(ana, "installed-profile", full_page=False)
-        await ana.click("#profile-dialog [data-close]")
+        await ana.click("#tab-chats")
+        # Sheets: their close buttons stay below the status bar.
+        await ana.click("#friends-button")
+        assert await top_of(ana, "#friends-dialog [data-close]") >= TOP, "close button under the status bar"
+        await ana.click("#friends-dialog [data-close]")
 
         # In a normal browser tab there are no insets, and nothing moves.
         plain = await (await browser.new_context(**IPHONE)).new_page()
@@ -115,7 +122,7 @@ async def main():
         assert await bare.evaluate("typeof Notification") == "undefined"
         await bare.reload()
         await expect(bare.locator("#app")).to_be_visible(timeout=20000)
-        await bare.click("#my-profile")
+        await bare.click("#tab-profile")
         await expect(bare.locator("#push-status")).to_have_text("This browser can't show notifications.")
         await bare.wait_for_timeout(1000)
         assert not PROBLEMS, PROBLEMS

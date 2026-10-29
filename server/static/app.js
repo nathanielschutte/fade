@@ -50,6 +50,7 @@ const state = {
   search: { q: "", hits: null }, // the chat list's search box, and message matches (null while looking)
   groupDetail: null,           // the group shown in the info sheet
   messages: new Map(),         // friend id -> Message[], oldest first; may be only the newest pages
+  readUpTo: new Map(),         // friend id -> when they last read my texts ("read" events)
   history: new Map(),          // friend id -> { hasMore, loading } for paging back
   ws: null,
   wsRetry: 0,
@@ -813,12 +814,14 @@ function signOutLocally() {
   state.token = null;
   state.me = null;
   clearNotifications(); // they name friends; not for whoever uses the device next
+  for (const d of document.querySelectorAll("dialog[open]")) d.close();
   state.loaded = { chats: false, groups: false, error: null };
   state.loadFailed.clear();
   state.identity = null;
   state.pins = {};
   state.pastPins = {};
   state.readKeys.clear();
+  state.readUpTo.clear();
   state.pairKeys.clear();
   state.plaintext.clear();
   state.activeId = null;
@@ -859,6 +862,8 @@ function enterApp() {
   renderAccountBar();
   // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
   $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
+  $("#profile-admin-link").hidden = $("#admin-link").hidden;
+  showTab("chats");
   syncPush();
   clearNotifications();
   if (location.hash) openFromLink(location.hash);
@@ -898,6 +903,7 @@ $("#announcement-close").addEventListener("click", () => {
 function renderAccountBar() {
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
+  paintAvatar($("#tab-avatar"), state.me);
   $("#recovery-nudge").hidden = Boolean(state.me.has_recovery_key);
   renderPushNudge();
 }
@@ -1549,6 +1555,7 @@ async function openChat(friendId) {
   state.activeGroupId = null;
   setConversationMode("direct");
   $("#app").classList.add("in-chat");
+  closeProfileTab();
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
   const switching = $("#messages").dataset.friend !== String(friendId);
@@ -1806,6 +1813,11 @@ async function upsertMessage(m) {
   const fid = friendOf(m);
   const msgs = state.messages.get(fid);
   if (!msgs) return; // chat not loaded yet; it'll fetch on open
+  // They may have read it before this copy got here (the "read" event beat
+  // the send's own response): it's read all the same.
+  if (m.sender_id === state.me.id && m.kind === "text" && !m.read_at && m.created_at <= (state.readUpTo.get(fid) ?? -1)) {
+    m.read_at = state.readUpTo.get(fid);
+  }
   const i = msgs.findIndex((x) => x.id === m.id);
   if (i >= 0) msgs[i] = m;
   else msgs.push(m);
@@ -2460,6 +2472,7 @@ async function handleEvent(ev) {
       if (ev.by === state.me.id) {
         refreshChatsSoon();
       } else {
+        state.readUpTo.set(ev.by, Math.max(ev.at, state.readUpTo.get(ev.by) ?? 0));
         const msgs = state.messages.get(ev.by) || [];
         for (const m of msgs) {
           if (m.sender_id === state.me.id && m.kind === "text" && !m.read_at && m.created_at <= ev.at) m.read_at = ev.at;
@@ -2745,6 +2758,7 @@ async function openGroup(groupId) {
   state.activeGroupId = groupId;
   setConversationMode("group");
   $("#app").classList.add("in-chat");
+  closeProfileTab();
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
   renderGroupHeader();
@@ -2946,33 +2960,6 @@ async function loadGroupPic(m) {
   let caption = "";
   try { caption = decodeURIComponent(res.headers.get("X-Napsack-Caption") || ""); } catch {}
   return { blob: await res.blob(), caption, from };
-}
-
-async function sendGroupPic(groupId) {
-  const btn = $("#send-snap");
-  btn.disabled = true;
-  cameraMessage("Sending…");
-  try {
-    // Sealed once per pic, so tapping Send again after a dropped connection
-    // resends the same one (the server keeps one copy).
-    if (!camera.groupSend) {
-      const caption = $("#snap-caption").value.trim();
-      const photo = await finalPhoto();
-      camera.groupSend = groupSender(groupId,
-        (opts) => e2e.encryptGroupPic(photo, caption, opts),
-        (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
-          method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
-        }));
-    }
-    const m = await withRetries(camera.groupSend);
-    upsertGroupMessage(m);
-    if (state.activeGroupId === groupId) renderMessages();
-    $("#camera-dialog").close();
-  } catch (err) {
-    cameraMessage(sendProblem(err));
-  } finally {
-    btn.disabled = false;
-  }
 }
 
 /** What to say when a pic couldn't be sent. */
@@ -3351,6 +3338,7 @@ async function openProfile(userId) {
   for (const id of ["#profile-stats", "#profile-people", "#profile-actions"]) $(id).replaceChildren();
   hideProfileEdit();
   $("#profile-people-section").hidden = true;
+  $("#profile-account").hidden = userId !== state.me?.id;
   msg.hidden = true;
   // Never the last person's name while this one loads (X23).
   const known = userId === state.me?.id ? state.me : chatById(userId);
@@ -3920,6 +3908,10 @@ const camera = {
   mirror: true,                // selfie view: preview and photo both flipped, like a mirror
   blob: null,
   previewUrl: null,
+  to: [],                      // who it's going to: the open chat, or picked in Send to… (X26)
+  picked: false,               // `to` came from Send to…
+  sends: new Map(),            // per recipient: the pic's id (friends) or sealed copy (groups), kept for retries
+  sent: new Set(),             // recipients that have it, so Send again skips them
 };
 
 function cameraMessage(text) {
@@ -4007,14 +3999,19 @@ function showCapture() {
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
   clearCaption();
+  // A new pic from the camera tab: pick who it's for again.
+  if (camera.picked) {
+    camera.to = [];
+    camera.picked = false;
+  }
 }
 
 function clearPreview() {
   if (camera.previewUrl) URL.revokeObjectURL(camera.previewUrl);
   camera.previewUrl = null;
   camera.blob = null;
-  camera.clientId = null;  // a new pic gets a new id...
-  camera.groupSend = null; // ...and is sealed afresh
+  camera.sends = new Map(); // a new pic gets new ids and is sealed afresh...
+  camera.sent = new Set();   // ...and hasn't gone to anyone
   const img = $("#camera-preview");
   img.removeAttribute("src");
   img.hidden = true;
@@ -4033,9 +4030,7 @@ function showPreview(blob) {
   cameraMessage("");
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
-  const chat = chatById(state.activeId);
-  const name = state.activeGroupId ? groupById(state.activeGroupId)?.name : chat && chatName(chat);
-  $("#send-snap").textContent = name ? `Send to ${name}` : "Send";
+  $("#send-snap").textContent = sendLabel();
   $("#snap-caption-box").hidden = false;
   fitCaption();
 }
@@ -4080,17 +4075,29 @@ async function compressPhoto(source, width, height, mirror = false) {
   throw new Error("Couldn't make that photo small enough to send.");
 }
 
-$("#camera-button").addEventListener("click", () => {
-  if (!state.activeId && !state.activeGroupId) return;
+/** Opens the camera. `to` is who the pic goes to: the open chat, or nobody yet (Send to… asks). */
+function openCamera(to) {
+  camera.to = to;
+  camera.picked = false;
+  if (!to.length) showTab("camera");
   $("#camera-dialog").showModal();
   showCapture();
   startStream();
+}
+
+$("#camera-button").addEventListener("click", () => {
+  if (state.activeGroupId) openCamera([{ kind: "group", id: state.activeGroupId }]);
+  else if (state.activeId) openCamera([{ kind: "friend", id: state.activeId }]);
 });
+$("#list-camera").addEventListener("click", () => openCamera([]));
+$("#tab-camera").addEventListener("click", () => openCamera([]));
 
 $("#camera-dialog").addEventListener("close", () => {
   stopStream();
   clearPreview();
   clearCaption(); // sent or abandoned, it shouldn't linger in the page
+  camera.to = [];
+  if (tabs.current === "camera") showTab(profileTabOpen() ? "profile" : "chats");
 });
 
 $("#flip-camera").addEventListener("click", () => {
@@ -4180,38 +4187,241 @@ $("#retake").addEventListener("click", () => {
   if (!camera.stream) startStream();
 });
 
-$("#send-snap").addEventListener("click", async () => {
-  if (state.activeGroupId) return sendGroupPic(state.activeGroupId);
-  const friendId = state.activeId;
-  if (!camera.blob || !friendId) return;
+$("#send-snap").addEventListener("click", () => {
+  if (!camera.blob) return;
+  if (!camera.to.length) return openSendTo();
+  sendPics(camera.to);
+});
+
+// ---------- sending a pic to one or more chats (X26) ----------
+
+const recipientKey = (r) => `${r.kind === "group" ? "g" : "d"}:${r.id}`;
+
+function recipientName(r) {
+  if (r.kind === "group") return groupById(r.id)?.name ?? "the group";
+  const chat = chatById(r.id);
+  return chat ? chatName(chat) : "them";
+}
+
+/** "Ana", "Ana and Ben", "Ana, Ben and Cal", "Ana, Ben, Cal and 2 others". */
+function listNames(rs) {
+  const names = rs.map(recipientName);
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length > 4) return `${names.slice(0, 3).join(", ")} and ${names.length - 3} others`;
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+function sendLabel() {
+  if (!camera.to.length) return "Send to…";
+  return camera.to.length === 1 ? `Send to ${recipientName(camera.to[0])}` : `Send to ${camera.to.length}`;
+}
+
+/**
+ * Sends the pic to each recipient in turn, each its own end-to-end encrypted
+ * copy (format 2 to a friend, format 3 to a group). Send again after a
+ * failure skips whoever has it and resends the same pic to the rest, so a
+ * dropped response never makes a second one.
+ */
+async function sendPics(to) {
   const btn = $("#send-snap");
   btn.disabled = true;
   cameraMessage("Sending…");
-  // The same id on every try (and on Send again), so a retry after a dropped
-  // response isn't a second pic.
-  camera.clientId ??= newClientId();
+  const failed = [];
   try {
     const photo = await finalPhoto();
-    // Format 2: the caption is sealed in with the photo, so only the friend sees it.
     const caption = $("#snap-caption").value.trim();
-    const sealed = await e2e.encryptPic(await keyFor(friendId), photo, caption, state.me.id, friendId);
-    if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
-      throw new Error("That photo is too large to send.");
+    for (const r of to) {
+      if (camera.sent.has(recipientKey(r))) continue;
+      try {
+        if (r.kind === "group") await sendGroupPicTo(r.id, photo, caption);
+        else await sendDirectPicTo(r.id, photo, caption);
+        camera.sent.add(recipientKey(r));
+      } catch (err) {
+        failed.push({ r, err });
+        report("warn", "sending a pic failed", { to: r.kind, ...errorFields(err) });
+      }
     }
-    const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}&client_id=${camera.clientId}`, {
-      method: "POST",
-      body: sealed,
-      headers: { "Content-Type": "application/octet-stream" },
-    }));
-    await upsertMessage(m);
-    renderMessages();
-    $("#camera-dialog").close();
   } catch (err) {
     cameraMessage(sendProblem(err));
+    return;
   } finally {
     btn.disabled = false;
   }
+  if (failed.length) {
+    const sent = to.filter((r) => camera.sent.has(recipientKey(r)));
+    const err = failed[0].err;
+    cameraMessage(!sent.length && failed.length === 1 ? sendProblem(err)
+      : `${sent.length ? `Sent to ${listNames(sent)}. ` : ""}Couldn't send to ${listNames(failed.map((f) => f.r))}. `
+        + (retryable(err) ? "The connection dropped: tap Send to try again." : err.message));
+    return;
+  }
+  const picked = camera.picked;
+  $("#camera-dialog").close();
+  if (picked) {
+    showToast(`Pic sent to ${listNames(to)}.`);
+    refreshChats();
+    refreshGroups();
+  }
+}
+
+async function sendDirectPicTo(friendId, photo, caption) {
+  const key = `d:${friendId}`;
+  // The same id on every try (and on Send again), so a retry after a dropped
+  // response isn't a second pic.
+  if (!camera.sends.has(key)) camera.sends.set(key, newClientId());
+  const clientId = camera.sends.get(key);
+  // Format 2: the caption is sealed in with the photo, so only the friend sees it.
+  const sealed = await e2e.encryptPic(await keyFor(friendId), photo, caption, state.me.id, friendId);
+  if (state.config?.snap_max_bytes && sealed.length > state.config.snap_max_bytes) {
+    throw new Error("That photo is too large to send.");
+  }
+  const m = await withRetries(() => getJSON(`/chats/${friendId}/snaps?format=${e2e.SNAP_FORMAT}&client_id=${clientId}`, {
+    method: "POST",
+    body: sealed,
+    headers: { "Content-Type": "application/octet-stream" },
+  }));
+  await upsertMessage(m);
+  if (state.activeId === friendId) renderMessages();
+}
+
+async function sendGroupPicTo(groupId, photo, caption) {
+  const key = `g:${groupId}`;
+  // Sealed once per pic and group, so Send again after a dropped connection
+  // resends the same one (the server keeps one copy).
+  if (!camera.sends.has(key)) {
+    camera.sends.set(key, groupSender(groupId,
+      (opts) => e2e.encryptGroupPic(photo, caption, opts),
+      (s) => getJSON(`/groups/${groupId}/pics?format=${e2e.GROUP_FORMAT}`, {
+        method: "POST", body: s.content, headers: { "Content-Type": "application/octet-stream", "X-Napsack-Keys": keysHeader(s) },
+      })));
+  }
+  const m = await withRetries(camera.sends.get(key));
+  upsertGroupMessage(m);
+  if (state.activeGroupId === groupId) renderMessages();
+}
+
+// The picker: every chat a pic can go to, newest first. Not chats that can't
+// take one (a changed key, a turned-off account, Team Napsack), and hidden
+// chats only when searched for, as in the list.
+const sendTo = { picked: new Set() };
+
+function sendToEntries() {
+  return [
+    ...state.chats.filter((c) => !(c.keyChanged || c.deactivated || c.system)).map((c) => ({
+      r: { kind: "friend", id: c.id },
+      at: c.last_message?.created_at ?? 0,
+      name: chatName(c),
+      sub: chatName(c) !== c.username ? `@${c.username}` : "",
+      hidden: c.hidden,
+      search: `${chatName(c)} ${c.username}`.toLowerCase(),
+      avatar: () => paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), c),
+    })),
+    ...state.groups.map((g) => ({
+      r: { kind: "group", id: g.id },
+      at: g.last_message?.created_at ?? 0,
+      name: g.name,
+      sub: "Group",
+      hidden: false,
+      search: g.name.toLowerCase(),
+      avatar: () => paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g),
+    })),
+  ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+}
+
+/** Who's picked, in the list's order (not the order they were tapped). */
+function pickedRecipients() {
+  const listed = sendToEntries().map((e) => e.r).filter((r) => sendTo.picked.has(recipientKey(r)));
+  const keys = new Set(listed.map(recipientKey));
+  const rest = [...sendTo.picked].filter((k) => !keys.has(k)).map((k) => ({ kind: k[0] === "g" ? "group" : "friend", id: Number(k.slice(2)) }));
+  return [...listed, ...rest];
+}
+
+function renderSendTo() {
+  const q = $("#send-to-search").value.trim().toLowerCase();
+  const rows = sendToEntries().filter((e) => (q ? e.search.includes(q) : !e.hidden));
+  $("#send-to-list").replaceChildren(...(rows.length ? rows.map((e) => {
+    const key = recipientKey(e.r);
+    const box = el("input", { type: "checkbox", value: key });
+    box.checked = sendTo.picked.has(key);
+    box.addEventListener("change", () => {
+      if (box.checked) sendTo.picked.add(key);
+      else sendTo.picked.delete(key);
+      renderSendToFoot();
+    });
+    return el("li", {}, el("label", { class: "send-to-row" },
+      e.avatar(),
+      el("span", { class: "send-to-name" },
+        el("span", { text: e.name }),
+        e.sub ? el("span", { class: "send-to-sub", text: e.sub }) : null),
+      box));
+  }) : [el("li", { class: "send-to-empty", text: q ? "Nobody by that name." : "No chats yet: add a friend first." })]));
+  renderSendToFoot();
+}
+
+function renderSendToFoot() {
+  const picked = pickedRecipients();
+  $("#send-to-go").disabled = picked.length === 0;
+  $("#send-to-go").textContent = picked.length > 1 ? `Send to ${picked.length}` : "Send";
+  $("#send-to-picked").textContent = picked.length ? listNames(picked) : "Pick one or more.";
+}
+
+function openSendTo() {
+  // Starts from whoever it's already going to.
+  sendTo.picked = new Set(camera.to.map(recipientKey));
+  $("#send-to-search").value = "";
+  renderSendTo();
+  $("#send-to-dialog").showModal();
+}
+
+$("#send-to-search").addEventListener("input", renderSendTo);
+$("#send-to-go").addEventListener("click", () => {
+  camera.to = pickedRecipients();
+  camera.picked = true;
+  $("#send-to-dialog").close();
+  $("#send-snap").textContent = sendLabel();
+  sendPics(camera.to);
 });
+
+// ---------- tabs on phones (X26) ----------
+// Along the bottom of the chat list: Chats, Camera, Profile. Profile shows
+// your profile in place of the list; Camera opens the camera with no chat
+// picked, and Send to… asks who it's for. Computers keep the side-by-side
+// layout: a camera button in the list's bar, and the profile at the bottom.
+const tabs = { current: "chats" };
+
+function showTab(name) {
+  tabs.current = name;
+  for (const t of ["chats", "camera", "profile"]) $(`#tab-${t}`).setAttribute("aria-current", t === name ? "page" : "false");
+}
+
+const profileTabOpen = () => $("#profile-dialog").open && $("#profile-dialog").classList.contains("as-tab");
+
+function closeProfileTab() {
+  if (profileTabOpen()) $("#profile-dialog").close();
+}
+
+$("#tab-chats").addEventListener("click", () => {
+  closeProfileTab();
+  showTab("chats");
+});
+$("#tab-profile").addEventListener("click", () => {
+  const dialog = $("#profile-dialog");
+  // Not modal: the tabs stay usable underneath it.
+  dialog.classList.add("as-tab");
+  if (!dialog.open) dialog.show();
+  dialog.scrollTop = 0;
+  showTab("profile");
+  openProfile(state.me.id);
+});
+$("#profile-dialog").addEventListener("close", () => {
+  const dialog = $("#profile-dialog");
+  if (!dialog.classList.contains("as-tab")) return;
+  dialog.classList.remove("as-tab");
+  if (tabs.current === "profile") showTab("chats");
+});
+// Grown to a computer's width: the profile goes back to being a sheet.
+wideLayout.addEventListener("change", () => { if (wideLayout.matches) closeProfileTab(); });
+$("#profile-sign-out").addEventListener("click", () => $("#sign-out").click());
 
 // ---------- snap viewer ----------
 

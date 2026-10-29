@@ -13,12 +13,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|
 | 0e | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 0l | [Loading, slow-network states](#x23-clear-loading-and-slow-network-states) · [bigger profile pictures](#x24-tap-a-picture-to-see-it-bigger) · [add friends by QR](#x25-adding-friends-a-personal-qr-and-link) | Experience | Done | Nate (2026-10-28); 0.34.0 |
-| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Up next | Nate (2026-10-28); release 2 |
-| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Up next | Nate (2026-10-28); releases 3 and 4 |
+| 0m | [Tabs, camera tab, send to many](#x26-tabs-a-camera-tab-and-send-to-many) | Experience | Done | Nate (2026-10-28); 0.35.0 |
+| 0n | [Camera zoom](#x27-camera-zoom) · [short videos](#x28-short-videos) | Features | Up next | Nate (2026-10-28); releases 3 and 4, with [X35](#x35-the-installed-app-keeps-asking-for-the-camera) |
 | 0o | [Edit sent texts](#x29-edit-sent-texts) | Features | Up next | Nate (2026-10-28); release 5 |
 | 0p | [Change your username](#x30-change-your-username) | Features | Up next | Nate (2026-10-28); release 6 |
 | 0q | [Load in pieces; cache encrypted data](#x31-load-in-pieces-and-keep-encrypted-data-on-the-device) | Experience | Up next | Nate (2026-10-28); release 7 |
 | 0r | [Captions anywhere on a pic](#x33-captions-anywhere-on-a-pic) · [add recipients from a chat](#x34-add-recipients-from-inside-a-chat) | Experience | Up next | Nate (2026-10-28); release 8, after the rest |
+| 0s | [Work through pull requests](#p5-pull-requests-and-repository-protection) | Process | Up next | Nate (2026-10-28); last, after all the features |
 | 1 | [iOS app](#f1-ios-app) | Features | In progress | Apple Developer Program approved; first build, then TestFlight for early users |
 | 2 | [Voice notes](#f16-voice-notes) | Features | Planned | End-to-end encrypted audio; a new message kind |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | Planned | Phase 1 shipped in 0.21.0; these finish it |
@@ -90,6 +91,10 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 #### P1. Development standard
 - [CLAUDE.md](../../CLAUDE.md): data durability rules, how every change is tested and shipped, prod verification. Grows as we go.
+
+#### P5. Pull requests and repository protection
+- Nate (2026-10-28): branch protection is on: other collaborators reach `main` only through pull requests, reviewed by the code owner (Nate) on the latest push; release tags are protected, need the staging deploy to have succeeded, and only repository admins create them. Admins can bypass all of it.
+- Proposal to weigh: work on a branch per release, open a pull request with a real description, let the checks pass on it, then squash-merge, so the history matches what collaborators will do. Also: a review of whether the protection is enough for outside collaborators. Comes last, after the queued features.
 
 #### P4. Faster test runs, same coverage
 - Asked (2026-10-28): can local test runs be trimmed or reorganized without losing any coverage or feedback?
@@ -255,6 +260,9 @@ Production runs **0.24.1**. Releases ship with `scripts/deploy.sh`; commit what 
 
 ### Debug
 
+#### D5. "Seen" sometimes never showed (fixed in 0.35.0)
+- Found from a CI failure in `test_chat.py` (2026-10-28): when a friend read a text before the sender's own copy came back from the server, the "read" event found nothing to mark, and the copy arrived unread. Now the app remembers how far each friend has read and applies it to copies that arrive later. `test_resilience.py` holds the response back to force that order.
+
 #### D4. Notifications stayed after opening napsack (fixed in 0.34.0)
 - Reported (2026-10-28): "Notis don't clear after you open the app?" Confirmed: only a tapped notification closed itself (`sw.js`); opening napsack any other way left the rest on the lock screen. Now napsack closes its notifications when it opens or comes back on screen, and on sign-out. `test_live.py` delivers a push and checks it's gone after opening.
 
@@ -416,6 +424,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X26. Tabs, a camera tab, and send to many
 - Requested (2026-10-28): on phones, tabs along the bottom: **Chats · Camera · Profile**. The profile and settings move out of the bottom-left button into their own tab (they're growing). Decided (Nate): phones only; computers keep the side-by-side layout, with Camera and Profile buttons in the list pane.
 - The camera tab has no chat to send to, so after taking a pic its button is **Send to…**: a list of chats (friends and groups) to pick one or more. Each recipient gets their own end-to-end encrypted copy (format 2 per friend; format 3 per group). The camera button inside a chat stays as it is.
+- Built (0.35.0): `#tabs` (phones only); the Profile tab is the profile sheet shown in place of the list (not modal, so the tabs stay usable), with Sign out and System at its foot. Computers get a camera button in the list's bar. Send to… lists every chat a pic can go to (not changed keys, turned-off accounts, or Team Napsack; hidden chats when searched for), newest first. Sending goes to each in turn; if some fail, the message says who got it, and Send again sends only to the rest, with the same ids and sealed copies, so nobody gets two. No server change. `test_tabs.py`.
 
 #### X27. Camera zoom
 - Requested (2026-10-28): zoom while taking a pic, with the back camera, on phones (pinch, and a zoom control). Desktop doesn't matter. Uses the camera's own zoom where the browser offers it, else a crop of the frame.
@@ -445,6 +454,11 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### X33. Captions anywhere on a pic
 - Requested (2026-10-28): tap anywhere on a pic or video (not just a strip at the bottom) and a caption line appears there to type into. Enter, or tapping elsewhere on the picture, finishes typing and leaves you looking at the pic with its caption; it never sends. Drag the caption up and down to place it. Only **Send to…** / **Send to <name>** sends.
 - The caption's height goes with the pic (inside the encrypted envelope, as a fraction of the height) so the receiver sees it where it was put. Older clients that don't know the field show it in the default place.
+
+#### X35. The installed app keeps asking for the camera
+- Reported (Nate, 2026-10-28): napsack on the Home Screen asks for camera permission again and again; the answer isn't remembered. With video (X28) it would ask for the microphone too.
+- Findings (2026-10-28): a known WebKit limit, not fixed as of the last reports. An installed web app doesn't keep camera answers across launches (Safari tabs do); within a launch, iOS can ask again after the page's address changes (WebKit bug 215884: hash changes in standalone mode), and napsack changes the hash when links open chats. Each camera open also starts a fresh stream.
+- Plan, done with X27 and X28 (same code): stop changing the address while the app runs where it isn't needed; ask for camera and microphone together once for video; consider keeping the stream briefly after the camera closes (a privacy trade-off: the camera light stays on; Nate decides). Asking once per launch is likely the floor on iOS.
 
 #### X34. Add recipients from inside a chat
 - Requested (2026-10-28): taking a pic or video from inside a chat or group shows who it's going to next to the send button. Tapping that opens the same **Send to…** picker as the camera tab (X26), with the current chat already ticked, to add more friends or groups.

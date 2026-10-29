@@ -859,6 +859,9 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   color: var(--env-mark); font: 0.62rem/1.35 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; opacity: 0.9;
 }
+/* On a phone the tabs' words fill the bottom (X26): the tab bar grows a
+   strip at its foot for the build line. */
+html[data-env] { --tabs-foot: 1.1rem; }
 .profile-security h3 + .field-hint { margin-bottom: 0.25rem; }
 
 /* ---------- installed on the Home Screen ----------
@@ -1394,3 +1397,68 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .more-invites { margin-top: 0.75rem; display: grid; gap: 0.5rem; }
 .more-invites summary { cursor: pointer; color: var(--fixer); font-size: var(--step--1); }
 .more-invites[open] { gap: 0.6rem; }
+
+/* ---------- tabs on phones, and sending to many (X26) ---------- */
+:root { --tabs-h: 3.5rem; }
+.tabs { display: none; }
+.tab {
+  min-height: var(--tabs-h);
+  display: grid; justify-items: center; align-content: center; gap: 0.2rem;
+  border: 0; background: none; color: var(--fixer);
+  font: inherit; font-size: 0.7rem; cursor: pointer;
+}
+.tab svg { width: 1.5rem; height: 1.5rem; }
+.tab .avatar.tiny { width: 1.5rem; height: 1.5rem; font-size: 0.7rem; }
+.tab[aria-current="page"] { color: var(--paper); font-weight: 600; }
+.tab[aria-current="page"] svg { stroke: var(--sage); }
+.tab[aria-current="page"] .avatar { outline: 2px solid var(--sage); outline-offset: 1px; }
+@media not all and (min-width: 760px) {
+  .list-pane .account-bar, .list-pane .wide-only { display: none; }
+  .tabs {
+    flex: none;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tabs-foot, 0px));
+    border-top: 1px solid var(--rule);
+    background: var(--deep);
+  }
+  /* The Profile tab: your profile in place of the list, above the tabs. */
+  #profile-dialog.as-tab {
+    position: fixed; inset: 0 0 calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + var(--tabs-foot, 0px)) 0; z-index: 3;
+    width: 100%; max-width: none; height: auto; max-height: none; margin: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+    border: 0; border-radius: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  #profile-dialog.as-tab .sheet-head [data-close] { visibility: hidden; }
+  .app.in-chat ~ #profile-dialog.as-tab { display: none; }
+}
+.profile-account {
+  display: flex; justify-content: flex-end; gap: 0.5rem;
+  margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+}
+.profile-account[hidden] { display: none; }
+.profile-account a.button { text-decoration: none; }
+
+.send-to[open] { display: flex; flex-direction: column; max-height: min(36rem, 85dvh); }
+.send-to-search {
+  flex: none; width: 100%; min-height: 2.5rem; margin-bottom: 0.4rem; padding: 0 0.9rem;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--deep); color: var(--paper); font: inherit;
+}
+.send-to-search:focus { outline: none; border-color: var(--sage); }
+.send-to-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 0; overscroll-behavior: contain; }
+.send-to-row {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.55rem 0.25rem; border-bottom: 1px solid var(--rule); cursor: pointer;
+}
+.send-to-name { flex: 1; min-width: 0; display: grid; font-weight: 600; }
+.send-to-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-to-sub { color: var(--fixer); font-size: var(--step--1); font-weight: 400; }
+.send-to-row input { flex: none; width: 1.25rem; height: 1.25rem; accent-color: var(--sage); }
+.send-to-empty { padding: 1rem 0.25rem; color: var(--fixer); }
+.send-to-foot { flex: none; display: flex; align-items: center; gap: 0.75rem; padding-top: 0.75rem; }
+.send-to-picked {
+  flex: 1; min-width: 0; margin: 0;
+  color: var(--fixer); font-size: var(--step--1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
