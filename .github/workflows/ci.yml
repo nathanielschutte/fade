@@ -4,11 +4,18 @@ on:
   pull_request:
   push:
     branches: [main]
+    # On main, a change only to the iOS app or the docs makes no candidate, so
+    # it doesn't run at all: that way it can't push a server commit's waiting
+    # run out of the queue below. (Pull requests still run, for the required checks.)
+    paths-ignore: ["ios/**", "docs/**", "*.md"]
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A newer push replaces a pull request's run; main's runs all finish, so
-  # every commit on main gets its release candidate (docs/operations/releasing.md).
+  # A newer push replaces a pull request's run. Main's runs aren't cancelled
+  # while running, but GitHub keeps only one waiting run per group: if a third
+  # push lands while one runs and one waits, the waiting one is cancelled
+  # (cdc071e, 2026-10-30). That commit then has no candidate and can't be
+  # released (release.sh staging-ran); release the newer one, which includes it.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
