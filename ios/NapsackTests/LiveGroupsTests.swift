@@ -32,7 +32,7 @@ struct LiveGroupsTests {
         #expect(anas.detail?.name == "Road trip 2")
 
         try await anas.setPicture(LiveProfileTests.photo(.systemPink))
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         #expect(list.rows.first { $0.kind == .group(id) }?.avatarId != nil)
 
@@ -47,5 +47,56 @@ struct LiveGroupsTests {
         try await bens.remove(ben.user.id)  // leaving
         try await list.load(ben)
         #expect(!list.rows.contains { $0.kind == .group(id) })
+    }
+
+    @Test func seenByAndEveryVersionOfAnEdit() async throws {
+        let ana = try await live.newAccount("ana"), ben = try await live.newAccount("ben"), cal = try await live.newAccount("cal")
+        try await befriend(ana, ben)
+        try await befriend(ana, cal)
+        let id = try await GroupModel.create(name: "Seen", members: [ben.user.id, cal.user.id], account: ana)
+        func chat(_ account: Account) async throws -> Conversation {
+            let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+            try await list.load(account)
+            let c = Conversation(.group(try #require(list.groups[id])), account: account, reader: try #require(list.reader), pinBook: list.pinBook)
+            try await c.loadNewest()
+            return c
+        }
+        let anas = try await chat(ana)
+        await anas.send("first draft", replyTo: nil)
+        let text = try #require(anas.bubbles.last)
+        try await anas.edit(text, to: "second draft")
+        try await anas.edit(try #require(anas.bubble(text.id)), to: "final")
+
+        await anas.loadGroupReads()
+        #expect(anas.seenBy == nil)
+        let bens = try await chat(ben)
+        await bens.markRead()
+        await anas.loadGroupReads()
+        #expect(anas.seenBy?.hasPrefix("Seen by") == true && anas.seenBy?.contains("ben") == true)
+        let cals = try await chat(cal)
+        await cals.markRead()
+        await anas.loadGroupReads()
+        #expect(anas.seenBy?.contains(" and ") == true)
+
+        // Ben sees every version, oldest first, each opened on his phone.
+        let edited = try #require(bens.bubble(text.id))
+        #expect(edited.original == "first draft")
+        let versions = try await bens.versions(of: edited)
+        #expect(versions.map(\.text) == ["first draft", "second draft", "final"] && versions.map(\.label) == ["Sent", "Edited", "Edited"])
+    }
+
+    @Test func everyVersionOfADirectEdit() async throws {
+        let ana = try await live.newAccount("ana"), ben = try await live.newAccount("ben")
+        try await befriend(ana, ben)
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await list.load(ana)
+        let toBen = Conversation(.friend(try #require(list.reader?.friends[ben.user.id])), account: ana, reader: try #require(list.reader))
+        try await toBen.loadNewest()
+        await toBen.send("8pm?", replyTo: nil)
+        let text = try #require(toBen.bubbles.last)
+        try await toBen.edit(text, to: "8:30?")
+        let edited = try #require(toBen.bubble(text.id))
+        #expect(edited.original == "8pm?")
+        #expect(try await toBen.versions(of: edited).map(\.text) == ["8pm?", "8:30?"])
     }
 }

@@ -20,6 +20,8 @@ struct ChatListScreen: View {
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
     @State private var settingUpRecovery = false
+    /// The announcement you closed, remembered on this phone (and forgotten at sign-out, Session).
+    @AppStorage(ChatList.dismissedAnnouncementKey) private var dismissedAnnouncement: Int = 0
     @State private var path: [ChatRow.Kind] = []
     @State private var makingGroup = false
     @State private var search = ""
@@ -48,6 +50,7 @@ struct ChatListScreen: View {
                         .padding(.vertical, 4)
                     }
                 }
+                announcementBanner
                 if let problem = list.problem {
                     Text(problem).foregroundStyle(.red)
                 }
@@ -166,6 +169,21 @@ struct ChatListScreen: View {
         .onDisappear { live.stop() }  // signed out
     }
 
+    /// The Admins' announcement, until you close it (app.js, `showAnnouncement`).
+    @ViewBuilder private var announcementBanner: some View {
+        if let a = list.announcement, Int(a.id) != dismissedAnnouncement {
+            Section {
+                HStack(alignment: .top) {
+                    Image(systemName: "megaphone").foregroundStyle(Color.accentColor)
+                    Text(a.body)
+                    Spacer()
+                    Button("Close", systemImage: "xmark") { dismissedAnnouncement = Int(a.id) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private func rows(_ rows: [ChatRow]) -> some View {
         ForEach(rows) { row in
             NavigationLink(value: row.kind) { ChatRowView(row: row) }
@@ -243,7 +261,7 @@ struct ChatListScreen: View {
             kept.update(chat, reader: reader)
             return kept
         }
-        let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook)
+        let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook, cache: list.cache(for: account))
         opened.chats[kind] = new
         return new
     }
@@ -274,6 +292,11 @@ struct ChatListScreen: View {
         case .read(let by, let at):
             chat?.read(by: by, at: at)
             list.reloadSoon(account)
+        case .groupRead(let group, let user, let last):
+            chat?.groupRead(group: group, user: user, last: last)
+            list.reloadSoon(account)
+        case .announcement(let a):
+            list.announce(a)
         case .listChanged:
             list.reloadSoon(account)
         case .pong, .other:
@@ -298,7 +321,7 @@ struct ChatRowView: View {
             Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(row.name).font(.headline).lineLimit(1)
+                    Text(row.name + row.marks).font(.headline).lineLimit(1)
                     if row.muted {
                         Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Muted")
                     }

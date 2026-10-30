@@ -28,6 +28,8 @@ struct ChatScreen: View {
     @State private var tapped = 0
     /// A pic or video being opened (once).
     @State private var viewing: PicToOpen?
+    /// An edited text whose versions are showing.
+    @State private var versionsOf: Bubble?
     /// A photo from the library, picked and waiting for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
     @State private var photoToSend: PhotoToSend?
@@ -115,6 +117,9 @@ struct ChatScreen: View {
                 photoToSend = PhotoToSend(image: image)
             }
         }
+        .sheet(item: $versionsOf) { bubble in
+            EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
+        }
         .sheet(item: $photoToSend) { photo in
             PhotoSendSheet(photo: photo, to: conversation.title) { caption in
                 guard let jpeg = Conversation.photoJPEG(photo.image) else { throw SendError.tooLarge }
@@ -199,6 +204,7 @@ struct ChatScreen: View {
             do {
                 // Opened before this session: just what's new since.
                 if conversation.loaded { try await conversation.catchUp() } else { try await conversation.loadNewest() }
+                await conversation.loadGroupReads()
                 await conversation.markRead()
             } catch {
                 Reporter.shared.report(.warn, "loading a chat failed", Reporter.fields(error))
@@ -287,6 +293,10 @@ struct ChatScreen: View {
             Text("Seen").font(.caption2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 4)
         }
+        if index == conversation.bubbles.count - 1, let seenBy = conversation.seenBy {
+            Text(seenBy).font(.caption2).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading).padding(.horizontal, 4)
+        }
     }
 
     /// What holding a message offers (app.js, the message actions): one row
@@ -302,6 +312,9 @@ struct ChatScreen: View {
         }
         if case .text(let text, _) = bubble.content {
             actions.append(.init(title: "Copy", icon: "doc.on.doc") { UIPasteboard.general.string = text })
+        }
+        if case .text(_, true) = bubble.content {
+            actions.append(.init(title: "Edits", icon: "clock.arrow.circlepath") { versionsOf = bubble })
         }
         if conversation.canSend, bubble.canEdit, case .text(let text, _) = bubble.content {
             actions.append(.init(title: "Edit", icon: "pencil") {
@@ -680,6 +693,34 @@ struct PhotoSendSheet: View {
                     }
                     .disabled(sending)
                 }
+            }
+        }
+    }
+}
+
+/// Every version of an edited text, oldest first, each opened on the phone (app.js, `showEdits`).
+struct EditsSheet: View {
+    let bubble: Bubble
+    let conversation: Conversation
+    @State private var versions: [Conversation.Version] = []
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if versions.isEmpty && problem == nil { ProgressView() }
+                ForEach(versions) { v in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(v.label) · \(v.at.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                        Text(v.text ?? "Couldn't decrypt this version.").foregroundStyle(v.text == nil ? .secondary : .primary)
+                    }
+                }
+                if let problem { Text("Couldn't load the edits. \(problem)").foregroundStyle(.red) }
+            }
+            .navigationTitle("Edits")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                do { versions = try await conversation.versions(of: bubble) } catch { problem = error.localizedDescription }
             }
         }
     }

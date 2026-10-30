@@ -57,7 +57,7 @@ struct LiveProfileTests {
         try await mine.removePicture()
         #expect(mine.profile?.avatarId == nil)
         try await seen.unfriend(ana.user.id)
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         #expect(!list.rows.contains { $0.kind == .friend(ana.user.id) })
     }

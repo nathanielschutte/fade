@@ -26,7 +26,7 @@ import Testing
         for type in ["friends_changed", "groups_changed", "read", "group_read"] {
             guard case .listChanged = event(["type": type]) else { Issue.record("\(type)"); return }
         }
-        guard case .other = event(["type": "announcement", "announcement": NSNull()]), case .other = LiveEvent.decode(Data("not json".utf8)),
+        guard case .other = event(["type": "visibility_changed"]), case .other = LiveEvent.decode(Data("not json".utf8)),
               case .other = event(["type": "message", "message": ["id": "broken"]]) else { Issue.record("the rest"); return }
     }
 
@@ -184,7 +184,7 @@ struct LiveSocketTests {
         let server = try Server(live.address)
         _ = try await server.send("friends/requests", method: "POST", token: ana.token, json: LiveChatListTests.Request(username: ben.user.username))
         _ = try await server.send("friends/requests", method: "POST", token: ben.token, json: LiveChatListTests.Request(username: ana.user.username))
-        let bens = ChatList(pinStore: MemoryPinStore())
+        let bens = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await bens.load(ben)
         let chat = Conversation(.friend(try #require(bens.reader?.friends[ana.user.id])), account: ben, reader: try #require(bens.reader))
         try await chat.loadNewest()

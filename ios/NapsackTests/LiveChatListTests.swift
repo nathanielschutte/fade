@@ -57,7 +57,7 @@ struct LiveChatListTests {
             wraps: Dictionary(uniqueKeysWithValues: sealed.wraps.map { (String($0.key), $0.value) })))
 
         // Ben's list: both, opened on his side.
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         let direct = try #require(list.rows.first { $0.kind == .friend(ana.user.id) })
         #expect(direct.preview == "hello from the iPhone 🌿")

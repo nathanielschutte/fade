@@ -11,7 +11,7 @@ struct LiveSendingTests {
     let live = LiveChatListTests()
 
     func lists(_ account: Account) async throws -> ChatList {
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(account)
         return list
     }

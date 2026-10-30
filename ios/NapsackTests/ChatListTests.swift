@@ -135,6 +135,30 @@ import Testing
         #expect(reader.status(try group(renamed)).0 == "You renamed the group to “Beach”")
     }
 
+    @Test func streaksAndBirthdaysBesideTheName() throws {
+        let today = Calendar.current.dateComponents([.month, .day], from: .now)
+        let md = String(format: "%02d-%02d", today.month!, today.day!)
+        func marks(_ extra: [String: Any]) throws -> String { Reader.marks(try direct(message(from: 7, to: 3, read: true), extra: extra)) }
+        #expect(try marks(["streak": 2]) == "")  // shown from 3 days
+        #expect(try marks(["streak": 5]) == " 🔥5")
+        #expect(try marks(["streak": 5, "streak_expiring": true]) == " 🔥5⌛")
+        #expect(try marks(["birthday": md]) == " 🎂")
+        #expect(try marks(["birthday": "13-40"]) == "")
+        #expect(try reader.row(try direct(message(from: 7, to: 3, read: true), extra: ["streak": 3, "birthday": md])).marks == " 🔥3 🎂")
+    }
+
+    @MainActor @Test func anAnnouncementShowsUntilItEnds() {
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        let now = Int64(Date().timeIntervalSince1970)
+        list.announce(ChatList.Announcement(id: 1, body: "Maintenance tonight", endsAt: now + 3600))
+        #expect(list.announcement?.body == "Maintenance tonight")
+        list.announce(ChatList.Announcement(id: 2, body: "Over", endsAt: now - 1))
+        #expect(list.announcement == nil)
+        guard case .announcement(let a) = LiveEvent.decode(json(["type": "announcement", "announcement": ["id": 3, "body": "Hi", "created_at": 1, "ends_at": now + 60]])),
+              a?.id == 3, case .announcement(nil) = LiveEvent.decode(json(["type": "announcement", "announcement": NSNull()]))
+        else { Issue.record("announcement events"); return }
+    }
+
     @Test func newestFirstThenByName() throws {
         let old = message(from: 7, to: 3, read: true)
         var newer = old

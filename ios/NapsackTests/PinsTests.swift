@@ -87,7 +87,7 @@ final class MemoryPinStore: PinStore, @unchecked Sendable {
         let reader = list.reader
         let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: list.bob["spki"] as! String,
                               privateKey: reader.identity.derRepresentation)
-        let chats = ChatList(pinStore: MemoryPinStore(pinned))
+        let chats = ChatList(pinStore: MemoryPinStore(pinned), cacheRoot: nil)
         try await chats.load(account, transport: server)
         #expect(chats.rows.map(\.preview) == ["Safety code changed"])
 

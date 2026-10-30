@@ -371,6 +371,8 @@ enum SignInError: LocalizedError, Equatable {
     private func endLocally(notice: String?) {
         if notice != nil { reporter.report(.info, "session ended") }
         try? store.delete()
+        UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
+        ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
         self.notice = notice
         state = .signedOut
     }

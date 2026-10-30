@@ -40,7 +40,7 @@ struct LivePicsTests {
                          format: E2E.videoFormat, token: ana.token)
 
         // Ben's chat: two waiting, each opened once, exactly as sent.
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         let chat = Conversation(.friend(try #require(list.reader?.friends[ana.user.id])), account: ben, reader: try #require(list.reader))
         try await chat.loadNewest()
@@ -91,7 +91,7 @@ struct LivePicsTests {
         #expect(UIImage(data: jpeg).map { max($0.size.width, $0.size.height) } == 1280)
 
         // Ana's app sends it to Ben, and to a group with him.
-        let anas = ChatList(pinStore: MemoryPinStore())
+        let anas = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await anas.load(ana)
         let toBen = Conversation(.friend(try #require(anas.reader?.friends[ben.user.id])), account: ana, reader: try #require(anas.reader))
         try await toBen.loadNewest()
@@ -104,7 +104,7 @@ struct LivePicsTests {
         try await toGroup.sendPhoto(jpeg, caption: "for the group")
 
         // Ben's app opens both, exactly as sent.
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         let fromAna = Conversation(.friend(try #require(list.reader?.friends[ana.user.id])), account: ben, reader: try #require(list.reader))
         try await fromAna.loadNewest()

@@ -19,7 +19,7 @@ struct LiveListActionsTests {
         let created = try Server.decoder.decode(LiveChatListTests.Created.self, from: await server.send(
             "groups", method: "POST", token: ben.token, json: LiveChatListTests.NewGroup(name: "Bowling night", memberIds: [ana.user.id])))
 
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ana)
         func row(_ kind: ChatRow.Kind) throws -> ChatRow { try #require(list.rows.first { $0.kind == kind }) }
         let friend = ChatRow.Kind.friend(ben.user.id), group = ChatRow.Kind.group(created.id)

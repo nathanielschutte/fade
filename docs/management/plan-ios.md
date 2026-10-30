@@ -42,7 +42,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Signing out leaves nothing: the account, every chat in memory, and later the cache, the notification token, and delivered notifications | Nate | Done | 2026-10-29: the Keychain account goes; the signed-in screens (chats, socket, open chats) are tied to the session and go with it; requests use an ephemeral connection with no cache or cookies, so the system never writes them down; reports stop going as the account. Pins stay. `signingOutLeavesNothingOfTheAccount`. When the cache and notifications come, they join it |
 | One outbox for the whole app: a "Not sent" text survives leaving its chat | Nate | Done | 2026-10-29: every chat opened in a session is kept (only in memory, gone with the session), so its unsent texts keep trying after you leave, all of them go again on reconnect, and reopening a chat is instant (it catches up instead of reloading) |
 | The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Decided | Nate (2026-10-30): desktop only. The iOS app doesn't show them |
-| Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | – | Planned | The web's `cache.js`. Native: a file with complete file protection (readable only while unlocked), wiped at sign-out |
+| Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | Nate | Done | 2026-10-30: `ResponseCache`, as the web's `cache.js`: the server's answers as sent (still end-to-end encrypted), opened only when shown; files with complete file protection, not backed up, per account; deleted at sign-out. Pics are never kept |
 
 ## 4. Your account
 
@@ -84,8 +84,8 @@ What the web app does quietly that the app must do too, before more features lea
 | Swipe actions: hide, mute, favorite; leave a group | Nate | Done | 2026-10-30: swipe right to favorite, left to hide (or leave a group, confirmed) and mute (8 hours, a week, or until turned back on); the same in a long-press menu; Undo for hiding and muting, in the web's words |
 | Hidden chats: their own section, and undo | Nate | Done | 2026-10-30: "Hidden chats (n)" at the end of the list, Unhide by swiping |
 | Search chat names and recent messages | Nate | In progress | 2026-10-30: `.searchable`, by name and newest message. The web also searches each chat's newest 200 messages; that waits for the encrypted cache (section 3) |
-| Streaks 🔥 and birthdays 🎂 beside names | – | Planned | From `/api/friends` |
-| The Admins' announcement, dismissible | – | Planned | `GET /announcement`, the `announcement` event |
+| Streaks 🔥 and birthdays 🎂 beside names | Nate | Done | 2026-10-30: 🔥 and the count from 3 days, ⌛ when it ends tonight, 🎂 on their birthday, as on the web |
+| The Admins' announcement, dismissible | Nate | Done | 2026-10-30: a banner at the top of the list, live, until it ends or you close it (remembered on the phone, forgotten at sign-out) |
 | Pull down to refresh; a new friend or message animates in | Nate | Done | Pull to refresh since #13; live since #19 |
 
 ## 8. Chats, native
@@ -93,8 +93,8 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Typing… and "Active now" (with the setting to share it) | Nate | Done | 2026-10-30: "Ana is typing…" above the composer (gone 4 seconds after the last word, or when the message comes; sent at most every 2 seconds), "Active now" or "Active 5m ago" under the friend's name, and "Share when I'm active" in Settings (mutual) |
-| "Seen" on your texts, "Seen by" in groups | Nate | In progress | 2026-10-30: "Seen" under your newest direct text once read, live. "Seen by" in groups isn't yet |
-| Every version of an edited text | – | Planned | `GET .../edits` |
+| "Seen" on your texts, "Seen by" in groups | Nate | Done | 2026-10-30: "Seen" under your newest direct text once read; "Seen by Ana and Ben" (or "everyone", or "…and 3 others") under a group's newest message; both live |
+| Every version of an edited text | Nate | Done | 2026-10-30: hold an edited text › Edits: as sent, then each edit with its time, each opened on the phone |
 | Tapping a reaction under a message adds yours | Nate | Done | 2026-10-30: reactions under a message are counted and tappable; yours is marked, and tapping it takes it back |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
