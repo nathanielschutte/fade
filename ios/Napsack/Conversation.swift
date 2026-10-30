@@ -227,6 +227,8 @@ struct OpenedPic: Sendable {
     private let transport: any Transport
     /// Whose keys to trust; group senders seen here for the first time are pinned.
     private let pinBook: PinBook?
+    /// The newest page, kept on the phone (still encrypted).
+    private let cache: ResponseCache?
 
     /// Oldest first.
     private(set) var bubbles: [Bubble] = []
@@ -253,11 +255,13 @@ struct OpenedPic: Sendable {
     /// Waits between tries while the connection is the problem.
     var retryDelays: [Duration] = [.seconds(1), .seconds(3)]
 
-    init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, transport: any Transport = NetworkTransport()) {
+    init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, cache: ResponseCache? = nil,
+         transport: any Transport = NetworkTransport()) {
         self.chat = chat
         self.account = account
         self.reader = reader
         self.pinBook = pinBook
+        self.cache = cache
         self.transport = transport
         if case .friend(let friend) = chat {
             activeNow = friend.activeNow == true
@@ -676,6 +680,12 @@ struct OpenedPic: Sendable {
 
     /// The newest page, replacing what's shown.
     func loadNewest() async throws {
+        // What was kept, at once, while the server answers.
+        if !loaded, let kept = cache?.read(cacheKey), let page = try? await bubbles(from: kept), !page.isEmpty {
+            bubbles = page
+            reachedStart = page.count < Self.page
+            loaded = true
+        }
         let page = try await fetch(before: nil)
         noteUnreadable(page)
         bubbles = page
@@ -898,15 +908,34 @@ struct OpenedPic: Sendable {
         problem = error.localizedDescription
     }
 
+    /// Where this chat's newest page is kept on the phone (ResponseCache).
+    private var cacheKey: String {
+        switch chat {
+        case .friend(let friend): "chat-d-\(friend.id)"
+        case .group(let group): "chat-g-\(group.id)"
+        }
+    }
+
     private func fetch(before: Int64?) async throws -> [Bubble] {
         let server = try Server(account.server, transport: transport)
+        let path = switch chat {
+        case .friend(let friend): "chats/\(friend.id)/messages"
+        case .group(let group): "groups/\(group.id)/messages"
+        }
+        let data = try await server.send(path, token: account.token, query: Server.page(before: before, limit: Self.page))
+        if before == nil { cache?.write(data, cacheKey) }  // as sent: still encrypted
+        return try await bubbles(from: data)
+    }
+
+    /// A page of messages (from the server, or kept), each opened here.
+    private func bubbles(from data: Data) async throws -> [Bubble] {
         let reader = self.reader
         switch chat {
         case .friend(let friend):
-            let messages = try await server.directMessages(friend: friend.id, before: before, limit: Self.page, token: account.token)
+            let messages = try Server.decoder.decode([DirectMessage].self, from: data)
             return await Task.detached(priority: .userInitiated) { messages.map { reader.bubble($0, with: friend) } }.value
-        case .group(let group):
-            let messages = try await server.groupMessages(group: group.id, before: before, limit: Self.page, token: account.token)
+        case .group:
+            let messages = try Server.decoder.decode([GroupMessage].self, from: data)
             if let pinBook {
                 pinBook.see(senders: messages.compactMap { m in m.senderPublicKey.map { (m.senderId, $0) } })
                 self.reader.pins = pinBook.pins

@@ -148,7 +148,7 @@ import Testing
     }
 
     @MainActor @Test func anAnnouncementShowsUntilItEnds() {
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         let now = Int64(Date().timeIntervalSince1970)
         list.announce(ChatList.Announcement(id: 1, body: "Maintenance tonight", endsAt: now + 3600))
         #expect(list.announcement?.body == "Maintenance tonight")

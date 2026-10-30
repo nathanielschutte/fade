@@ -18,7 +18,7 @@ struct LiveFriendsTests {
         #expect(anas.requests.outgoing.map(\.username) == [ben.user.username])
         try await bens.load()
         #expect(bens.requests.incoming.map(\.username) == [ana.user.username])
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         #expect(list.incoming == 1)
         try await bens.accept(try #require(bens.requests.incoming.first))

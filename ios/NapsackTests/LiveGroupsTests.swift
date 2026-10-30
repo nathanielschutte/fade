@@ -32,7 +32,7 @@ struct LiveGroupsTests {
         #expect(anas.detail?.name == "Road trip 2")
 
         try await anas.setPicture(LiveProfileTests.photo(.systemPink))
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ben)
         #expect(list.rows.first { $0.kind == .group(id) }?.avatarId != nil)
 
@@ -55,7 +55,7 @@ struct LiveGroupsTests {
         try await befriend(ana, cal)
         let id = try await GroupModel.create(name: "Seen", members: [ben.user.id, cal.user.id], account: ana)
         func chat(_ account: Account) async throws -> Conversation {
-            let list = ChatList(pinStore: MemoryPinStore())
+            let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
             try await list.load(account)
             let c = Conversation(.group(try #require(list.groups[id])), account: account, reader: try #require(list.reader), pinBook: list.pinBook)
             try await c.loadNewest()
@@ -88,7 +88,7 @@ struct LiveGroupsTests {
     @Test func everyVersionOfADirectEdit() async throws {
         let ana = try await live.newAccount("ana"), ben = try await live.newAccount("ben")
         try await befriend(ana, ben)
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(ana)
         let toBen = Conversation(.friend(try #require(list.reader?.friends[ben.user.id])), account: ana, reader: try #require(list.reader))
         try await toBen.loadNewest()

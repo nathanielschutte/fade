@@ -396,9 +396,18 @@ struct Reader: Sendable {
 
     /// Both lists at once; the rows are worked out (decrypted) off the main thread.
     private let pinStore: any PinStore
+    /// Where the server's answers are kept on the phone (ResponseCache); nil keeps nothing.
+    let cacheRoot: URL?
+    /// The list is showing what was kept, until the server answers.
+    private(set) var fromCache = false
 
-    init(pinStore: any PinStore = KeychainPinStore()) {
+    init(pinStore: any PinStore = KeychainPinStore(), cacheRoot: URL? = ResponseCache.root) {
         self.pinStore = pinStore
+        self.cacheRoot = cacheRoot
+    }
+
+    func cache(for account: Account) -> ResponseCache? {
+        cacheRoot.map { ResponseCache(account: account.user.id, root: $0) }
     }
 
     @ObservationIgnored private var reloading: Task<Void, Never>?
@@ -414,16 +423,40 @@ struct Reader: Sendable {
     }
 
     func load(_ account: Account, transport: any Transport = NetworkTransport()) async throws {
+        let cache = cache(for: account)
+        // What was kept, shown at once while the server answers (still encrypted on disk; opened here).
+        if !loaded, let cache, let fd = cache.read("friends"), let gd = cache.read("groups"),
+           let f = try? Server.decoder.decode([Friend].self, from: fd), let g = try? Server.decoder.decode([GroupSummary].self, from: gd) {
+            try? await show(f, g, account: account)
+            fromCache = true
+        }
         do {
             let server = try Server(account.server, transport: transport)
-            async let friends = server.friends(token: account.token)
-            async let groups = server.groups(token: account.token)
+            let tz = URLQueryItem(name: "tz", value: String(TimeZone.current.secondsFromGMT() / 60))
+            async let friends = server.send("friends", token: account.token, query: [tz])
+            async let groups = server.send("groups", token: account.token)
             async let requests = server.send("friends/requests", token: account.token)
             async let announced = server.send("announcement", token: account.token)
-            let (f, g) = try await (friends, groups)
+            let (fd, gd) = try await (friends, groups)
+            let f = try Server.decoder.decode([Friend].self, from: fd), g = try Server.decoder.decode([GroupSummary].self, from: gd)
+            cache?.write(fd, "friends")
+            cache?.write(gd, "groups")
             incoming = (try? Server.decoder.decode(FriendsModel.Requests.self, from: await requests).incoming.count) ?? incoming
             struct Announced: Decodable { let announcement: Announcement? }
             if let a = try? Server.decoder.decode(Announced.self, from: await announced) { announce(a.announcement) }
+            try await show(f, g, account: account)
+            fromCache = false
+            problem = nil
+        } catch {
+            Reporter.shared.report(.warn, "loading chats failed", Reporter.fields(error))
+            problem = error.localizedDescription
+            throw error
+        }
+    }
+
+    /// The list from friends and groups (the server's answer, or what was kept).
+    private func show(_ f: [Friend], _ g: [GroupSummary], account: Account) async throws {
+        do {
             let identity = try account.identity()
             let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore)
             self.pinBook = pinBook
@@ -434,12 +467,7 @@ struct Reader: Sendable {
             rows = await Task.detached(priority: .userInitiated) { reader.rows(friends: f, groups: g) }.value
             self.reader = reader
             self.groups = Dictionary(uniqueKeysWithValues: g.map { ($0.id, $0) })
-            problem = nil
             loaded = true
-        } catch {
-            Reporter.shared.report(.warn, "loading chats failed", Reporter.fields(error))
-            problem = error.localizedDescription
-            throw error
         }
     }
 }

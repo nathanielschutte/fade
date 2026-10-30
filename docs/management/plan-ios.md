@@ -42,7 +42,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Signing out leaves nothing: the account, every chat in memory, and later the cache, the notification token, and delivered notifications | Nate | Done | 2026-10-29: the Keychain account goes; the signed-in screens (chats, socket, open chats) are tied to the session and go with it; requests use an ephemeral connection with no cache or cookies, so the system never writes them down; reports stop going as the account. Pins stay. `signingOutLeavesNothingOfTheAccount`. When the cache and notifications come, they join it |
 | One outbox for the whole app: a "Not sent" text survives leaving its chat | Nate | Done | 2026-10-29: every chat opened in a session is kept (only in memory, gone with the session), so its unsent texts keep trying after you leave, all of them go again on reconnect, and reopening a chat is instant (it catches up instead of reloading) |
 | The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Decided | Nate (2026-10-30): desktop only. The iOS app doesn't show them |
-| Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | – | Planned | The web's `cache.js`. Native: a file with complete file protection (readable only while unlocked), wiped at sign-out |
+| Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | Nate | Done | 2026-10-30: `ResponseCache`, as the web's `cache.js`: the server's answers as sent (still end-to-end encrypted), opened only when shown; files with complete file protection, not backed up, per account; deleted at sign-out. Pics are never kept |
 
 ## 4. Your account
 

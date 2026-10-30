@@ -56,7 +56,7 @@ struct LiveReporterTests {
         let posted = try Server.decoder.decode(Posted.self, from: await server.send("admin/announcements", method: "POST", token: account.token,
                                                                                      json: Post(body: text, hours: 1)))
         defer { Task { _ = try? await server.send("admin/announcements/\(posted.announcement.id)/withdraw", method: "POST", token: account.token) } }
-        let list = ChatList(pinStore: MemoryPinStore())
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(account)
         #expect(list.announcement?.body == text)
     }

@@ -261,7 +261,7 @@ struct ChatListScreen: View {
             kept.update(chat, reader: reader)
             return kept
         }
-        let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook)
+        let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook, cache: list.cache(for: account))
         opened.chats[kind] = new
         return new
     }
