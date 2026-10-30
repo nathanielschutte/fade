@@ -163,7 +163,7 @@ struct GroupInfoScreen: View {
         List {
             Section {
                 VStack(spacing: 8) {
-                    Avatar(kind: .group(model.id), avatarId: avatarId, name: model.detail?.name ?? "", size: 88)
+                    Avatar(kind: .group(model.id), avatarId: avatarId, name: model.detail?.name ?? "", size: 88, enlarges: true)
                     PhotosPicker("Change group picture", selection: $picked, matching: .images).font(.callout)
                 }
                 .frame(maxWidth: .infinity)

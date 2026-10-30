@@ -1,3 +1,4 @@
+import AVKit
 import NapsackCrypto
 import PhotosUI
 import SwiftUI
@@ -33,9 +34,16 @@ struct ChatScreen: View {
     /// A photo from the library, picked and waiting for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
     @State private var photoToSend: PhotoToSend?
+    @State private var usingCamera = false
+    /// The server's limits for pics and videos (its /api/config).
+    @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
 
     var body: some View {
+        presentations(main)
+    }
+
+    private var main: some View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(spacing: 4) {
@@ -106,34 +114,9 @@ struct ChatScreen: View {
         .animation(.easeOut(duration: 0.15), value: held?.id)
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .sensoryFeedback(.impact(weight: .light), trigger: tapped)
-        .onChange(of: pickedPhoto) { _, item in
-            guard let item else { return }
-            Task {
-                defer { pickedPhoto = nil }
-                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
-                    failure = "Couldn't open that photo."
-                    return
-                }
-                photoToSend = PhotoToSend(image: image)
-            }
-        }
-        .sheet(item: $versionsOf) { bubble in
-            EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
-        }
-        .sheet(item: $photoToSend) { photo in
-            PhotoSendSheet(photo: photo, to: conversation.title) { caption in
-                guard let jpeg = Conversation.photoJPEG(photo.image) else { throw SendError.tooLarge }
-                try await conversation.sendPhoto(jpeg, caption: caption)
-                tapped += 1
-            }
-        }
-        .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
-            PicViewer(pic: item.pic, conversation: conversation)
-        }
-        .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(failure ?? "")
+        // A new message from them in the open chat: a light tap (only newer ones, not a page loading).
+        .sensoryFeedback(.impact(weight: .light), trigger: conversation.bubbles.last?.id) { before, after in
+            before != nil && after != nil && conversation.bubbles.last?.mine == false
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -245,6 +228,11 @@ struct ChatScreen: View {
                 }
                 HStack(alignment: .bottom, spacing: 8) {
                     if editing == nil {
+                        Button { usingCamera = true } label: {
+                            Image(systemName: "camera").font(.system(size: 22)).frame(width: 32, height: 36)
+                        }
+                        .disabled(!conversation.canSend)
+                        .accessibilityLabel("Camera")
                         PhotosPicker(selection: $pickedPhoto, matching: .images) {
                             Image(systemName: "photo.on.rectangle").font(.system(size: 22)).frame(width: 32, height: 36)
                         }
@@ -371,6 +359,53 @@ struct ChatScreen: View {
         Task {
             await conversation.retry(id)
             if conversation.outbox.isEmpty, let last = conversation.bubbles.last?.id { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
+        }
+    }
+
+    /// The sheets and covers a chat shows (picked photos, the camera, the viewer, edits, problems).
+    private func presentations(_ content: some View) -> some View {
+        content
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                defer { pickedPhoto = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    failure = "Couldn't open that photo."
+                    return
+                }
+                photoToSend = PhotoToSend(media: .photo(image))
+            }
+        }
+        .sheet(item: $versionsOf) { bubble in
+            EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
+        }
+        .fullScreenCover(isPresented: $usingCamera) {
+            CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10) { captured in
+                usingCamera = false
+                photoToSend = PhotoToSend(media: captured)
+            }
+        }
+        .task { limits = try? await Server(AppInfo.server).config() }
+        .sheet(item: $photoToSend) { photo in
+            PhotoSendSheet(photo: photo, to: conversation.title) { caption in
+                switch photo.media {
+                case .photo(let image):
+                    guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                    try await conversation.sendPhoto(jpeg, caption: caption, maxBytes: limits?.snapMaxBytes)
+                case .video(let url):
+                    defer { try? FileManager.default.removeItem(at: url) }
+                    try await conversation.sendVideo(try Data(contentsOf: url), caption: caption, maxBytes: limits?.videoMaxBytes)
+                }
+                tapped += 1
+            }
+        }
+        .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
+            PicViewer(pic: item.pic, conversation: conversation)
+        }
+        .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(failure ?? "")
         }
     }
 
@@ -642,10 +677,10 @@ struct IdentifiedPic: Identifiable {
     }
 }
 
-/// A photo picked from the library, before it's sent.
+/// A photo (from the library or the camera) or a video, before it's sent.
 struct PhotoToSend: Identifiable {
     let id = UUID()
-    let image: UIImage
+    let media: Captured
 }
 
 /// The photo, a caption (sealed in with it, so only they see it), and Send.
@@ -661,9 +696,14 @@ struct PhotoSendSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                Image(uiImage: photo.image).resizable().scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .frame(maxHeight: .infinity)
+                Group {
+                    switch photo.media {
+                    case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
+                    case .video(let url): LoopingVideo(url: url)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(maxHeight: .infinity)
                 TextField("Add a caption", text: $caption, axis: .vertical)
                     .lineLimit(1...3)
                     .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
@@ -723,5 +763,24 @@ struct EditsSheet: View {
                 do { versions = try await conversation.versions(of: bubble) } catch { problem = error.localizedDescription }
             }
         }
+    }
+}
+
+/// A recorded video, playing on a loop (muted) while its caption's written.
+struct LoopingVideo: View {
+    let url: URL
+    @State private var player: AVQueuePlayer?
+    @State private var looper: AVPlayerLooper?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .onAppear {
+                let queue = AVQueuePlayer()
+                queue.isMuted = true
+                looper = AVPlayerLooper(player: queue, templateItem: AVPlayerItem(url: url))
+                player = queue
+                queue.play()
+            }
+            .onDisappear { player?.pause() }
     }
 }

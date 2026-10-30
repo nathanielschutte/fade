@@ -73,7 +73,7 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | In progress | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only. Not yet: tapping to see one big |
+| Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | Done | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only; tapping one on a profile or group info shows it big |
 | Your profile: display name, picture, birthday | Nate | Done | 2026-10-30: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
 | A friend's profile: nickname, streak, friends in common, past usernames, safety code | Nate | Done | 2026-10-30: tap the chat's title (with their picture): name, @username and past usernames, a nickname only you see, friends since, birthday, streak, texts and pics together, friends in common, safety code, and Unfriend (confirmed; the chat stays) |
 
@@ -98,7 +98,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Tapping a reaction under a message adds yours | Nate | Done | 2026-10-30: reactions under a message are counted and tappable; yours is marked, and tapping it takes it back |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
-| Haptics where they help: sending, reacting, a new message in the open chat | Nate | In progress | 2026-10-30: holding a message, swiping to reply, sending, and reacting. Not yet: a new message in the open chat |
+| Haptics where they help: sending, reacting, a new message in the open chat | Nate | Done | 2026-10-30: holding a message, swiping to reply, sending, reacting, and a new message from them in the open chat |
 | Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | – | Planned | Before TestFlight |
 
 ## 9. Groups
@@ -112,9 +112,9 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality). Native: a full-screen camera, pinch to zoom |
+| The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | Nate | In progress | 2026-10-30: the camera button beside the message box: full screen, tap for a photo, hold for a video with sound (stops at the server's limit, made MP4), pinch to zoom (1× again for each capture), flip, the front camera's photo mirrored; then the caption sheet. Built and tested up to the capture on the Simulator (which has no camera); **needs trying on a phone**. Not yet: flip while recording, mute |
 | Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | In progress | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and closes at its end. It counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted on close). Formats 1, 2, 4, 6 and groups' 3, 5, 7. Not yet: opening several back to back |
-| Sending a pic or video to several friends and groups at once, with a caption placed anywhere | Nate | In progress | 2026-10-30: a photo to the open chat (format 6 direct, 7 groups, sealed once, resealed if the group changed). Not yet: to several at once, videos, placing the caption |
+| Sending a pic or video to several friends and groups at once, with a caption placed anywhere | Nate | In progress | 2026-10-30: a photo or video to the open chat (formats 6 and 4 direct, 7 and 5 in groups; sealed once, resealed if the group changed; the server's size limits checked first). Not yet: to several at once, placing the caption |
 | Drawing and stickers on a pic | – | Planned | Native: PencilKit |
 | Picking a photo from the library | Nate | Done | 2026-10-30: the photo button beside the message box (`PhotosPicker`, no access to the whole library), a caption (up to 200, sealed in), Send. Made at most 1280 on its longest side, JPEG, as the web does |
 | Double-tap a chat in the list to open the camera for it | – | Planned | As on the web |
@@ -135,7 +135,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Release builds talk to `https://api.napsack.io` | – | Waiting | Decided (Nate, 2026-10-29): a name only for the apps, so the site can move freely ([api-host.md](../design/api-host.md)). Waits on the DNS and Caddy change, which replaces the instance (Nate's to apply; plan.md [I10](plan.md#i10-apinapsackio-a-stable-address-for-the-apps)) |
 | The oldest iOS supported (17 today, in `Config/Base.xcconfig`) | Nate | Needs decision | |
 | Export compliance: the encryption declaration at the first upload | Nate | Needs decision | A legal declaration; Nate's to make |
-| Development-only pieces out of release builds: the development screens, and the vectors copied into the app (today the whole `tests/vectors/` folder, its Python scripts included) | – | Planned | Before the first TestFlight build |
+| Development-only pieces out of release builds: the development screens, and the vectors copied into the app (today the whole `tests/vectors/` folder, its Python scripts included) | Nate | Done | 2026-10-30: Release builds leave out `tests/vectors` (`EXCLUDED_SOURCE_FILE_NAMES`, App.xcconfig) and the checks screen; Developer stays, Admins only, read-only. `make ios` and the iOS CI build Release and fail if the vectors are in it |
 | TestFlight: internal first, then friends by public link (needs a reviewer account on production) | – | Planned | [mobile.md](../design/mobile.md), TestFlight. Release docs get written with it |
 | The App Store | – | Planned | |
 | Retire `mobile/` (the Expo prototype) | Nate | Done | 2026-10-30: removed; every vector passes in `ios/`. It's in the git history if ever wanted |

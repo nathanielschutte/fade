@@ -42,6 +42,22 @@ import UIKit
     }
 }
 
+/// A picture shown big, from tapping it (a profile's or a group's).
+struct BigPicture: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: UIImage
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Image(uiImage: image).resizable().scaledToFit()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { dismiss() }
+        .accessibilityAddTraits(.isButton).accessibilityLabel("Close")
+    }
+}
+
 /// A friend's or group's picture, or their initial until it's in.
 struct Avatar: View {
     @Environment(Pictures.self) private var pictures: Pictures?
@@ -49,6 +65,9 @@ struct Avatar: View {
     let avatarId: Int64?
     let name: String
     var size: CGFloat = 44
+    /// Tapping it shows it big (profiles and group info, not the list).
+    var enlarges = false
+    @State private var big: UIImage?
 
     var body: some View {
         let path = avatarId.map { Pictures.path(kind, avatar: $0) }
@@ -58,12 +77,16 @@ struct Avatar: View {
                 Image(uiImage: image).resizable().scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(group ? AnyShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)) : AnyShape(Circle()))
-                    .accessibilityHidden(true)
+                    .accessibilityHidden(!enlarges)
+                    .onTapGesture { if enlarges { big = image } }
+                    .accessibilityAddTraits(enlarges ? .isButton : [])
+                    .accessibilityLabel(enlarges ? "Picture of \(name). Tap to see it big" : "")
             } else {
                 Initial(name: name, group: group, size: size)
             }
         }
         .task(id: path) { if let path { await pictures?.load(path) } }
+        .fullScreenCover(item: Binding(get: { big.map(IdentifiedImage.init) }, set: { big = $0?.image })) { BigPicture(image: $0.image) }
     }
 }
 
@@ -223,7 +246,7 @@ struct FriendProfileScreen: View {
         List {
             Section {
                 VStack(spacing: 8) {
-                    Avatar(kind: .friend(friend.id), avatarId: model.profile?.avatarId ?? friend.avatarId, name: friend.name, size: 96)
+                    Avatar(kind: .friend(friend.id), avatarId: model.profile?.avatarId ?? friend.avatarId, name: friend.name, size: 96, enlarges: true)
                     Text(model.profile?.displayName ?? friend.username).font(.title2.bold())
                     Text("@\(friend.username)").foregroundStyle(.secondary)
                     if let past = model.profile?.pastUsernames, !past.isEmpty {
@@ -312,4 +335,9 @@ struct FriendProfileScreen: View {
             }
         }
     }
+}
+
+struct IdentifiedImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }

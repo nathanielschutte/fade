@@ -591,13 +591,27 @@ struct OpenedPic: Sendable {
     /// Sealed once and sent with the same id on every try, so a retry is never
     /// a second pic; a group that changed meanwhile (409) is sealed again for who's there now.
     func sendPhoto(_ jpeg: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil) async throws {
+        try await sendMedia(jpeg, video: nil, caption: caption, y: y, maxBytes: maxBytes)
+    }
+
+    /// A video from the camera (MP4): format 4 to a friend, 5 to a group, sealed the same way.
+    func sendVideo(_ mp4: Data, caption: String, maxBytes: Int? = nil) async throws {
+        try await sendMedia(mp4, video: "video/mp4", caption: caption, y: nil, maxBytes: maxBytes)
+    }
+
+    /// A photo (`video` nil) or a video of that type.
+    private func sendMedia(_ media: Data, video: String?, caption: String, y: Double?, maxBytes: Int?) async throws {
+        let jpeg = media
         let server = try Server(account.server, transport: transport)
         let caption = String(caption.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         switch chat {
         case .friend(let friend):
-            let sealed = try E2E.encryptImage(sendingPairKey(friend), jpeg, caption: caption, sender: account.user.id, recipient: friend.id, y: y)
+            let key = try sendingPairKey(friend)
+            let sealed = try video.map { try E2E.encryptVideo(key, jpeg, type: $0, caption: caption, sender: account.user.id, recipient: friend.id, y: y) }
+                ?? E2E.encryptImage(key, jpeg, caption: caption, sender: account.user.id, recipient: friend.id, y: y)
             if let maxBytes, sealed.count > maxBytes { throw SendError.tooLarge }
-            let query = [URLQueryItem(name: "format", value: String(E2E.imageFormat)), URLQueryItem(name: "client_id", value: Self.newClientId())]
+            let format = video == nil ? E2E.imageFormat : E2E.videoFormat
+            let query = [URLQueryItem(name: "format", value: String(format)), URLQueryItem(name: "client_id", value: Self.newClientId())]
             let data = try await retrying {
                 try await server.upload("chats/\(friend.id)/snaps", data: sealed, contentType: "application/octet-stream",
                                         token: self.account.token, query: query)
@@ -605,9 +619,13 @@ struct OpenedPic: Sendable {
             upsert(reader.bubble(try Server.decoder.decode(DirectMessage.self, from: data), with: friend))
         case .group(let group):
             func seal() async throws -> E2E.GroupMessage {
-                try E2E.encryptGroupImage(jpeg, caption: caption, y: y, groupId: group.id, senderId: account.user.id,
-                                          wrapKeys: await wrapKeys(for: group, server: server))
+                let keys = try await wrapKeys(for: group, server: server)
+                if let video {
+                    return try E2E.encryptGroupVideo(jpeg, type: video, caption: caption, y: y, groupId: group.id, senderId: account.user.id, wrapKeys: keys)
+                }
+                return try E2E.encryptGroupImage(jpeg, caption: caption, y: y, groupId: group.id, senderId: account.user.id, wrapKeys: keys)
             }
+            let format = video == nil ? E2E.groupImageFormat : E2E.groupVideoFormat
             func post(_ sealed: E2E.GroupMessage) async throws -> Data {
                 let keys = try JSONSerialization.data(withJSONObject: [
                     "client_id": sealed.clientId, "recipients": sealed.recipients,
@@ -615,7 +633,7 @@ struct OpenedPic: Sendable {
                 ])
                 return try await retrying {
                     try await server.upload("groups/\(group.id)/pics", data: sealed.content, contentType: "application/octet-stream",
-                                            token: self.account.token, query: [URLQueryItem(name: "format", value: String(E2E.groupImageFormat))],
+                                            token: self.account.token, query: [URLQueryItem(name: "format", value: String(format))],
                                             headers: ["X-Napsack-Keys": String(decoding: keys, as: UTF8.self)])
                 }
             }
@@ -630,12 +648,12 @@ struct OpenedPic: Sendable {
             }
             upsert(reader.bubble(try Server.decoder.decode(GroupMessage.self, from: data)))
         }
-        Reporter.shared.report(.info, "pic sent", ["group": groupFlag, "bytes": String(jpeg.count)])
+        Reporter.shared.report(.info, video == nil ? "pic sent" : "video sent", ["group": groupFlag, "bytes": String(jpeg.count)])
     }
 
     /// A photo as napsack sends one: at most 1280 on its longest side, JPEG,
     /// smaller and smaller until it fits (app.js, `compressPhoto`).
-    nonisolated static func photoJPEG(_ image: UIImage, maxBytes: Int = 900_000) -> Data? {
+    nonisolated static func photoJPEG(_ image: UIImage, maxBytes: Int = 500_000) -> Data? {  // under the server's 512 KB, with room for sealing
         var edge: CGFloat = 1280
         while edge >= 320 {
             let scale = min(1, edge / max(image.size.width, image.size.height))
