@@ -30,7 +30,7 @@ struct ChatScreen: View {
                         Text(bubble.time.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
                             .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
                     }
-                    BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote))
+                    BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
                         .id(bubble.id)
                 }
             }
@@ -72,6 +72,15 @@ struct ChatScreen: View {
         }
     }
 
+    /// The time shows under the last of a run: the next message is someone
+    /// else's, or more than five minutes later.
+    private func endsARun(_ index: Int) -> Bool {
+        let bubbles = conversation.bubbles
+        guard index + 1 < bubbles.count else { return true }
+        let this = bubbles[index], next = bubbles[index + 1]
+        return next.mine != this.mine || next.sender != this.sender || next.time.timeIntervalSince(this.time) > 5 * 60
+    }
+
     /// What a reply quotes: the message it answers, if it's loaded.
     private func quote(_ id: Int64) -> String {
         guard let original = conversation.bubble(id) else { return "A message from earlier" }
@@ -83,6 +92,7 @@ struct ChatScreen: View {
 struct BubbleView: View {
     let bubble: Bubble
     let quote: String?
+    var showTime = true
 
     var body: some View {
         switch bubble.content {
@@ -107,11 +117,13 @@ struct BubbleView: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(bubble.mine ? Color.accentColor.opacity(0.3) : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    HStack(spacing: 4) {
-                        if !bubble.reactions.isEmpty { Text(bubble.reactions.joined()) }
-                        Text(bubble.time.formatted(date: .omitted, time: .shortened))
+                    if showTime || !bubble.reactions.isEmpty {
+                        HStack(spacing: 4) {
+                            if !bubble.reactions.isEmpty { Text(bubble.reactions.joined()) }
+                            if showTime { Text(bubble.time.formatted(date: .omitted, time: .shortened)) }
+                        }
+                        .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
                     }
-                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
                 }
                 if !bubble.mine { Spacer(minLength: 48) }
             }
