@@ -126,8 +126,7 @@ async function api(path, { method = "GET", json, body, headers = {}, timeout, re
 
       // 401 Unauthorized, we have a token but it's not working
       if (res.status === 401 && state.token && !path.startsWith("/auth/")) {
-        signOutLocally();
-        throw new ApiError("Your session ended. Sign in again.", 401);
+        await signOutLocally("Your session ended. Sign in again.");
       }
 
       if (!res.ok) {
@@ -899,52 +898,48 @@ $("#recover-form").addEventListener("submit", async (e) => {
   }
 });
 
-function signOutLocally() {
-  state.token = null;
-  state.me = null;
-  clearNotifications(); // they name friends; not for whoever uses the device next
-  cache.clear(); // what was kept on this device goes too
+// Signing out, or a session the server ended: everything napsack kept in this
+// browser goes, then the page starts over, so nothing of this account is left
+// for whoever signs in next. Not on the device: the token, the private key,
+// the kept chats (cache.js), settings, this browser's push subscription. Not
+// in memory: the reload leaves no state behind, whatever later code adds to it.
+// Only the pinned keys stay (keystore.js): friends' public keys, which can't
+// open anything. `notice` ("Your session ended") shows on the sign-in screen.
+const SIGNED_OUT_NOTICE_KEY = "napsack.signedOutNotice";
+let signingOut = null;
+
+function signOutLocally(notice = null) {
+  signingOut ??= forgetEverything(notice); // several failing requests at once end it once
+  return signingOut;
+}
+
+async function forgetEverything(notice) {
+  $("#app").hidden = true; // nothing of theirs stays on screen while it goes
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
-  state.loaded = { chats: false, groups: false, error: null };
-  state.loadFailed.clear();
-  state.identity = null;
-  state.pins = {};
-  state.pastPins = {};
-  state.readKeys.clear();
-  state.readUpTo.clear();
-  state.pairKeys.clear();
-  state.plaintext.clear();
-  state.editText.clear();
-  state.editing = null;
-  groupEdits.clear();
-  state.activeId = null;
-  state.messages.clear();
-  state.history.clear();
-  state.groups = [];
-  state.activeGroupId = null;
-  state.groupMessages.clear();
-  state.groupReads.clear();
-  state.groupHistory.clear();
-
-  localStorage.removeItem(TOKEN_KEY);
-
-  // IndexedDB napsack bucket - delete "identity"
-  keystore.deleteLocal(IDENTITY_KEY).catch(() => {});
-  
   const ws = state.ws;
   state.ws = null;
   ws?.close();
   clearInterval(conn.heartbeat);
-  clearTimeout(conn.pongTimer);
-  setConnBanner(null);
-  outbox.length = 0; // unsent texts were this account's
-  $("#friends-dialog").close();
-  showAuth();
+  clearNotifications(); // they name friends
+  await Promise.allSettled([
+    keystore.forgetAllButPins(),
+    cache.clear(),
+    navigator.serviceWorker?.getRegistration()
+      .then((reg) => reg?.pushManager.getSubscription())
+      .then((sub) => sub?.unsubscribe()),
+  ]);
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+    if (notice) sessionStorage.setItem(SIGNED_OUT_NOTICE_KEY, notice);
+  } catch { /* storage refused: nothing was kept in it either */ }
+  location.reload();
+  await new Promise(() => {}); // the page is going; nothing more runs here
 }
 
 $("#sign-out").addEventListener("click", async () => {
   try { await api("/auth/logout", { method: "POST" }); } catch {}
-  signOutLocally();
+  await signOutLocally();
 });
 
 // ---------- app shell ----------
@@ -2760,7 +2755,7 @@ async function handleEvent(ev) {
       else if (state.activeGroupId) openGroup(state.activeGroupId);
       break;
     case "auth_failed":
-      signOutLocally();
+      signOutLocally("Your session ended. Sign in again.");
       break;
     case "pong":
       clearTimeout(conn.pongTimer);
@@ -5578,10 +5573,15 @@ async function loadIdentityFor(me) {
     } catch {
       // fall through to sign in
     }
-    signOutLocally();
-    showInviteBanner();
+    await signOutLocally();
     return;
   }
   showAuth();
   showInviteBanner();
+  // Why the last session ended, carried across signing out's reload.
+  try {
+    const notice = sessionStorage.getItem(SIGNED_OUT_NOTICE_KEY);
+    sessionStorage.removeItem(SIGNED_OUT_NOTICE_KEY);
+    if (notice) $("#auth-error").textContent = notice;
+  } catch { /* nothing to say, then */ }
 })();
