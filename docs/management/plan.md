@@ -480,6 +480,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-30): remove invite links entirely: the one-time links (10 people, 7 days), resetting your link, their whole UI, and their server endpoints, on the web and the iOS app. The single "Add a friend" QR and link (X25) does both: someone with an account adds you, someone new signs up with it and you're friends. It never expires, and there's only ever one per person.
 - Rule 1: nothing is deleted. The `invites` rows stay; one-time links simply stop being honored, and a link someone reset stays off.
 - The API shrinks here, against the usual rule (releasing.md): the only clients are the web app, which ships inside the server, and the iOS app, not yet released.
+- **Built:** the routes for one-time links (`POST`/`GET /invites`, revoke) and `POST /friend-link/reset` are gone, and only add-a-friend links are honored (`invites::find_valid`); the web app's "More" section and the iOS app's Reset and invite links are gone. Unknown API addresses now answer a `404` that's never cached (they used to skip `no-store`). `test_invites.py`, smoke `check_invites`, `LiveFriendsTests`.
 - **Concern for Nate:** with no reset, a link that gets out to the wrong people can't be stopped, and opening it makes them friends at once. A backstop worth having: an Admin can reset someone's link from System → Users.
 
 ### Security

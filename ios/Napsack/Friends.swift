@@ -2,8 +2,9 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 
-/// Friend requests, your add-me link, and invite links (the web app's Friends
-/// sheet; friends.rs and invites.rs).
+/// Friend requests and your add-a-friend link: one link that adds you and
+/// signs someone new up as your friend, never changing (the web app's Friends
+/// sheet; friends.rs and invites.rs; X39).
 @MainActor @Observable final class FriendsModel {
     struct Request: Decodable, Identifiable, Equatable, Sendable {
         let id: Int64
@@ -22,25 +23,8 @@ import UIKit
         let uses: Int?
     }
 
-    struct Invite: Decodable, Identifiable, Equatable, Sendable {
-        struct Joined: Decodable, Equatable, Sendable {
-            let id: Int64
-            let username: String
-        }
-        let id: Int64
-        let createdAt: Int64
-        let expiresAt: Int64
-        let maxUses: Int
-        let revokedAt: Int64?
-        let live: Bool
-        let joined: [Joined]
-    }
-
     private(set) var requests = Requests(incoming: [], outgoing: [])
     private(set) var link: Link?
-    private(set) var invites: [Invite] = []
-    /// A one-time invite link just made: its address is shown only now.
-    private(set) var madeInvite: String?
 
     let account: Account
     private let transport: any Transport
@@ -66,10 +50,8 @@ import UIKit
         let server = try server
         async let requests = server.send("friends/requests", token: account.token)
         async let link = server.send("friend-link", token: account.token)
-        async let invites = server.send("invites", token: account.token)
         self.requests = try Server.decoder.decode(Requests.self, from: await requests)
         self.link = try Server.decoder.decode(Link.self, from: await link)
-        self.invites = try Server.decoder.decode([Invite].self, from: await invites)
     }
 
     func loadRequests() async throws {
@@ -105,24 +87,6 @@ import UIKit
         _ = try await server.send("friends/requests/\(request.id)", method: "DELETE", token: account.token)
         try await loadRequests()
     }
-
-    /// The old link stops working at once; a new one starts.
-    func resetLink() async throws {
-        link = try Server.decoder.decode(Link.self, from: await server.send("friend-link/reset", method: "POST", token: account.token))
-    }
-
-    /// A one-time invite link: 10 people, 7 days.
-    func makeInvite() async throws {
-        struct Made: Decodable { let path: String }
-        let made = try Server.decoder.decode(Made.self, from: await server.send("invites", method: "POST", token: account.token))
-        madeInvite = address(made.path)
-        invites = try Server.decoder.decode([Invite].self, from: await server.send("invites", token: account.token))
-    }
-
-    func revoke(_ invite: Invite) async throws {
-        _ = try await server.send("invites/\(invite.id)/revoke", method: "POST", token: account.token)
-        invites = try Server.decoder.decode([Invite].self, from: await server.send("invites", token: account.token))
-    }
 }
 
 /// A QR code for a link, drawn on the phone (CoreImage), crisp at any size.
@@ -147,15 +111,12 @@ struct QRCode: View {
 }
 
 /// Friends: who wants to be friends, adding someone (your code and link, or
-/// their username), who you're waiting on, and more ways to invite.
+/// their username), and who you're waiting on.
 struct FriendsScreen: View {
     @Environment(Session.self) private var session
     @State var model: FriendsModel
     @State private var username = ""
     @State private var note: String?
-    @State private var linkNote: String?
-    @State private var inviteNote: String?
-    @State private var confirmingReset = false
     @State private var copied = false
 
     var body: some View {
@@ -222,56 +183,10 @@ struct FriendsScreen: View {
                     }
                 }
             }
-            Section {
-                Button("Reset my link", role: .destructive) { confirmingReset = true }
-                Button("Make an invite link") {
-                    act { try await model.makeInvite() } failed: { inviteNote = $0 }
-                }
-                if let made = model.madeInvite {
-                    VStack(spacing: 8) {
-                        QRCode(text: made).frame(width: 160, height: 160).padding(6)
-                            .background(.white, in: RoundedRectangle(cornerRadius: 10))
-                        Text(made).font(.footnote).textSelection(.enabled)
-                        ShareLink(item: URL(string: made)!) { Label("Share", systemImage: "square.and.arrow.up") }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                ForEach(model.invites) { invite in
-                    HStack {
-                        Text(describe(invite)).font(.footnote)
-                        Spacer()
-                        if invite.live {
-                            Button("Turn off") {
-                                act { try await model.revoke(invite); inviteNote = "That link no longer works." } failed: { inviteNote = $0 }
-                            }
-                            .buttonStyle(.bordered).font(.footnote)
-                        }
-                    }
-                }
-            } header: {
-                Text("More")
-            } footer: {
-                Text([linkNote, inviteNote].compactMap { $0 }.first
-                     ?? "Your code and link keep working until you reset them. If one got out to someone it shouldn't have, reset it: the old one stops working at once. Or make a one-time invite link: it works for 10 people for 7 days.")
-            }
         }
         .navigationTitle("Friends")
         .refreshable { await load() }
         .task { await load() }
-        .confirmationDialog("Reset your link?", isPresented: $confirmingReset, titleVisibility: .visible) {
-            Button("Reset my link", role: .destructive) {
-                act { try await model.resetLink(); copied = false; linkNote = "Your old code and link no longer work." } failed: { linkNote = $0 }
-            }
-        } message: {
-            Text("Your current code and link stop working at once. Anyone you've shared them with will need the new one.")
-        }
-    }
-
-    private func describe(_ invite: FriendsModel.Invite) -> String {
-        let date = { (t: Int64) in Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .abbreviated, time: .omitted) }
-        let state = invite.live ? "until \(date(invite.expiresAt))" : invite.revokedAt != nil ? "turned off" : "finished"
-        let who = invite.joined.isEmpty ? "" : " · " + invite.joined.map(\.username).joined(separator: ", ")
-        return "Link from \(date(invite.createdAt)) · \(invite.joined.count) of \(invite.maxUses) used, \(state)\(who)"
     }
 
     private func add() {

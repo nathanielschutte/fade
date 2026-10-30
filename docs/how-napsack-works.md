@@ -17,7 +17,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [Notifications](#notifications)
 - [Typing and "active now"](#typing-and-active-now)
 - [Team Napsack](#team-napsack)
-- [Invite links](#invite-links)
+- [Your add-a-friend link](#your-add-a-friend-link)
 - [The friend map](#the-friend-map)
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
 - [Limits](#limits)
@@ -238,9 +238,9 @@ While you type, your friend sees "Ana is typing…"; it travels over the live co
 
 napsack's own account, **Team Napsack**, can write to anyone for occasions: a birthday wish, a holiday, a heads-up that a friend's birthday is today. Its messages are encrypted to you exactly as a friend's are, and your app decrypts them the same way. The difference is who writes them: the server holds Team Napsack's key and writes these itself, so it knows what they say. It still can't read anything else. Its chat is read-only, and it never signs in or becomes anyone's friend. [team-napsack.md](implementation/team-napsack.md)
 
-## Invite links
+## Your add-a-friend link
 
-You can invite someone with a link or a QR code (`/i/<token>`). Someone new signs up with it without the invite code and becomes your friend at once; someone who already has an account adds you in one tap. A link works 10 times and for 7 days, and you can turn it off. The server stores only a hash of the token, so the database alone can't be used to make a working link.
+Everyone has one link and QR code (`/i/<token>`). Someone new signs up with it without the invite code and becomes your friend at once; someone who already has an account adds you in one tap. It's the same every time, has no limit on uses, and doesn't expire. The token is worked out from a server key, so it can be shown again, but the server stores only a hash of it, so the database alone can't be used to make a working link.
 
 ## The friend map
 

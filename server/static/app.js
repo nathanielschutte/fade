@@ -3961,18 +3961,15 @@ async function requestAction(userId, action) {
 
 function openFriends() {
   $("#add-friend-note").textContent = "";
-  $("#invite-made").hidden = true;
-  $("#invite-note").textContent = "";
-  $("#my-link-note").textContent = "";
   $("#friends-dialog").showModal();
   refreshRequests();
-  renderInvites();
   loadMyLink();
 }
 
 // ---------- my personal link and code (X25) ----------
 // One "add me" link per person (invites.rs), shown as a QR to people in
-// person: it keeps working until reset.
+// person: someone with an account adds you with it, someone new signs up
+// with it, and it never changes (X39).
 
 function showMyLink(path) {
   const url = `${location.origin}${path}`;
@@ -4003,25 +4000,6 @@ $("#my-link-copy").addEventListener("click", async () => {
 $("#my-link-share").addEventListener("click", () => {
   navigator.share({ title: "napsack", text: "Add me on napsack", url: $("#my-link").textContent }).catch(() => {});
 });
-// Two taps: the old link and code stop working for everyone.
-$("#my-link-reset").addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  if (!btn.dataset.confirm) {
-    btn.dataset.confirm = "1";
-    btn.textContent = "Tap again: your old code stops working";
-    return;
-  }
-  delete btn.dataset.confirm;
-  btn.textContent = "Reset my link";
-  try {
-    showMyLink((await getJSON("/friend-link/reset", { method: "POST" })).path);
-    $("#my-link-note").textContent = "Done: you have a new link and code. The old ones don't work any more.";
-    report("info", "personal link reset");
-  } catch (err) {
-    $("#my-link-note").textContent = err.message;
-  }
-});
-
 // ---------- invite links ----------
 // A link (/i/<token>) signs a new person up and makes them friends with
 // whoever made it, or adds someone who already has an account (invites.rs).
@@ -4087,64 +4065,6 @@ $("#invite-accept").addEventListener("click", async () => {
   }
 });
 
-async function renderInvites() {
-  let invites = [];
-  try {
-    invites = await getJSON("/invites");
-  } catch (err) {
-    report("warn", "loading invites failed", errorFields(err));
-    return;
-  }
-  $("#invite-list").replaceChildren(...invites.slice(0, 5).map((inv) => {
-    const used = `${inv.joined.length} of ${inv.max_uses} used`;
-    const state_ = inv.live ? `until ${longDate(inv.expires_at)}` : inv.revoked_at ? "turned off" : "finished";
-    const who = inv.joined.length ? ` · ${inv.joined.map((j) => personName(j.id, j.username)).join(", ")}` : "";
-    return el("li", { class: "person" },
-      el("span", { class: "person-name", text: `Link from ${longDate(inv.created_at)} · ${used}, ${state_}${who}` }),
-      inv.live ? el("button", { type: "button", class: "button", onclick: () => revokeInvite(inv.id) }, "Turn off") : null);
-  }));
-}
-
-async function revokeInvite(id) {
-  try {
-    await api(`/invites/${id}/revoke`, { method: "POST" });
-    $("#invite-note").textContent = "That link no longer works.";
-  } catch (err) {
-    $("#invite-note").textContent = err.message;
-  }
-  $("#invite-made").hidden = true;
-  renderInvites();
-}
-
-$("#invite-make").addEventListener("click", async () => {
-  try {
-    const res = await getJSON("/invites", { method: "POST" });
-    const url = `${location.origin}${res.path}`;
-    $("#invite-link").textContent = url;
-    $("#invite-qr").replaceChildren(qrSvg(url, "QR code for your invite link"));
-    $("#invite-share").hidden = !navigator.share;
-    $("#invite-copy").textContent = "Copy link";
-    $("#invite-made").hidden = false;
-    $("#invite-note").textContent = "";
-    report("info", "invite link made");
-  } catch (err) {
-    $("#invite-note").textContent = err.message;
-  }
-  renderInvites();
-});
-
-$("#invite-copy").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText($("#invite-link").textContent);
-    $("#invite-copy").textContent = "Copied";
-  } catch {
-    $("#invite-copy").textContent = "Select it and copy";
-  }
-});
-
-$("#invite-share").addEventListener("click", () => {
-  navigator.share({ title: "napsack", text: "Join me on napsack", url: $("#invite-link").textContent }).catch(() => {});
-});
 $("#friends-button").addEventListener("click", openFriends);
 $("#empty-add").addEventListener("click", openFriends);
 

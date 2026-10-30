@@ -20,7 +20,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 
 ### Accounts and sign-in
 - Sign-in attempts are limited per address and per username (a wrong password 10 times locks that username for 15 minutes, for everyone, without revealing whether it exists).
-- Sign-up needs the invite code or a friend's invite link, and stops entirely once there are **100 accounts**. Invite links work 10 times within 7 days, can be turned off, and are stored only as hashes.
+- Sign-up needs the invite code or a friend's add-a-friend link, and stops entirely once there are **100 accounts**. Each person has one link, which doesn't change or expire (X39); it's stored only as a hash, and lookups are rate-limited like sign-in.
 - Each person can be signed in on **4 devices**; a fifth sign-in quietly signs out the oldest.
 - Changing your password, using your recovery key, or an admin reset signs out every other device, and their live connections close at once.
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
@@ -62,7 +62,6 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Wrong passwords | 10 per username per 15 minutes | |
 | Image uploads | 60 per person per 10 minutes, decoded one at a time | |
 | Friend requests | 50 per person per day | |
-| Invite links | 20 new per person per day; 10 live at once; each 10 uses, 7 days | |
 | New groups | 20 per person per day; 32 people per group | |
 | Favorites | 10 per person (direct chats and groups together) | Turning one on or off adds a row (Rule 1); writes are capped by the write budgets |
 | Edits | 20 per text, within 15 minutes of sending | Every version is kept (Rule 1) |
