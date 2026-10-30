@@ -16,6 +16,7 @@ struct SignInScreen: View {
     @State private var inviteRequired = false
     @State private var working = false
     @State private var problem: String?
+    @State private var recovering = false
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,9 @@ struct SignInScreen: View {
                         problem = nil
                     }
                     .disabled(working)
+                    if !creating {
+                        Button("Forgot your password?") { recovering = true }.disabled(working)
+                    }
                 }
                 if let serverLabel {
                     Section {
@@ -60,6 +64,7 @@ struct SignInScreen: View {
                 }
             }
             .navigationTitle("napsack")
+            .sheet(isPresented: $recovering) { RecoverScreen(username: username) }
             // Whether to ask for an invite code depends on the server.
             .task(id: creating) {
                 let config = try? await Server(server).config()
@@ -82,6 +87,64 @@ struct SignInScreen: View {
                     try await session.signIn(server: server, username: username, password: password)
                 }
                 password = ""
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
+    }
+}
+
+/// Back in after a forgotten password: the recovery key saved at sign-up
+/// (everything kept), or a reset code from an Admin (a new key; old messages
+/// can't be read). The web app's words.
+struct RecoverScreen: View {
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    @State var username: String
+    @State private var secret = ""
+    @State private var password = ""
+    @State private var confirm = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Username", text: $username).textContentType(.username)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField("Recovery key or reset code", text: $secret).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    SecureField("New password", text: $password).textContentType(.newPassword)
+                    SecureField("New password again", text: $confirm).textContentType(.newPassword)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Use the recovery key you saved when you signed up, or a reset code from an admin.")
+                        if Session.secretKind(secret) == .resetCode {
+                            Text("Reset code: you'll get your account and friends back, but messages from before can't be read, and your friends will see a new safety code.")
+                        }
+                        if let problem { Text(problem).foregroundStyle(.red) }
+                    }
+                }
+                Section {
+                    Button(working ? "Unlocking…" : "Get back in", action: submit)
+                        .disabled(working || username.isEmpty || secret.isEmpty || password.isEmpty)
+                }
+            }
+            .navigationTitle("Forgot password")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+
+    private func submit() {
+        guard password == confirm else { problem = SignInError.mismatch.errorDescription; return }
+        working = true
+        problem = nil
+        Task {
+            defer { working = false }
+            do {
+                try await session.recover(server: AppInfo.server, username: username, secret: secret, newPassword: password)
+                dismiss()
             } catch {
                 problem = error.localizedDescription
             }

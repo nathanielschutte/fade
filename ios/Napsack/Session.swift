@@ -48,6 +48,8 @@ enum SignInError: LocalizedError, Equatable {
     case emailAsUsername
     case shortPassword
     case badUsername
+    case badSecret
+    case mismatch
 
     var errorDescription: String? {
         switch self {
@@ -57,6 +59,8 @@ enum SignInError: LocalizedError, Equatable {
         case .emailAsUsername: "Pick a username, not an email address: letters, numbers, _ and . only."
         case .shortPassword: "Passwords need at least 8 characters."
         case .badUsername: "Usernames are 3 to 20 characters: letters, numbers, dots, and underscores."
+        case .badSecret: "Recovery keys are 32 letters and numbers; reset codes are 16."
+        case .mismatch: "The new passwords don't match."
         }
     }
 }
@@ -247,6 +251,71 @@ enum SignInError: LocalizedError, Equatable {
         _ = try await server.send("me/recovery", method: "PUT", token: token, json: SetRecovery(
             authKey: keys.authKey, recoveryAuthKey: recovery.authKey, recoveryWrappedKey: copy))
         return recoveryKey
+    }
+
+    // ---------- forgot password (signed out; the web's recover form) ----------
+
+    enum Secret: Equatable { case recoveryKey, resetCode }
+
+    /// A recovery key is 32 letters and numbers; an Admin's reset code, 16 (spaces and dashes don't count).
+    static func secretKind(_ text: String) -> Secret? {
+        switch text.filter({ !$0.isWhitespace && $0 != "-" }).count {
+        case 32: .recoveryKey
+        case 16: .resetCode
+        default: nil
+        }
+    }
+
+    /// Back in after a forgotten password. With the recovery key: the same key,
+    /// so every message stays readable. With an Admin's reset code: a new key
+    /// (messages from before can't be read, and friends see a new safety code),
+    /// then a new recovery key, shown once.
+    func recover(server address: String, username typed: String, secret: String, newPassword: String) async throws {
+        let username = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let kind = Self.secretKind(secret) else { throw SignInError.badSecret }
+        guard newPassword.count >= 8 else { throw SignInError.shortPassword }
+        let server = try Server(address, transport: transport)
+        notice = nil
+        lastServer = server.address
+        let next = try await deriveKeys(username, newPassword)
+        let answer: SessionResponse
+        let privateKey: Data
+        switch kind {
+        case .recoveryKey:
+            let recovery = try E2E.deriveFromRecoveryKey(secret)
+            struct Start: Encodable { let username: String; let recoveryAuthKey: String }
+            struct Started: Decodable { let recoveryWrappedKey: String }
+            let started = try await watchingForUpdates {
+                try Server.decoder.decode(Started.self, from: await server.send("auth/recover/start", method: "POST",
+                                                                                json: Start(username: username, recoveryAuthKey: recovery.authKey)))
+            }
+            let got = try E2E.recoverIdentity(recoveryWrapKey: recovery.wrapKey, recoveryWrapped: started.recoveryWrappedKey, newWrapKey: next.wrapKey)
+            struct Finish: Encodable { let username: String; let recoveryAuthKey: String; let newAuthKey: String; let newWrappedPrivateKey: String }
+            answer = try Server.decoder.decode(SessionResponse.self, from: await server.send("auth/recover/finish", method: "POST", json: Finish(
+                username: username, recoveryAuthKey: recovery.authKey, newAuthKey: next.authKey, newWrappedPrivateKey: got.wrappedPrivateKey)))
+            privateKey = got.privateKey.derRepresentation
+            reporter.use(server: server.address, token: answer.token)
+            reporter.report(.info, "recovered with recovery key")
+        case .resetCode:
+            let identity = try E2E.createIdentity(wrapKey: next.wrapKey)
+            struct Reset: Encodable { let username: String; let code: String; let newAuthKey: String; let publicKey: String; let wrappedPrivateKey: String }
+            answer = try await watchingForUpdates {
+                try Server.decoder.decode(SessionResponse.self, from: await server.send("auth/reset", method: "POST", json: Reset(
+                    username: username, code: secret.filter { !$0.isWhitespace }, newAuthKey: next.authKey,
+                    publicKey: identity.publicKey, wrappedPrivateKey: identity.wrappedPrivateKey)))
+            }
+            privateKey = identity.privateKey.derRepresentation
+            recoveryKeyToShow = try? await setUpRecovery(server, token: answer.token, keys: next, wrapped: answer.wrappedPrivateKey)
+            reporter.use(server: server.address, token: answer.token)
+            reporter.report(.info, "reset with code")
+        }
+        var account = Account(server: server.address, token: answer.token, user: answer.user, publicKey: answer.publicKey, privateKey: privateKey)
+        if recoveryKeyToShow != nil {
+            account.user = Me(id: account.user.id, username: account.user.username, displayName: account.user.displayName,
+                              role: account.user.role, hasRecoveryKey: true, avatarId: account.user.avatarId)
+        }
+        try store.save(account)
+        state = .signedIn(account)
     }
 
     // ---------- your account (SettingsScreen; the web's Security panel) ----------
