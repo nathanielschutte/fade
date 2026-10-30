@@ -108,8 +108,10 @@ struct Server: Sendable {
     /// The address as it's kept and shown.
     var address: String { base.absoluteString }
 
-    func request(_ path: String, method: String = "GET", token: String? = nil, body: Data? = nil) -> URLRequest {
-        var request = URLRequest(url: base.appending(path: "api").appending(path: path))
+    func request(_ path: String, method: String = "GET", token: String? = nil, body: Data? = nil, query: [URLQueryItem] = []) -> URLRequest {
+        var url = base.appending(path: "api").appending(path: path)
+        if !query.isEmpty { url.append(queryItems: query) }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(AppInfo.clientHeader, forHTTPHeaderField: "X-Napsack-Client")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
@@ -124,11 +126,11 @@ struct Server: Sendable {
     /// Sends a request and returns the body of a successful answer; anything
     /// else becomes a ServerError. A 401 on a signed-in request (not signing
     /// in itself) means the session is over.
-    func send(_ path: String, method: String = "GET", token: String? = nil, json: (any Encodable)? = nil) async throws -> Data {
+    func send(_ path: String, method: String = "GET", token: String? = nil, json: (any Encodable)? = nil, query: [URLQueryItem] = []) async throws -> Data {
         let body = try json.map { try Self.encoder.encode($0) }
         let data: Data, response: HTTPURLResponse
         do {
-            (data, response) = try await transport.send(request(path, method: method, token: token, body: body))
+            (data, response) = try await transport.send(request(path, method: method, token: token, body: body, query: query))
         } catch let error as ServerError {
             throw error
         } catch {
@@ -163,6 +165,17 @@ struct Server: Sendable {
 
     func me(token: String) async throws -> Me {
         try Self.decoder.decode(Me.self, from: await send("me", token: token))
+    }
+
+    /// The chat list: friends, each with the newest message between you.
+    /// `tz` is minutes east of UTC, for counting streak days.
+    func friends(token: String) async throws -> [Friend] {
+        let tz = URLQueryItem(name: "tz", value: String(TimeZone.current.secondsFromGMT() / 60))
+        return try Self.decoder.decode([Friend].self, from: await send("friends", token: token, query: [tz]))
+    }
+
+    func groups(token: String) async throws -> [GroupSummary] {
+        try Self.decoder.decode([GroupSummary].self, from: await send("groups", token: token))
     }
 
     /// Ends this session on the server (the token stops working).

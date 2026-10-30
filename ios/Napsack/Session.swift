@@ -128,6 +128,16 @@ enum SignInError: LocalizedError, Equatable {
         updateNeeded = "This version of napsack is too old. Update to \(minimum) or newer to keep using it."
     }
 
+    /// What any screen does with a server's error: an ended session signs out
+    /// (and says so), a too-old app shows the update screen. Others are the screen's to show.
+    func noticed(_ error: any Error) {
+        switch error {
+        case ServerError.sessionEnded: endLocally(notice: ServerError.sessionEnded.errorDescription)
+        case ServerError.updateRequired(let message): updateNeeded = message
+        default: break
+        }
+    }
+
     /// Development builds only: back to signing in, to pick another server.
     /// (A server that needs a newer app refuses this one's every request anyway.)
     func leaveUpdateScreen() {

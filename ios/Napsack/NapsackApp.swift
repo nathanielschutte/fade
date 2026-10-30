@@ -17,7 +17,7 @@ struct NapsackApp: App {
                     case .signedOut:
                         SignInScreen()
                     case .signedIn(let account):
-                        HomeScreen(account: account)
+                        ChatListScreen(account: account)
                             .sheet(isPresented: .constant(session.recoveryKeyToShow != nil)) {
                                 RecoveryKeyScreen(key: session.recoveryKeyToShow ?? "") { session.recoveryKeyToShow = nil }
                             }
