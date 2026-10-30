@@ -2,7 +2,9 @@
 //!
 //! Admins are a list in settings: `FADE_ADMINS`, plus the SSM parameter named
 //! by `FADE_ADMINS_PARAM` in production, reloadable without a deploy. They're
-//! never stored in the database. PowerUsers are granted in the app
+//! never stored in the database. An entry is a user id, written `id:7` (fixed
+//! forever, S5), or a username (which can change; an old one still counts).
+//! Usernames can't contain `:`, so the two never mix up. PowerUsers are granted in the app
 //! (`user_roles`, append-only marks) by Admins or other PowerUsers, and taken
 //! away only by Admins. PowerXtreme is a step above PowerUser that Admins
 //! give to PowerUsers (`user_role_upgrades`); for now it can do exactly what
@@ -76,6 +78,22 @@ impl Admins {
             from_env,
             param,
         }
+    }
+
+    /// Whether `id:<user_id>` is on the list.
+    pub fn contains_id(&self, user_id: i64) -> bool {
+        let entry = format!("id:{user_id}");
+        self.list.read().unwrap().iter().any(|a| a == &entry)
+    }
+
+    /// The user ids listed as `id:<n>`.
+    pub fn ids(&self) -> Vec<i64> {
+        self.list
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.strip_prefix("id:")?.parse().ok())
+            .collect()
     }
 
     pub fn contains(&self, username: &str) -> bool {
@@ -453,6 +471,11 @@ mod tests {
         let admins = Admins::new(vec!["nate".into()], None);
         assert!(admins.contains("NATE") && !admins.contains("liana"));
         assert!(!admins.has_param());
+        // By id (S5): `id:7` names user 7, never a username "7" or "id:7".
+        let admins = Admins::new(parse_list("ID:7, liana, 12"), None);
+        assert!(admins.contains_id(7) && !admins.contains_id(12) && !admins.contains_id(70));
+        assert_eq!(admins.ids(), [7]);
+        assert!(admins.contains("liana") && admins.contains("12") && !admins.contains("7"));
     }
 
     #[test]
