@@ -106,7 +106,9 @@ enum SignInError: LocalizedError, Equatable {
 
     /// At launch: straight in with what the Keychain holds, then confirm with
     /// the server. A session the server has ended signs out; no connection
-    /// keeps what's here.
+    /// keeps what's here. A session from another server than this build's
+    /// (signed in before NAPSACK_SERVER_URL changed) signs out: the app talks
+    /// to one server only (#39).
     func restore(server: String) async {
         lastServer = server
         guard let kept = try? store.load() else {
@@ -115,6 +117,13 @@ enum SignInError: LocalizedError, Equatable {
             return
         }
         state = .signedIn(kept)
+        if let configured = try? Server(server, transport: transport).address, kept.server != configured {
+            reporter.report(.info, "session from another server signed out")
+            await signOut()  // ended there too, if it can be reached
+            notice = "This app now uses another server. Sign in again."
+            await checkVersion(server: server)
+            return
+        }
         do {
             let me = try await Server(kept.server, transport: transport).me(token: kept.token)
             if me != kept.user, var updated = account, updated.token == kept.token {

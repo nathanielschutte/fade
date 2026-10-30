@@ -129,6 +129,21 @@ func body(_ request: URLRequest) -> [String: Any] {
         #expect(try store.load() == nil)
     }
 
+    /// Signed in on one server, then the build points at another
+    /// (NAPSACK_SERVER_URL): signed out, ended on the old server, nothing kept.
+    @Test func aKeptSessionFromAnotherServerSignsOut() async throws {
+        let store = MemoryStore(try keptAccount())  // napsack.test
+        let server = StubServer { _ in (200, json(["ok": true])) }
+        let session = Session(transport: server, store: store)
+        await session.restore(server: "http://laptop.local:8080")
+        #expect(session.state == .signedOut)
+        #expect(session.notice == "This app now uses another server. Sign in again.")
+        #expect(try store.load() == nil)
+        let logout = try #require(await server.requests.first { $0.url?.path == "/api/auth/logout" })
+        #expect(logout.url?.host == "napsack.test")  // ended where it was made
+        #expect(await !server.requests.contains { $0.url?.path == "/api/me" })
+    }
+
     @Test func aKeptSessionStaysWhenTheServerIsOutOfReach() async throws {
         let kept = try keptAccount()
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: MemoryStore(kept))
