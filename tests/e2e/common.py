@@ -23,6 +23,11 @@ _CHANNEL = os.environ.get("E2E_CHROME", "chrome")
 
 # Every test account's password (the admin's too, which several tests share).
 PASSWORD = "correct horse battery"
+# Signing up or in makes keys from the password (600,000 rounds, twice for a
+# new account, plus a recovery key): with four browsers at once on a CI runner
+# that can pass 20 seconds. A waiting check, so it costs nothing when it's quick.
+SIGN_IN_WAIT = 30000
+
 PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 
 
@@ -78,7 +83,7 @@ async def fill_sign_up(page, name, password=PASSWORD, code=True, toggle=True, sa
     if code:
         await page.fill("#auth-form input[name=invite_code]", INVITE)
     await page.click("#auth-submit")
-    await expect(page.locator("#app")).to_be_visible(timeout=20000)
+    await expect(page.locator("#app")).to_be_visible(timeout=SIGN_IN_WAIT)
     if save_key:
         await save_recovery_key(page)
 
@@ -97,7 +102,7 @@ async def sign_in(page, name, password=PASSWORD, wait=True):
     await page.fill("#auth-form input[name=password]", password)
     await page.click("#auth-submit")
     if wait:
-        await expect(page.locator("#app")).to_be_visible(timeout=20000)
+        await expect(page.locator("#app")).to_be_visible(timeout=SIGN_IN_WAIT)
 
 
 async def sign_up_or_in(page, name, password=PASSWORD):
@@ -111,7 +116,7 @@ async def sign_up_or_in(page, name, password=PASSWORD):
     app = page.locator("#app")
     refused = page.locator("#auth-error").filter(has_text=re.compile(r"\S"))
     # (Once refused, both match: the error, then the still-hidden app.)
-    await expect(app.or_(refused).first).to_be_visible(timeout=20000)
+    await expect(app.or_(refused).first).to_be_visible(timeout=SIGN_IN_WAIT)
     if not await app.is_visible():
         await fill_sign_up(page, name, password)
 
@@ -136,7 +141,7 @@ def row(page, name):
 async def save_recovery_key(page):
     """A new account is shown its recovery key once, in a dialog that stays
     until it's saved. Tests save it and go on. Returns the key."""
-    await expect(page.locator("#recovery-dialog")).to_be_visible(timeout=20000)
+    await expect(page.locator("#recovery-dialog")).to_be_visible(timeout=SIGN_IN_WAIT)
     key = await page.locator("#recovery-key").text_content()
     await page.check("#recovery-saved")
     await page.click("#recovery-done")

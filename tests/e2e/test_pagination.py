@@ -66,10 +66,9 @@ async def main():
             await reader.evaluate("document.querySelector('#messages').scrollTop = 0")
             await expect(reader.locator("#messages .msg")).not_to_have_count(len(texts), timeout=10000)
             if len(texts) == len(first):
-                # After the first page back, the old top message is still on screen.
-                box = await anchor.bounding_box()
-                view = await reader.locator("#messages").bounding_box()
-                assert box and view and view["y"] <= box["y"] <= view["y"] + view["height"], (box, view)
+                # After the first page back, the old top message is still on screen
+                # (a waiting check: the list may still be redrawing).
+                await expect(anchor).to_be_in_viewport(timeout=10000)
         texts = await reader.evaluate(TEXTS)
         assert texts == [f"msg {i}" for i in range(1, COUNT + 1)], texts[:5]
         await expect(reader.locator(".history-edge")).to_contain_text(f"beginning of your chat with {SENDER}")
