@@ -2,11 +2,20 @@ import SwiftUI
 
 /// The chat list: friends and groups together, newest first, favorites on
 /// top, each row with its newest message (decrypted here). Pull to refresh;
-/// tapping a row opens the chat, and coming back refreshes the list.
+/// tapping a row opens the chat, and coming back refreshes the list. While
+/// the app is on screen the live connection (Live.swift) keeps the list and
+/// the open chat current.
 struct ChatListScreen: View {
     @Environment(Session.self) private var session
+    @Environment(\.scenePhase) private var scenePhase
     let account: Account
     @State private var list = ChatList()
+    @State private var live: Live
+
+    init(account: Account) {
+        self.account = account
+        _live = State(initialValue: Live(account: account))
+    }
     @State private var showDeveloper = false
     @State private var signingOut = false
 
@@ -32,12 +41,18 @@ struct ChatListScreen: View {
             }
             .listStyle(.plain)
             .refreshable { await load() }
-            .task { await load() }
+            .task {
+                live.onEvent = handle
+                live.start()
+                await load()
+            }
+            .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
             .navigationTitle("Chats")
             .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen() }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
+                        .environment(live)
                         .onDisappear { Task { await load() } }  // reads and new messages since
                 }
             }
@@ -58,6 +73,10 @@ struct ChatListScreen: View {
                 }
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { live.start() } else if phase == .background { live.stop() }
+        }
+        .onDisappear { live.stop() }  // signed out
     }
 
     private func rows(_ rows: [ChatRow]) -> some View {
@@ -71,6 +90,30 @@ struct ChatListScreen: View {
         switch kind {
         case .friend(let id): return reader.friends[id].map { Conversation(.friend($0), account: account, reader: reader, pinBook: list.pinBook) }
         case .group(let id): return list.groups[id].map { Conversation(.group($0), account: account, reader: reader, pinBook: list.pinBook) }
+        }
+    }
+
+    /// What the live connection says: the open chat takes its own messages,
+    /// and the list refetches (the API is the truth).
+    private func handle(_ event: LiveEvent) {
+        let chat = live.openChat
+        switch event {
+        case .authFailed:
+            session.noticed(ServerError.sessionEnded)
+        case .ready:
+            // Anything could have happened while disconnected.
+            list.reloadSoon(account)
+            if let chat { Task { try? await chat.catchUp(); await chat.flush() } }
+        case .message(let m):
+            if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
+            list.reloadSoon(account)
+        case .groupMessage(let m):
+            if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
+            list.reloadSoon(account)
+        case .listChanged:
+            list.reloadSoon(account)
+        case .pong, .other:
+            break
         }
     }
 
@@ -144,5 +187,18 @@ struct Initial: View {
             .frame(width: 44, height: 44)
             .background(Color.accentColor.opacity(0.18), in: shape)
             .accessibilityHidden(true)
+    }
+}
+
+/// "Reconnecting…" while the live connection's been down more than a moment.
+struct ReconnectingNote: View {
+    let live: Live
+
+    var body: some View {
+        if live.reconnecting {
+            Label("Reconnecting…", systemImage: "wifi.exclamationmark")
+                .font(.footnote).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).padding(.vertical, 6).background(.bar)
+        }
     }
 }

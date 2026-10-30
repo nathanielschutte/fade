@@ -158,6 +158,8 @@ enum SendError: LocalizedError {
     /// Sealed once per text, so every try sends the same bytes.
     private var sealedTexts: [String: String] = [:]
     private var sealedGroupTexts: [String: E2E.GroupMessage] = [:]
+    /// Texts that failed for the connection's sake: they go again on reconnect.
+    private var offline: Set<String> = []
     /// Waits between tries while the connection is the problem.
     var retryDelays: [Duration] = [.seconds(1), .seconds(3)]
 
@@ -235,6 +237,7 @@ enum SendError: LocalizedError {
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return nil }
         sealedTexts[id] = nil
         sealedGroupTexts[id] = nil
+        offline.remove(id)
         return outbox.remove(at: i).text
     }
 
@@ -247,6 +250,7 @@ enum SendError: LocalizedError {
     private func attempt(_ id: String) async {
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
         outbox[i].status = .sending
+        offline.remove(id)
         var failure: (any Error)?
         for n in 0...retryDelays.count {
             guard let item = outbox.first(where: { $0.id == id }) else { return }
@@ -261,17 +265,16 @@ enum SendError: LocalizedError {
             }
         }
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
-        let offline = failure.map { ($0 as? ServerError)?.retryable == true } ?? true
-        let why = offline ? "no connection." : failure?.localizedDescription ?? "no connection."
+        let connection = failure.map { ($0 as? ServerError)?.retryable == true } ?? true
+        if connection { offline.insert(id) }
+        let why = connection ? "no connection." : failure?.localizedDescription ?? "no connection."
         outbox[i].status = .failed("Not sent: \(why)")
     }
 
     /// It's in: the server's copy joins the chat, and the outbox lets it go.
     private func settle(_ id: String, _ bubble: Bubble) {
         _ = discard(id)
-        guard !bubbles.contains(where: { $0.id == bubble.id }) else { return }
-        bubbles.append(bubble)
-        bubbles.sort { $0.id < $1.id }
+        upsert(bubble)
     }
 
     private func post(_ item: Outgoing) async throws -> Bubble {
@@ -346,6 +349,59 @@ enum SendError: LocalizedError {
         reachedStart = page.count < Self.page
         loaded = true
         problem = nil
+    }
+
+    /// Back from a dropped connection: the newest page again, merged with what's
+    /// shown. If more came than a page holds, it starts again from the newest.
+    func catchUp() async throws {
+        guard loaded else { return try await loadNewest() }
+        let page = try await fetch(before: nil)
+        if page.count == Self.page, let oldest = page.first?.id, let newest = bubbles.last?.id, oldest > newest {
+            bubbles = page
+            reachedStart = false
+            return
+        }
+        page.forEach(upsert)
+    }
+
+    /// A direct message, new or changed, from the socket. Returns whether it's
+    /// a new text from them (to mark it read while it's on screen).
+    @discardableResult func arrived(_ m: DirectMessage) -> Bool {
+        guard loaded, let friend, [m.senderId, m.recipientId].contains(friend.id) else { return false }
+        if m.senderId == account.user.id, let clientId = m.clientId { _ = discard(clientId) }  // it went
+        let new = !bubbles.contains { $0.id == m.id }
+        upsert(reader.bubble(m, with: friend))
+        return new && m.senderId == friend.id && m.kind == "text"
+    }
+
+    /// A group message, new or changed, from the socket. Returns whether it's new and someone else's.
+    @discardableResult func arrived(_ m: GroupMessage) -> Bool {
+        guard loaded, case .group(let group) = chat, m.groupId == group.id else { return false }
+        if m.senderId == account.user.id, let clientId = m.clientId,
+           let id = sealedGroupTexts.first(where: { $0.value.clientId == clientId })?.key {
+            _ = discard(id)
+        }
+        if let pinBook, let key = m.senderPublicKey {
+            pinBook.see(senders: [(m.senderId, key)])
+            reader.pins = pinBook.pins
+        }
+        let new = !bubbles.contains { $0.id == m.id }
+        upsert(reader.bubble(m))
+        return new && m.senderId != account.user.id
+    }
+
+    /// Back online: texts that couldn't go for the connection's sake go now.
+    func flush() async {
+        for id in outbox.map(\.id) where offline.contains(id) { await attempt(id) }
+    }
+
+    private func upsert(_ bubble: Bubble) {
+        if let i = bubbles.firstIndex(where: { $0.id == bubble.id }) {
+            bubbles[i] = bubble
+        } else {
+            bubbles.append(bubble)
+            bubbles.sort { $0.id < $1.id }
+        }
     }
 
     /// The page before the oldest shown.
