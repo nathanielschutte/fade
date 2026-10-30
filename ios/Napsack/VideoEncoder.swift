@@ -47,7 +47,7 @@ enum VideoEncoder {
             if size <= maxBytes - sealingRoom { return out }
             try? FileManager.default.removeItem(at: out)
             await Reporter.shared.report(.info, "video over the cap, encoding smaller", ["bytes": String(size), "bitrate": String(bitrate), "attempt": String(attempt)])
-            bitrate = Int(Double(bitrate) * Double(maxBytes - sealingRoom) / Double(size) * 0.85)
+            bitrate = max(100_000, Int(Double(bitrate) * Double(maxBytes - sealingRoom) / Double(size) * 0.85))
         }
         throw Problem.tooLarge
     }
@@ -122,11 +122,8 @@ enum VideoEncoder {
             throw Problem.failed
         }
         writer.startSession(atSourceTime: .zero)
-        // Each track on its own queue; the writer interleaves them.
-        async let pictures: Void = pump(videoOut, into: videoIn, on: DispatchQueue(label: "napsack.video-encode.video"))
-        if let audio { await pump(audio.0, into: audio.1, on: DispatchQueue(label: "napsack.video-encode.audio")) }
-        await pictures
-        if reader.status == .failed {
+        let copied = await copy([(videoOut, videoIn)] + (audio.map { [($0.0, $0.1)] } ?? []), writer: writer)
+        if !copied || reader.status == .failed {
             writer.cancelWriting()
             await Reporter.shared.report(.warn, "video encode failed reading", Reporter.fields(reader.error ?? Problem.failed))
             throw Problem.failed
@@ -138,18 +135,35 @@ enum VideoEncoder {
         }
     }
 
-    /// Copies samples until the track ends (or the writer refuses one), on its own queue.
-    private static func pump(_ output: AVAssetReaderOutput, into input: AVAssetWriterInput, on queue: DispatchQueue) async {
-        final class Once: @unchecked Sendable { var done = false }  // only touched on `queue`
-        let once = Once()
-        await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
-            input.requestMediaDataWhenReady(on: queue) {
-                while !once.done && input.isReadyForMoreMediaData {
-                    if let sample = output.copyNextSampleBuffer(), input.append(sample) { continue }
-                    once.done = true
-                    input.markAsFinished()
-                    finished.resume()
+    /// Copies every track's samples into the writer, each as it's ready for
+    /// more (it interleaves them). One loop for all of them, off the main
+    /// thread, so a writer that fails partway can't leave anything waiting
+    /// for a "ready" that never comes (it hung on GitHub's Simulator with
+    /// `requestMediaDataWhenReady`). False if the writer failed or it ran out of time.
+    private static func copy(_ tracks: [(AVAssetReaderOutput, AVAssetWriterInput)], writer: AVAssetWriter,
+                             deadline: TimeInterval = 120) async -> Bool {
+        await withCheckedContinuation { (finished: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let giveUp = Date().addingTimeInterval(deadline)
+                var open = Array(tracks.indices)
+                while !open.isEmpty {
+                    guard writer.status == .writing, Date() < giveUp else {
+                        for i in open { tracks[i].1.markAsFinished() }
+                        return finished.resume(returning: false)
+                    }
+                    var moved = false
+                    for i in open where tracks[i].1.isReadyForMoreMediaData {
+                        moved = true
+                        if let sample = tracks[i].0.copyNextSampleBuffer() {
+                            if !tracks[i].1.append(sample) { break }  // the writer failed: the guard above ends it
+                        } else {
+                            tracks[i].1.markAsFinished()
+                            open.removeAll { $0 == i }
+                        }
+                    }
+                    if !moved { usleep(2_000) }  // the writer is busy with what it has
                 }
+                finished.resume(returning: true)
             }
         }
     }
