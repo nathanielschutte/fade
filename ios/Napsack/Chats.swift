@@ -395,13 +395,14 @@ struct Reader: Sendable {
     }
 
     /// Both lists at once; the rows are worked out (decrypted) off the main thread.
-    private let pinStore: any PinStore
+    /// Where pins are kept; by default the Keychain, per server and account (KeychainPinStore).
+    private let pinStore: (any PinStore)?
     /// Where the server's answers are kept on the phone (ResponseCache); nil keeps nothing.
     let cacheRoot: URL?
     /// The list is showing what was kept, until the server answers.
     private(set) var fromCache = false
 
-    init(pinStore: any PinStore = KeychainPinStore(), cacheRoot: URL? = ResponseCache.root) {
+    init(pinStore: (any PinStore)? = nil, cacheRoot: URL? = ResponseCache.root) {
         self.pinStore = pinStore
         self.cacheRoot = cacheRoot
     }
@@ -458,7 +459,7 @@ struct Reader: Sendable {
     private func show(_ f: [Friend], _ g: [GroupSummary], account: Account) async throws {
         do {
             let identity = try account.identity()
-            let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore)
+            let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore ?? KeychainPinStore(server: account.server))
             self.pinBook = pinBook
             pinBook.see(friends: f)
             pinBook.see(senders: g.compactMap { m in m.lastMessage.flatMap { m in m.senderPublicKey.map { (m.senderId, $0) } } })

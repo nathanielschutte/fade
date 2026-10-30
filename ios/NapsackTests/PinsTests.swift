@@ -55,16 +55,20 @@ final class MemoryPinStore: PinStore, @unchecked Sendable {
         #expect(later.changed.isEmpty && store.load(account: 3).current[7] == swapped && store.load(account: 3).past[7] == [real])
     }
 
-    @Test func pinsAreKeptInTheKeychainPerAccount() throws {
-        let store = KeychainPinStore(), account = Int64.random(in: 1_000_000...9_999_999)
-        defer { try? Keychain.delete(account: "pins:\(account)") }
-        #expect(store.load(account: account) == Pins())
+    @Test func pinsAreKeptInTheKeychainPerServerAndAccount() throws {
+        let staging = KeychainPinStore(server: "https://staging.napsack.test"), local = KeychainPinStore(server: "http://127.0.0.1:8097")
+        let account = Int64.random(in: 1_000_000...9_999_999)
+        defer { try? Keychain.delete(account: staging.key(account)); try? Keychain.delete(account: local.key(account)) }
+        #expect(staging.key(account) == "pins:staging.napsack.test:\(account)" && local.key(account) == "pins:127.0.0.1:8097:\(account)")
+        #expect(staging.load(account: account) == Pins())
         var pins = Pins()
         _ = pins.see(7, real)
         pins.accept(7, swapped)
-        try store.save(pins, account: account)
-        #expect(store.load(account: account) == pins)
-        #expect(store.load(account: account + 1) == Pins())
+        try staging.save(pins, account: account)
+        #expect(staging.load(account: account) == pins)
+        #expect(staging.load(account: account + 1) == Pins())
+        // The same id on another server is someone else: none of these pins.
+        #expect(local.load(account: account) == Pins())
     }
 
     /// The whole path: the server swaps Alice's key. Her chat says so, still
