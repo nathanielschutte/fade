@@ -142,8 +142,15 @@ enum VideoEncoder {
     /// `requestMediaDataWhenReady`). False if the writer failed or it ran out of time.
     private static func copy(_ tracks: [(AVAssetReaderOutput, AVAssetWriterInput)], writer: AVAssetWriter,
                              deadline: TimeInterval = 120) async -> Bool {
-        await withCheckedContinuation { (finished: CheckedContinuation<Bool, Never>) in
+        // AVFoundation's objects aren't Sendable; this loop is the only thing touching them meanwhile.
+        struct Handed: @unchecked Sendable {
+            let tracks: [(AVAssetReaderOutput, AVAssetWriterInput)]
+            let writer: AVAssetWriter
+        }
+        let handed = Handed(tracks: tracks, writer: writer)
+        return await withCheckedContinuation { (finished: CheckedContinuation<Bool, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
+                let tracks = handed.tracks, writer = handed.writer
                 let giveUp = Date().addingTimeInterval(deadline)
                 var open = Array(tracks.indices)
                 while !open.isEmpty {

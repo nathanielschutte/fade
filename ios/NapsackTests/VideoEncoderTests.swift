@@ -18,68 +18,73 @@ import Testing
     #expect(VideoEncoder.size(for: CGSize(width: 3840, height: 2161)) == CGSize(width: 1280, height: 720))
 }
 
-/// A recording as the camera makes it (1080p turned upright by its transform,
-/// with sound and a location) comes out 720p upright, H.264 High, AAC, under
-/// the cap, and with nothing of the camera's metadata.
-@Test(.timeLimit(.minutes(1))) func aRecordingBecomesWhatIsSent() async throws {
-    let source = try await TestMovie.make(seconds: 2)
-    defer { try? FileManager.default.removeItem(at: source) }
-    // The Simulator's encoder (software) doesn't keep to a bitrate, so the cap
-    // here is roomy; a phone's does (measured on a Mac's: 3.18 Mbit/s for 3).
-    let cap = 6 << 20
-    let out = try await VideoEncoder.mp4(source, maxBytes: cap, seconds: 2)
-    defer { try? FileManager.default.removeItem(at: out) }
+/// Encoding, one test at a time: each makes its own movie and encodes it,
+/// and run side by side they can use up the Simulator's video encoders
+/// (they stalled together on GitHub's smaller Simulator).
+@Suite(.serialized) struct VideoEncoding {
+    /// A recording as the camera makes it (1080p turned upright by its transform,
+    /// with sound and a location) comes out 720p upright, H.264 High, AAC, under
+    /// the cap, and with nothing of the camera's metadata.
+    @Test(.timeLimit(.minutes(1))) func aRecordingBecomesWhatIsSent() async throws {
+        let source = try await TestMovie.make(seconds: 2)
+        defer { try? FileManager.default.removeItem(at: source) }
+        // The Simulator's encoder (software) doesn't keep to a bitrate, so the cap
+        // here is roomy; a phone's does (measured on a Mac's: 3.18 Mbit/s for 3).
+        let cap = 6 << 20
+        let out = try await VideoEncoder.mp4(source, maxBytes: cap, seconds: 2)
+        defer { try? FileManager.default.removeItem(at: out) }
 
-    let size = try #require(try out.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-    #expect(size <= cap - VideoEncoder.sealingRoom)
-    let asset = AVURLAsset(url: out)
-    let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
-    let (natural, transform) = try await video.load(.naturalSize, .preferredTransform)
-    let shown = natural.applying(transform)
-    #expect(abs(shown.width) == 720 && abs(shown.height) == 1280)  // upright, as recorded
-    let format = try #require(try await video.load(.formatDescriptions).first)
-    #expect(CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_H264)
-    let atoms = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Any]
-    let avcC = try #require(atoms?["avcC"] as? Data)
-    #expect(avcC[avcC.startIndex + 1] == 100)  // AVCProfileIndication: High
-    let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
-    let audioFormat = try #require(try await audio.load(.formatDescriptions).first)
-    #expect(CMFormatDescriptionGetMediaSubType(audioFormat) == kAudioFormatMPEG4AAC)
-    let duration = try await asset.load(.duration).seconds
-    #expect(abs(duration - 2) < 0.2)
-    #expect(try await asset.load(.metadata).isEmpty)  // the source's location isn't carried over
-}
+        let size = try #require(try out.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        #expect(size <= cap - VideoEncoder.sealingRoom)
+        let asset = AVURLAsset(url: out)
+        let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let (natural, transform) = try await video.load(.naturalSize, .preferredTransform)
+        let shown = natural.applying(transform)
+        #expect(abs(shown.width) == 720 && abs(shown.height) == 1280)  // upright, as recorded
+        let format = try #require(try await video.load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_H264)
+        let atoms = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Any]
+        let avcC = try #require(atoms?["avcC"] as? Data)
+        #expect(avcC[avcC.startIndex + 1] == 100)  // AVCProfileIndication: High
+        let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let audioFormat = try #require(try await audio.load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(audioFormat) == kAudioFormatMPEG4AAC)
+        let duration = try await asset.load(.duration).seconds
+        #expect(abs(duration - 2) < 0.2)
+        #expect(try await asset.load(.metadata).isEmpty)  // the source's location isn't carried over
+    }
 
-/// Without sound (the microphone not allowed), it's still a video.
-@Test(.timeLimit(.minutes(1))) func aSilentRecordingStillEncodes() async throws {
-    let source = try await TestMovie.make(seconds: 1, sound: false)
-    defer { try? FileManager.default.removeItem(at: source) }
-    let out = try await VideoEncoder.mp4(source, maxBytes: 4 << 20, seconds: 10)
-    defer { try? FileManager.default.removeItem(at: out) }
-    let asset = AVURLAsset(url: out)
-    #expect(try await asset.loadTracks(withMediaType: .video).count == 1)
-    #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
-}
+    /// Without sound (the microphone not allowed), it's still a video.
+    @Test(.timeLimit(.minutes(1))) func aSilentRecordingStillEncodes() async throws {
+        let source = try await TestMovie.make(seconds: 1, sound: false)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let out = try await VideoEncoder.mp4(source, maxBytes: 4 << 20, seconds: 10)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let asset = AVURLAsset(url: out)
+        #expect(try await asset.loadTracks(withMediaType: .video).count == 1)
+        #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
+    }
 
-/// Sound recorded with more than two channels (newer iPhones record four
-/// microphones) still comes out as stereo AAC.
-@Test(.timeLimit(.minutes(1))) func fourChannelSoundIsMixedToStereo() async throws {
-    let source = try await TestMovie.make(seconds: 1, channels: 4)
-    defer { try? FileManager.default.removeItem(at: source) }
-    let out = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
-    defer { try? FileManager.default.removeItem(at: out) }
-    let audio = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .audio).first)
-    let format = try #require(try await audio.load(.formatDescriptions).first)
-    #expect(CMFormatDescriptionGetMediaSubType(format) == kAudioFormatMPEG4AAC)
-    #expect(CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mChannelsPerFrame == 2)
-}
+    /// Sound recorded with more than two channels (newer iPhones record four
+    /// microphones) still comes out as stereo AAC.
+    @Test(.timeLimit(.minutes(1))) func fourChannelSoundIsMixedToStereo() async throws {
+        let source = try await TestMovie.make(seconds: 1, channels: 4)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let out = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let audio = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .audio).first)
+        let format = try #require(try await audio.load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(format) == kAudioFormatMPEG4AAC)
+        #expect(CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mChannelsPerFrame == 2)
+    }
 
-/// A cap nothing can fit says so, rather than sending something the server refuses.
-@Test(.timeLimit(.minutes(1))) func aCapTooSmallIsSaid() async throws {
-    let source = try await TestMovie.make(seconds: 1, sound: false)
-    defer { try? FileManager.default.removeItem(at: source) }
-    await #expect(throws: VideoEncoder.Problem.tooLarge) {
-        _ = try await VideoEncoder.mp4(source, maxBytes: VideoEncoder.sealingRoom + 2_000, seconds: 1)
+    /// A cap nothing can fit says so, rather than sending something the server refuses.
+    @Test(.timeLimit(.minutes(1))) func aCapTooSmallIsSaid() async throws {
+        let source = try await TestMovie.make(seconds: 1, sound: false)
+        defer { try? FileManager.default.removeItem(at: source) }
+        await #expect(throws: VideoEncoder.Problem.tooLarge) {
+            _ = try await VideoEncoder.mp4(source, maxBytes: VideoEncoder.sealingRoom + 2_000, seconds: 1)
+        }
     }
 }
 
