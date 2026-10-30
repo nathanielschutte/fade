@@ -23,15 +23,16 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
-| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 4 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
-| 5 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
-| 6 | [A tap on the shutter can count as a hold](#d11-a-tap-on-the-shutter-can-count-as-a-hold-when-the-page-is-busy) | Debug | – | Planned | Flaky `test_chat.py` on main |
-| 7 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
-| 8 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 9 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 10 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [PowerXtreme: a role above PowerUser](#s4-powerxtreme) | Security | Nate | In progress | Nate (2026-10-29); built for 0.43.0 |
+| 3 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
+| 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
+| 6 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
+| 7 | [A tap on the shutter can count as a hold](#d11-a-tap-on-the-shutter-can-count-as-a-hold-when-the-page-is-busy) | Debug | – | Planned | Flaky `test_chat.py` on main |
+| 8 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
+| 9 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 10 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 11 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -455,6 +456,17 @@ Oldest first; newly shipped rows go at the bottom.
 - The admin list moves out of source control into its own SSM parameter, reloadable without a deploy.
 - Design: [roles.md](../implementation/roles.md).
 - Done (0.28.0). Production's admin list moved to `/fade/admins` (`scripts/set-admins.sh`, `scripts/reload-admins.sh`); `admin_usernames` in Terraform is no longer used.
+
+#### S4. PowerXtreme
+- Nate (2026-10-29): a role between PowerUser and Admin, called PowerXtreme. Only Admins grant it and take it away, and only to people who are PowerUsers already. For now it's identical to PowerUser ("to appease my sister who wants to be more than a PowerUser"); more interesting things can come later.
+- Built (0.43.0): `user_role_upgrades`, `POST`/`DELETE /admin/roles/{id}/powerxtreme`, the Roles page (Make PowerXtreme, Back to PowerUser), its badge, and the iOS app treats it as a PowerUser ([roles.md](../implementation/roles.md)).
+- Ideas for later (Nate to pick; none of them may show private data or act on anyone, as for PowerUsers):
+  - **Looks:** a PowerXtreme badge beside their name for friends (opt-in), an app icon of their own on iOS (alternate icons), a theme or accent only they can choose, a sparkle on their chat bubbles' send animation.
+  - **Early access:** new features reach PowerXtremes first, behind a flag ("try it before everyone"), with a feedback button that goes to the log viewer.
+  - **Fun data, their own:** a yearly "napsack wrapped" (their messages sent, pics, streak records, busiest hour), computed on the phone from what's already decrypted there, never on the server.
+  - **The System pages, a little more:** the friend map's history (how the graph grew month by month, still anonymous beyond their friends), or naming the anonymous clusters on their own graph (kept on their phone).
+  - **Bragging rights:** a longer streak grace period, or extra stickers for pics.
+  - **Say hello to the team:** a direct line to Team Napsack (a chat that reaches the Admins), with notes back.
 
 #### S3. Signing out leaves nothing behind
 - Nate (2026-10-29), bug: signing out and back in as another account (same server, a desktop browser) showed the previous account's chat list. Signing out must clear all local data: storage, IndexedDB, everything.

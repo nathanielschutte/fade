@@ -1026,7 +1026,7 @@ window.addEventListener("resize", () => {
 // Everyone for Admins; for PowerUsers, themselves and their friends. Admins
 // and PowerUsers make someone a PowerUser; only Admins take it away.
 
-const ROLE_NAMES = { user: "User", power: "PowerUser", admin: "Admin" };
+const ROLE_NAMES = { user: "User", power: "PowerUser", powerxtreme: "PowerXtreme", admin: "Admin" };
 const rolesView = { data: null, confirm: null };
 
 async function api(path, method = "GET", payload = undefined) {
@@ -1056,21 +1056,25 @@ function renderRoles() {
   if (!data) return;
   const admin = data.role === "admin";
   $("#r-explain").textContent = admin
-    ? "PowerUsers see how napsack is doing: the overview, metrics without cost, and the graph with people they don't know kept anonymous. They can make their friends PowerUsers; only Admins can take it away. Admins come from settings."
+    ? "PowerUsers see how napsack is doing: the overview, metrics without cost, and the graph with people they don't know kept anonymous. They can make their friends PowerUsers; only Admins can take it away. PowerXtreme is a step above PowerUser, the same for now, that only Admins give (to PowerUsers) and take away. Admins come from settings."
     : "PowerUsers see how napsack is doing. You can make your friends PowerUsers; only an Admin can take it away.";
   $("#r-admin").hidden = !(admin && data.admins_from_settings);
   const q = $("#r-search").value.trim().toLowerCase();
   const people = data.people.filter((p) => !q || p.username.toLowerCase().includes(q));
   const counts = data.people.reduce((c, p) => ({ ...c, [p.role]: (c[p.role] || 0) + 1 }), {});
-  $("#r-note").textContent = ["admin", "power", "user"].filter((r) => counts[r]).map((r) => `${counts[r]} ${ROLE_NAMES[r]}${counts[r] === 1 ? "" : "s"}`).join(" · ");
+  $("#r-note").textContent = ["admin", "powerxtreme", "power", "user"].filter((r) => counts[r]).map((r) => `${counts[r]} ${ROLE_NAMES[r]}${counts[r] === 1 ? "" : "s"}`).join(" · ");
   $("#r-rows").replaceChildren(...people.map((p) => {
     const me = p.id === viewer?.id;
     let action = null;
     if (p.role === "user" && !me) {
       action = el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, "grant") }, "Make PowerUser");
-    } else if (p.role === "power" && admin && !me) {
-      action = el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, "revoke") },
-        rolesView.confirm === p.id ? "Tap again: remove PowerUser" : "Remove PowerUser");
+    } else if ((p.role === "power" || p.role === "powerxtreme") && admin && !me) {
+      const xtreme = p.role === "powerxtreme";
+      action = el("span", { class: "role-actions" },
+        el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, xtreme ? "unxtreme" : "xtreme") },
+          xtreme ? "Back to PowerUser" : "Make PowerXtreme"),
+        el("button", { type: "button", class: "reset-button", onclick: (e) => changeRole(e.currentTarget, p, "revoke") },
+          rolesView.confirm === p.id ? "Tap again: remove PowerUser" : "Remove PowerUser"));
     } else if (p.role === "admin") {
       action = el("span", { class: "muted", text: "Set in settings" });
     }
@@ -1095,8 +1099,10 @@ async function changeRole(btn, person, how) {
   btn.disabled = true;
   const out = $("#r-result");
   try {
-    await api(`/admin/roles/${person.id}`, how === "grant" ? "POST" : "DELETE");
-    out.replaceChildren(el("p", { text: how === "grant" ? `${person.username} is a PowerUser now.` : `${person.username} is a User again.` }));
+    const path = how === "xtreme" || how === "unxtreme" ? `/admin/roles/${person.id}/powerxtreme` : `/admin/roles/${person.id}`;
+    await api(path, how === "grant" || how === "xtreme" ? "POST" : "DELETE");
+    const said = { grant: "is a PowerUser now", revoke: "is a User again", xtreme: "is a PowerXtreme now", unxtreme: "is a PowerUser again" };
+    out.replaceChildren(el("p", { text: `${person.username} ${said[how]}.` }));
   } catch (err) {
     out.replaceChildren(el("p", { text: `Couldn't change ${person.username}'s role: ${err.message}` }));
   }
@@ -1355,7 +1361,7 @@ $("#u-close").addEventListener("click", () => {
 const TABS = ["overview", "metrics", "graph", "users", "roles", "logs"];
 // Which tabs each role gets (roles.md). The server enforces the same, endpoint by endpoint.
 const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", users: "admin", roles: "power", logs: "admin" };
-const RANK = { user: 0, power: 1, admin: 2 };
+const RANK = { user: 0, power: 1, powerxtreme: 2, admin: 3 };
 let viewer = null;
 const allowed = (tab) => viewer && RANK[viewer.role] >= RANK[TAB_ROLES[tab]];
 const currentTab = () => TABS.find((t) => location.hash === `#${t}` && allowed(t)) ?? "overview";

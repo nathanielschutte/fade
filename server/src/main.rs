@@ -517,6 +517,10 @@ fn router(state: SharedState) -> Router {
             "/admin/roles/{user_id}",
             post(roles::grant).delete(roles::revoke),
         )
+        .route(
+            "/admin/roles/{user_id}/powerxtreme",
+            post(roles::grant_xtreme).delete(roles::revoke_xtreme),
+        )
         .route("/graph", get(graph::mine))
         .route("/admin/logs", get(logs::list))
         .route(

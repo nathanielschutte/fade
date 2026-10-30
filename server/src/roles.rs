@@ -1,10 +1,12 @@
-//! Roles (docs/implementation/roles.md): User, PowerUser, Admin.
+//! Roles (docs/implementation/roles.md): User, PowerUser, PowerXtreme, Admin.
 //!
 //! Admins are a list in settings: `FADE_ADMINS`, plus the SSM parameter named
 //! by `FADE_ADMINS_PARAM` in production, reloadable without a deploy. They're
 //! never stored in the database. PowerUsers are granted in the app
 //! (`user_roles`, append-only marks) by Admins or other PowerUsers, and taken
-//! away only by Admins.
+//! away only by Admins. PowerXtreme is a step above PowerUser that Admins
+//! give to PowerUsers (`user_role_upgrades`); for now it can do exactly what
+//! a PowerUser can.
 //!
 //! PowerUser is for curiosity, not power: it opens parts of the System pages
 //! but never shows more private data than a User sees, and can't act on
@@ -36,7 +38,16 @@ use crate::{
 pub enum Role {
     User,
     Power,
+    /// A PowerUser, and then some: the same as `Power` for now (Nate, 2026-10-29).
+    PowerXtreme,
     Admin,
+}
+
+impl Role {
+    /// PowerUser or PowerXtreme: curious, never more private data than a User.
+    pub fn is_power(self) -> bool {
+        matches!(self, Role::Power | Role::PowerXtreme)
+    }
 }
 
 /// Usernames from a comma-, space-, or line-separated list, lowercased.
@@ -113,16 +124,30 @@ async fn granted_power(db: &SqlitePool, user_id: i64) -> sqlx::Result<bool> {
     Ok(row.is_some())
 }
 
+/// Whether `user_id` currently holds PowerXtreme (on top of a PowerUser grant).
+async fn granted_xtreme(db: &SqlitePool, user_id: i64) -> sqlx::Result<bool> {
+    let row: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM user_role_upgrades WHERE user_id = ? AND role = 'powerxtreme' AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.is_some())
+}
+
 /// Someone's role. Being listed as an Admin beats a PowerUser grant.
+/// PowerXtreme counts only on top of a current PowerUser grant.
 pub async fn role_of(state: &SharedState, user: &UserPublic) -> sqlx::Result<Role> {
     // By the name they have now, or one they had (usernames.rs).
     if crate::usernames::is_listed_admin(&state.db, &state.admins, user.id, &user.username).await? {
         return Ok(Role::Admin);
     }
-    Ok(if granted_power(&state.db, user.id).await? {
-        Role::Power
-    } else {
+    Ok(if !granted_power(&state.db, user.id).await? {
         Role::User
+    } else if granted_xtreme(&state.db, user.id).await? {
+        Role::PowerXtreme
+    } else {
+        Role::Power
     })
 }
 
@@ -185,6 +210,7 @@ struct Person {
     username: String,
     granted_by: Option<String>,
     granted_at: Option<i64>,
+    xtreme_at: Option<i64>,
 }
 
 /// `GET /api/admin/roles`: everyone for Admins; for PowerUsers, themselves
@@ -195,9 +221,10 @@ pub async fn list(
 ) -> AppResult<Json<Value>> {
     let role = require(&state, &me, Role::Power).await?;
     let rows: Vec<Person> = sqlx::query_as(
-        "SELECT u.id, u.username, g.username AS granted_by, r.granted_at
+        "SELECT u.id, u.username, g.username AS granted_by, r.granted_at, x.granted_at AS xtreme_at
          FROM users u
          LEFT JOIN user_roles r ON r.user_id = u.id AND r.role = 'power' AND r.revoked_at IS NULL
+         LEFT JOIN user_role_upgrades x ON x.user_id = u.id AND x.role = 'powerxtreme' AND x.revoked_at IS NULL
          LEFT JOIN users g ON g.id = r.granted_by
          ORDER BY lower(u.username)",
     )
@@ -217,6 +244,8 @@ pub async fn list(
         .map(|p| {
             let their_role = if admin_ids.contains(&p.id) {
                 Role::Admin
+            } else if p.granted_at.is_some() && p.xtreme_at.is_some() {
+                Role::PowerXtreme
             } else if p.granted_at.is_some() {
                 Role::Power
             } else {
@@ -257,13 +286,15 @@ pub async fn grant(
     if target.id == me.id {
         return Err(AppError::bad("You can't change your own role."));
     }
-    if role == Role::Power && !friend_ids(&state.db, me.id).await?.contains(&target.id) {
+    if role.is_power() && !friend_ids(&state.db, me.id).await?.contains(&target.id) {
         // Same answer as someone who doesn't exist: PowerUsers only see their friends.
         return Err(AppError::not_found("They aren't on napsack."));
     }
     match role_of(&state, &target).await? {
         Role::Admin => return Err(AppError::Conflict("They're an Admin already.".into())),
-        Role::Power => return Err(AppError::Conflict("They're a PowerUser already.".into())),
+        Role::Power | Role::PowerXtreme => {
+            return Err(AppError::Conflict("They're a PowerUser already.".into()))
+        }
         Role::User => {}
     }
     let added = sqlx::query(
@@ -287,6 +318,7 @@ pub async fn grant(
 }
 
 /// `DELETE /api/admin/roles/{user_id}`: take PowerUser away. Admins only.
+/// PowerXtreme goes with it: it's only ever on top of PowerUser.
 pub async fn revoke(
     State(state): State<SharedState>,
     AuthUser(me): AuthUser,
@@ -306,8 +338,84 @@ pub async fn revoke(
     if marked == 0 {
         return Err(AppError::not_found("They aren't a PowerUser."));
     }
+    end_xtreme(&state.db, user_id, me.id).await?;
     tracing::info!(user_id, by = me.id, "poweruser revoked");
     Ok(Json(json!({ "ok": true, "role": Role::User })))
+}
+
+/// Marks someone's PowerXtreme as ended, if they have it. Returns whether they did.
+async fn end_xtreme(db: &SqlitePool, user_id: i64, by: i64) -> sqlx::Result<bool> {
+    let marked = sqlx::query(
+        "UPDATE user_role_upgrades SET revoked_at = ?, revoked_by = ?
+         WHERE user_id = ? AND role = 'powerxtreme' AND revoked_at IS NULL",
+    )
+    .bind(now())
+    .bind(by)
+    .bind(user_id)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(marked > 0)
+}
+
+/// `POST /api/admin/roles/{user_id}/powerxtreme`: make a PowerUser a
+/// PowerXtreme. Admins only, and only for someone who's a PowerUser now.
+pub async fn grant_xtreme(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(user_id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    require(&state, &me, Role::Admin).await?;
+    let target: Option<UserPublic> = sqlx::query_as("SELECT id, username FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some(target) = target else {
+        return Err(AppError::not_found("They aren't on napsack."));
+    };
+    match role_of(&state, &target).await? {
+        Role::Power => {}
+        Role::PowerXtreme => {
+            return Err(AppError::Conflict("They're a PowerXtreme already.".into()))
+        }
+        Role::Admin => return Err(AppError::Conflict("They're an Admin already.".into())),
+        Role::User => {
+            return Err(AppError::bad(
+                "Only PowerUsers can be made PowerXtreme. Make them a PowerUser first.",
+            ))
+        }
+    }
+    let added = sqlx::query(
+        "INSERT INTO user_role_upgrades (user_id, role, granted_by, granted_at) VALUES (?, 'powerxtreme', ?, ?)",
+    )
+    .bind(target.id)
+    .bind(me.id)
+    .bind(now())
+    .execute(&state.db)
+    .await;
+    match added {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(AppError::Conflict("They're a PowerXtreme already.".into()))
+        }
+        Err(e) => return Err(e.into()),
+    }
+    tracing::info!(user_id = target.id, by = me.id, "powerxtreme granted");
+    Ok(Json(json!({ "ok": true, "role": Role::PowerXtreme })))
+}
+
+/// `DELETE /api/admin/roles/{user_id}/powerxtreme`: back to PowerUser. Admins only.
+pub async fn revoke_xtreme(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+    Path(user_id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    require(&state, &me, Role::Admin).await?;
+    if !end_xtreme(&state.db, user_id, me.id).await? {
+        return Err(AppError::not_found("They aren't a PowerXtreme."));
+    }
+    tracing::info!(user_id, by = me.id, "powerxtreme revoked");
+    Ok(Json(json!({ "ok": true, "role": Role::Power })))
 }
 
 /// `POST /api/admin/roles/reload`: read the admin list from settings again. Admins only.
@@ -361,8 +469,18 @@ mod tests {
 
     #[test]
     fn roles_order() {
-        assert!(Role::User < Role::Power && Role::Power < Role::Admin);
+        assert!(
+            Role::User < Role::Power
+                && Role::Power < Role::PowerXtreme
+                && Role::PowerXtreme < Role::Admin
+        );
         assert_eq!(serde_json::to_value(Role::Power).unwrap(), "power");
+        assert_eq!(
+            serde_json::to_value(Role::PowerXtreme).unwrap(),
+            "powerxtreme"
+        );
+        assert!(Role::Power.is_power() && Role::PowerXtreme.is_power());
+        assert!(!Role::User.is_power() && !Role::Admin.is_power());
     }
 
     #[tokio::test]
@@ -392,6 +510,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, 2);
+
+        // PowerXtreme sits on top of the PowerUser grant; ending it leaves PowerUser.
+        assert!(!granted_xtreme(&db, 2).await.unwrap());
+        sqlx::query("INSERT INTO user_role_upgrades (user_id, role, granted_by, granted_at) VALUES (2, 'powerxtreme', 1, 9)")
+            .execute(&db).await.unwrap();
+        assert!(granted_xtreme(&db, 2).await.unwrap());
+        assert!(sqlx::query("INSERT INTO user_role_upgrades (user_id, role, granted_by, granted_at) VALUES (2, 'powerxtreme', 1, 10)")
+            .execute(&db).await.is_err(), "one current grant at a time");
+        assert!(end_xtreme(&db, 2, 1).await.unwrap());
+        assert!(!end_xtreme(&db, 2, 1).await.unwrap(), "nothing left to end");
+        assert!(!granted_xtreme(&db, 2).await.unwrap() && granted_power(&db, 2).await.unwrap());
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM user_role_upgrades WHERE revoked_at IS NOT NULL",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(kept, 1, "the history stays");
 
         let k1 = alias_key(&db).await.unwrap();
         assert_eq!(k1.len(), 32);

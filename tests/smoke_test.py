@@ -872,9 +872,41 @@ def check_roles(tag):
     everyone = ok(call("GET", "/admin/roles", adm)).json()
     granted = next(p for p in everyone["people"] if p["id"] == uid["friend"])
     assert granted["role"] == "power" and granted["granted_by"] == name["power"]
+
+    # PowerXtreme: Admins give it, to PowerUsers only, and take it away; for now
+    # it's exactly a PowerUser (roles.md).
+    for who in (tok["user"], P):                                                  # nobody else can
+        ok(call("POST", f"/admin/roles/{uid['friend']}/powerxtreme", who), 404)
+        ok(call("DELETE", f"/admin/roles/{uid['friend']}/powerxtreme", who), 404)
+    ok(call("POST", f"/admin/roles/{uid['user']}/powerxtreme", adm), 400)        # not a PowerUser
+    ok(call("POST", f"/admin/roles/{uid['power']}/powerxtreme", adm))
+    ok(call("POST", f"/admin/roles/{uid['power']}/powerxtreme", adm), 409)
+    assert ok(call("GET", "/me", P)).json()["role"] == "powerxtreme"
+    ok(call("POST", f"/admin/roles/{uid['power']}", adm), 409)                   # a PowerUser already
+    stats = ok(call("GET", "/admin/stats", P)).json()
+    assert stats["users"]["list"] is None and name["stranger"] not in json.dumps(stats)
+    assert ok(call("GET", "/admin/metrics?hours=1", P)).json()["cost_visible"] is False
+    for method, path in (("GET", "/admin/logs"), ("GET", "/admin/users"), ("GET", "/admin/incidents"),
+                         ("POST", f"/admin/users/{uid['friend']}/reset-code"), ("POST", "/admin/roles/reload"),
+                         ("DELETE", f"/admin/roles/{uid['friend']}")):
+        ok(call(method, path, P), 404)
+    g = ok(call("GET", "/admin/graph?all=1", P)).json()
+    assert g["anonymous"] is True and name["stranger"] not in json.dumps(g)
+    roles = ok(call("GET", "/admin/roles", P)).json()
+    assert roles["role"] == "powerxtreme" and {p["id"] for p in roles["people"]} == {uid["power"], uid["friend"], uid["pal"]}
+    ok(call("POST", f"/admin/roles/{uid['stranger']}", P), 404)
+    me_row = next(p for p in ok(call("GET", "/admin/roles", adm)).json()["people"] if p["id"] == uid["power"])
+    assert me_row["role"] == "powerxtreme", me_row
+    ok(call("DELETE", f"/admin/roles/{uid['power']}/powerxtreme", adm))          # back to PowerUser
+    ok(call("DELETE", f"/admin/roles/{uid['power']}/powerxtreme", adm), 404)
+    assert ok(call("GET", "/me", P)).json()["role"] == "power"
+    ok(call("POST", f"/admin/roles/{uid['power']}/powerxtreme", adm))
+
     ok(call("DELETE", f"/admin/roles/{uid['friend']}", adm))
-    ok(call("DELETE", f"/admin/roles/{uid['power']}", adm))
+    ok(call("DELETE", f"/admin/roles/{uid['power']}", adm))                      # PowerXtreme goes with it
     ok(call("GET", "/admin/stats", P), 404)                                       # back to User
+    assert ok(call("GET", "/me", P)).json()["role"] == "user"
+    ok(call("POST", f"/admin/roles/{uid['power']}/powerxtreme", adm), 400)
     ok(call("POST", "/admin/roles/reload", adm), 400)                             # no settings parameter here
     # Incidents: Admins only. Locally there's no monitor; ids are checked before anything else.
     inc = ok(call("GET", "/admin/incidents", adm)).json()
@@ -885,7 +917,9 @@ def check_roles(tag):
     if DB:
         n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_roles WHERE user_id IN (?, ?, ?)", (uid["power"], uid["friend"], uid["user"])).fetchone()[0]
         assert n == 3, f"grants are marked ended, never deleted: {n}"
-    print("  roles: Users see nothing; PowerUsers no names, cost, logs, or resets; Admins everything")
+        n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM user_role_upgrades WHERE user_id = ? AND revoked_at IS NOT NULL", (uid["power"],)).fetchone()[0]
+        assert n == 2, f"PowerXtreme grants are marked ended, never deleted: {n}"
+    print("  roles: Users see nothing; PowerUsers (and PowerXtremes, the same) no names, cost, logs, or resets; Admins everything")
 
 def check_admin_users(tag):
     """System → Users (admin_users.rs): turning an account off keeps all of it,

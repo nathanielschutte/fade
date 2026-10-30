@@ -991,7 +991,7 @@ $("#announcement-close").addEventListener("click", () => {
 function renderAccountBar() {
   // System (the admin panel) is for PowerUsers and Admins (roles.md); the server checks again.
   // Here, not once at start: the app may open from a kept "me" with an older role (X31).
-  $("#admin-link").hidden = !(state.me.role === "power" || state.me.role === "admin" || state.me.is_admin);
+  $("#admin-link").hidden = !(["power", "powerxtreme", "admin"].includes(state.me.role) || state.me.is_admin);
   $("#profile-admin-link").hidden = $("#admin-link").hidden;
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);

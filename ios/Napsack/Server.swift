@@ -42,7 +42,8 @@ struct Me: Codable, Equatable, Sendable {
     let hasRecoveryKey: Bool
 
     var isAdmin: Bool { role == "admin" }
-    var isPowerUser: Bool { role == "power" || isAdmin }
+    /// PowerUser, PowerXtreme (the same, for now), or Admin.
+    var isPowerUser: Bool { role == "power" || role == "powerxtreme" || isAdmin }
 }
 
 /// What `POST /api/auth/login` (and later register) answers.
