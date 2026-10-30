@@ -39,7 +39,7 @@ Changing config: edit tfvars, run `terraform apply` (which updates the SSM param
 |---|---|
 | t4g.nano | ~$3.07 |
 | Public IPv4 (Elastic IP) | ~$3.65 |
-| 8 GB root + 1 GB data gp3 | ~$0.72 |
+| 8 GB root + 5 GB data gp3 | ~$1.04 |
 | Snapshots, S3, SSM parameter | cents |
 | **Total** | **~$7.50** |
 
@@ -60,7 +60,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_SNAP_MAX_KB` | `512` | Hard cap per encrypted pic. The client compresses every photo to 200 KB or less |
 | `FADE_VIDEO_MAX_KB` | `4096` | Hard cap per encrypted video. Clients record about 1.5 Mbit/s, so 10 seconds is about 2 MB |
 | `FADE_VIDEO_MAX_SECONDS` | `10` | The longest video a client records (1 to 60) |
-| `FADE_SNAP_DISK_MB` | `256` | Disk ceiling for all unopened direct pics |
+| `FADE_SNAP_DISK_MB` · `FADE_GROUP_PIC_DISK_MB` | `256` · `200` | Disk ceilings for all unopened direct, and group, pics and videos. Production sets 2048 · 1536 for its 5 GB data volume (`snap_disk_mb`, `group_pic_disk_mb`) |
 | `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
