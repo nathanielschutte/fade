@@ -15,6 +15,7 @@ struct ChatListScreen: View {
     /// trying after you leave its chat, and coming back is instant. (Only in
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
+    @State private var settingUpRecovery = false
 
     init(account: Account) {
         self.account = account
@@ -24,6 +25,16 @@ struct ChatListScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                if !account.user.hasRecoveryKey {
+                    // As the web app's nudge: until there's one, a forgotten password costs every message.
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Save a recovery key, so a forgotten password can't cost you your messages.")
+                            Button("Set up") { settingUpRecovery = true }.buttonStyle(.borderedProminent)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 if let problem = list.problem {
                     Text(problem).foregroundStyle(.red)
                 }
@@ -49,6 +60,9 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
+            .sheet(isPresented: $settingUpRecovery) {
+                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+            }
             .navigationTitle("Chats")
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {

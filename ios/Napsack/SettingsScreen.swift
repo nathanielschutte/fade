@@ -107,8 +107,18 @@ struct PasswordSheet: View {
     @State private var username = ""
     @State private var working = false
     @State private var problem: String?
+    /// A new recovery key, shown here once (the app's own sheet can't open over this one).
+    @State private var newKey: String?
 
     var body: some View {
+        if let newKey {
+            RecoveryKeyScreen(key: newKey) { dismiss() }
+        } else {
+            form
+        }
+    }
+
+    private var form: some View {
         NavigationStack {
             Form {
                 Section {
@@ -189,6 +199,9 @@ struct PasswordSheet: View {
                 case .recovery:
                     try await session.makeRecoveryKey(password: current)
                     done("Recovery key saved.")
+                    newKey = session.recoveryKeyToShow
+                    session.recoveryKeyToShow = nil
+                    return  // the key shows here; "I've saved it" closes the sheet
                 case .username:
                     try await session.changeUsername(to: username, password: current)
                     done("Your username is now @\(session.account?.user.username ?? username). Sign in with it from now on.")

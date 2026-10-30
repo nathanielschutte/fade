@@ -49,7 +49,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Settings: your account, its safety, and signing out, as one screen | Nate | Done | 2026-10-29: the person button on the chat list opens Settings (a `Form`): username, server, security, Developer for Admins, Sign out, in the web's Security panel's words |
-| The recovery key: a reminder if you have none, and setting one later | Nate | In progress | Setting or replacing one from Settings is done (2026-10-29); the reminder in the chat list isn't yet |
+| The recovery key: a reminder if you have none, and setting one later | Nate | Done | 2026-10-29: the chat list says so, in the web's words, until there's one (Set up asks for the password); Settings makes or replaces one; shown once either way |
 | Change password (unlock first) | Nate | Done | 2026-10-29: Settings; the key is unlocked and locked again on the phone; other devices are signed out. AutoFill's new-password suggestion works on the fields |
 | Forgot password: the recovery key or an admin's reset code | – | Planned | `/auth/recover/start`, `/auth/recover/finish`, `/auth/reset` |
 | Change your username (once a week) | Nate | Done | 2026-10-29: Settings; the key is locked again under the new name (the salt); the server's own words when it's too soon or taken |
