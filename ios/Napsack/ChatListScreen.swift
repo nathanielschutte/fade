@@ -122,14 +122,14 @@ struct ChatListScreen: View {
                 }
             }
             .sheet(item: $captured) { media in
-                SendToSheet(media: media, chats: sendable, send: { kind, caption in
+                SendToSheet(media: media, chats: sendable, send: { kind, caption, y in
                     guard let chat = conversation(kind) else { throw SendError.cantOpen }
                     switch media {
                     case .photo(let image):
                         guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                        try await chat.sendPhoto(jpeg, caption: caption)
+                        try await chat.sendPhoto(jpeg, caption: caption, y: y)
                     case .video(let url):
-                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption)
+                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y)
                     }
                 }, done: { toast = Toast(text: $0, undo: nil) })
                 .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }

@@ -362,10 +362,11 @@ struct SendToSheet: View {
     let media: Captured
     let chats: [ChatRow]
     /// Sends to one chat; throws what went wrong there.
-    let send: (ChatRow.Kind, String) async throws -> Void
+    let send: (ChatRow.Kind, String, Double) async throws -> Void
     let done: (String) -> Void
     @State private var picked: [ChatRow.Kind] = []
     @State private var caption = ""
+    @State private var y = 0.8
     @State private var search = ""
     @State private var sending = false
     @State private var problem: String?
@@ -373,13 +374,8 @@ struct SendToSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Group {
-                    switch media {
-                    case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
-                    case .video(let url): LoopingVideo(url: url)
-                    }
-                }
-                .frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 12)).padding(.horizontal)
+                CaptionedPreview(media: media, caption: caption, y: $y)
+                    .frame(maxHeight: 220).padding(.horizontal)
                 TextField("Add a caption", text: $caption, axis: .vertical).lineLimit(1...3)
                     .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
                     .padding(10).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12)).padding()
@@ -427,7 +423,7 @@ struct SendToSheet: View {
             for kind in picked {
                 let name = chats.first { $0.kind == kind }?.name ?? "a chat"
                 do {
-                    try await send(kind, caption)
+                    try await send(kind, caption, y)
                     sent.append(name)
                 } catch {
                     failed.append((name, error.localizedDescription))
@@ -442,5 +438,43 @@ struct SendToSheet: View {
                 problem = failed.map { "Not sent to \($0.0): \($0.1)" }.joined(separator: "\n")
             }
         }
+    }
+}
+
+/// The photo or video being sent, with its caption where it'll sit: drag it
+/// up or down (0 top, 1 bottom), as on the web (X33). Recipients see it there.
+struct CaptionedPreview: View {
+    let media: Captured
+    let caption: String
+    @Binding var y: Double
+
+    var body: some View {
+        Group {
+            switch media {
+            case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
+            case .video(let url): LoopingVideo(url: url)
+            }
+        }
+        .overlay {
+            if !caption.isEmpty {
+                GeometryReader { geo in
+                    Text(caption).font(.callout).foregroundStyle(.white).multilineTextAlignment(.center)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 12)
+                        .frame(width: geo.size.width)
+                        .position(x: geo.size.width / 2, y: geo.size.height * y)
+                        .gesture(DragGesture().onChanged { value in
+                            y = min(max(value.location.y / max(geo.size.height, 1), 0.08), 0.92)
+                        })
+                        .accessibilityLabel("Caption: \(caption)")
+                        .accessibilityHint("Drag up or down to place it")
+                        .accessibilityAdjustableAction { direction in
+                            y = min(max(y + (direction == .increment ? 0.1 : -0.1), 0.08), 0.92)
+                        }
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

@@ -595,8 +595,8 @@ struct OpenedPic: Sendable {
     }
 
     /// A video from the camera (MP4): format 4 to a friend, 5 to a group, sealed the same way.
-    func sendVideo(_ mp4: Data, caption: String, maxBytes: Int? = nil) async throws {
-        try await sendMedia(mp4, video: "video/mp4", caption: caption, y: nil, maxBytes: maxBytes)
+    func sendVideo(_ mp4: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil) async throws {
+        try await sendMedia(mp4, video: "video/mp4", caption: caption, y: y, maxBytes: maxBytes)
     }
 
     /// A photo (`video` nil) or a video of that type.
