@@ -400,7 +400,10 @@ struct ChatScreen: View {
             }
         }
         .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
-            PicViewer(pic: item.pic, conversation: conversation)
+            // This one, then the others still waiting after it.
+            let waiting = conversation.bubbles.compactMap(\.opening)
+            let from = waiting.firstIndex(of: item.pic) ?? 0
+            PicViewer(pics: Array(waiting[from...]), conversation: conversation)
         }
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}

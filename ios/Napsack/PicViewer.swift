@@ -5,10 +5,11 @@ import SwiftUI
 /// its caption where the sender put it. It counts as opened only once it's
 /// been shown; closing it before then leaves it unopened. Nothing is saved:
 /// a video plays from a temporary file that's deleted when it closes.
-struct PicViewer: View {
-    @Environment(\.dismiss) private var dismiss
+struct PicPage: View {
     let pic: PicToOpen
     let conversation: Conversation
+    /// Shown, and tapped past (or a video's end): on to the next, or closed.
+    let next: () -> Void
     @State private var opened: OpenedPic?
     @State private var problem: String?
     @State private var player: AVPlayer?
@@ -46,7 +47,7 @@ struct PicViewer: View {
             } else if let problem {
                 VStack(spacing: 12) {
                     Text(problem).foregroundStyle(.white).multilineTextAlignment(.center)
-                    Button("Close") { dismiss() }.buttonStyle(.bordered).tint(.white)
+                    Button("Close") { next() }.buttonStyle(.bordered).tint(.white)
                 }
                 .padding()
             } else {
@@ -54,9 +55,9 @@ struct PicViewer: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { if opened != nil || problem != nil { dismiss() } }
+        .onTapGesture { if opened != nil || problem != nil { next() } }
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Tap to close. It can't be opened again.")
+        .accessibilityHint("Tap for the next one, or to close. It can't be opened again.")
         .statusBarHidden()
         .task {
             do {
@@ -69,7 +70,7 @@ struct PicViewer: View {
                     player.play()
                     // Closes when it ends, as on the web.
                     for await _ in NotificationCenter.default.notifications(named: AVPlayerItem.didPlayToEndTimeNotification, object: player.currentItem) {
-                        dismiss()
+                        next()
                         break
                     }
                 }
@@ -82,6 +83,30 @@ struct PicViewer: View {
             player?.pause()
             if let url = opened?.video { try? FileManager.default.removeItem(at: url) }
             if shown { Task { await conversation.confirmOpened(pic) } }
+        }
+    }
+}
+
+/// Waiting pics and videos, opened back to back (app.js, `openPics`): each
+/// counts as opened once shown; tapping goes on to the next, then closes.
+struct PicViewer: View {
+    @Environment(\.dismiss) private var dismiss
+    /// Taken once, when it opens: the chat refreshes as each is confirmed, and the list mustn't move under it.
+    @State private var pics: [PicToOpen]
+    let conversation: Conversation
+    @State private var index = 0
+
+    init(pics: [PicToOpen], conversation: Conversation) {
+        _pics = State(initialValue: pics)
+        self.conversation = conversation
+    }
+
+    var body: some View {
+        if index < pics.count {
+            PicPage(pic: pics[index], conversation: conversation) {
+                if index + 1 < pics.count { index += 1 } else { dismiss() }
+            }
+            .id(index)  // a fresh page (and its own opening) for each
         }
     }
 }
