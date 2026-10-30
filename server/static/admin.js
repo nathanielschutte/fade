@@ -1203,12 +1203,13 @@ function renderUser() {
   const c = d.counts;
   const lock = d.sign_in;
   facts("#u-facts", [
+    ["User id", `id:${d.id} (as the admin list names Admins)`],
     ["Joined", longDate(d.created_at)],
     ["Last seen", d.online ? "Online now" : ago(d.last_seen_at)],
     ["Signed in on", `${d.sessions.length} ${d.sessions.length === 1 ? "device" : "devices"}${c.notification_devices ? `, ${c.notification_devices} with notifications` : ""}`],
     ["Friends · groups", `${n(c.friends)} · ${n(c.groups)}`],
     ["Sent", `${n(c.texts_sent)} texts, ${n(c.pics_sent)} pics, ${n(c.group_messages_sent)} group messages`],
-    ["Invite links made", n(c.invites_made)],
+    ["Add-a-friend links", n(c.invites_made)],
     ["Recovery key", d.recovery_key ? "Saved at sign-up (they can recover with it)" : "None"],
     ["Key reset", d.key_reset_at ? when(d.key_reset_at) : "Never"],
     ["Wrong passwords", lock.failures ? `${lock.failures} of ${lock.limit} in the last 15 minutes${lock.locked ? ": locked" : ""}` : "None lately"],

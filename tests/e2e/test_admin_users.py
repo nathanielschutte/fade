@@ -3,7 +3,7 @@ someone's account, turns it off (they're signed out and can't get back in;
 their friend's chat stays readable but can't be sent to), turns it back on,
 and posts an announcement that everyone sees live. Settings come from the
 environment; see common.py."""
-import asyncio, uuid
+import asyncio, re, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import ADMIN, BASE, launch, shot, PHONE, befriend, row, sign_up_or_in, fill_sign_up, open_page, sign_in
@@ -41,6 +41,7 @@ async def main():
         await expect(admin.locator("#u-detail-title")).to_have_text(BEN, timeout=10000)
         await expect(admin.locator("#u-facts")).to_contain_text("Friends · groups")
         await expect(admin.locator("#u-facts")).to_contain_text("Saved at sign-up")
+        await expect(admin.locator("#u-facts")).to_contain_text(re.compile(r"id:\d+ \(as the admin list names Admins\)"))  # S5
         assert "see you at 8" not in await admin.content()
         await shot(admin, "users-detail", full_page=False)
 
