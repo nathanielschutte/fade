@@ -287,6 +287,7 @@ enum SendError: LocalizedError {
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
         let connection = failure.map { ($0 as? ServerError)?.retryable == true } ?? true
         if connection { offline.insert(id) }
+        Reporter.shared.report(.warn, "send failed", failure.map { Reporter.fields($0, ["group": groupFlag]) } ?? [:])
         let why = connection ? "no connection." : failure?.localizedDescription ?? "no connection."
         outbox[i].status = .failed("Not sent: \(why)")
     }
@@ -339,7 +340,10 @@ enum SendError: LocalizedError {
     private func sendingKey(_ member: Server.GroupDetail.Member) throws -> String {
         if member.id == account.user.id { return account.publicKey }
         if let pinned = reader.pins.current[member.id] {
-            guard pinned == member.publicKey else { throw SendError.memberKeyChanged(reader.name(member.id, member.username)) }
+            guard pinned == member.publicKey else {
+                Reporter.shared.report(.warn, "group member key changed; group blocked", ["user_id": String(member.id)])
+                throw SendError.memberKeyChanged(reader.name(member.id, member.username))
+            }
             return pinned
         }
         pinBook?.see(senders: [(member.id, member.publicKey)])
@@ -349,9 +353,10 @@ enum SendError: LocalizedError {
     }
 
     /// Trusts the friend's new key (compared or not), then reopens the chat with it.
-    func acceptNewKey() async throws {
+    func acceptNewKey(verified: Bool) async throws {
         guard let friend, let pinBook else { return }
         pinBook.accept(friend)
+        Reporter.shared.report(.info, "friend key accepted", ["friend_id": String(friend.id), "verified": String(verified)])
         reader.pins = pinBook.pins
         reader.changed = pinBook.changed
         try await loadNewest()
@@ -360,6 +365,7 @@ enum SendError: LocalizedError {
     /// The newest page, replacing what's shown.
     func loadNewest() async throws {
         let page = try await fetch(before: nil)
+        noteUnreadable(page)
         bubbles = page
         reachedStart = page.count < Self.page
         loaded = true
@@ -480,6 +486,16 @@ enum SendError: LocalizedError {
             bubbles.append(bubble)
             bubbles.sort { $0.id < $1.id }
         }
+    }
+
+    private var groupFlag: String {
+        if case .group = chat { "true" } else { "false" }
+    }
+
+    /// Messages that couldn't be opened say so in the chat; the log viewer gets how many, nothing more.
+    private func noteUnreadable(_ page: [Bubble]) {
+        let count = page.filter { $0.content == .unreadable(Reader.cantOpen) }.count
+        if count > 0 { Reporter.shared.report(.warn, "messages couldn't be decrypted", ["count": String(count), "group": groupFlag]) }
     }
 
     /// The page before the oldest shown.

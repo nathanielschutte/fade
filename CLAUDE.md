@@ -125,7 +125,7 @@ Every change reaches `main` through a pull request, the owner's included, with o
 - Problems the apps report (warn and error) also go to the journal (target `napsack_client`), so they outlive restarts.
 - Never log message content, ciphertext, keys, tokens, invite codes, passwords, or request bodies and query strings. `tests/e2e/test_admin.py` checks the logs for these.
 - New features log their important events, and a user-visible failure always leaves a log line explaining it.
-- Clients report too. In the web app, call `report(level, message, fields)` (it batches to `POST /api/logs`); the iOS app will do the same. These show in the viewer as "web app" / "ios app" (Source filter). The same never-log list applies, and the server redacts fields named like content or secrets as a backstop. Don't rely on that.
+- Clients report too. In the web app, call `report(level, message, fields)` (it batches to `POST /api/logs`); in the iOS app, `Reporter.shared.report(.warn, "message", fields)` (`Reporter.swift`), the same way. These show in the viewer as "web app" / "ios app" (Source filter). The same never-log list applies, and the server redacts fields named like content or secrets as a backstop. Don't rely on that.
 
 ## Environment notes
 

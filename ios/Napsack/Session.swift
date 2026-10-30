@@ -71,7 +71,12 @@ enum SignInError: LocalizedError, Equatable {
         case signedIn(Account)
     }
 
-    private(set) var state: State = .starting
+    private(set) var state: State = .starting {
+        // The app's reports go as whoever's signed in.
+        didSet { if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) } }
+    }
+    /// Where sign-in last went, for reports while signed out.
+    private var lastServer: String?
     /// Something to tell the person on the sign-in screen ("Your session ended").
     var notice: String?
     /// The server needs a newer app: what it says. The app shows nothing else until it's updated.
@@ -81,10 +86,12 @@ enum SignInError: LocalizedError, Equatable {
 
     private let transport: any Transport
     private let store: any AccountStore
+    private let reporter: Reporter
 
-    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore()) {
+    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore(), reporter: Reporter? = nil) {
         self.transport = transport
         self.store = store
+        self.reporter = reporter ?? .shared
     }
 
     var account: Account? {
@@ -95,6 +102,7 @@ enum SignInError: LocalizedError, Equatable {
     /// the server. A session the server has ended signs out; no connection
     /// keeps what's here.
     func restore(defaultServer: String) async {
+        lastServer = defaultServer
         guard let kept = try? store.load() else {
             state = .signedOut
             await checkVersion(server: defaultServer)
@@ -166,12 +174,21 @@ enum SignInError: LocalizedError, Equatable {
         guard !username.contains("@") else { throw SignInError.emailAddress }
         let server = try Server(address, transport: transport)
         notice = nil
+        lastServer = server.address
+        reporter.use(server: server.address, token: nil)
         let keys = try await deriveKeys(username, password)
-        let answer = try await watchingForUpdates { try await server.login(username: username, authKey: keys.authKey) }
+        let answer: SessionResponse
+        do {
+            answer = try await watchingForUpdates { try await server.login(username: username, authKey: keys.authKey) }
+        } catch {
+            reporter.report(.warn, "sign in failed", Reporter.fields(error))
+            throw error
+        }
         let identity: P256.KeyAgreement.PrivateKey
         do {
             identity = try E2E.unwrapIdentity(wrapKey: keys.wrapKey, wrapped: answer.wrappedPrivateKey)
         } catch {
+            reporter.report(.error, "unlocking the private key failed")
             throw SignInError.cantUnlock
         }
         let account = Account(server: server.address, token: answer.token, user: answer.user,
@@ -239,11 +256,13 @@ enum SignInError: LocalizedError, Equatable {
     /// forgets it either way.
     func signOut() async {
         guard let account else { return }
+        await reporter.flush()  // what's waiting goes as this account, before it's gone
         try? await Server(account.server, transport: transport).logout(token: account.token)
         endLocally(notice: nil)
     }
 
     private func endLocally(notice: String?) {
+        if notice != nil { reporter.report(.info, "session ended") }
         try? store.delete()
         self.notice = notice
         state = .signedOut
