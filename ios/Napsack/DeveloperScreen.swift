@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// For development, from sign-in or the home screen: what a server says about
-/// itself, what this app says it is, and the encryption's checks run on this
-/// phone (VectorScreen). The server address is the one sign-in uses.
+/// Debugging tools, for Admins only (from the account menu): what a server
+/// says about itself, what this app says it is, the encryption's checks run on
+/// this phone (VectorScreen), and which server the next sign-in uses.
 struct DeveloperScreen: View {
+    /// The server this account is on.
+    let signedInTo: String
     @AppStorage("server") private var address = AppInfo.defaultServer
     @State private var config: ServerConfig?
     @State private var problem: String?
@@ -11,7 +13,8 @@ struct DeveloperScreen: View {
 
     var body: some View {
         Form {
-            Section("Server") {
+            Section {
+                LabeledContent("Signed in to", value: signedInTo)
                 TextField("https://staging.napsack.io", text: $address)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -20,6 +23,9 @@ struct DeveloperScreen: View {
                     .disabled(checking)
                 if let problem {
                     Text(problem).foregroundStyle(.red)
+                }
+                if address != AppInfo.defaultServer {
+                    Button("Use napsack's server") { address = AppInfo.defaultServer }
                 }
                 if let config {
                     LabeledContent("Version", value: config.serverVersion)
@@ -31,6 +37,10 @@ struct DeveloperScreen: View {
                         Text("This server needs napsack \(minimum) or newer.").foregroundStyle(.red)
                     }
                 }
+            } header: {
+                Text("Server")
+            } footer: {
+                Text("The address is the server the next sign-in uses; sign out to go there. Check shows what it says about itself.")
             }
             Section("This app") {
                 LabeledContent("Version", value: "\(AppInfo.version) (\(AppInfo.build))")
@@ -65,5 +75,5 @@ struct DeveloperScreen: View {
 }
 
 #Preview {
-    NavigationStack { DeveloperScreen() }
+    NavigationStack { DeveloperScreen(signedInTo: AppInfo.defaultServer) }
 }

@@ -43,6 +43,8 @@ Aliases are an HMAC of the viewer's id and the person's id, under a random serve
 
 The people picker lists only the PowerUser and their friends. Anyone else is reached by tapping them in the graph.
 
+**The iOS app** shows its debugging tools (Developer: a server's public settings, the encryption's checks, and which server to sign in to) to Admins only, going by `role` in `/api/me`. They show nothing an account couldn't see anyway (`/api/config` is public); it's scoping, not protection.
+
 ## Where Admins come from
 
 - **Production:** the SSM parameter `/fade/admins` (SecureString, comma-separated usernames). The server reads it at start, using the instance role and its own SigV4 signing (`aws.rs`), and again on **Reload admin list** (System → Roles, Admins only) or `scripts/reload-admins.sh`, which sends the service `SIGHUP`. The parameter is set with `scripts/set-admins.sh`, outside Terraform, so the list isn't in source control or Terraform state.
