@@ -89,7 +89,7 @@ A free team's builds stop opening after **7 days**; run it from Xcode again. Pus
   TEST_RUNNER_NAPSACK_TEST_SERVER=http://127.0.0.1:8080 xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack \
     -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:NapsackTests/LiveSignInTests
   ```
-  `xcodebuild` hands the tests any variable that starts with `TEST_RUNNER_`, without the prefix. Otherwise they show as skipped. One live test reads the log viewer back, which needs an Admin: run the server with `FADE_ADMINS=nate` and add `TEST_RUNNER_NAPSACK_TEST_ADMIN=nate`.
+  The easy way: **`make ios`** (`scripts/test-ios.sh`) runs the crypto package's tests, then the app's on a Simulator against a fresh server on a throwaway database, live tests included, and prints how long each part took; `make ios-quick` skips the server (as CI does), and `ONLY=NapsackTests/SendingTests make ios` runs one suite. By hand: `xcodebuild` hands the tests any variable that starts with `TEST_RUNNER_`, without the prefix. Otherwise they show as skipped. One live test reads the log viewer back, which needs an Admin: run the server with `FADE_ADMINS=nate` and add `TEST_RUNNER_NAPSACK_TEST_ADMIN=nate`.
 
 ### Pointing the app at your own server
 
