@@ -23,6 +23,8 @@ struct ChatScreen: View {
     @State private var failure: String?
     /// The message being held: its reactions and actions show over the chat.
     @State private var held: Bubble?
+    /// Counts what you've sent and reacted, for a light tap of haptics each time.
+    @State private var tapped = 0
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -95,6 +97,7 @@ struct ChatScreen: View {
         }
         .animation(.easeOut(duration: 0.15), value: held?.id)
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
+        .sensoryFeedback(.impact(weight: .light), trigger: tapped)
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -235,8 +238,14 @@ struct ChatScreen: View {
             Text(bubble.time.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
                 .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
         }
-        BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
+        BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index),
+                   react: conversation.canSend && bubble.repliable ? { react(bubble, $0) } : nil)
             .id(bubble.id)
+            .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable) {
+                editing = nil
+                replyingTo = bubble
+                composing = true
+            })
             .onLongPressGesture(minimumDuration: 0.35) { if holdable(bubble) { held = bubble } }
             .accessibilityAction(named: "Message actions") { if holdable(bubble) { held = bubble } }
         if bubble.id == conversation.seenId {
@@ -276,6 +285,7 @@ struct ChatScreen: View {
     }
 
     private func react(_ bubble: Bubble, _ emoji: String) {
+        tapped += 1
         Task {
             do { try await conversation.react(bubble, emoji) } catch { trouble(error) }
         }
@@ -291,6 +301,7 @@ struct ChatScreen: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, conversation.canSend else { return }
         draft = ""
+        tapped += 1
         if let editing {
             self.editing = nil
             guard case .text(let before, _) = editing.content, before != text else { return }  // nothing changed
@@ -383,6 +394,8 @@ struct BubbleView: View {
     let bubble: Bubble
     let quote: String?
     var showTime = true
+    /// Tapping a reaction under the message adds the same one (or takes yours back).
+    var react: ((String) -> Void)? = nil
 
     var body: some View {
         switch bubble.content {
@@ -409,7 +422,19 @@ struct BubbleView: View {
                                 in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if showTime || !bubble.reactions.isEmpty {
                         HStack(spacing: 4) {
-                            if !bubble.reactions.isEmpty { Text(bubble.reactions.joined()) }
+                            if !bubble.reactions.isEmpty {
+                                ForEach(Array(Set(bubble.reactions)).sorted(), id: \.self) { emoji in
+                                    let count = bubble.reactions.filter { $0 == emoji }.count
+                                    Button { react?(emoji) } label: {
+                                        Text(count > 1 ? "\(emoji)\(count)" : emoji)
+                                            .padding(.horizontal, 4).padding(.vertical, 1)
+                                            .background(bubble.myReaction == emoji ? Color.accentColor.opacity(0.25) : .clear, in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(react == nil)
+                                    .accessibilityLabel(bubble.myReaction == emoji ? "\(emoji) \(count), including you. Tap to take yours back" : "\(emoji) \(count). Tap to react")
+                                }
+                            }
                             if showTime { Text(bubble.time.formatted(date: .omitted, time: .shortened)) }
                         }
                         .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
@@ -515,5 +540,40 @@ struct MessageActions: View {
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
         }
+    }
+}
+
+/// Swipe a message right to reply, as people expect on a phone: it follows the
+/// finger a little, and past the threshold a tap of haptics and the reply bar.
+/// Vertical drags are left to the scroll view.
+struct SwipeToReply: ViewModifier {
+    let enabled: Bool
+    let reply: () -> Void
+    @State private var offset: CGFloat = 0
+    @State private var fired = false
+    static let threshold: CGFloat = 60
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offset)
+            .overlay(alignment: .leading) {
+                if offset > 8 {
+                    Image(systemName: "arrowshape.turn.up.left.fill").foregroundStyle(.secondary)
+                        .opacity(Double(min(1, offset / Self.threshold))).offset(x: offset - 30)
+                }
+            }
+            .simultaneousGesture(enabled ? DragGesture(minimumDistance: 15)
+                .onChanged { value in
+                    // Only a mostly-sideways drag to the right; scrolling stays scrolling.
+                    guard value.translation.width > 0, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                    offset = min(value.translation.width, Self.threshold * 1.3)
+                    if offset >= Self.threshold && !fired { fired = true }
+                }
+                .onEnded { _ in
+                    if fired { reply() }
+                    fired = false
+                    withAnimation(.spring(duration: 0.25)) { offset = 0 }
+                } : nil)
+            .sensoryFeedback(.impact(weight: .light), trigger: fired) { _, now in now }
     }
 }
