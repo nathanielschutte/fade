@@ -48,7 +48,7 @@ struct ChatListScreen: View {
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
             .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen() }
+            .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen(signedInTo: account.server) }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
@@ -60,7 +60,9 @@ struct ChatListScreen: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Section("@\(account.user.username) on \(URL(string: account.server)?.host() ?? account.server)") {
-                            Button("Developer", systemImage: "hammer") { showDeveloper = true }
+                            if account.user.isAdmin {  // debugging tools: Admins only, for now
+                                Button("Developer", systemImage: "hammer") { showDeveloper = true }
+                            }
                             Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                                 signingOut = true
                                 Task { await session.signOut() }

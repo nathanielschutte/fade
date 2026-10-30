@@ -37,8 +37,12 @@ struct Me: Codable, Equatable, Sendable {
     let id: Int64
     let username: String
     let displayName: String?
+    /// "user", "power", or "admin" (roles.md); the server checks it on every request.
     let role: String
     let hasRecoveryKey: Bool
+
+    var isAdmin: Bool { role == "admin" }
+    var isPowerUser: Bool { role == "power" || isAdmin }
 }
 
 /// What `POST /api/auth/login` (and later register) answers.

@@ -169,3 +169,12 @@ extension JSONDecoder {
         return decoder
     }
 }
+
+/// Roles as the server names them (roles.md): the app shows its debugging tools to Admins only.
+@Test func rolesFromTheServer() {
+    func me(_ role: String) -> Me { Me(id: 1, username: "nate", displayName: nil, role: role, hasRecoveryKey: true) }
+    #expect(me("admin").isAdmin && me("admin").isPowerUser)
+    #expect(!me("power").isAdmin && me("power").isPowerUser)
+    #expect(!me("user").isAdmin && !me("user").isPowerUser)
+    #expect(!me("something new").isAdmin)
+}

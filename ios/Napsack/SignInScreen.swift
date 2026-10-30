@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Signing in, or creating an account, on the server below the form. Like the
-/// web app's form: one screen, and a button to switch between the two.
+/// Signing in, or creating an account. Like the web app's form: one screen,
+/// and a button to switch between the two. It signs in to napsack's server
+/// unless an Admin pointed this phone at another (DeveloperScreen); then it
+/// says which, with a way back.
 struct SignInScreen: View {
     @Environment(Session.self) private var session
     @AppStorage("server") private var server = AppInfo.defaultServer
@@ -32,6 +34,7 @@ struct SignInScreen: View {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
+                        Text("Your password stays on this phone; the server gets a key made from it.")
                         if creating {
                             Text("Your password also unlocks your messages. If you forget it, they can't be recovered.")
                         }
@@ -49,21 +52,16 @@ struct SignInScreen: View {
                     }
                     .disabled(working)
                 }
-                Section {
-                    TextField("https://staging.napsack.io", text: $server)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Server")
-                } footer: {
-                    Text("Your password stays on this phone; the server gets a key made from it.")
+                if server != AppInfo.defaultServer {
+                    Section {
+                        LabeledContent("Server", value: server)
+                        Button("Use napsack's server") { server = AppInfo.defaultServer }
+                    } footer: {
+                        Text("An Admin pointed this phone at another server.")
+                    }
                 }
             }
             .navigationTitle("napsack")
-            .toolbar {
-                NavigationLink("Developer") { DeveloperScreen() }
-            }
             // Whether to ask for an invite code depends on the server.
             .task(id: "\(creating) \(server)") {
                 guard creating, let config = try? await Server(server).config() else { return }
