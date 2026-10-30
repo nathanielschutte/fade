@@ -2,15 +2,16 @@
 
 Status: **built (0.28.0).** Requested by Nate on 2026-10-23 (S2 in [plan.md](../management/plan.md)).
 
-## The three roles
+## The roles
 
 | Role | Who | Where it comes from |
 |---|---|---|
 | **User** | Everyone who signs up | The default |
 | **PowerUser** | People interested in how napsack is doing | Granted in the app by an Admin or another PowerUser; taken away only by an Admin |
+| **PowerXtreme** | A PowerUser, and then some | Granted to PowerUsers, and taken away, by Admins only. For now it can do exactly what a PowerUser can (Nate, 2026-10-29: a step up for those who want one; more may come, [S4](../management/plan.md#s4-powerxtreme)) |
 | **Admin** | A fixed few | A list in settings (an SSM parameter in production), never the database |
 
-**PowerUser is for curiosity, not power.** It shows how the app is doing; it never shows more private data than a User sees, and it can't act on anyone else. Every rule below is enforced by the server on every request; the pages only hide what the server already refuses.
+**PowerUser is for curiosity, not power.** PowerXtreme is the same, one step up: everywhere below, "PowerUser" includes it, and the server checks it the same way (`Role::is_power`). It shows how the app is doing; it never shows more private data than a User sees, and it can't act on anyone else. Every rule below is enforced by the server on every request; the pages only hide what the server already refuses.
 
 ## What each role can do
 
@@ -28,7 +29,8 @@ The admin panel becomes **System** (a gear in the account bar, shown to PowerUse
 | System → Users (accounts, turn off and on, sign out everywhere, clear a sign-in lock, reset codes, announcements, admin activity; [admin-users.md](admin-users.md)) | – | **no** | yes |
 | System → Roles: see roles | – | themselves and their friends | everyone |
 | Make someone a PowerUser | – | their friends only | anyone |
-| Take PowerUser away | – | **no** | yes |
+| Take PowerUser away (PowerXtreme goes with it) | – | **no** | yes |
+| Make a PowerUser a PowerXtreme, or back | – | **no** | yes |
 | Reload the admin list from settings | – | no | yes |
 
 Pages and endpoints a role can't use answer **404**, as the admin panel always has, so they don't confirm what exists.
@@ -69,12 +71,16 @@ CREATE UNIQUE INDEX user_roles_current ON user_roles(user_id, role) WHERE revoke
 
 Taking PowerUser away marks the grant's `revoked_at`; granting again adds a new row. The history of who granted and revoked what, and when, is kept.
 
+PowerXtreme has its own table, `user_role_upgrades` (the same columns; `role` is `powerxtreme`, with no CHECK so later steps can join it), because `user_roles` allows only `power` and migrations never rewrite a table. It counts only on top of a current PowerUser grant, and taking PowerUser away marks it ended too.
+
 ## API
 
-- `GET /api/me` adds `role` (`user`, `power` or `admin`); `is_admin` stays for older clients.
+- `GET /api/me` adds `role` (`user`, `power`, `powerxtreme`, or `admin`); `is_admin` stays for older clients.
 - `GET /api/admin/roles`: `{ role, people: [{ id, username, role, granted_by, granted_at }] }`. Everyone for Admins; for PowerUsers, themselves and their friends.
 - `POST /api/admin/roles/{user_id}`: make them a PowerUser. Admins: anyone. PowerUsers: friends only. Not themselves, not an Admin, and not someone who already is one.
-- `DELETE /api/admin/roles/{user_id}`: take PowerUser away. Admins only.
+- `DELETE /api/admin/roles/{user_id}`: take PowerUser away (and PowerXtreme with it). Admins only.
+- `POST /api/admin/roles/{user_id}/powerxtreme`: make a PowerUser a PowerXtreme. Admins only; 400 for someone who isn't a PowerUser now, 409 for someone who already is one.
+- `DELETE /api/admin/roles/{user_id}/powerxtreme`: back to PowerUser. Admins only.
 - `POST /api/admin/roles/reload`: reload the admin list. Admins only.
 - The rest of `/api/admin/*` as in the table above.
 
@@ -83,5 +89,5 @@ Grants, revocations, and reloads are logged at info, with ids only.
 ## Tests
 
 - **Unit:** role resolution (an Admin listed in settings beats a PowerUser grant), grant and revoke rules, aliases (stable per viewer, different between viewers, never containing the id).
-- **Smoke** (`check_roles`): the full matrix, endpoint by endpoint, for a User, a PowerUser, and an Admin. That includes no users table and no cost for PowerUsers, and no usernames or ids of non-friends anywhere in a PowerUser's graph responses.
+- **Smoke** (`check_roles`): the full matrix, endpoint by endpoint, for a User, a PowerUser, a PowerXtreme, and an Admin. That includes no users table and no cost for PowerUsers, and no usernames or ids of non-friends anywhere in a PowerUser's graph responses.
 - **Browser:** the System button for PowerUsers, their tabs, the Roles page (grant, revoke for Admins), and the anonymous graph.

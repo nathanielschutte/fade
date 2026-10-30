@@ -95,8 +95,24 @@ async def main():
         await expect(admin.locator("#m-incidents")).to_contain_text("no health monitor here" if not REMOTE else "")
         await admin.goto(f"{BASE}/admin#roles")
 
-        # Only an Admin takes it away: two taps.
+        # PowerXtreme: an Admin makes a PowerUser one, and it's exactly a PowerUser for now.
         await admin.reload()  # (already on #roles: fetch the list afresh)
+        await admin.fill("#r-search", PWR)
+        await row(admin, PWR).locator("button", has_text="Make PowerXtreme").click()
+        await expect(row(admin, PWR).locator(".role-badge")).to_have_text("PowerXtreme", timeout=10000)
+        await expect(admin.locator("#r-result")).to_contain_text(f"{PWR} is a PowerXtreme now.")
+        await shot(admin, "roles-powerxtreme", full_page=False)
+        await pwr.reload()  # (already on #roles)
+        await expect(row(pwr, PWR).locator(".role-badge")).to_have_text("PowerXtreme", timeout=10000)
+        for tab in ("overview", "metrics", "graph", "roles"):
+            await expect(pwr.locator(f"#tab-{tab}")).to_be_visible()
+        await expect(pwr.locator("#tab-logs")).to_be_hidden()
+        await expect(pwr.locator("#tab-users")).to_be_hidden()
+        assert await pwr.locator("#r-rows button", has_text="PowerXtreme").count() == 0  # only Admins give it
+        await row(admin, PWR).locator("button", has_text="Back to PowerUser").click()
+        await expect(row(admin, PWR).locator(".role-badge")).to_have_text("PowerUser", timeout=10000)
+
+        # Only an Admin takes it away: two taps.
         await admin.fill("#r-search", FRIEND)
         await row(admin, FRIEND).locator("button", has_text="Remove PowerUser").click()
         await row(admin, FRIEND).locator("button", has_text="Tap again: remove PowerUser").click()

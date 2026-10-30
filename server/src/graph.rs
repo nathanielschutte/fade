@@ -353,7 +353,7 @@ pub async fn admin(
     // PowerUsers and Admins (roles.md). PowerUsers see everyone they aren't
     // friends with as anonymous, and choose them by alias, never by id.
     let role = crate::roles::require(&state, &me, crate::roles::Role::Power).await?;
-    let power = role == crate::roles::Role::Power;
+    let power = role.is_power();
     let people: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, username FROM users ORDER BY lower(username)")
             .fetch_all(&state.db)

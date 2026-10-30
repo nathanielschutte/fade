@@ -175,6 +175,7 @@ extension JSONDecoder {
     func me(_ role: String) -> Me { Me(id: 1, username: "nate", displayName: nil, role: role, hasRecoveryKey: true) }
     #expect(me("admin").isAdmin && me("admin").isPowerUser)
     #expect(!me("power").isAdmin && me("power").isPowerUser)
+    #expect(!me("powerxtreme").isAdmin && me("powerxtreme").isPowerUser)
     #expect(!me("user").isAdmin && !me("user").isPowerUser)
     #expect(!me("something new").isAdmin)
 }

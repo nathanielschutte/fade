@@ -1296,6 +1296,8 @@ html[data-env] { --tabs-foot: 1.1rem; }
 }
 .role-badge { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; border: 1px solid var(--rule); }
 .role-power { color: var(--sage); border-color: rgba(147, 197, 163, 0.5); }
+.role-powerxtreme { color: var(--sage); border-color: var(--sage); font-weight: 800; letter-spacing: 0.03em; }
+.role-actions { display: inline-flex; gap: 0.4rem; flex-wrap: wrap; }
 .role-admin { color: var(--paper); background: var(--wash); }
 .role-user { color: var(--fixer); }
 .r-admin { margin-top: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
