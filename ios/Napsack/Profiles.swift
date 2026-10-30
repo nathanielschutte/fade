@@ -42,6 +42,29 @@ import UIKit
     }
 }
 
+/// Saves one at a time, in order, keeping only the newest of those waiting:
+/// a setting changed many times quickly (a date wheel spun) sends the value
+/// it stopped on, and never an older value after a newer one.
+@MainActor final class LatestSave {
+    private var newest = 0
+    private var last: Task<Void, Never>?
+
+    func save(after delay: Duration = .milliseconds(600), _ work: @escaping @MainActor () async throws -> Void,
+              done: @escaping @MainActor ((any Error)?) -> Void) {
+        newest += 1
+        let mine = newest
+        let previous = last
+        last = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            await previous?.value  // after the one before has finished: the order holds down the chain
+            // A newer one is waiting and will send. (One already on its way
+            // is never cut off: the server may have it.)
+            guard let self, mine == self.newest else { return }
+            do { try await work(); done(nil) } catch { done(error) }
+        }
+    }
+}
+
 /// A picture shown big, from tapping it (a profile's or a group's).
 struct BigPicture: View {
     @Environment(\.dismiss) private var dismiss

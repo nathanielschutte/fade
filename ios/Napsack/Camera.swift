@@ -227,6 +227,8 @@ struct CameraScreen: View {
     @Environment(\.dismiss) private var dismiss
     let maxSeconds: Int
     let maxBytes: Int
+    /// What the close button does: in the Camera tab, back to Chats; otherwise it's dismissed.
+    var close: (() -> Void)?
     let captured: (Captured) -> Void
     @State private var camera = CameraSession()
     @State private var problem: String?
@@ -249,7 +251,7 @@ struct CameraScreen: View {
             }
             VStack {
                 HStack {
-                    Button { camera.stop(); dismiss() } label: { Image(systemName: "xmark").font(.title2).padding() }
+                    Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Image(systemName: "xmark").font(.title2).padding() }
                         .accessibilityLabel("Close")
                     Spacer()
                     if zoom > 1.05 { Text(String(format: "%.1f×", zoom)).font(.callout.bold()).padding(.horizontal, 10).padding(.vertical, 4)
