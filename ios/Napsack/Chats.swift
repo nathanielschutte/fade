@@ -56,6 +56,11 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
     /// On screen now, and when they last were: only if you both share it (`share_activity`).
     let activeNow: Bool?
     let lastSeenAt: Int64?
+    /// Days in a row you've both sent each other a pic, and whether it ends tonight (streaks.rs).
+    let streak: Int?
+    let streakExpiring: Bool?
+    /// "MM-DD", if they've shared it.
+    let birthday: String?
 
     /// What the app calls them: your nickname, their display name, or their username.
     var name: String { nickname ?? displayName ?? username }
@@ -133,6 +138,8 @@ struct ChatRow: Identifiable, Equatable, Sendable {
     let hidden: Bool
     /// The friend's or group's picture, if any.
     var avatarId: Int64? = nil
+    /// After the name: " 🔥5⌛ 🎂" (app.js, `listName`).
+    var marks: String = ""
 
     var id: Kind { kind }
     var isGroup: Bool { if case .group = kind { true } else { false } }
@@ -162,11 +169,22 @@ struct Reader: Sendable {
 
     // ---------- direct chats ----------
 
+    /// A streak shows from 3 days, with ⌛ when it ends tonight; a 🎂 on their birthday (app.js, `streakText`).
+    static func marks(_ friend: Friend, today: Date = .now) -> String {
+        var marks = ""
+        if let streak = friend.streak, streak >= 3 { marks += " 🔥\(streak)" + (friend.streakExpiring == true ? "⌛" : "") }
+        let parts = Calendar.current.dateComponents([.month, .day], from: today)
+        if let b = friend.birthday, b == String(format: "%02d-%02d", parts.month ?? 0, parts.day ?? 0) { marks += " 🎂" }
+        return marks
+    }
+
     func row(_ friend: Friend) -> ChatRow {
         let (preview, waiting) = status(friend)
-        return ChatRow(kind: .friend(friend.id), name: friend.name, preview: preview, waiting: waiting,
+        var row = ChatRow(kind: .friend(friend.id), name: friend.name, preview: preview, waiting: waiting,
                        time: friend.lastMessage.map { Date(timeIntervalSince1970: TimeInterval($0.createdAt)) },
                        favorite: friend.favorite, muted: friend.muted, hidden: friend.hidden, avatarId: friend.avatarId)
+        row.marks = Self.marks(friend)
+        return row
     }
 
     func status(_ friend: Friend) -> (String, ChatRow.Waiting?) {
@@ -310,6 +328,21 @@ struct Reader: Sendable {
     private(set) var pinBook: PinBook?
     /// Friend requests waiting on you: the badge on Friends.
     private(set) var incoming = 0
+    /// The Admins' current announcement, if there is one (and it isn't over).
+    private(set) var announcement: Announcement?
+
+    static let dismissedAnnouncementKey = "napsack.announcementDismissed"
+
+    struct Announcement: Decodable, Equatable, Sendable {
+        let id: Int64
+        let body: String
+        let endsAt: Int64
+    }
+
+    /// From the socket: a new one, or none.
+    func announce(_ a: Announcement?) {
+        announcement = a.flatMap { $0.endsAt > Int64(Date().timeIntervalSince1970) ? $0 : nil }
+    }
 
     var favorites: [ChatRow] { rows.filter { $0.favorite && !$0.hidden } }
     var others: [ChatRow] { rows.filter { !$0.favorite && !$0.hidden } }
@@ -386,8 +419,11 @@ struct Reader: Sendable {
             async let friends = server.friends(token: account.token)
             async let groups = server.groups(token: account.token)
             async let requests = server.send("friends/requests", token: account.token)
+            async let announced = server.send("announcement", token: account.token)
             let (f, g) = try await (friends, groups)
             incoming = (try? Server.decoder.decode(FriendsModel.Requests.self, from: await requests).incoming.count) ?? incoming
+            struct Announced: Decodable { let announcement: Announcement? }
+            if let a = try? Server.decoder.decode(Announced.self, from: await announced) { announce(a.announcement) }
             let identity = try account.identity()
             let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore)
             self.pinBook = pinBook

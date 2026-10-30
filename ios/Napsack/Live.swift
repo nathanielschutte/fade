@@ -21,6 +21,8 @@ enum LiveEvent: Sendable {
     case presence(user: Int64, active: Bool, lastSeenAt: Int64?)
     /// A friend read your texts up to `at`.
     case read(by: Int64, at: Int64)
+    /// The Admins' announcement changed: a new one, or none.
+    case announcement(ChatList.Announcement?)
     /// Typing, presence, announcements: not shown in the app yet.
     case other
 
@@ -40,6 +42,9 @@ enum LiveEvent: Sendable {
             return (try? Server.decoder.decode(Direct.self, from: data)).map { .message($0.message) } ?? .other
         case "group_message":
             return (try? Server.decoder.decode(Group.self, from: data)).map { .groupMessage($0.message) } ?? .other
+        case "announcement":
+            struct Announced: Decodable { let announcement: ChatList.Announcement? }
+            return (try? Server.decoder.decode(Announced.self, from: data)).map { .announcement($0.announcement) } ?? .other
         case "typing":
             return (try? Server.decoder.decode(Typing.self, from: data)).map { .typing(from: $0.from, group: $0.groupId) } ?? .other
         case "presence":
