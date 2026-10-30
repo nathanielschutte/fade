@@ -24,14 +24,16 @@ async def swipe(page, locator, dx):
     await asyncio.sleep(0.3)
 
 
-async def section_names(page):
-    """The list as [(heading or None, name), ...], top to bottom."""
-    return await page.evaluate("""() => { let h = null; const out = [];
+async def expect_section(page, heading, names):
+    """Waits until the list's section under `heading` (None: before any
+    heading) holds exactly `names`, in any order: the list redraws as its
+    parts arrive, so a one-time read can catch it halfway."""
+    await page.wait_for_function("""([heading, want]) => { let h = null; const got = [];
       for (const li of document.querySelectorAll('#chat-list > li')) {
         if (li.classList.contains('list-heading')) h = li.textContent;
-        else if (li.classList.contains('chat-row')) out.push([h, li.querySelector('.chat-name').textContent]);
+        else if (li.classList.contains('chat-row') && h === heading) got.push(li.querySelector('.chat-name').textContent);
       }
-      return out; }""")
+      return JSON.stringify(got.sort()) === JSON.stringify(want); }""", arg=[heading, sorted(names)], timeout=10000)
 
 
 async def main():
@@ -65,29 +67,27 @@ async def main():
         await expect(row(ana2, CAL)).to_be_visible(timeout=10000)
 
         # A computer: hovering a row shows its actions. Favorite Cal and the group.
-        assert await section_names(ana) and all(h is None for h, _ in await section_names(ana)), "no headings yet"
+        await expect(ana.locator(".list-heading")).to_have_count(0)  # no headings yet
         await row(ana, CAL).hover()
         await expect(row(ana, CAL).locator(".row-action", has_text="Favorite")).to_be_visible()
         await shot(ana, "marks-hover", full_page=False)
         await row(ana, CAL).locator(".row-action", has_text="Favorite").click()
         await row(ana, GROUP).hover()
         await row(ana, GROUP).locator(".row-action", has_text="Favorite").click()
-        names = await section_names(ana)
-        favs = [n for h, n in names if h == "Favorites"]
-        assert sorted(favs) == sorted([CAL, GROUP]), names
-        assert [n for h, n in names if h == "Chats"] == [BEN], names
+        await expect_section(ana, "Favorites", [CAL, GROUP])
+        await expect_section(ana, "Chats", [BEN])
         # Live on the other tab, and still there after a reload.
         await expect(ana2.locator(".list-heading", has_text="Favorites")).to_be_visible(timeout=10000)
         await ana.reload()
         await expect(ana.locator("#app")).to_be_visible(timeout=10000)
         await expect(ana.locator(".list-heading", has_text="Favorites")).to_be_visible(timeout=10000)
-        assert sorted(n for h, n in await section_names(ana) if h == "Favorites") == sorted([CAL, GROUP])
+        await expect_section(ana, "Favorites", [CAL, GROUP])
         # Private: Cal's list doesn't change.
         await expect(cal.locator(".list-heading")).to_have_count(0)
         # Unfavorite the group.
         await row(ana, GROUP).hover()
         await row(ana, GROUP).locator(".row-action", has_text="Unfavorite").click()
-        assert [n for h, n in await section_names(ana) if h == "Favorites"] == [CAL]
+        await expect_section(ana, "Favorites", [CAL])
         print("favorites: own section, live on other tabs, kept, private")
 
         # Hide Ben's chat: gone, with Undo; undo brings it back.
