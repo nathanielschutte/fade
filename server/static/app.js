@@ -4424,7 +4424,18 @@ const HOLD_MS = 350;
 const ZOOM_SLIDE_PX = 110; // was 60, which zoomed too fast (Nate, 2026-10-29)
 const VIDEO_EDGE = 1280;
 const rec = { timer: null, held: false, pointerId: null, startY: 0, startZoom: 1, suppressClick: false,
-  recorder: null, chunks: [], started: 0, draw: 0, tick: 0, discard: false };
+  recorder: null, chunks: [], started: 0, draw: 0, tick: 0, discard: false, stopTimer: null, timedOut: false };
+
+// Safari, and every browser on an iPhone (all WebKit): one recorder at a time.
+// With a second one recording the silent copy alongside (X37, 0.41.0), the
+// installed iPhone app's videos came out black and the ring stuck (Nate,
+// 2026-10-29). There, a video has no "send without sound".
+const ONE_RECORDER = /iPhone|iPad|iPod/.test(navigator.userAgent)
+  || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+  || (/Safari\//.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent));
+// A recorder that never says it stopped mustn't leave the camera stuck: after
+// this long, the video finishes with what was recorded.
+const STOP_WAIT_MS = 3000;
 
 function videoMime() {
   if (typeof MediaRecorder === "undefined") return null;
@@ -4438,8 +4449,9 @@ $("#shutter").addEventListener("pointerdown", (e) => {
   if (!camera.stream || e.button > 0 || !videoMime()) return;
   rec.held = true;
   rec.pointerId = e.pointerId;
+  rec.downAt = e.timeStamp;
   rec.startY = e.clientY;
-  $("#shutter").setPointerCapture?.(e.pointerId);
+  try { $("#shutter").setPointerCapture?.(e.pointerId); } catch { /* the pointer's already gone: nothing to follow */ }
   clearTimeout(rec.timer);
   rec.timer = setTimeout(() => {
     rec.timer = null;
@@ -4454,9 +4466,19 @@ $("#shutter").addEventListener("pointermove", (e) => {
 function releaseShutter(e) {
   if (e.pointerId !== rec.pointerId) return;
   rec.held = false;
+  // Tap or hold, by when the finger went down and came up (the events' own
+  // times), not by which ran first: on a busy page the hold timer can run
+  // before a quick let-go is handled, and a tap must still be a photo (D11).
+  const tap = e.timeStamp - rec.downAt < HOLD_MS;
   if (rec.timer) {
     clearTimeout(rec.timer); // a tap: the click takes a photo
     rec.timer = null;
+  } else if (tap) {
+    if (rec.recorder) {
+      rec.discard = true; // started too soon: not a video after all
+      stopRecording();
+    }
+    rec.suppressClick = false; // the click takes the photo
   } else if (rec.recorder) {
     stopRecording();
   }
@@ -4512,11 +4534,12 @@ async function startRecording() {
   }
   rec.recorder.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
   rec.recorder.onstop = finishRecording;
+  rec.recorder.onerror = (e) => report("warn", "video recorder error", errorFields(e.error ?? e));
   // With sound, a silent copy records alongside (X37), so "send without
   // sound" leaves no sound in what's sent, and needs no waiting.
   rec.silent = null;
   rec.silentDone = null;
-  if (stream.getAudioTracks().length) {
+  if (stream.getAudioTracks().length && !ONE_RECORDER) {
     try {
       const silent = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: videoMime(), videoBitsPerSecond: 1_500_000 });
       const chunks = [];
@@ -4553,7 +4576,24 @@ function recordingTick() {
 function stopRecording() {
   clearInterval(rec.tick);
   if (rec.silent?.state === "recording") rec.silent.stop();
-  if (rec.recorder?.state === "recording") rec.recorder.stop();
+  const recorder = rec.recorder;
+  if (!recorder) return;
+  if (recorder.state !== "recording") {
+    // It stopped on its own (an error) without saying so: finish now.
+    if (recorder.state === "inactive") finishRecording();
+    return;
+  }
+  recorder.stop();
+  clearTimeout(rec.stopTimer);
+  rec.stopTimer = setTimeout(() => {
+    if (rec.recorder !== recorder) return; // it finished
+    report("warn", "video recorder never stopped", {
+      type: (recorder.mimeType || "").split(";")[0], state: recorder.state, chunks: rec.chunks.length, silent: Boolean(rec.silent),
+    });
+    recorder.onstop = null;
+    rec.timedOut = true;
+    finishRecording();
+  }, STOP_WAIT_MS);
 }
 
 /** The sound button on a recorded video: shown when there's a silent copy to send instead. */
@@ -4580,6 +4620,10 @@ $("#video-sound").addEventListener("click", () => {
 
 function finishRecording() {
   const recorder = rec.recorder;
+  if (!recorder) return;
+  clearTimeout(rec.stopTimer);
+  const timedOut = rec.timedOut;
+  rec.timedOut = false;
   const type = recorder.mimeType || videoMime();
   const seconds = (Date.now() - rec.started) / 1000;
   cancelAnimationFrame(rec.draw);
@@ -4592,6 +4636,10 @@ function finishRecording() {
   if (rec.discard) return;
   const blob = new Blob(rec.chunks, { type });
   rec.chunks = [];
+  if (timedOut && !blob.size) {
+    cameraMessage("Couldn't record that video. Try again, or tap for a photo.");
+    return;
+  }
   if (seconds < 0.5 || !blob.size) {
     cameraMessage("Hold the button a little longer to record a video.");
     return;
@@ -4648,6 +4696,7 @@ function showCapture() {
   $("#capture-controls").hidden = false;
   $("#send-controls").hidden = true;
   $("#zoom-chip").hidden = !camera.stream;
+  if (camera.stream) setZoom(1); // each new pic or video starts at 1× (Nate, 2026-10-29)
   clearCaption();
   // A new pic from the camera tab: pick who it's for again.
   if (camera.picked) {

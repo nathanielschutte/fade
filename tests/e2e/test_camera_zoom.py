@@ -80,11 +80,14 @@ async def main():
         await expect(ana.locator("#camera-preview")).to_be_visible()
         assert await ana.evaluate(PHOTO) == {"width": 640, "corner": "light"}, "a 2× photo is the middle half"
         await ana.click("#retake")
+        await expect(chip).to_have_text("1×")  # each new pic starts at 1× (Nate, 2026-10-29)
+        await chip.click()
+        await expect(chip).to_have_text("2×")
         await chip.click()
         await expect(chip).to_have_text("3×")  # as far as cropping goes
         await chip.click()
         await expect(chip).to_have_text("1×")
-        print("button: 1×, 2×, 3×, back to 1×; the photo is cropped to match")
+        print("button: 1×, 2×, 3×, back to 1×; the photo is cropped to match; a retake starts at 1×")
 
         # Two fingers apart: zooms in; together: back out. Never past the ends.
         await pinch(ana, cdp, 80, 200)
