@@ -241,6 +241,50 @@ struct Server: Sendable {
                             recipients: sealed.recipients, wraps: Dictionary(uniqueKeysWithValues: sealed.wraps.map { (String($0.key), $0.value) }))))
     }
 
+    /// A direct reaction, encrypted; nil takes mine back.
+    func react(to message: Int64, friend: Int64, ciphertext: String?, token: String) async throws -> DirectMessage {
+        struct Reaction: Encodable {
+            let ciphertext: String?
+            func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(ciphertext, forKey: .ciphertext)  // null, not left out: it takes the reaction back
+                try c.encode(E2E.textFormat, forKey: .format)
+            }
+            enum CodingKeys: String, CodingKey { case ciphertext, format }
+        }
+        return try Self.decoder.decode(DirectMessage.self, from: await send(
+            "chats/\(friend)/messages/\(message)/reaction", method: "PUT", token: token, json: Reaction(ciphertext: ciphertext)))
+    }
+
+    /// A group reaction, one of the fixed set (not encrypted); nil takes mine back.
+    func react(to message: Int64, group: Int64, emoji: String?, token: String) async throws -> GroupMessage {
+        struct Reaction: Encodable {
+            let emoji: String?
+            func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(emoji, forKey: .emoji)
+            }
+            enum CodingKeys: String, CodingKey { case emoji }
+        }
+        return try Self.decoder.decode(GroupMessage.self, from: await send(
+            "groups/\(group)/messages/\(message)/reaction", method: "PUT", token: token, json: Reaction(emoji: emoji)))
+    }
+
+    /// New words for my text, sealed with the edit's associated data.
+    func editText(_ message: Int64, friend: Int64, ciphertext: String, clientId: String, token: String) async throws -> DirectMessage {
+        try Self.decoder.decode(DirectMessage.self, from: await send(
+            "chats/\(friend)/messages/\(message)/edit", method: "PUT", token: token,
+            json: DirectText(ciphertext: ciphertext, format: E2E.textFormat, clientId: clientId)))
+    }
+
+    /// New words for my group text, sealed for the text's own member list.
+    func editGroupText(_ message: Int64, group: Int64, _ sealed: E2E.GroupMessage, token: String) async throws -> GroupMessage {
+        try Self.decoder.decode(GroupMessage.self, from: await send(
+            "groups/\(group)/messages/\(message)/edit", method: "PUT", token: token,
+            json: GroupText(format: E2E.groupFormat, content: E2E.toB64(sealed.content), clientId: sealed.clientId,
+                            recipients: sealed.recipients, wraps: Dictionary(uniqueKeysWithValues: sealed.wraps.map { (String($0.key), $0.value) }))))
+    }
+
     static func page(before: Int64?, limit: Int) -> [URLQueryItem] {
         [URLQueryItem(name: "limit", value: String(limit))] + (before.map { [URLQueryItem(name: "before", value: String($0))] } ?? [])
     }

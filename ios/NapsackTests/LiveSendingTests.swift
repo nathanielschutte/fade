@@ -4,8 +4,8 @@ import Testing
 @testable import Napsack
 
 /// Sending against a real napsack server (a local one; it makes accounts):
-/// Ben sends Ana a text and a group text from the app's own code, and Ana's
-/// side opens both. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
+/// Ben sends Ana a text and a group text from the app's own code, edits and
+/// reacts to them, and Ana's side opens all of it. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
 struct LiveSendingTests {
     let live = LiveChatListTests()
@@ -50,6 +50,21 @@ struct LiveSendingTests {
         let group = Conversation(.group(try #require(anas.groups[created.id])), account: ana, reader: try #require(anas.reader), pinBook: anas.pinBook)
         try await group.loadNewest()
         #expect(group.bubbles.last?.content == .text("the group, from the app", edited: false))
+
+        // Ben edits his text and reacts to it; Ana sees both. Then he takes the reaction back.
+        let reply = try #require(toAna.bubbles.last)
+        try await toAna.edit(reply, to: "and a reply, edited")
+        try await toAna.react(try #require(toAna.bubble(reply.id)), "😮")
+        try await toGroup.edit(try #require(toGroup.bubbles.last), to: "the group, edited")
+        try await toGroup.react(try #require(toGroup.bubbles.last), "👍")
+        try await fromBen.catchUp()
+        try await group.catchUp()
+        #expect(fromBen.bubble(reply.id)?.content == .text("and a reply, edited", edited: true))
+        #expect(fromBen.bubble(reply.id)?.reactions == ["😮"])
+        #expect(group.bubbles.last?.content == .text("the group, edited", edited: true) && group.bubbles.last?.reactions == ["👍"])
+        try await toAna.react(try #require(toAna.bubble(reply.id)), "😮")
+        try await fromBen.catchUp()
+        #expect(fromBen.bubble(reply.id)?.reactions == [])
 
         // Sending the same client id again (a dropped answer) returns what's stored, not a copy.
         struct Raw: Decodable { let id: Int64; let clientId: String?; let ciphertext: String? }
