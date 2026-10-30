@@ -54,11 +54,10 @@ extension Reader {
         } else {
             content = .unreadable(Self.cantOpen)
         }
-        let key = pairKey(friend)
+        let keys = readingKeys(friend)
         let reactions = (m.reactions ?? []).compactMap { r -> String? in
-            guard let key else { return nil }
             let to = r.senderId == me.id ? friend.id : me.id
-            return try? E2E.decryptReaction(key, r.ciphertext, sender: r.senderId, recipient: to, message: m.id)
+            return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
         }
         return Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
                       time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions)
@@ -102,8 +101,10 @@ extension Reader {
 
     let chat: Chat
     private let account: Account
-    private let reader: Reader
+    private var reader: Reader
     private let transport: any Transport
+    /// Whose keys to trust; group senders seen here for the first time are pinned.
+    private let pinBook: PinBook?
 
     /// Oldest first.
     private(set) var bubbles: [Bubble] = []
@@ -113,10 +114,11 @@ extension Reader {
     private(set) var loadingOlder = false
     private(set) var problem: String?
 
-    init(_ chat: Chat, account: Account, reader: Reader, transport: any Transport = NetworkTransport()) {
+    init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, transport: any Transport = NetworkTransport()) {
         self.chat = chat
         self.account = account
         self.reader = reader
+        self.pinBook = pinBook
         self.transport = transport
     }
 
@@ -136,6 +138,34 @@ extension Reader {
     }
 
     func bubble(_ id: Int64) -> Bubble? { bubbles.first { $0.id == id } }
+
+    /// The friend in a direct chat.
+    var friend: Friend? {
+        if case .friend(let friend) = chat { return friend }
+        return nil
+    }
+
+    /// The server now hands out a different key for this friend than the one
+    /// pinned: sending is blocked until it's accepted.
+    var keyChanged: Bool {
+        guard let friend else { return false }
+        return pinBook?.changed.contains(friend.id) ?? reader.changed.contains(friend.id)
+    }
+
+    /// The code to compare with the friend, for the key the server hands out now.
+    var safetyCode: String? {
+        guard let friend else { return nil }
+        return E2E.safetyCode(account.publicKey, friend.publicKey)
+    }
+
+    /// Trusts the friend's new key (compared or not), then reopens the chat with it.
+    func acceptNewKey() async throws {
+        guard let friend, let pinBook else { return }
+        pinBook.accept(friend)
+        reader.pins = pinBook.pins
+        reader.changed = pinBook.changed
+        try await loadNewest()
+    }
 
     /// The newest page, replacing what's shown.
     func loadNewest() async throws {
@@ -179,6 +209,11 @@ extension Reader {
             return await Task.detached(priority: .userInitiated) { messages.map { reader.bubble($0, with: friend) } }.value
         case .group(let group):
             let messages = try await server.groupMessages(group: group.id, before: before, limit: Self.page, token: account.token)
+            if let pinBook {
+                pinBook.see(senders: messages.compactMap { m in m.senderPublicKey.map { (m.senderId, $0) } })
+                self.reader.pins = pinBook.pins
+            }
+            let reader = self.reader
             return await Task.detached(priority: .userInitiated) { messages.map(reader.bubble) }.value
         }
     }

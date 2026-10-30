@@ -1,12 +1,14 @@
 import SwiftUI
 
 /// An open chat: its history, newest at the bottom, older pages loading as you
-/// scroll up. Opening it marks it read. Sending comes next (plan-ios.md).
+/// scroll up. Opening it marks it read. A friend's changed key shows a warning
+/// at the top until it's accepted. Sending comes next (plan-ios.md).
 struct ChatScreen: View {
     @Environment(Session.self) private var session
     @State var conversation: Conversation
     /// The message at the top of the screen, kept there while older ones load above it.
     @State private var position: Int64?
+    @State private var showingSafetyCode = false
 
     var body: some View {
         ScrollView {
@@ -49,8 +51,32 @@ struct ChatScreen: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            if conversation.keyChanged, let friend = conversation.friend {
+                KeyWarning(friend: friend, compare: { showingSafetyCode = true }, accept: { Task { await accept() } })
+                    .padding(.horizontal, 12).padding(.top, 4).background(.bar)
+            }
+        }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if conversation.friend != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingSafetyCode = true } label: {
+                        Image(systemName: conversation.keyChanged ? "lock.trianglebadge.exclamationmark" : "lock")
+                    }
+                    .accessibilityLabel("Encryption and safety code")
+                }
+            }
+        }
+        .sheet(isPresented: $showingSafetyCode) {
+            if let friend = conversation.friend, let code = conversation.safetyCode {
+                SafetyCodeScreen(username: friend.username, code: code, keyChanged: conversation.keyChanged) {
+                    Task { await accept() }
+                }
+                .presentationDetents([.medium, .large])
+            }
+        }
         .task {
             do {
                 try await conversation.loadNewest()
@@ -59,6 +85,14 @@ struct ChatScreen: View {
                 conversation.noted(error)
                 session.noticed(error)
             }
+        }
+    }
+
+    private func accept() async {
+        do {
+            try await conversation.acceptNewKey()
+        } catch {
+            session.noticed(error)
         }
     }
 
