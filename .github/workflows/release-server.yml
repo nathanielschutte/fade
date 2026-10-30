@@ -12,7 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write # the GitHub Release, once production is updated
+  actions: read # whether main's CI put the tagged commit on staging
   id-token: write # GitHub OIDC -> the fade-github-deploy role in AWS; no stored keys
 
 jobs:
@@ -39,13 +40,21 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
 
+      # Production only gets what staging ran (P8): main's CI must have passed
+      # for this commit and made its release candidate. Otherwise, stop here.
+      - name: Staging ran this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release.sh staging-ran "$(git rev-parse HEAD)"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # The exact binary staging ran for this commit. Only if it's no longer
-      # kept (more than ten pushes ago) is it built again, tests first.
+      # kept (more than ten pushes ago) is it built again, tests first; that
+      # staging ran it at all was checked above.
       - name: The candidate staging ran
         id: candidate
         run: bash scripts/release.sh fetch-candidate "$BUILD" || echo "rebuild=true" >> "$GITHUB_OUTPUT"
@@ -71,3 +80,8 @@ jobs:
         run: bash scripts/release.sh backup "$APP_NAME"
       - name: Update production
         run: bash scripts/release.sh update "$APP_NAME" "$APP_URL" "$BUILD"
+      # Only now, so a Release on GitHub means it's live (P7).
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release.sh github-release "$VERSION"

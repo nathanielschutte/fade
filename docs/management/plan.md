@@ -26,8 +26,8 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [PowerXtreme: a role above PowerUser](#s4-powerxtreme) | Security | Nate | In progress | Nate (2026-10-29); built for 0.43.0 |
 | 3 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | Nate | In progress | Fixed for 0.43.0 |
 | 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
-| 6 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
+| 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | Nate | In progress | Built for 0.43.0 (the first release that makes one) |
+| 6 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | Nate | In progress | Nate (2026-10-30): fix it, for security. Built; it guards 0.43.0's release |
 | 7 | [A tap on the shutter could count as a hold](#d11-a-tap-on-the-shutter-could-count-as-a-hold-when-the-page-was-busy-fixed-in-0430) | Debug | Nate | In progress | Fixed for 0.43.0 (#28) with D12, iPhone videos |
 | 8 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
 | 9 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
@@ -177,12 +177,13 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### P7. A GitHub Release for every server release
 - Nate (2026-10-29): the release pipeline also creates a GitHub Release for the new `server-v<version>` tag, with release notes generated automatically, marked as the latest release.
+- Built: `release.sh github-release`, the workflow's last step (needs `contents: write`), with notes from the previous `server-v*` tag (`--notes-start-tag`), so iOS tags won't mix in.
 - Notes: GitHub's generated notes list the pull requests merged since the previous tag, which now covers every change (they all arrive through pull requests). Create it in `release-server.yml` after production is updated, so a Release means it's live; the job needs `contents: write` for it. Open: when iOS releases (`ios-v*`) start, which one is "latest" (probably the server's, with the app's as its own Releases).
 
 #### P8. A release refuses a commit staging never ran
 - Found 2026-10-29: 0.42.2 (`99c0b7c`) reached production without staging ever running it. Main's CI for that commit failed (D11, a flaky browser test), so it made no candidate, and staging stayed on 0.42.1. The release then found no candidate and fell back to "built too long ago": it tested without the browser tests, built, and shipped. The code was fine (the browser tests had passed on its pull request, production checked out clean, and the job was rerun green afterwards), but the rule "tag a commit staging has run" was only a habit.
 - Proposal: `release-server.yml` asks GitHub whether main's CI passed for the tagged commit, and refuses the release when it didn't (or never ran), saying so. Rebuilding stays for candidates that aged out. Also: `releasing.md` and the release checklist say to check staging's `/api/config` build before tagging.
-- Needs decision (Nate): whether to make it a hard stop.
+- Nate (2026-10-30): yes, fix it ("it would be good to fix this for security"). Built: `release.sh staging-ran` asks GitHub for main's CI run on the tagged commit and its **Release candidate on staging** job, and the release stops unless both passed; rebuilding stays only for candidates that aged out. Tried on real history: refuses `99c0b7c` (0.42.2, main's CI failed) and an iOS-only commit (no candidate), allows `1fd2a25`.
 
 ### Features
 

@@ -3,6 +3,8 @@
 # Actions: .github/workflows/ci.yml (main → a release candidate on staging)
 # and release-server.yml (a server-v* tag → a release on production).
 #
+#   release.sh staging-ran <sha>        succeed only if main's CI put this commit on staging
+#                                       (its "Release candidate on staging" job passed)
 #   release.sh build <build>            build the ARM64 server into dist/fade-server
 #   release.sh candidate <build>        upload it as releases/main/fade-server-<build>,
 #                                       make it staging's, keep the newest $KEEP
@@ -13,8 +15,11 @@
 #   release.sh backup <app>             back up the database on every <app> server first
 #   release.sh update <app> <url> <build>   run fade-update on every <app> server, then
 #                                       check <url> reports <build>
+#   release.sh github-release <version> a GitHub Release for server-v<version>, its notes
+#                                       the pull requests since the last server release
 #
-# Settings (environment): BUCKET, AWS_REGION; KEEP (candidates kept, 10).
+# Settings (environment): BUCKET, AWS_REGION; KEEP (candidates kept, 10);
+# GITHUB_REPOSITORY and GH_TOKEN for staging-ran and github-release.
 # AWS credentials come from the job's role; each role can reach only its own
 # servers and releases (infra/github.tf).
 set -euo pipefail
@@ -49,6 +54,35 @@ on_servers() {
 }
 
 case "${1:-}" in
+  staging-ran)
+    # The rule (releasing.md): production only gets what staging ran. A tag on
+    # a commit whose main CI failed, or that made no candidate (only ios/ or
+    # docs changed), has nothing staging ran; 0.42.2 once shipped that way.
+    SHA=$2
+    REPO="${GITHUB_REPOSITORY:-nathanielschutte/fade}"
+    RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&event=push" \
+      --jq '[.workflow_runs[] | select(.conclusion == "success")][0].id // empty')
+    if [ -z "$RUN" ]; then
+      echo "refusing: main's CI didn't pass for $SHA, so staging never ran it. Tag a commit staging's /api/config shows."
+      exit 1
+    fi
+    JOB=$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --jq '.jobs[] | select(.name == "Release candidate on staging") | .conclusion')
+    if [ "$JOB" != "success" ]; then
+      echo "refusing: $SHA made no release candidate (${JOB:-no such job}), so staging never ran it. Tag a commit staging's /api/config shows."
+      exit 1
+    fi
+    echo "==> staging ran $SHA (CI run $RUN)"
+    ;;
+
+  github-release)
+    VERSION=$2
+    TAG="server-v$VERSION"
+    # Notes since the last server release, not the last tag of any kind (iOS ones will come).
+    PREV=$(git describe --tags --abbrev=0 --match 'server-v*' "$TAG^" 2>/dev/null || true)
+    gh release create "$TAG" --repo "${GITHUB_REPOSITORY:-nathanielschutte/fade}" --title "napsack server $VERSION" \
+      --generate-notes ${PREV:+--notes-start-tag "$PREV"} --latest --verify-tag
+    ;;
+
   build)
     BUILD=$2
     # sqlx embeds migrations at compile time and cargo can miss a new file.
