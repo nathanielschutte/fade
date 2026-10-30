@@ -81,9 +81,15 @@ variable "admin_usernames" {
 }
 
 variable "snap_disk_mb" {
-  description = "Max disk for all unopened direct pics combined (they wait on the data volume until opened or expired)."
+  description = "Max disk for all unopened direct pics and videos combined (they wait on the data volume until opened or expired)."
   type        = number
-  default     = 256
+  default     = 2048
+}
+
+variable "group_pic_disk_mb" {
+  description = "Max disk for all unopened group pics and videos combined."
+  type        = number
+  default     = 1536
 }
 
 variable "snap_ttl_hours" {
@@ -93,9 +99,9 @@ variable "snap_ttl_hours" {
 }
 
 variable "data_volume_gb" {
-  description = "Separate EBS volume for the SQLite DB and TLS certs. Survives instance replacement."
+  description = "Separate EBS volume for the SQLite DB, unopened pics, and TLS certs. Survives instance replacement. It can only grow (in place; then xfs_growfs, docs/design/mono-scaling.md)."
   type        = number
-  default     = 1
+  default     = 5
 }
 
 variable "snapshot_retain_days" {

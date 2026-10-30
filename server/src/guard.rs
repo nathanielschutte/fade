@@ -1,5 +1,5 @@
 //! Protection against abuse at our size: one small server (t4g.nano, 0.5 GB
-//! RAM, a 1 GB data disk) for a few dozen friends. Everything here is far
+//! RAM, a 5 GB data disk) for a few dozen friends. Everything here is far
 //! above what people use, so it's invisible to them; it's there for scripts,
 //! scanners, and anyone trying to knock napsack over. See docs/security.md.
 //!

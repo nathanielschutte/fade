@@ -71,9 +71,9 @@ The baseline allows 6 CPU-minutes per hour. That's very roughly 200,000+ ordinar
 
 **Watch for it:** the CPU credits chart (watch below a third of a full bank, red below a tenth), and steal.
 
-### 5. The data disk (1 GB)
+### 5. The data disk (5 GB)
 
-The database grows by roughly 100 KB per active person per month: about 90 bytes of ciphertext per text plus row and index overhead, group message keys, and every profile or group picture they ever set (about 20 KB each, kept forever). Unopened pics are capped at 256 MB direct + 200 MB group, so about half the disk is the database's.
+The database grows by roughly 100 KB per active person per month: about 90 bytes of ciphertext per text plus row and index overhead, group message keys, and every profile or group picture they ever set (about 20 KB each, kept forever). Unopened pics and videos are capped at 2 GB direct + 1.5 GB group (production, on a 5 GB volume since 2026-10-30, [I11](../management/plan.md#i11-the-data-volume-to-5-gb)), so the database has at least 1.3 GB.
 
 | Active people | Fills the database's half in about |
 |---|---|

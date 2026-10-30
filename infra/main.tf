@@ -42,6 +42,7 @@ locals {
     # Admins live in their own parameter, outside Terraform (docs/implementation/roles.md; scripts/set-admins.sh).
     "FADE_ADMINS_PARAM=/${var.app_name}/admins",
     "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
+    "FADE_GROUP_PIC_DISK_MB=${var.group_pic_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
     # The contact in push notification requests (VAPID); never hardcoded in the server.
     "FADE_PUBLIC_URL=https://${local.domain}",
