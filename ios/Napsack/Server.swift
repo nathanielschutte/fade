@@ -8,8 +8,17 @@ enum AppInfo {
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
     static var clientHeader: String { "ios/\(version)+\(build)" }
-    /// The server this build starts on (Config/Base.xcconfig); the app can be pointed elsewhere.
-    static let defaultServer = Bundle.main.object(forInfoDictionaryKey: "NapsackServerURL") as? String ?? ""
+    /// The one server this build talks to: `NAPSACK_SERVER_URL` in the build
+    /// settings (Config/Base.xcconfig, or your Local.xcconfig). Nothing in the
+    /// app changes it.
+    static let server = Bundle.main.object(forInfoDictionaryKey: "NapsackServerURL") as? String ?? ""
+    /// Shown outside production (in production, nothing says where the app talks to).
+    static func serverLabel(environment: String?, server: String = server) -> String? {
+        guard let url = URL(string: server) else { return server }
+        if environment == nil && url.scheme == "https" { return nil }  // production
+        let host = url.host() ?? server
+        return environment.map { "\(host) (\($0))" } ?? host
+    }
 }
 
 /// GET /api/config: what a client needs before signing in (docs/spec/api.md).

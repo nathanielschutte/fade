@@ -45,7 +45,7 @@ Aliases are an HMAC of the viewer's id and the person's id, under a random serve
 
 The people picker lists only the PowerUser and their friends. Anyone else is reached by tapping them in the graph.
 
-**The iOS app** shows its debugging tools (Developer: a server's public settings, the encryption's checks, and which server to sign in to) to Admins only, going by `role` in `/api/me`. They show nothing an account couldn't see anyway (`/api/config` is public); it's scoping, not protection.
+**The iOS app** shows its debugging tools (Developer: the server's public settings and the encryption's checks) to Admins only, going by `role` in `/api/me`. They show nothing an account couldn't see anyway (`/api/config` is public); it's scoping, not protection.
 
 ## Where Admins come from
 

@@ -6,7 +6,7 @@ import Testing
 /// Sending against a real napsack server (a local one; it makes accounts):
 /// Ben sends Ana a text and a group text from the app's own code, edits and
 /// reacts to them, and Ana's side opens all of it. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveSendingTests {
     let live = LiveChatListTests()
 

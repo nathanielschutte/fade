@@ -4,7 +4,6 @@ import SwiftUI
 /// launch): nothing else works until it's updated, so this is all that shows.
 /// The App Store link comes with the App Store (plan-ios.md).
 struct UpdateScreen: View {
-    @Environment(Session.self) private var session
     let message: String
 
     var body: some View {
@@ -12,11 +11,6 @@ struct UpdateScreen: View {
             Label("napsack needs an update", systemImage: "arrow.down.app")
         } description: {
             Text(message)
-        } actions: {
-            #if DEBUG
-            // So a development build pointed at the wrong server isn't stuck here.
-            Button("Use another server") { session.leaveUpdateScreen() }
-            #endif
         }
     }
 }

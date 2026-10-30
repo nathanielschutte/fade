@@ -5,7 +5,7 @@ import Testing
 /// Friends against a real napsack server (a local one; it makes accounts):
 /// requests both ways, your link, and invite links. Runs only with
 /// NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveFriendsTests {
     let live = LiveChatListTests()
 

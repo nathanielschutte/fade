@@ -175,7 +175,7 @@ final class Pages: @unchecked Sendable {
 /// The live connection against a real napsack server (a local one; it makes
 /// accounts): Ben's socket signs in, and Ana's text reaches his open chat as
 /// it's sent. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveSocketTests {
     let live = LiveChatListTests()
 

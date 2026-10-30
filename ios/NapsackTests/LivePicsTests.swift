@@ -9,7 +9,7 @@ import UIKit
 /// makes accounts): a photo, a video, and a group photo, each sealed here as
 /// the web app seals them, opened once by the friend's app, then gone. Runs
 /// only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LivePicsTests {
     let live = LiveChatListTests()
 

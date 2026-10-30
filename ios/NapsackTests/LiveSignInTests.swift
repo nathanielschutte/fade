@@ -11,7 +11,7 @@ import Testing
 ///
 /// (docs/ios-onboarding.md, The daily loop). The invite code is
 /// NAPSACK_TEST_INVITE, "letmein" if it isn't set.
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveSignInTests {
     let address = ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] ?? ""
     let invite = ProcessInfo.processInfo.environment["NAPSACK_TEST_INVITE"] ?? "letmein"

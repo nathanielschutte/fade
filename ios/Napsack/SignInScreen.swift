@@ -1,12 +1,13 @@
 import SwiftUI
 
 /// Signing in, or creating an account. Like the web app's form: one screen,
-/// and a button to switch between the two. It signs in to napsack's server
-/// unless an Admin pointed this phone at another (DeveloperScreen); then it
-/// says which, with a way back.
+/// and a button to switch between the two. It signs in to the one server this
+/// build talks to (AppInfo.server); outside production it says which.
 struct SignInScreen: View {
     @Environment(Session.self) private var session
-    @AppStorage("server") private var server = AppInfo.defaultServer
+    private let server = AppInfo.server
+    /// Which server, outside production (nothing in production).
+    @State private var serverLabel: String?
     @State private var creating = false
     @State private var username = ""
     @State private var password = ""
@@ -52,20 +53,18 @@ struct SignInScreen: View {
                     }
                     .disabled(working)
                 }
-                if server != AppInfo.defaultServer {
+                if let serverLabel {
                     Section {
-                        LabeledContent("Server", value: server)
-                        Button("Use napsack's server") { server = AppInfo.defaultServer }
-                    } footer: {
-                        Text("An Admin pointed this phone at another server.")
+                        LabeledContent("Server", value: serverLabel)
                     }
                 }
             }
             .navigationTitle("napsack")
             // Whether to ask for an invite code depends on the server.
-            .task(id: "\(creating) \(server)") {
-                guard creating, let config = try? await Server(server).config() else { return }
-                inviteRequired = config.inviteRequired
+            .task(id: creating) {
+                let config = try? await Server(server).config()
+                serverLabel = AppInfo.serverLabel(environment: config?.environment)
+                if creating, let config { inviteRequired = config.inviteRequired }
             }
         }
     }

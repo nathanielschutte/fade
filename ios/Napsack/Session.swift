@@ -103,11 +103,11 @@ enum SignInError: LocalizedError, Equatable {
     /// At launch: straight in with what the Keychain holds, then confirm with
     /// the server. A session the server has ended signs out; no connection
     /// keeps what's here.
-    func restore(defaultServer: String) async {
-        lastServer = defaultServer
+    func restore(server: String) async {
+        lastServer = server
         guard let kept = try? store.load() else {
             state = .signedOut
-            await checkVersion(server: defaultServer)
+            await checkVersion(server: server)
             return
         }
         state = .signedIn(kept)
@@ -148,11 +148,6 @@ enum SignInError: LocalizedError, Equatable {
         }
     }
 
-    /// Development builds only: back to signing in, to pick another server.
-    /// (A server that needs a newer app refuses this one's every request anyway.)
-    func leaveUpdateScreen() {
-        updateNeeded = nil
-    }
 
     /// Notes a "too old" answer for the update screen, and passes every error on.
     private func watchingForUpdates<T>(_ body: () async throws -> T) async throws -> T {

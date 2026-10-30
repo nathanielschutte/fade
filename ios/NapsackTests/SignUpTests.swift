@@ -89,11 +89,11 @@ import Testing
 
     @Test func aServerThatNeedsANewerAppSaysSoAtLaunch() async {
         let session = Session(transport: configServer(minimumIOS: "99.0.0"), store: MemoryStore())
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         #expect(session.updateNeeded == "This version of napsack is too old. Update to 99.0.0 or newer to keep using it.")
 
         let fine = Session(transport: configServer(minimumIOS: nil), store: MemoryStore())
-        await fine.restore(defaultServer: "https://napsack.test")
+        await fine.restore(server: "https://napsack.test")
         #expect(fine.updateNeeded == nil && fine.state == .signedOut)
     }
 
