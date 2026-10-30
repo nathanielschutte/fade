@@ -34,4 +34,6 @@ A name only for the apps fixes that. Wherever the web app lives, `api.napsack.io
 
 ## Open
 
+- **Links people share** (your add-me link, invite links) must use the site's address, not `api.`: the server returns a path (`/i/<token>`), and the apps put the server's address in front today. Before release builds switch, `/api/config` should say the site's address (it knows it: `FADE_PUBLIC_URL`) and the apps use that.
+
 - **When to apply it:** Nate's call, since it replaces production's instance. It isn't urgent until the first TestFlight build, which is also waiting on the Developer Program.

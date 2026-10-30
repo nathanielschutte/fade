@@ -15,17 +15,26 @@ struct ChatListScreen: View {
     /// trying after you leave its chat, and coming back is instant. (Only in
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
+    @State private var settingUpRecovery = false
 
     init(account: Account) {
         self.account = account
         _live = State(initialValue: Live(account: account))
     }
-    @State private var showDeveloper = false
-    @State private var signingOut = false
 
     var body: some View {
         NavigationStack {
             List {
+                if !account.user.hasRecoveryKey {
+                    // As the web app's nudge: until there's one, a forgotten password costs every message.
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Save a recovery key, so a forgotten password can't cost you your messages.")
+                            Button("Set up") { settingUpRecovery = true }.buttonStyle(.borderedProminent)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 if let problem = list.problem {
                     Text(problem).foregroundStyle(.red)
                 }
@@ -51,8 +60,10 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
+            .sheet(isPresented: $settingUpRecovery) {
+                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+            }
             .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen(signedInTo: account.server) }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
@@ -61,20 +72,22 @@ struct ChatListScreen: View {
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink { FriendsScreen(model: FriendsModel(account: account)) } label: {
+                        Image(systemName: "person.2")
+                            .overlay(alignment: .topTrailing) {
+                                if list.incoming > 0 {
+                                    Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
+                                        .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
+                                        .offset(x: 10, y: -8)
+                                }
+                            }
+                            .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Section("@\(account.user.username) on \(URL(string: account.server)?.host() ?? account.server)") {
-                            if account.user.isAdmin {  // debugging tools: Admins only, for now
-                                Button("Developer", systemImage: "hammer") { showDeveloper = true }
-                            }
-                            Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                                signingOut = true
-                                Task { await session.signOut() }
-                            }
-                            .disabled(signingOut)
-                        }
-                    } label: {
-                        Image(systemName: "person.crop.circle").accessibilityLabel("Account")
+                    NavigationLink { SettingsScreen(account: account) } label: {
+                        Image(systemName: "person.crop.circle").accessibilityLabel("Settings")
                     }
                 }
             }

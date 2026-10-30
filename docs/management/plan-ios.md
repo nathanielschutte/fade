@@ -48,23 +48,23 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Settings: your account, its safety, and signing out, as one screen | – | Planned | Native: a `Form` reached from the account menu, replacing the menu's growing list |
-| The recovery key: a reminder if you have none, and setting one later | – | Planned | `has_recovery_key`, `PUT /me/recovery` |
-| Change password (unlock first) | – | Planned | `/auth/unlock`, `/me/password`. Native: password AutoFill's new-password suggestion |
+| Settings: your account, its safety, and signing out, as one screen | Nate | Done | 2026-10-29: the person button on the chat list opens Settings (a `Form`): username, server, security, Developer for Admins, Sign out, in the web's Security panel's words |
+| The recovery key: a reminder if you have none, and setting one later | Nate | Done | 2026-10-29: the chat list says so, in the web's words, until there's one (Set up asks for the password); Settings makes or replaces one; shown once either way |
+| Change password (unlock first) | Nate | Done | 2026-10-29: Settings; the key is unlocked and locked again on the phone; other devices are signed out. AutoFill's new-password suggestion works on the fields |
 | Forgot password: the recovery key or an admin's reset code | – | Planned | `/auth/recover/start`, `/auth/recover/finish`, `/auth/reset` |
-| Change your username (once a week) | – | Planned | `/me/username`, `next_rename_at` |
-| Account security: when the recovery key was set, devices signed in, sign out every other device | – | Planned | `/me/security`, `/me/sessions/end-others` |
+| Change your username (once a week) | Nate | Done | 2026-10-29: Settings; the key is locked again under the new name (the salt); the server's own words when it's too soon or taken |
+| Account security: when the recovery key was set, devices signed in, sign out every other device | Nate | Done | 2026-10-29: Settings. `LiveAccountTests` proves each against a real server by signing in again afterwards |
 | Lock napsack with Face ID | Nate | Needs decision | Native, and not on the web: an optional lock when the app opens. Nate's call whether we want it |
 
 ## 5. Friends
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Friend requests: incoming, outgoing, accept, decline, cancel; a badge for new ones | – | Planned | `/friends/requests`; live with `friends_changed` |
-| Add by username | – | Planned | |
-| Your QR code and link: show, share, reset | – | Planned | `/friend-link`. Native: CoreImage for the QR, `ShareLink` for the share sheet |
+| Friend requests: incoming, outgoing, accept, decline, cancel; a badge for new ones | Nate | Done | 2026-10-30: the Friends screen (the person-pair button on the chat list, with a badge for requests waiting on you, kept current live) |
+| Add by username | Nate | Done | 2026-10-30: in the web's words, an old username included ("(was @…)") |
+| Your QR code and link: show, share, reset | Nate | Done | 2026-10-30: the QR drawn on the phone (CoreImage), the share sheet (`ShareLink`), Copy, and Reset with a confirmation. The link uses the server's address; once apps talk to `api.napsack.io`, links must use the site's ([api-host.md](../design/api-host.md)) |
 | Scan a friend's QR with the camera | – | Planned | Native: VisionKit's `DataScannerViewController` |
-| One-time invite links: make, list who joined, revoke | – | Planned | `/invites` |
+| One-time invite links: make, list who joined, revoke | Nate | Done | 2026-10-30: made with its QR and share sheet, listed with who joined, turned off |
 | Opening a napsack link (`/i/<token>`) opens the app | – | Waiting | Universal Links need Associated Domains, a Developer Program capability. Until then, links open in Safari |
 | Unfriend | – | Planned | `DELETE /friends/{id}`; history stays (Rule 1) |
 | The friend map | – | Planned | `GET /graph`. Native: a SwiftUI `Canvas`, pinch and drag |

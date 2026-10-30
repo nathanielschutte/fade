@@ -47,6 +47,7 @@ enum SignInError: LocalizedError, Equatable {
     case cantUnlock
     case emailAsUsername
     case shortPassword
+    case badUsername
 
     var errorDescription: String? {
         switch self {
@@ -55,6 +56,7 @@ enum SignInError: LocalizedError, Equatable {
         case .cantUnlock: "Couldn't unlock your keys. Check your password."
         case .emailAsUsername: "Pick a username, not an email address: letters, numbers, _ and . only."
         case .shortPassword: "Passwords need at least 8 characters."
+        case .badUsername: "Usernames are 3 to 20 characters: letters, numbers, dots, and underscores."
         }
     }
 }
@@ -250,6 +252,102 @@ enum SignInError: LocalizedError, Equatable {
         _ = try await server.send("me/recovery", method: "PUT", token: token, json: SetRecovery(
             authKey: keys.authKey, recoveryAuthKey: recovery.authKey, recoveryWrappedKey: copy))
         return recoveryKey
+    }
+
+    // ---------- your account (SettingsScreen; the web's Security panel) ----------
+
+    struct Security: Decodable, Equatable, Sendable {
+        let recoverySetAt: Int64?
+        let keyResetAt: Int64?
+        let activeSessions: Int
+    }
+
+    /// When the recovery key was set, and how many devices are signed in.
+    func security() async throws -> Security {
+        let account = try signedIn()
+        return try Server.decoder.decode(Security.self, from: await Server(account.server, transport: transport)
+            .send("me/security", token: account.token))
+    }
+
+    /// Proves the password: the keys made from it, and the private key the
+    /// server keeps wrapped under it (`/auth/unlock`).
+    private func unlock(_ password: String) async throws -> (keys: E2E.PasswordKeys, wrapped: String) {
+        let account = try signedIn()
+        struct Unlock: Encodable { let authKey: String }
+        struct Wrapped: Decodable { let wrappedPrivateKey: String }
+        let keys = try await deriveKeys(account.user.username, password)
+        let answer = try Server.decoder.decode(Wrapped.self, from: await Server(account.server, transport: transport)
+            .send("auth/unlock", method: "POST", token: account.token, json: Unlock(authKey: keys.authKey)))
+        return (keys, answer.wrappedPrivateKey)
+    }
+
+    /// The same key, locked under a new password. Other devices are signed
+    /// out; returns how many.
+    func changePassword(current: String, new: String) async throws -> Int {
+        guard new.count >= 8 else { throw SignInError.shortPassword }
+        let account = try signedIn()
+        let old = try await unlock(current)
+        let next = try await deriveKeys(account.user.username, new)
+        let rewrapped = try E2E.rewrapIdentity(oldWrapKey: old.keys.wrapKey, wrapped: old.wrapped, newWrapKey: next.wrapKey)
+        struct Change: Encodable { let authKey: String; let newAuthKey: String; let newWrappedPrivateKey: String }
+        struct Ended: Decodable { let sessionsEnded: Int? }
+        let answer = try Server.decoder.decode(Ended.self, from: await Server(account.server, transport: transport).send(
+            "me/password", method: "POST", token: account.token,
+            json: Change(authKey: old.keys.authKey, newAuthKey: next.authKey, newWrappedPrivateKey: rewrapped)))
+        reporter.report(.info, "password changed")
+        return answer.sessionsEnded ?? 0
+    }
+
+    /// A new recovery key (replacing any old one), shown once.
+    func makeRecoveryKey(password: String) async throws {
+        let account = try signedIn()
+        let unlocked = try await unlock(password)
+        recoveryKeyToShow = try await setUpRecovery(Server(account.server, transport: transport), token: account.token,
+                                                    keys: unlocked.keys, wrapped: unlocked.wrapped)
+        updateUser { Me(id: $0.id, username: $0.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: true) }
+        reporter.report(.info, "recovery key set")
+    }
+
+    /// Signs out every other device; returns how many.
+    func endOtherSessions() async throws -> Int {
+        let account = try signedIn()
+        struct Ended: Decodable { let sessionsEnded: Int? }
+        let answer = try Server.decoder.decode(Ended.self, from: await Server(account.server, transport: transport)
+            .send("me/sessions/end-others", method: "POST", token: account.token))
+        return answer.sessionsEnded ?? 0
+    }
+
+    /// A new username: the keys are made from it (it's the salt), so the
+    /// password unlocks the key under the old name and locks it under the new.
+    func changeUsername(to typed: String, password: String) async throws {
+        let username = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard username.range(of: #"^[A-Za-z0-9_.]{3,20}$"#, options: .regularExpression) != nil else {
+            throw SignInError.badUsername
+        }
+        let account = try signedIn()
+        let old = try await unlock(password)
+        let next = try await deriveKeys(username, password)
+        let rewrapped = try E2E.rewrapIdentity(oldWrapKey: old.keys.wrapKey, wrapped: old.wrapped, newWrapKey: next.wrapKey)
+        struct Rename: Encodable { let username: String; let authKey: String; let newAuthKey: String; let newWrappedPrivateKey: String }
+        struct Renamed: Decodable { let username: String }
+        let answer = try Server.decoder.decode(Renamed.self, from: await Server(account.server, transport: transport).send(
+            "me/username", method: "POST", token: account.token,
+            json: Rename(username: username, authKey: old.keys.authKey, newAuthKey: next.authKey, newWrappedPrivateKey: rewrapped)))
+        updateUser { Me(id: $0.id, username: answer.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: $0.hasRecoveryKey) }
+        reporter.report(.info, "username changed")
+    }
+
+    private func signedIn() throws -> Account {
+        guard let account else { throw ServerError.sessionEnded }
+        return account
+    }
+
+    /// The signed-in person, changed here and in the Keychain.
+    private func updateUser(_ change: (Me) -> Me) {
+        guard var account else { return }
+        account.user = change(account.user)
+        try? store.save(account)
+        state = .signedIn(account)
     }
 
     /// Ends the session on the server too, if it can be reached; this phone
