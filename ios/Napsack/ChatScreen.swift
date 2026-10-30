@@ -380,7 +380,7 @@ struct ChatScreen: View {
             EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
         }
         .fullScreenCover(isPresented: $usingCamera) {
-            CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10) { captured in
+            CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20) { captured in
                 usingCamera = false
                 photoToSend = PhotoToSend(media: captured)
             }

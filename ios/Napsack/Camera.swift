@@ -43,16 +43,24 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         let withSound = await Self.allowed(.audio)  // without it, videos have no sound (the web says so too)
         try await run { [self] in
             session.beginConfiguration()
-            defer { session.commitConfiguration() }
-            session.sessionPreset = .high
-            try use(facing)
-            if withSound, microphone == nil, let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
-               session.canAddInput(input) {
-                session.addInput(input)
-                microphone = input
+            do {
+                session.sessionPreset = .high
+                try use(facing)
+                if withSound, microphone == nil, let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
+                   session.canAddInput(input) {
+                    session.addInput(input)
+                    microphone = input
+                }
+                if !session.outputs.contains(photo), session.canAddOutput(photo) { session.addOutput(photo) }
+                if !session.outputs.contains(movie), session.canAddOutput(movie) { session.addOutput(movie) }
+            } catch {
+                session.commitConfiguration()
+                throw error
             }
-            if !session.outputs.contains(photo), session.canAddOutput(photo) { session.addOutput(photo) }
-            if !session.outputs.contains(movie), session.canAddOutput(movie) { session.addOutput(movie) }
+            session.commitConfiguration()
+            // Only once configured: AVFoundation raises an exception for
+            // starting inside beginConfiguration/commitConfiguration (the
+            // frozen black camera on a phone, 2026-10-30).
             if !session.isRunning { session.startRunning() }
         }
     }
@@ -85,7 +93,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             queue.async { [self] in
                 guard session.isRunning else { return continuation.resume(throwing: Problem.noCamera) }
                 photoDone = continuation
-                photo.connection(with: .video)?.isVideoMirrored = facing == .front
+                Self.orient(photo.connection(with: .video), mirrored: facing == .front)
                 photo.capturePhoto(with: AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg]), delegate: self)
             }
         }
@@ -104,14 +112,28 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         queue.async { [self] in
             guard session.isRunning, !movie.isRecording else { return }
             movie.maxRecordedDuration = CMTime(seconds: Double(seconds), preferredTimescale: 600)
-            movie.connection(with: .video)?.isVideoMirrored = facing == .front
+            Self.orient(movie.connection(with: .video), mirrored: facing == .front)
             let url = FileManager.default.temporaryDirectory.appending(path: "napsack-recording-\(UUID().uuidString).mov")
             movie.startRecording(to: url, recordingDelegate: self)
         }
     }
 
-    /// Stops (or waits for the limit to stop it) and gives the recording, as MP4 so every client plays it.
-    func stopRecording() async throws -> URL {
+    /// Upright for a phone held up (the app is portrait only), and mirrored for
+    /// the front camera as the preview shows it. Mirroring can only be set by
+    /// hand once the automatic choice is off (otherwise AVFoundation raises an
+    /// exception), and only where the camera supports it.
+    static func orient(_ connection: AVCaptureConnection?, mirrored: Bool) {
+        guard let connection else { return }
+        if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = mirrored
+        }
+    }
+
+    /// Stops (or waits for the limit to stop it) and gives the recording, as
+    /// MP4 that fits the server's cap (VideoEncoder) so every client plays it.
+    func stopRecording(maxBytes: Int, seconds: Int) async throws -> URL {
         let recorded: URL = try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 movieDone = continuation
@@ -126,7 +148,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             }
         }
         defer { try? FileManager.default.removeItem(at: recorded) }
-        return try await Self.mp4(recorded)
+        return try await VideoEncoder.mp4(recorded, maxBytes: maxBytes, seconds: seconds)
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo url: URL, from connections: [AVCaptureConnection], error: (any Error)?) {
@@ -144,16 +166,6 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         } else {
             pendingMovie = url  // stopped by the limit before anyone asked
         }
-    }
-
-    /// QuickTime from the camera, made MP4 (H.264 and AAC) at a size the server takes.
-    static func mp4(_ source: URL) async throws -> URL {
-        let out = FileManager.default.temporaryDirectory.appending(path: "napsack-video-\(UUID().uuidString).mp4")
-        guard let export = AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetMediumQuality) else {
-            throw Problem.failed
-        }
-        try await export.export(to: out, as: .mp4)
-        return out
     }
 
     private func use(_ position: AVCaptureDevice.Position) throws {
@@ -214,6 +226,7 @@ enum Captured: Identifiable {
 struct CameraScreen: View {
     @Environment(\.dismiss) private var dismiss
     let maxSeconds: Int
+    let maxBytes: Int
     let captured: (Captured) -> Void
     @State private var camera = CameraSession()
     @State private var problem: String?
@@ -338,7 +351,7 @@ struct CameraScreen: View {
         recordStart = nil
         Task {
             do {
-                let url = try await camera.stopRecording()
+                let url = try await camera.stopRecording(maxBytes: maxBytes, seconds: maxSeconds)
                 reset()
                 captured(.video(url))
             } catch { problem = error.localizedDescription }
