@@ -387,10 +387,10 @@ struct ChatScreen: View {
         }
         .task { limits = try? await Server(AppInfo.server).config() }
         .sheet(item: $photoToSend) { photo in
-            PhotoSendSheet(photo: photo, to: conversation.title) { caption, y in
+            PhotoSendSheet(photo: photo, to: conversation.title) { caption, y, drawn in
                 switch photo.media {
                 case .photo(let image):
-                    guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                    guard let jpeg = Conversation.photoJPEG(drawn ?? image) else { throw SendError.tooLarge }
                     try await conversation.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
                 case .video(let url):
                     defer { try? FileManager.default.removeItem(at: url) }
@@ -691,17 +691,25 @@ struct PhotoSendSheet: View {
     @Environment(\.dismiss) private var dismiss
     let photo: PhotoToSend
     let to: String
-    let send: (String, Double) async throws -> Void
+    /// Sends it: the caption, where it sits, and the photo as drawn on (if it was).
+    let send: (String, Double, UIImage?) async throws -> Void
     @State private var caption = ""
     @State private var y = 0.8
+    /// The photo as drawn on (PencilKit), if it was.
+    @State private var drawn: UIImage?
+    @State private var drawing = false
     @State private var sending = false
     @State private var problem: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                CaptionedPreview(media: photo.media, caption: caption, y: $y)
+                CaptionedPreview(media: drawn.map(Captured.photo) ?? photo.media, caption: caption, y: $y)
                     .frame(maxHeight: .infinity)
+                if case .photo(let image) = photo.media {
+                    Button("Draw", systemImage: "pencil.tip") { drawing = true }
+                        .fullScreenCover(isPresented: $drawing) { DrawOnPhoto(image: drawn ?? image) { drawn = $0 } }
+                }
                 TextField("Add a caption", text: $caption, axis: .vertical)
                     .lineLimit(1...3)
                     .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
@@ -721,7 +729,7 @@ struct PhotoSendSheet: View {
                         Task {
                             defer { sending = false }
                             do {
-                                try await send(caption, y)
+                                try await send(caption, y, drawn)
                                 dismiss()
                             } catch {
                                 Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
