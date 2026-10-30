@@ -74,14 +74,14 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | Done | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only; tapping one on a profile or group info shows it big |
-| Your profile: display name, picture, birthday | Nate | In progress | Nate (2026-10-30): the birthday is one field, unset until you set it, saved as soon as it's set (no Birthday switch, no Save button), with a "Show the year" switch, saved the same way; tap your own picture to see it big, as on the web. Before: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
+| Your profile: display name, picture, birthday | Nate | Done | Nate (2026-10-30): the birthday is one field, unset until you set it, saved as soon as it's set (no Birthday switch, no Save button), with a "Show the year" switch, saved the same way; tap your own picture to see it big, as on the web. Built: Birthday shows "Not set" or the date; tapping it opens a wheel that saves a moment after it stops (`LatestSave`: one save at a time, in order, only the newest of those waiting; tested), plus Show the year and Remove birthday. Before: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
 | A friend's profile: nickname, streak, friends in common, past usernames, safety code | Nate | Done | 2026-10-30: tap the chat's title (with their picture): name, @username and past usernames, a nickname only you see, friends since, birthday, streak, texts and pics together, friends in common, safety code, and Unfriend (confirmed; the chat stays) |
 
 ## 7. The chat list, native
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| A tab bar: Chats, Camera, Profile | Nate | In progress | Nate (2026-10-30): as the web app on a phone, the iOS way (a `TabView`): Chats, the Camera, and Profile (your profile and settings), instead of the camera and person buttons at the top of the chat list |
+| A tab bar: Chats, Camera, Profile | Nate | Done | Nate (2026-10-30): as the web app on a phone, the iOS way (a `TabView`): Chats (badged with the chats waiting, muted ones not counted), the Camera (running only while it's shown; close goes back to Chats, and a sent pic too), and Profile (your profile and settings), instead of the camera and person buttons at the top of the chat list. Seen on the Simulator. Later: your picture as the Profile tab's icon |
 | Swipe actions: hide, mute, favorite; leave a group | Nate | Done | 2026-10-30: swipe right to favorite, left to hide (or leave a group, confirmed) and mute (8 hours, a week, or until turned back on); the same in a long-press menu; Undo for hiding and muting, in the web's words |
 | Hidden chats: their own section, and undo | Nate | Done | 2026-10-30: "Hidden chats (n)" at the end of the list, Unhide by swiping |
 | Search chat names and recent messages | Nate | In progress | 2026-10-30: `.searchable`, by name and newest message. The web also searches each chat's newest 200 messages; that waits for the encrypted cache (section 3) |
@@ -106,7 +106,7 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Create a group: a name and friends | Nate | Done | Nate (2026-10-30): its button looks like "new message"; a group icon instead (custom artwork comes later). 2026-10-30: the button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
+| Create a group: a name and friends | Nate | Done | Nate (2026-10-30): its button looked like "new message"; now a group of people (`person.3`; custom artwork comes later). 2026-10-30: the button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
 | Group info: rename, picture, members (add, remove, leave), the privacy notice | Nate | Done | 2026-10-30: tap the group's title: the notice in the web's words, its picture (`PhotosPicker`, made small here, cleaned by the server), rename (any member), members (the owner removes by swiping; who can, said plainly), add friends, Leave (confirmed) |
 
 ## 10. Pics and videos

@@ -1,7 +1,7 @@
 import PhotosUI
 import SwiftUI
 
-/// Your account, from the person button on the chat list: your username,
+/// Your profile and account, the Profile tab: your name, picture, and birthday, your username,
 /// the account's safety (recovery key, password, other devices), the
 /// debugging tools for Admins, and signing out. The words are the web app's
 /// Security panel's.
@@ -16,9 +16,11 @@ struct SettingsScreen: View {
     @State private var profile: ProfileModel?
     @State private var name = ""
     @State private var picked: PhotosPickerItem?
-    @State private var hasBirthday = false
-    @State private var birthday = Date()
+    /// Nil until you set it (Nate, 2026-10-30: one field, unset by default, saved as it's set).
+    @State private var birthday: Date?
+    @State private var pickingBirthday = false
     @State private var withYear = false
+    @State private var birthdaySaves = LatestSave()
     @State private var profileNote: String?
     @State private var serverLabel: String?
 
@@ -26,26 +28,38 @@ struct SettingsScreen: View {
         Form {
             Section {
                 HStack(spacing: 16) {
-                    Avatar(kind: .friend(account.user.id), avatarId: profile?.profile?.avatarId, name: account.user.username, size: 64)
+                    // Tap it to see it big, as on the web.
+                    Avatar(kind: .friend(account.user.id), avatarId: profile?.profile?.avatarId, name: account.user.username, size: 64, enlarges: true)
                     VStack(alignment: .leading, spacing: 6) {
                         PhotosPicker(profile?.profile?.avatarId == nil ? "Choose a picture" : "Change picture", selection: $picked, matching: .images)
                         if profile?.profile?.avatarId != nil {
                             Button("Remove picture", role: .destructive) { change { try await $0.removePicture() } }
                         }
                     }
+                    .buttonStyle(.borderless)  // each its own tap, not the whole row's
                 }
                 HStack {
                     TextField("Your name, for friends", text: $name).textContentType(.name).onSubmit(saveName)
                     Button("Save", action: saveName).disabled(name == (profile?.profile?.displayName ?? ""))
                 }
-                Toggle("Birthday", isOn: $hasBirthday.animation())
-                if hasBirthday {
-                    DatePicker("Date", selection: $birthday, in: ...Date.now, displayedComponents: .date)
-                    Toggle("Show the year", isOn: $withYear)
-                    Button("Save birthday") { saveBirthday() }
+                Button { withAnimation { pickingBirthday.toggle() } } label: {
+                    LabeledContent("Birthday", value: birthday.map { Self.words($0, withYear: withYear) } ?? "Not set")
                 }
-            } header: {
-                Text("Profile")
+                .foregroundStyle(.primary)
+                .accessibilityHint(pickingBirthday ? "Hides the date picker" : "Shows a date picker")
+                if pickingBirthday {
+                    // Starts somewhere neutral; nothing is saved until it's turned.
+                    DatePicker("Birthday", selection: Binding(get: { birthday ?? Self.wheelStart }, set: { birthday = $0; saveBirthday() }),
+                               in: Self.earliestBirthday...Date.now, displayedComponents: .date)
+                        .datePickerStyle(.wheel).labelsHidden()
+                }
+                if birthday != nil {
+                    Toggle("Show the year", isOn: Binding(get: { withYear }, set: { withYear = $0; saveBirthday() }))
+                    Button("Remove birthday", role: .destructive) {
+                        withAnimation { birthday = nil; pickingBirthday = false }
+                        saveBirthday()
+                    }
+                }
             } footer: {
                 Text(profileNote ?? "Your friends see your name, picture, and birthday. They aren't end-to-end encrypted.")
             }
@@ -91,7 +105,7 @@ struct SettingsScreen: View {
                 .disabled(signingOut)
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Profile")
         .task { await loadSecurity() }
         .task { await loadProfile() }
         .task { serverLabel = AppInfo.serverLabel(environment: (try? await Server(AppInfo.server).config())?.environment) }
@@ -105,9 +119,6 @@ struct SettingsScreen: View {
                 }
                 change { try await $0.setPicture(image) }
             }
-        }
-        .onChange(of: hasBirthday) { _, on in
-            if !on, profile?.profile?.birthday != nil { change { try await $0.setBirthday(month: nil, day: nil, year: nil) } }
         }
         .sheet(item: $asking) { purpose in
             PasswordSheet(purpose: purpose, hasRecoveryKey: account.user.hasRecoveryKey) { note = $0; Task { await loadSecurity() } }
@@ -136,9 +147,8 @@ struct SettingsScreen: View {
             try await model.load(account.user.id)
             name = model.profile?.displayName ?? ""
             if let b = model.profile?.birthday {
-                hasBirthday = true
                 withYear = b.year != nil
-                birthday = Calendar.current.date(from: DateComponents(year: b.year ?? 2000, month: b.month, day: b.day)) ?? .now
+                birthday = Calendar.current.date(from: DateComponents(year: b.year ?? 2000, month: b.month, day: b.day))
             }
         } catch {
             session.noticed(error)
@@ -161,9 +171,26 @@ struct SettingsScreen: View {
 
     private func saveName() { change { [name] in try await $0.setName(name) } }
 
+    /// Saves the birthday as it is now: a moment after the wheel stops, one
+    /// save at a time and in order, so the last one set is the one kept.
     private func saveBirthday() {
-        let parts = Calendar.current.dateComponents([.year, .month, .day], from: birthday)
-        change { [withYear] in try await $0.setBirthday(month: parts.month, day: parts.day, year: withYear ? parts.year : nil) }
+        guard let profile else { return }
+        let parts = birthday.map { Calendar.current.dateComponents([.year, .month, .day], from: $0) }
+        let year = withYear ? parts?.year : nil
+        birthdaySaves.save {
+            try await profile.setBirthday(month: parts?.month, day: parts?.day, year: year)
+        } done: { error in
+            profileNote = error?.localizedDescription ?? "Saved."
+            if let error { session.noticed(error) }
+        }
+    }
+
+    static let earliestBirthday = Calendar.current.date(from: DateComponents(year: 1900, month: 1, day: 1))!  // as the server allows
+    static let wheelStart = Calendar.current.date(from: DateComponents(year: 2000, month: 1, day: 1))!
+
+    /// "March 4", or "March 4, 1990" with the year.
+    static func words(_ date: Date, withYear: Bool) -> String {
+        withYear ? date.formatted(.dateTime.month(.wide).day().year()) : date.formatted(.dateTime.month(.wide).day())
     }
 
     private func loadSecurity() async {

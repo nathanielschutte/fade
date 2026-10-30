@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The chat list: friends and groups together, newest first, favorites on
-/// top, each row with its newest message (decrypted here). Pull to refresh;
+/// Home: a tab bar with Chats, the Camera, and Profile, as the web app on a
+/// phone (Nate, 2026-10-30). Chats is the chat list: friends and groups
+/// together, newest first, favorites on top, each row with its newest
+/// message (decrypted here). Pull to refresh;
 /// tapping a row opens the chat, and coming back refreshes the list. Swipe a
 /// row (or hold it) to favorite, mute, hide, or leave; search finds chats by
 /// name or newest message. While
@@ -22,9 +24,10 @@ struct ChatListScreen: View {
     @State private var settingUpRecovery = false
     /// The announcement you closed, remembered on this phone (and forgotten at sign-out, Session).
     @AppStorage(ChatList.dismissedAnnouncementKey) private var dismissedAnnouncement: Int = 0
+    enum HomeTab: Hashable { case chats, camera, profile }
+    @State private var tab = HomeTab.chats
     @State private var path: [ChatRow.Kind] = []
     @State private var makingGroup = false
-    @State private var usingCamera = false
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
     @State private var captured: Captured?
@@ -42,6 +45,55 @@ struct ChatListScreen: View {
     }
 
     var body: some View {
+        TabView(selection: $tab) {
+            chats
+                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
+                .tag(HomeTab.chats)
+                .badge(unreadChats)
+            // Only while it's the tab shown: the camera is let go of otherwise.
+            Group {
+                if tab == .camera {
+                    CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
+                                 close: { tab = .chats }) { captured = $0 }
+                } else {
+                    Color.black.ignoresSafeArea()
+                }
+            }
+            .tabItem { Label("Camera", systemImage: "camera") }
+            .tag(HomeTab.camera)
+            NavigationStack { SettingsScreen(account: account) }
+                .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+                .tag(HomeTab.profile)
+        }
+        .sheet(item: $captured) { media in
+            SendToSheet(media: media, chats: sendable, send: { kind, caption, y in
+                guard let chat = conversation(kind) else { throw SendError.cantOpen }
+                switch media {
+                case .photo(let image):
+                    guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                    try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
+                case .video(let url):
+                    try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
+                }
+            }, done: {
+                toast = Toast(text: $0, undo: nil)
+                tab = .chats  // where it went, as on the web
+            })
+            .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }
+        }
+        .environment(pictures)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { live.start() } else if phase == .background { live.stop() }
+        }
+        .onDisappear { live.stop() }  // signed out
+    }
+
+    /// Chats with something unread or unopened, for the tab's badge (muted ones don't count).
+    private var unreadChats: Int {
+        list.rows.filter { $0.waiting != nil && !$0.muted && !$0.hidden }.count
+    }
+
+    private var chats: some View {
         NavigationStack(path: $path) {
             List {
                 if !account.user.hasRecoveryKey {
@@ -118,25 +170,6 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
-            .fullScreenCover(isPresented: $usingCamera) {
-                CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20) { media in
-                    usingCamera = false
-                    captured = media
-                }
-            }
-            .sheet(item: $captured) { media in
-                SendToSheet(media: media, chats: sendable, send: { kind, caption, y in
-                    guard let chat = conversation(kind) else { throw SendError.cantOpen }
-                    switch media {
-                    case .photo(let image):
-                        guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                        try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
-                    case .video(let url):
-                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
-                    }
-                }, done: { toast = Toast(text: $0, undo: nil) })
-                .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }
-            }
             .sheet(isPresented: $makingGroup) {
                 let friends = (list.reader?.friends.values.map { $0 } ?? [])
                     .filter { $0.system != true && $0.deactivated != true }
@@ -174,29 +207,14 @@ struct ChatListScreen: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { usingCamera = true } label: {
-                        Image(systemName: "camera").accessibilityLabel("Camera")
-                    }
-                    .disabled(list.reader == nil)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
+                    // A group of people, not "new message" (Nate, 2026-10-30; custom artwork later).
                     Button { makingGroup = true } label: {
-                        Image(systemName: "square.and.pencil").accessibilityLabel("New group")
+                        Image(systemName: "person.3").accessibilityLabel("New group")
                     }
                     .disabled(list.reader == nil)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink { SettingsScreen(account: account) } label: {
-                        Image(systemName: "person.crop.circle").accessibilityLabel("Settings")
-                    }
                 }
             }
         }
-        .environment(pictures)
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { live.start() } else if phase == .background { live.stop() }
-        }
-        .onDisappear { live.stop() }  // signed out
     }
 
     /// The Admins' announcement, until you close it (app.js, `showAnnouncement`).
