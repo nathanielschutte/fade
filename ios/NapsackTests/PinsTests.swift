@@ -99,7 +99,7 @@ final class MemoryPinStore: PinStore, @unchecked Sendable {
         // The code to compare is for the key the server hands out now.
         #expect(chat.safetyCode == E2E.safetyCode(account.publicKey, swapped))
 
-        try await chat.acceptNewKey()
+        try await chat.acceptNewKey(verified: false)
         #expect(!chat.keyChanged)
         #expect(chat.bubbles.map(\.content) == [.text(text["plaintext"] as! String, edited: false)])
         try await chats.load(account, transport: server)

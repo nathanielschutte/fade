@@ -83,7 +83,7 @@ struct ChatScreen: View {
         .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
         .safeAreaInset(edge: .top) {
             if conversation.keyChanged, let friend = conversation.friend {
-                KeyWarning(friend: friend, compare: { showingSafetyCode = true }, accept: { Task { await accept() } })
+                KeyWarning(friend: friend, compare: { showingSafetyCode = true }, accept: { Task { await accept(verified: false) } })
                     .padding(.horizontal, 12).padding(.top, 4).background(.bar)
             }
         }
@@ -119,7 +119,7 @@ struct ChatScreen: View {
         .sheet(isPresented: $showingSafetyCode) {
             if let friend = conversation.friend, let code = conversation.safetyCode {
                 SafetyCodeScreen(username: friend.username, code: code, keyChanged: conversation.keyChanged) {
-                    Task { await accept() }
+                    Task { await accept(verified: true) }
                 }
                 .presentationDetents([.medium, .large])
             }
@@ -132,6 +132,7 @@ struct ChatScreen: View {
                 try await conversation.loadNewest()
                 await conversation.markRead()
             } catch {
+                Reporter.shared.report(.warn, "loading a chat failed", Reporter.fields(error))
                 conversation.noted(error)
                 session.noticed(error)
             }
@@ -221,6 +222,7 @@ struct ChatScreen: View {
     }
 
     private func trouble(_ error: any Error) {
+        Reporter.shared.report(.warn, "message action failed", Reporter.fields(error))
         session.noticed(error)
         failure = error.localizedDescription
     }
@@ -253,9 +255,9 @@ struct ChatScreen: View {
         }
     }
 
-    private func accept() async {
+    private func accept(verified: Bool) async {
         do {
-            try await conversation.acceptNewKey()
+            try await conversation.acceptNewKey(verified: verified)
         } catch {
             session.noticed(error)
         }

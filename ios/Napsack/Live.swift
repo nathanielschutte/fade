@@ -135,6 +135,7 @@ enum LiveEvent: Sendable {
 
     /// Dropped: try again soon. A short blip passes unnoticed; a longer one shows.
     private func closed() {
+        Reporter.shared.report(.debug, "socket closed", ["retry": String(retries)])
         task = nil
         timers["heartbeat"]?.cancel()
         timers["pong"]?.cancel()
@@ -148,7 +149,10 @@ enum LiveEvent: Sendable {
     func checkAlive() {
         guard running, let task else { return }
         send(["type": "ping"], on: task)
-        later("pong", after: .seconds(10)) { $0.connect() }
+        later("pong", after: .seconds(10)) {
+            Reporter.shared.report(.info, "socket unresponsive; reconnecting")
+            $0.connect()
+        }
     }
 
     private func send(_ frame: [String: any Sendable], on task: URLSessionWebSocketTask) {

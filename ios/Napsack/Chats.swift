@@ -340,6 +340,7 @@ struct Reader: Sendable {
             problem = nil
             loaded = true
         } catch {
+            Reporter.shared.report(.warn, "loading chats failed", Reporter.fields(error))
             problem = error.localizedDescription
             throw error
         }

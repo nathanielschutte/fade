@@ -38,7 +38,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Developer tools for Admins only; choosing a server moves there | Nate | Done | 2026-10-29 (#22): `role` from `/api/me`; sign-in has no server field unless an Admin pointed the phone elsewhere ([roles.md](../implementation/roles.md)) |
-| Client logs: what goes wrong on the phone reaches the log viewer (`POST /api/logs`, "ios app") | – | Up next | The web's `report()`: batched, ids, counts, and errors only, never content; flushed when the app leaves the screen |
+| Client logs: what goes wrong on the phone reaches the log viewer (`POST /api/logs`, "ios app") | Nate | Done | 2026-10-29: `Reporter`, as the web's `report()`: batched (50 a request), errors within half a second, everything when the app leaves the screen; ids, statuses, and error wording only. Reports sign-in failures, sends, loading, key changes, the socket, and messages that couldn't be opened (how many). A live test reads it back from the log viewer as an Admin |
 | Signing out leaves nothing: the account, every chat in memory, and later the cache, the notification token, and delivered notifications | – | Up next | The web's rule (CLAUDE.md, Security). Pins stay, per account, as on the web. A test like `test_sign_out.py` |
 | One outbox for the whole app: a "Not sent" text survives leaving its chat | – | Planned | Still only in memory, never written down |
 | The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Needs decision | Native screens, or the web's `/admin` in the app (it would need signing in there too). Until then, a browser |
