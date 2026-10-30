@@ -2,15 +2,20 @@ import SwiftUI
 
 /// An open chat: its history, newest at the bottom, older pages loading as you
 /// scroll up. Opening it marks it read. A friend's changed key shows a warning
-/// at the top until it's accepted. Sending comes next (plan-ios.md).
+/// at the top until it's accepted. Texts are written at the bottom; a long
+/// press on a message replies to it.
 struct ChatScreen: View {
     @Environment(Session.self) private var session
     @State var conversation: Conversation
     /// The message at the top of the screen, kept there while older ones load above it.
     @State private var position: Int64?
     @State private var showingSafetyCode = false
+    @State private var draft = ""
+    @State private var replyingTo: Bubble?
+    @FocusState private var composing: Bool
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(spacing: 4) {
                 if case .group = conversation.chat {
@@ -34,6 +39,22 @@ struct ChatScreen: View {
                     }
                     BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
                         .id(bubble.id)
+                        .contextMenu {
+                            if conversation.canSend, bubble.repliable {
+                                Button("Reply", systemImage: "arrowshape.turn.up.left") {
+                                    replyingTo = bubble
+                                    composing = true
+                                }
+                            }
+                        }
+                }
+                ForEach(conversation.outbox) { item in
+                    OutgoingView(item: item, quote: item.replyTo.map(quote),
+                                 retry: { Task { await conversation.retry(item.id) } },
+                                 remove: {
+                                     if let text = conversation.discard(item.id), draft.isEmpty { draft = text }  // nothing lost
+                                 })
+                        .id(item.id)
                 }
             }
             .scrollTargetLayout()
@@ -42,6 +63,8 @@ struct ChatScreen: View {
         }
         .defaultScrollAnchor(.bottom)
         .scrollPosition(id: $position, anchor: .top)
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) { composer(proxy) }
         .overlay {
             if !conversation.loaded {
                 if let problem = conversation.problem {
@@ -77,6 +100,7 @@ struct ChatScreen: View {
                 .presentationDetents([.medium, .large])
             }
         }
+        }
         .task {
             do {
                 try await conversation.loadNewest()
@@ -85,6 +109,55 @@ struct ChatScreen: View {
                 conversation.noted(error)
                 session.noticed(error)
             }
+        }
+    }
+
+    @ViewBuilder private func composer(_ proxy: ScrollViewProxy) -> some View {
+        if let note = conversation.blockedNote {
+            Text(note).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity).padding(12).background(.bar)
+        } else if conversation.loaded {
+            VStack(spacing: 6) {
+                if let replyingTo {
+                    HStack {
+                        Text("Replying to \(replyingTo.mine ? "yourself" : replyingTo.sender ?? conversation.title): \(replyingTo.gist)")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer()
+                        Button("Cancel reply", systemImage: "xmark") { self.replyingTo = nil }
+                            .labelStyle(.iconOnly).font(.caption)
+                    }
+                }
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Message", text: $draft, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($composing)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .disabled(!conversation.canSend)
+                        .accessibilityIdentifier("composer")
+                    Button { send(proxy) } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                    }
+                    .disabled(!conversation.canSend || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.bar)
+        }
+    }
+
+    private func send(_ proxy: ScrollViewProxy) {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, conversation.canSend else { return }
+        draft = ""
+        let reply = replyingTo?.id
+        replyingTo = nil
+        let id = conversation.queue(text, replyTo: reply)
+        withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+        Task {
+            await conversation.retry(id)
+            if conversation.outbox.isEmpty, let last = conversation.bubbles.last?.id { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
         }
     }
 
@@ -120,6 +193,35 @@ struct ChatScreen: View {
         guard let original = conversation.bubble(id) else { return "A message from earlier" }
         let who = original.mine ? "You" : original.sender ?? conversation.title
         return "\(who): \(original.gist)"
+    }
+}
+
+/// A text on its way, under the chat: "Sending…", or why it wasn't sent and what to do.
+struct OutgoingView: View {
+    let item: Outgoing
+    let quote: String?
+    let retry: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            BubbleView(bubble: Bubble(id: 0, mine: true, sender: nil, content: .text(item.text, edited: false), replyTo: item.replyTo,
+                                      time: .now, reactions: []),
+                       quote: quote, showTime: false)
+                .opacity(0.6)
+            switch item.status {
+            case .sending:
+                Text("Sending…").font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
+            case .failed(let why):
+                HStack(spacing: 4) {
+                    Text(why)
+                    Button("Try again", action: retry)
+                    Text("·")
+                    Button("Remove", action: remove)
+                }
+                .font(.caption2).foregroundStyle(.red).padding(.horizontal, 4)
+            }
+        }
     }
 }
 

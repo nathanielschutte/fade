@@ -1,4 +1,5 @@
 import Foundation
+import NapsackCrypto
 
 /// Who this app is to a server. Every request says `X-Napsack-Client:
 /// ios/<version>+<build>`, so the server can turn away an app older than it
@@ -64,6 +65,15 @@ enum ServerError: LocalizedError, Equatable {
         case .refused(let message, _): message
         case .sessionEnded: "Your session ended. Sign in again."
         case .updateRequired(let message): message
+        }
+    }
+
+    /// The connection's fault, not the request's: worth trying again (app.js, `retryable`).
+    var retryable: Bool {
+        switch self {
+        case .unreachable: true
+        case .refused(_, let status): [502, 503, 504].contains(status)
+        default: false
         }
     }
 }
@@ -187,6 +197,48 @@ struct Server: Sendable {
     func groupMessages(group: Int64, before: Int64?, limit: Int, token: String) async throws -> [GroupMessage] {
         try Self.decoder.decode([GroupMessage].self, from: await send(
             "groups/\(group)/messages", token: token, query: Self.page(before: before, limit: limit)))
+    }
+
+    struct DirectText: Encodable {
+        let ciphertext: String
+        let format: Int
+        let clientId: String
+    }
+
+    /// Sends a sealed text. The same `clientId` again returns the message already stored.
+    func sendText(to friend: Int64, ciphertext: String, clientId: String, token: String) async throws -> DirectMessage {
+        try Self.decoder.decode(DirectMessage.self, from: await send(
+            "chats/\(friend)/messages", method: "POST", token: token,
+            json: DirectText(ciphertext: ciphertext, format: E2E.textFormat, clientId: clientId)))
+    }
+
+    struct GroupDetail: Decodable, Sendable {
+        struct Member: Decodable, Sendable {
+            let id: Int64
+            let username: String
+            let publicKey: String
+        }
+        let members: [Member]
+    }
+
+    func group(_ id: Int64, token: String) async throws -> GroupDetail {
+        try Self.decoder.decode(GroupDetail.self, from: await send("groups/\(id)", token: token))
+    }
+
+    struct GroupText: Encodable {
+        let format: Int
+        let content: String
+        let clientId: String
+        let recipients: [Int64]
+        let wraps: [String: String]
+    }
+
+    /// Sends a sealed group text; 409 if the members changed since it was sealed.
+    func sendGroupText(to group: Int64, _ sealed: E2E.GroupMessage, token: String) async throws -> GroupMessage {
+        try Self.decoder.decode(GroupMessage.self, from: await send(
+            "groups/\(group)/messages", method: "POST", token: token,
+            json: GroupText(format: E2E.groupFormat, content: E2E.toB64(sealed.content), clientId: sealed.clientId,
+                            recipients: sealed.recipients, wraps: Dictionary(uniqueKeysWithValues: sealed.wraps.map { (String($0.key), $0.value) }))))
     }
 
     static func page(before: Int64?, limit: Int) -> [URLQueryItem] {
