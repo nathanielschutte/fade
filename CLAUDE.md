@@ -94,6 +94,15 @@ Every change reaches `main` through a pull request, the owner's included, with o
 - Encryption: anything that changes bytes on the wire is a new message format, never an edit to an existing one, and it lands in every implementation (`shared/crypto/crypto.js` first, then the Swift and later Kotlin ports). The pinned vectors in `tests/vectors/` are never regenerated: a new format gets a new vector file, generated once, with an independent Python check (`tests/vectors/check_*.py`). The web crypto runs `shared/crypto/vector-checks.js` against them (Node, in `scripts/test.sh`); each native app runs the same checks in its own test suite. If they fail, the change is wrong. Update [how-napsack-works.md](docs/how-napsack-works.md) when the design changes.
 - Never log, print, or commit secrets: tokens, auth keys, invite codes, `terraform.tfvars`, saved plans, or anything decrypted. The server never has plaintext, and logs and the admin panel show counts and events only.
 
+## Concurrency, and every client
+
+Everything happens at once (Nate, 2026-10-30): requests on the server, several devices per account, the web app on a desktop and a phone and the iOS app (Android later) for the same people, and async work inside every client. Design and test for it:
+
+- **Server:** every transaction begins with `db::write_tx` (`BEGIN IMMEDIATE`, so writers wait their turn instead of failing "database is locked"; `db::tests::transactions_take_the_write_lock`). Races between requests are settled by the database (unique indexes, as for role grants and friendships), never by reading first and hoping. Retries are safe because writes carry the client's own id (`client_id`).
+- **Clients:** an answer can arrive after the screen has moved on, so check it's still current before using it (the web camera's `attempt`, the iOS socket's replaced task). Never rely on which callback runs first: decide by the data (the shutter's tap or hold goes by the events' own times, D11). Retries reuse the same ids and bytes. Shared state is touched on one thread (`@MainActor` in the iOS app).
+- **Tests:** where order or timing matters, test it on purpose (`concurrent_writers_wait_their_turn`; a tap handled only after the hold timer ran). Test suites run in parallel (browser tests four at a time, the iOS tests on parallel Simulators), so every check waits for what it checks (rule 7 above).
+- **Every client:** a feature or fix is considered on the web (desktop and phone), the iOS app, and later Android, even when only one changes now. What the others still need goes into their plan ([plan-ios.md](docs/management/plan-ios.md)).
+
 ## Security
 
 **All human input is hostile until proven otherwise:** every field, header, file, and byte. Each rule below has a test that enforces it.
