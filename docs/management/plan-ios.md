@@ -95,25 +95,25 @@ What the web app does quietly that the app must do too, before more features lea
 | Typing… and "Active now" (with the setting to share it) | Nate | Done | 2026-10-30: "Ana is typing…" above the composer (gone 4 seconds after the last word, or when the message comes; sent at most every 2 seconds), "Active now" or "Active 5m ago" under the friend's name, and "Share when I'm active" in Settings (mutual) |
 | "Seen" on your texts, "Seen by" in groups | Nate | In progress | 2026-10-30: "Seen" under your newest direct text once read, live. "Seen by" in groups isn't yet |
 | Every version of an edited text | – | Planned | `GET .../edits` |
-| Tapping a reaction under a message adds yours | – | Planned | |
+| Tapping a reaction under a message adds yours | Nate | Done | 2026-10-30: reactions under a message are counted and tappable; yours is marked, and tapping it takes it back |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
-| Swipe a message to reply | – | Planned | Native, and quicker than holding |
-| Haptics where they help: sending, reacting, a new message in the open chat | – | Planned | `sensoryFeedback` |
+| Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
+| Haptics where they help: sending, reacting, a new message in the open chat | Nate | In progress | 2026-10-30: holding a message, swiping to reply, sending, and reacting. Not yet: a new message in the open chat |
 | Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | – | Planned | Before TestFlight |
 
 ## 9. Groups
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Create a group: a name and friends | – | Planned | `POST /groups` |
-| Group info: rename, picture, members (add, remove, leave), the privacy notice | – | Planned | Group pictures go through the server's `images::clean`; the notice says the name and picture aren't end-to-end encrypted (CLAUDE.md) |
+| Create a group: a name and friends | Nate | Done | 2026-10-30: the compose button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
+| Group info: rename, picture, members (add, remove, leave), the privacy notice | Nate | Done | 2026-10-30: tap the group's title: the notice in the web's words, its picture (`PhotosPicker`, made small here, cleaned by the server), rename (any member), members (the owner removes by swiping; who can, said plainly), add friends, Leave (confirmed) |
 
 ## 10. Pics and videos
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality). Native: a full-screen camera, pinch to zoom |
-| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | – | Planned | `GET /snaps/{id}`, `POST /snaps/{id}/opened`; nothing saved to the phone, and screenshots can't be stopped (say so where the web does) |
+| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | In progress | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and closes at its end. It counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted on close). Formats 1, 2, 4, 6 and groups' 3, 5, 7. Not yet: opening several back to back |
 | Sending a pic or video to several friends and groups at once, with a caption placed anywhere | – | Planned | `/chats/{id}/snaps`, `/groups/{id}/pics` with `X-Napsack-Keys` |
 | Drawing and stickers on a pic | – | Planned | Native: PencilKit |
 | Picking a photo from the library | – | Planned | Native: `PhotosPicker`, no full library access needed |

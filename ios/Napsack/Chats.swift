@@ -63,6 +63,7 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
 
 struct GroupMessage: Decodable, Sendable, Equatable {
     struct Pic: Decodable, Sendable, Equatable {
+        let id: Int64
         let viewers: [Int64]
         /// "opened" or "expired", once the file is gone.
         let discardReason: String?

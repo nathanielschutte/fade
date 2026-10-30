@@ -30,6 +30,8 @@ struct Bubble: Identifiable, Equatable, Sendable {
     var recipients: [Int64]? = nil
     /// One of my direct texts the friend has read.
     var seen = false
+    /// A pic or video waiting for me to open it (once).
+    var opening: PicToOpen? = nil
 
     /// Your own texts can be edited for 15 minutes after sending (app.js, `canEdit`).
     static let editWindow: TimeInterval = 15 * 60
@@ -60,12 +62,14 @@ extension Reader {
         let mine = m.senderId == me.id
         let content: Bubble.Content
         var replyTo: Int64?
+        var opening: PicToOpen?
         if m.kind == "snap" {
             let word = m.format == E2E.videoFormat ? "video" : "pic", Word = word.capitalized
             let words = mine
                 ? ["pending": "Sent a \(word)", "opened": "\(Word) opened", "expired": "\(Word) expired unopened"]
                 : ["pending": "New \(word)", "opened": "\(Word) viewed", "expired": "\(Word) expired"]
             content = .media(words[m.snapState ?? ""] ?? Word)
+            if !mine && m.snapState == "pending" { opening = .direct(m) }
         } else if ![1, 2].contains(m.format) {
             content = .unreadable(Self.tooNew)
         } else if let opened = body(m, with: friend) {
@@ -85,6 +89,7 @@ extension Reader {
         bubble.myReaction = reactions.first { $0.0 == me.id }?.1
         if case .text = content { bubble.editable = mine }
         bubble.seen = mine && m.kind == "text" && m.readAt != nil
+        bubble.opening = opening
         return bubble
     }
 
@@ -92,6 +97,7 @@ extension Reader {
         let mine = m.senderId == me.id
         let content: Bubble.Content
         var replyTo: Int64?
+        var opening: PicToOpen?
         if m.kind == "event" {
             content = .event(eventText(m))
         } else if let pic = m.pic {
@@ -100,6 +106,7 @@ extension Reader {
                 pic.discardReason == "expired" ? "\(Word) expired"
                 : mine ? "Sent a \(word)"
                 : pic.viewers.contains(me.id) ? "\(Word) viewed" : "New \(word)")
+            if !mine && pic.discardReason == nil && !pic.viewers.contains(me.id) { opening = .group(m) }
         } else if ![0, E2E.groupFormat].contains(m.format) {
             content = .unreadable(Self.tooNew)
         } else if let opened = groupBody(m) {
@@ -114,6 +121,7 @@ extension Reader {
         bubble.myReaction = m.reactions?.first { $0.userId == me.id }?.emoji
         if case .text = content { bubble.editable = mine && m.format == E2E.groupFormat }
         bubble.recipients = m.recipients
+        bubble.opening = opening
         return bubble
     }
 }
@@ -138,15 +146,39 @@ enum SendError: LocalizedError {
     case keyChanged(String)
     case memberKeyChanged(String)
     case cantEdit
+    case cantOpen
 
     var errorDescription: String? {
         switch self {
         case .keyChanged(let username): "\(username)'s safety code changed. Messages are blocked."
         case .cantEdit: "This text can't be edited: napsack doesn't have the key of everyone it went to."
+        case .cantOpen: "This pic couldn't be shown. It's still unopened."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
     }
+}
+
+/// A pic or video someone sent me that I haven't opened: what's needed to fetch and open it.
+enum PicToOpen: Equatable, Sendable {
+    case direct(DirectMessage)
+    case group(GroupMessage)
+
+    var isVideo: Bool {
+        switch self {
+        case .direct(let m): m.format == E2E.videoFormat
+        case .group(let m): m.format == E2E.groupVideoFormat
+        }
+    }
+}
+
+/// A pic or video, opened: shown once, never saved (a video is a temporary file, deleted after).
+struct OpenedPic: Sendable {
+    let image: Data?
+    let video: URL?
+    let caption: String
+    /// Where the caption sits, 0 (top) to 1 (bottom); nil for the usual place.
+    let y: Double?
 }
 
 /// An open chat: its history, newest page first, older pages as you scroll
@@ -298,6 +330,9 @@ enum SendError: LocalizedError {
     }
 
     func bubble(_ id: Int64) -> Bubble? { bubbles.first { $0.id == id } }
+
+    /// Friends by id, for names (a group's members, adding people).
+    var friendsById: [Int64: Friend] { reader.friends }
 
     /// The friend in a direct chat.
     var friend: Friend? {
@@ -572,6 +607,68 @@ enum SendError: LocalizedError {
         if keyChanged { throw SendError.keyChanged(friend.username) }
         return try E2E.pairKey(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
                                myId: account.user.id, theirId: friend.id)
+    }
+
+    // ---------- pics and videos, opened once ----------
+
+    /// Fetches and decrypts a pic or video sent to me (app.js, `loadSnap`). Fetching doesn't open it;
+    /// `confirmOpened` does, once it's been shown.
+    func open(_ pic: PicToOpen) async throws -> OpenedPic {
+        let server = try Server(account.server, transport: transport)
+        switch pic {
+        case .direct(let m):
+            guard let friend else { throw SendError.cantOpen }
+            let sealed = try await server.send("snaps/\(m.id)", token: account.token)
+            for key in reader.readingKeys(friend) {
+                if m.format == E2E.videoFormat, let v = try? E2E.decryptVideo(key, sealed, sender: m.senderId, recipient: m.recipientId) {
+                    return try OpenedPic(image: nil, video: Self.temporaryVideo(v.media, type: v.type), caption: v.caption, y: v.y)
+                }
+                if m.format == E2E.imageFormat, let p = try? E2E.decryptImage(key, sealed, sender: m.senderId, recipient: m.recipientId) {
+                    return OpenedPic(image: p.media, video: nil, caption: p.caption, y: p.y)
+                }
+                if [1, 2].contains(m.format), let p = try? E2E.decryptPic(key, sealed, format: m.format, sender: m.senderId, recipient: m.recipientId) {
+                    return OpenedPic(image: p.photo, video: nil, caption: p.caption, y: nil)
+                }
+            }
+            throw SendError.cantOpen
+        case .group(let m):
+            guard let id = m.pic?.id, let wrap = m.key else { throw SendError.cantOpen }
+            let sealed = try await server.send("groups/\(m.groupId)/pics/\(id)", token: account.token)
+            for senderKey in reader.senderKeys(m.senderId, server: m.senderPublicKey) {
+                guard let wrapKey = try? E2E.groupWrapKey(mine: reader.identity, theirs: senderKey, myId: account.user.id, theirId: m.senderId) else { continue }
+                let o = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: account.user.id,
+                                         clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
+                if m.format == E2E.groupVideoFormat, let v = try? E2E.decryptGroupVideo(sealed, wrap: wrap, o) {
+                    return try OpenedPic(image: nil, video: Self.temporaryVideo(v.media, type: v.type), caption: v.caption, y: v.y)
+                }
+                if m.format == E2E.groupImageFormat, let p = try? E2E.decryptGroupImage(sealed, wrap: wrap, o) {
+                    return OpenedPic(image: p.media, video: nil, caption: p.caption, y: p.y)
+                }
+                if m.format == E2E.groupFormat, let p = try? E2E.decryptGroupPic(sealed, wrap: wrap, o) {
+                    return OpenedPic(image: p.photo, video: nil, caption: p.caption, y: nil)
+                }
+            }
+            throw SendError.cantOpen
+        }
+    }
+
+    /// It's been shown: now it's opened, and gone. A repeat is fine.
+    func confirmOpened(_ pic: PicToOpen) async {
+        let server = try? Server(account.server, transport: transport)
+        switch pic {
+        case .direct(let m): _ = try? await server?.send("snaps/\(m.id)/opened", method: "POST", token: account.token)
+        case .group(let m):
+            if let id = m.pic?.id { _ = try? await server?.send("groups/\(m.groupId)/pics/\(id)/opened", method: "POST", token: account.token) }
+        }
+        try? await catchUp()
+    }
+
+    /// A video to play: a file only this app can read, while the phone is unlocked, deleted once watched.
+    nonisolated static func temporaryVideo(_ data: Data, type: String) throws -> URL {
+        let ext = type.contains("mp4") ? "mp4" : type.contains("webm") ? "webm" : "mov"
+        let url = FileManager.default.temporaryDirectory.appending(path: "napsack-\(UUID().uuidString).\(ext)")
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        return url
     }
 
     /// Back online: texts that couldn't go for the connection's sake go now.

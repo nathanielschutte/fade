@@ -20,6 +20,8 @@ struct ChatListScreen: View {
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
     @State private var settingUpRecovery = false
+    @State private var path: [ChatRow.Kind] = []
+    @State private var makingGroup = false
     @State private var search = ""
     @State private var showingHidden = false
     @State private var muting: ChatRow?
@@ -34,7 +36,7 @@ struct ChatListScreen: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 if !account.user.hasRecoveryKey {
                     // As the web app's nudge: until there's one, a forgotten password costs every message.
@@ -108,6 +110,17 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
+            .sheet(isPresented: $makingGroup) {
+                let friends = (list.reader?.friends.values.map { $0 } ?? [])
+                    .filter { $0.system != true && $0.deactivated != true }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                NewGroupScreen(account: account, friends: friends) { id in
+                    Task {
+                        await load()
+                        path = [.group(id)]  // straight into it, as on the web
+                    }
+                }
+            }
             .sheet(isPresented: $settingUpRecovery) {
                 PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
             }
@@ -132,6 +145,12 @@ struct ChatListScreen: View {
                             }
                             .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { makingGroup = true } label: {
+                        Image(systemName: "square.and.pencil").accessibilityLabel("New group")
+                    }
+                    .disabled(list.reader == nil)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SettingsScreen(account: account) } label: {
