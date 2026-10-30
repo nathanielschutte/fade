@@ -13,7 +13,7 @@ The riskiest part first: the app has to produce exactly the bytes the web client
 | The project: Xcode app, Swift package, settings, docs | Nate | Done | 2026-10-29 (#7): `ios/`, [ios-onboarding.md](../ios-onboarding.md) |
 | Format 1 in Swift: the password's keys, the identity, chat keys, texts and pics | Nate | Done | 2026-10-29 (#7) |
 | Every other format: recovery keys, safety codes, format 2 texts (replies), reactions, edits, format 2 pics, format 3 groups, formats 4 to 7 (videos, photos) | Nate | Done | 2026-10-29: `NapsackCryptoChecks` is `vector-checks.js` in Swift, all 64 checks pass; a key made in Swift opens in the web client and back |
-| The checks on the iPhone itself, and how long the key derivation takes there | Nate | In progress | The app's "Run every encryption check" screen and ⌘U on the phone. Needs: a run on the iPhone 16 Pro, its PBKDF2 time written here (near a second is the bar; 0.1 s in the Simulator) |
+| The checks on the iPhone itself, and how long the key derivation takes there | Nate | Done | 2026-10-29: 64 of 64 on the iPhone 16 Pro; PBKDF2 (600,000 rounds) takes about 492 ms there, well inside the bar of near a second |
 
 ## 2. Signing in, and the chats
 
@@ -21,7 +21,7 @@ A skeleton that does the real thing against a server: sign in, see your chats, r
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Sign in: username and password to keys, the private key unwrapped and kept in the Keychain (this device only, readable while unlocked), the session token too | – | Up next | `POST /api/auth/login` ([api.md](../spec/api.md)); errors shown as the server words them |
+| Sign in: username and password to keys, the private key unwrapped and kept in the Keychain (this device only, readable while unlocked), the session token too | Nate | In progress | `POST /api/auth/login` ([api.md](../spec/api.md)); errors shown as the server words them |
 | The API client: the `X-Napsack-Client` header on everything, signed out on 401, an update screen on 426 | – | Planned | `Server.swift` today; [releasing.md](../operations/releasing.md), rule 4 |
 | Sign up: invite code, a new identity, the recovery key shown once | – | Planned | `createIdentity`, `newRecoveryKey` are ready |
 | The chat list: friends and groups, newest first, previews decrypted | – | Planned | `GET /api/friends` and the groups ([api.md](../spec/api.md)) |

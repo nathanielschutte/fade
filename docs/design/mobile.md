@@ -90,7 +90,7 @@ Getting it to people:
 
 ## First milestones
 
-1. **The crypto, in Swift, passing every vector.** The riskiest part goes first: a Swift package with the formats above, and tests that run every pinned vector, plus a timing check that 600,000-round PBKDF2 stays near a second on a real iPhone. Nothing ships until it's all green. Done (2026-10-29) but for the phone's timing: every format passes all 64 checks, on the Mac and in the app; the task list is [plan-ios.md](../management/plan-ios.md).
+1. **The crypto, in Swift, passing every vector.** The riskiest part goes first: a Swift package with the formats above, and tests that run every pinned vector, plus a timing check that 600,000-round PBKDF2 stays near a second on a real iPhone. Nothing ships until it's all green. Done (2026-10-29): every format passes all 64 checks, on the Mac and on an iPhone 16 Pro, where the key derivation takes about 492 ms; the task list is [plan-ios.md](../management/plan-ios.md).
 2. **Skeleton.** Sign in, chat list, chat screen, sending and reading texts, against a chosen server.
 3. **The camera.** Pics and short videos with AVFoundation: zoom, holding to record, the same compression and size limits as the web app, and the formats 6 and 7 envelopes with the caption's place.
 4. **Notifications.** APNs: the server's `push.rs` gains APNs delivery alongside Web Push (needs the paid program). The server can't read messages, so notifications say who sent something, never what.
