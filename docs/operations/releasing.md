@@ -123,8 +123,7 @@ It makes that build what production runs and installs it. Rule 5 is what makes t
 ## Releasing the iOS app
 
 The details live in [mobile.md](../design/mobile.md). The short version:
-- **Native changes** (new native modules, permissions, Expo SDK upgrades): bump `version`, tag `ios-v1.2.0`, and EAS builds it in the cloud, uploads it to TestFlight, and after you test it, you submit it for App Store review.
-- **JavaScript-only fixes** go out with EAS Update to installed apps whose native code matches. No review wait, but it's still bound by rules 1-3.
+- **Every change** to the app is a new build: bump `MARKETING_VERSION` (and the build number, `CURRENT_PROJECT_VERSION`) in `ios/Config/Base.xcconfig`, tag `ios-v1.2.0`, upload it to TestFlight, and after testing it, submit it for App Store review. How exactly comes with the Developer Program ([mobile.md](../design/mobile.md)).
 
 ## One-time setup
 
