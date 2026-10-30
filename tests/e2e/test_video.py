@@ -111,14 +111,21 @@ async def main():
 
         # Sound off (X37): what's sent has no sound at all, not just a quiet player.
         # Waits for what it checks, never a fixed time: on a busy machine audio
-        # can start decoding well after the picture (it failed CI that way).
+        # can start decoding well after the picture (it failed CI that way). What
+        # the player reports is kept as it plays, since the viewer resets it at the end.
+        WATCH = """() => {
+          window.__played = 0; window.__audio = 0;
+          const v = document.querySelector('#viewer-video');
+          v.ontimeupdate = () => {
+            window.__played = Math.max(window.__played, v.currentTime);
+            window.__audio = Math.max(window.__audio, v.webkitAudioDecodedByteCount || 0);
+          };
+        }"""
         async def no_sound_after_a_second(page):
-            await expect(page.locator("#viewer-video")).to_be_visible(timeout=15000)
-            await page.wait_for_function("() => { const v = document.querySelector('#viewer-video'); return v.currentTime >= 1 || v.ended; }", timeout=15000)
-            return await page.locator("#viewer-video").evaluate("v => v.webkitAudioDecodedByteCount") == 0
+            await page.wait_for_function("() => window.__played >= 1", timeout=20000)
+            return await page.evaluate("window.__audio") == 0
         async def some_sound(page):
-            await expect(page.locator("#viewer-video")).to_be_visible(timeout=15000)
-            await page.wait_for_function("() => document.querySelector('#viewer-video').webkitAudioDecodedByteCount > 0", timeout=15000)
+            await page.wait_for_function("() => window.__audio > 0", timeout=20000)
             return True
         await ana.click("#camera-button")
         await ana.wait_for_timeout(500)
@@ -131,6 +138,7 @@ async def main():
         await shot(ana, "video-muted-phone", full_page=False)
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
+        await ben.evaluate(WATCH)
         await ben.locator("button.snap-chip", has_text="Tap to view video").click()
         assert await no_sound_after_a_second(ben), "a muted video carries no sound"
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
@@ -141,6 +149,7 @@ async def main():
         await expect(ana.locator("#video-sound")).to_be_visible(timeout=10000)
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
+        await ben.evaluate(WATCH)
         await ben.locator("button.snap-chip", has_text="Tap to view video").click()
         assert await some_sound(ben), "with sound, there's sound"
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
