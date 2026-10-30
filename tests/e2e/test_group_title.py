@@ -25,6 +25,7 @@ async def main():
             assert await page.locator("#chat-title").evaluate(FITS), (name, await page.locator("#chat-title").evaluate("e => [e.scrollWidth, e.clientWidth]"))
         # Ana (phone) makes one, Ben (desktop) the other; each header is checked on both.
         for name, maker, friend, other in (("Rats", ana, BEN, ben), (f"Dusty Relics {tag}", ben, ANA, ana)):
+            await expect(row(maker, friend)).to_be_visible(timeout=15000)  # (the friend is in the list, so in the picker)
             await maker.click("#start-button")
             await maker.fill("#new-group-name", name)
             await maker.locator("#new-group-friends label", has_text=friend).locator("input").check()
