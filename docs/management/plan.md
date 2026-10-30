@@ -24,11 +24,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Better video quality](#f20-better-video-quality) | Features | Nate | In progress | Nate (2026-10-30): step 1 of [video-quality.md](../design/video-quality.md), the cap to 6 MB, 10 seconds kept |
-| 3 | [The data volume to 5 GB](#i11-the-data-volume-to-5-gb) | Infrastructure | Nate | In progress | Nate (2026-10-30), with the bigger video cap |
-| 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 5 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 4 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 5 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 6 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -104,6 +103,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [A tap on the shutter could count as a hold](#d11-a-tap-on-the-shutter-could-count-as-a-hold-when-the-page-was-busy-fixed-in-0430) | 0.43.0 | Nate |
 | [iPhone videos came out black, and the ring stuck](#d12-iphone-videos-came-out-black-and-the-ring-stuck-fixed-in-0430) | 0.43.0 | Nate |
 | ["Database is locked" under load](#d13-database-is-locked-under-load-fixed) | 0.43.0 | Nate |
+| [The data volume to 5 GB](#i11-the-data-volume-to-5-gb) | infra | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -676,6 +676,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I11. The data volume to 5 GB
 - Nate (2026-10-30): grow the data volume from 1 GB to 5 GB, with the video cap going to 6 MB ([F20](#f20-better-video-quality)); about $0.32 a month more.
 - An in-place change to `aws_ebs_volume.data` (`data_volume_gb`), then the filesystem grown on the running instance (`xfs_growfs`, online). The Rule 1 procedure: a snapshot first, read the plan, row counts before and after. Staging stays at 1 GB.
+- **Done 2026-10-30 (#48):** snapshot `snap-0063c1ec7208bff90` first; the plan was only the volume's size (1 → 5, in place) and the settings parameter; `xfs_growfs` online (960 MB → 5.0 GB, 105 MB used); row counts the same before and after (28 users, 50 friendships, 600 messages, 93 sessions); a clean restart with the new ceilings (2048 MB direct, 1536 MB group).
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
