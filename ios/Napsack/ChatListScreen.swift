@@ -72,6 +72,19 @@ struct ChatListScreen: View {
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink { FriendsScreen(model: FriendsModel(account: account)) } label: {
+                        Image(systemName: "person.2")
+                            .overlay(alignment: .topTrailing) {
+                                if list.incoming > 0 {
+                                    Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
+                                        .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
+                                        .offset(x: 10, y: -8)
+                                }
+                            }
+                            .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SettingsScreen(account: account) } label: {
                         Image(systemName: "person.crop.circle").accessibilityLabel("Settings")

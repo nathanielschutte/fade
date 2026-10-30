@@ -298,6 +298,8 @@ struct Reader: Sendable {
     private(set) var groups: [Int64: GroupSummary] = [:]
     /// Whose keys to trust (Pins.swift), shared with open chats.
     private(set) var pinBook: PinBook?
+    /// Friend requests waiting on you: the badge on Friends.
+    private(set) var incoming = 0
 
     var favorites: [ChatRow] { rows.filter { $0.favorite && !$0.hidden } }
     var others: [ChatRow] { rows.filter { !$0.favorite && !$0.hidden } }
@@ -326,7 +328,9 @@ struct Reader: Sendable {
             let server = try Server(account.server, transport: transport)
             async let friends = server.friends(token: account.token)
             async let groups = server.groups(token: account.token)
+            async let requests = server.send("friends/requests", token: account.token)
             let (f, g) = try await (friends, groups)
+            incoming = (try? Server.decoder.decode(FriendsModel.Requests.self, from: await requests).incoming.count) ?? incoming
             let identity = try account.identity()
             let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore)
             self.pinBook = pinBook

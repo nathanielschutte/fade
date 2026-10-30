@@ -60,11 +60,11 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Friend requests: incoming, outgoing, accept, decline, cancel; a badge for new ones | – | Planned | `/friends/requests`; live with `friends_changed` |
-| Add by username | – | Planned | |
-| Your QR code and link: show, share, reset | – | Planned | `/friend-link`. Native: CoreImage for the QR, `ShareLink` for the share sheet |
+| Friend requests: incoming, outgoing, accept, decline, cancel; a badge for new ones | Nate | Done | 2026-10-30: the Friends screen (the person-pair button on the chat list, with a badge for requests waiting on you, kept current live) |
+| Add by username | Nate | Done | 2026-10-30: in the web's words, an old username included ("(was @…)") |
+| Your QR code and link: show, share, reset | Nate | Done | 2026-10-30: the QR drawn on the phone (CoreImage), the share sheet (`ShareLink`), Copy, and Reset with a confirmation. The link uses the server's address; once apps talk to `api.napsack.io`, links must use the site's ([api-host.md](../design/api-host.md)) |
 | Scan a friend's QR with the camera | – | Planned | Native: VisionKit's `DataScannerViewController` |
-| One-time invite links: make, list who joined, revoke | – | Planned | `/invites` |
+| One-time invite links: make, list who joined, revoke | Nate | Done | 2026-10-30: made with its QR and share sheet, listed with who joined, turned off |
 | Opening a napsack link (`/i/<token>`) opens the app | – | Waiting | Universal Links need Associated Domains, a Developer Program capability. Until then, links open in Safari |
 | Unfriend | – | Planned | `DELETE /friends/{id}`; history stays (Rule 1) |
 | The friend map | – | Planned | `GET /graph`. Native: a SwiftUI `Canvas`, pinch and drag |
