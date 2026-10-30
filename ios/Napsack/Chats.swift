@@ -303,6 +303,53 @@ struct Reader: Sendable {
 
     var favorites: [ChatRow] { rows.filter { $0.favorite && !$0.hidden } }
     var others: [ChatRow] { rows.filter { !$0.favorite && !$0.hidden } }
+    /// Chats you hid (archived): out of the list until you open "Hidden chats", or a new message shows them again.
+    var hiddenRows: [ChatRow] { rows.filter(\.hidden) }
+
+    // ---------- the list's own actions (app.js, the row actions) ----------
+
+    private struct On: Encodable { let on: Bool; var hours: Int? = nil }
+
+    private func path(_ kind: ChatRow.Kind, _ what: String) -> String {
+        switch kind {
+        case .friend(let id): "chats/\(id)/\(what)"
+        case .group(let id): "groups/\(id)/\(what)"
+        }
+    }
+
+    /// Kept at the top (up to 10, direct and groups together: the server says so past that).
+    func setFavorite(_ row: ChatRow, _ on: Bool, account: Account, transport: any Transport = NetworkTransport()) async throws {
+        _ = try await Server(account.server, transport: transport).send(path(row.kind, "favorite"), method: "PUT", token: account.token, json: On(on: on))
+        try await load(account, transport: transport)
+    }
+
+    /// No notifications and no unread dot: for `hours`, or until turned back on (nil).
+    func setMuted(_ row: ChatRow, _ on: Bool, hours: Int? = nil, account: Account, transport: any Transport = NetworkTransport()) async throws {
+        _ = try await Server(account.server, transport: transport).send(path(row.kind, "mute"), method: "PUT", token: account.token,
+                                                                         json: On(on: on, hours: on ? hours : nil))
+        try await load(account, transport: transport)
+    }
+
+    /// Out of the list, or back. Only direct chats; you leave a group instead.
+    func setHidden(_ row: ChatRow, _ on: Bool, account: Account, transport: any Transport = NetworkTransport()) async throws {
+        guard case .friend = row.kind else { return }
+        _ = try await Server(account.server, transport: transport).send(path(row.kind, "hidden"), method: "PUT", token: account.token, json: On(on: on))
+        try await load(account, transport: transport)
+    }
+
+    /// Leaves a group: the membership is marked ended, nothing is deleted.
+    func leave(_ row: ChatRow, account: Account, transport: any Transport = NetworkTransport()) async throws {
+        guard case .group(let id) = row.kind else { return }
+        _ = try await Server(account.server, transport: transport).send("groups/\(id)/members/\(account.user.id)", method: "DELETE", token: account.token)
+        try await load(account, transport: transport)
+    }
+
+    /// Rows whose name or newest message (as shown, already decrypted here) has the words.
+    func search(_ text: String) -> [ChatRow] {
+        let words = text.trimmingCharacters(in: .whitespaces)
+        guard !words.isEmpty else { return [] }
+        return rows.filter { $0.name.localizedStandardContains(words) || $0.preview.localizedStandardContains(words) }
+    }
 
     /// Both lists at once; the rows are worked out (decrypted) off the main thread.
     private let pinStore: any PinStore

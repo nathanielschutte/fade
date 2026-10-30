@@ -81,9 +81,9 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Swipe actions: hide, mute, favorite; leave a group | – | Planned | Native: `.swipeActions` (left and right) and the same in a long-press menu. `PUT /chats|groups/{id}/hidden|favorite|mute` |
-| Hidden chats: their own section, and undo | – | Planned | |
-| Search chat names and recent messages | – | Planned | Native: `.searchable`, on what's already decrypted on the phone |
+| Swipe actions: hide, mute, favorite; leave a group | Nate | Done | 2026-10-30: swipe right to favorite, left to hide (or leave a group, confirmed) and mute (8 hours, a week, or until turned back on); the same in a long-press menu; Undo for hiding and muting, in the web's words |
+| Hidden chats: their own section, and undo | Nate | Done | 2026-10-30: "Hidden chats (n)" at the end of the list, Unhide by swiping |
+| Search chat names and recent messages | Nate | In progress | 2026-10-30: `.searchable`, by name and newest message. The web also searches each chat's newest 200 messages; that waits for the encrypted cache (section 3) |
 | Streaks 🔥 and birthdays 🎂 beside names | – | Planned | From `/api/friends` |
 | The Admins' announcement, dismissible | – | Planned | `GET /announcement`, the `announcement` event |
 | Pull down to refresh; a new friend or message animates in | Nate | Done | Pull to refresh since #13; live since #19 |
