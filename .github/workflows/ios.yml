@@ -6,8 +6,8 @@ name: iOS app
 # shape. To turn it on, delete the `if:` line and check the runner's Xcode is
 # at least the one in docs/ios-onboarding.md.
 #
-# Runs only when something the app depends on changes; ci.yml skips changes
-# that are only in ios/.
+# Runs only when something the app depends on changes; ci.yml's server and
+# Terraform checks skip changes that are only in ios/ and the docs.
 
 on:
   pull_request:

@@ -110,7 +110,7 @@ The crypto tests find the vectors through the repository's folders, so they run 
 
 - **A branch and a pull request**, like everything else (`<name>/ios-...`; [onboarding.md](onboarding.md), Working together), with the plan row kept current.
 - **Check it on your Mac:** `swift test` for the package, then ⌘U, or the `xcodebuild test` line above, and run it on the phone for anything you can see.
-- **Server CI doesn't run** for a pull request that only changes `ios/` and the docs (`ci.yml` skips them), and there's nothing to merge into staging or tag. When the app needs something new from the server, that's a server change with its own pull request and release, and it ships first ([releasing.md](operations/releasing.md), rule 1).
+- **Server CI skips** a pull request that only changes `ios/` and the docs: its first job sees that and the server and Terraform checks skip, which counts as passing. There's nothing to put on staging or tag. When the app needs something new from the server, that's a server change with its own pull request and release, and it ships first ([releasing.md](operations/releasing.md), rule 1).
 - **The app's CI** (`.github/workflows/ios.yml`) runs the same two steps on GitHub's Macs. It's off (`if: false`) while the app takes shape. Keep its commands matching the ones above, so turning it on is just deleting that line.
 - **Versions:** the app's version is `MARKETING_VERSION` and its build number `CURRENT_PROJECT_VERSION` (`Config/Base.xcconfig`). Releasing it (TestFlight, the App Store, `ios-v*` tags) comes later, with the paid Developer Program ([mobile.md](design/mobile.md)).
 

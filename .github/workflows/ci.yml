@@ -1,14 +1,9 @@
 name: CI
 
-# Changes only to the iOS app or the docs (the plan included) don't touch the
-# server, the web app, or the infrastructure, so they skip all of this; ios.yml
-# checks the app. Anything else in the change runs everything.
 on:
   pull_request:
-    paths-ignore: ["ios/**", "docs/**", "*.md"]
   push:
     branches: [main]
-    paths-ignore: ["ios/**", "docs/**", "*.md"]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -17,8 +12,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Changes only to the iOS app or the docs (the plan included) don't touch the
+  # server, the web app, or the infrastructure, so the jobs below skip them;
+  # ios.yml checks the app. They skip rather than not run: main requires the
+  # server and Terraform checks, and a skipped job counts as passing, where a
+  # workflow that never ran would leave the pull request waiting.
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          # A pull request is checked out as a merge onto main, whose first parent is main.
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: |
+          # Anything outside ios/, docs/, and top-level Markdown runs everything,
+          # and so does a base that can't be compared (a new branch, a force push).
+          if git rev-parse -q --verify "$BASE^{commit}" >/dev/null &&
+             ! git diff --name-only "$BASE" HEAD | grep -qvE '^(ios/|docs/|[^/]+\.md$)'; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "Only the iOS app or docs changed: the server and Terraform checks skip."
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
   server:
     name: Server and web client
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -137,6 +163,8 @@ jobs:
 
   infra:
     name: Terraform
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
