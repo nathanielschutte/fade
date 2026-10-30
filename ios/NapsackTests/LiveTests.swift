@@ -26,8 +26,53 @@ import Testing
         for type in ["friends_changed", "groups_changed", "read", "group_read"] {
             guard case .listChanged = event(["type": type]) else { Issue.record("\(type)"); return }
         }
-        guard case .other = event(["type": "typing", "from": 7]), case .other = LiveEvent.decode(Data("not json".utf8)),
+        guard case .other = event(["type": "announcement", "announcement": NSNull()]), case .other = LiveEvent.decode(Data("not json".utf8)),
               case .other = event(["type": "message", "message": ["id": "broken"]]) else { Issue.record("the rest"); return }
+    }
+
+    @Test func typingPresenceAndReadsAreRead() {
+        func event(_ object: [String: Any]) -> LiveEvent { LiveEvent.decode(json(object)) }
+        guard case .typing(7, nil) = event(["type": "typing", "from": 7]),
+              case .typing(7, 12) = event(["type": "typing", "from": 7, "group_id": 12]),
+              case .presence(7, true, 99) = event(["type": "presence", "user_id": 7, "active": true, "last_seen_at": 99]),
+              case .read(7, 1000) = event(["type": "read", "by": 7, "at": 1000])
+        else { Issue.record("typing, presence, read"); return }
+    }
+
+    @Test func typingActiveAndSeen() async throws {
+        let mine = list.message(from: 3, to: 7, ciphertext: try E2E.encryptText2(list.pairKey, "hi", replyTo: nil, sender: 3, recipient: 7), format: 2, id: 2)
+        var older = mine
+        older["id"] = 1
+        older["created_at"] = 1_793_299_000
+        let chat = try await opened(Pages([json([older, mine])]))
+        #expect(chat.typingLine == nil && chat.seenId == nil)
+
+        // Alice types: shown, and gone 4 seconds after her last word (or when her message comes).
+        #expect(chat.typing(from: 7, group: nil))
+        #expect(!chat.typing(from: 7, group: 12) && !chat.typing(from: 8, group: nil))  // other chats
+        #expect(chat.typingLine == "Al is typing…")
+
+        // She reads up to my older text, then all of it: "Seen" goes under my newest only when it's read.
+        chat.read(by: 7, at: 1_793_299_500)
+        #expect(chat.seenId == nil && chat.typingLine == nil)  // reading ends the typing line
+        chat.read(by: 7, at: 1_793_300_000)
+        #expect(chat.seenId == 2)
+
+        // Active now, then a while ago, then nothing after a day.
+        chat.presence(user: 7, active: true, lastSeenAt: nil)
+        #expect(chat.activeText() == "Active now")
+        chat.presence(user: 7, active: false, lastSeenAt: 1_000_000)
+        #expect(chat.activeText(now: Date(timeIntervalSince1970: 1_000_000 + 300)) == "Active 5m ago")
+        #expect(chat.activeText(now: Date(timeIntervalSince1970: 1_000_000 + 7200)) == "Active 2h ago")
+        #expect(chat.activeText(now: Date(timeIntervalSince1970: 1_000_000 + 90_000)) == nil)
+    }
+
+    @Test func theTypingLineEndsByItself() async throws {
+        let chat = try await opened(Pages([pics(1...1)]))
+        chat.typing(from: 7, group: nil)
+        #expect(chat.typingLine != nil)
+        try await Task.sleep(for: .seconds(Conversation.typingFor + 0.3))
+        #expect(chat.typingLine == nil)
     }
 
     @Test func theSocketIsOnTheServersAddress() {
@@ -164,5 +209,21 @@ struct LiveSocketTests {
         while arrived == nil, let e = await heard.next() { if case .message(let m) = e { arrived = m } }
         #expect(chat.arrived(try #require(arrived)))
         #expect(chat.bubbles.last?.content == .text("live from the server ⚡️", edited: false))
+
+        // Ana's app says she's typing; Ben's socket hears it, and his open chat shows it.
+        let anaSocket = Live(account: ana)
+        let (anaEvents, anaHears) = AsyncStream.makeStream(of: LiveEvent.self)
+        anaSocket.onEvent = { anaHears.yield($0) }
+        anaSocket.start()
+        defer { anaSocket.stop() }
+        var anaHeard = anaEvents.makeAsyncIterator()
+        var anaReady = false
+        while !anaReady, let e = await anaHeard.next() { if case .ready = e { anaReady = true } }
+        anaSocket.sendTyping(to: .friend(ben.user.id))
+        var typed = false
+        while !typed, let e = await heard.next() {
+            if case .typing(let from, nil) = e, from == ana.user.id { typed = chat.typing(from: from, group: nil) }
+        }
+        #expect(typed && chat.typingLine?.hasSuffix("is typing…") == true)
     }
 }

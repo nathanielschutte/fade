@@ -42,6 +42,8 @@ struct Me: Codable, Equatable, Sendable {
     let hasRecoveryKey: Bool
     /// Your profile picture, if you have one (Settings). Older kept accounts lack it.
     var avatarId: Int64? = nil
+    /// Friends see when you're active or typing, and you see theirs (mutual).
+    var shareActivity: Bool? = nil
 
     var isAdmin: Bool { role == "admin" }
     /// PowerUser, PowerXtreme (the same, for now), or Admin.

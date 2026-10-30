@@ -342,6 +342,15 @@ enum SignInError: LocalizedError, Equatable {
         return account
     }
 
+    /// Friends see when you're active or typing, and you theirs (both must share).
+    func setShareActivity(_ on: Bool) async throws {
+        let account = try signedIn()
+        struct Settings: Encodable { let shareActivity: Bool }
+        _ = try await Server(account.server, transport: transport).send("me/settings", method: "PUT", token: account.token,
+                                                                        json: Settings(shareActivity: on))
+        updateUser { var me = $0; me.shareActivity = on; return me }
+    }
+
     /// The signed-in person, changed here and in the Keychain.
     private func updateUser(_ change: (Me) -> Me) {
         guard var account else { return }

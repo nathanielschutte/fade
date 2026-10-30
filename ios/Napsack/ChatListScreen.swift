@@ -248,6 +248,13 @@ struct ChatListScreen: View {
         case .groupMessage(let m):
             if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
             list.reloadSoon(account)
+        case .typing(let from, let group):
+            chat?.typing(from: from, group: group)
+        case .presence(let user, let active, let lastSeenAt):
+            chat?.presence(user: user, active: active, lastSeenAt: lastSeenAt)
+        case .read(let by, let at):
+            chat?.read(by: by, at: at)
+            list.reloadSoon(account)
         case .listChanged:
             list.reloadSoon(account)
         case .pong, .other:

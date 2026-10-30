@@ -15,11 +15,20 @@ enum LiveEvent: Sendable {
     case groupMessage(GroupMessage)
     /// Friends, groups, or reads changed: the chat list refetches.
     case listChanged
+    /// Someone's typing to you, or in a group (for a few seconds).
+    case typing(from: Int64, group: Int64?)
+    /// A friend came on screen or left (only friends who share it, and only if you do).
+    case presence(user: Int64, active: Bool, lastSeenAt: Int64?)
+    /// A friend read your texts up to `at`.
+    case read(by: Int64, at: Int64)
     /// Typing, presence, announcements: not shown in the app yet.
     case other
 
     static func decode(_ data: Data) -> LiveEvent {
         struct Head: Decodable { let type: String }
+        struct Typing: Decodable { let from: Int64; let groupId: Int64? }
+        struct Presence: Decodable { let userId: Int64; let active: Bool; let lastSeenAt: Int64? }
+        struct Read: Decodable { let by: Int64; let at: Int64 }
         struct Direct: Decodable { let message: DirectMessage }
         struct Group: Decodable { let message: GroupMessage }
         guard let head = try? Server.decoder.decode(Head.self, from: data) else { return .other }
@@ -31,7 +40,13 @@ enum LiveEvent: Sendable {
             return (try? Server.decoder.decode(Direct.self, from: data)).map { .message($0.message) } ?? .other
         case "group_message":
             return (try? Server.decoder.decode(Group.self, from: data)).map { .groupMessage($0.message) } ?? .other
-        case "friends_changed", "groups_changed", "read", "group_read": return .listChanged
+        case "typing":
+            return (try? Server.decoder.decode(Typing.self, from: data)).map { .typing(from: $0.from, group: $0.groupId) } ?? .other
+        case "presence":
+            return (try? Server.decoder.decode(Presence.self, from: data)).map { .presence(user: $0.userId, active: $0.active, lastSeenAt: $0.lastSeenAt) } ?? .other
+        case "read":
+            return (try? Server.decoder.decode(Read.self, from: data)).map { .read(by: $0.by, at: $0.at) } ?? .listChanged
+        case "friends_changed", "groups_changed", "group_read": return .listChanged
         default: return .other
         }
     }
@@ -143,6 +158,15 @@ enum LiveEvent: Sendable {
         retries += 1
         later("retry", after: .seconds(delay)) { $0.connect() }
         if timers["banner"] == nil { later("banner", after: .seconds(4)) { $0.reconnecting = true } }
+    }
+
+    /// Tells a friend (or a group) you're typing. The caller keeps it to every couple of seconds.
+    func sendTyping(to chat: ChatRow.Kind) {
+        guard let task else { return }
+        switch chat {
+        case .friend(let id): send(["type": "typing", "to": id], on: task)
+        case .group(let id): send(["type": "typing", "group": id], on: task)
+        }
     }
 
     /// Pings; no answer within 10 seconds means start a new connection.

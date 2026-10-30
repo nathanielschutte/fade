@@ -48,6 +48,18 @@ struct SettingsScreen: View {
             } footer: {
                 Text(profileNote ?? "Your friends see your name, picture, and birthday. They aren't end-to-end encrypted.")
             }
+            Section {
+                Toggle("Share when I'm active", isOn: Binding(get: { account.user.shareActivity ?? true }, set: { on in
+                    Task {
+                        do { try await session.setShareActivity(on) } catch {
+                            note = error.localizedDescription
+                            session.noticed(error)
+                        }
+                    }
+                }))
+            } footer: {
+                Text("Friends see when you're active or typing, and you see theirs. It goes both ways: turn it off and you see nobody's.")
+            }
             Section("Account") {
                 LabeledContent("Username", value: "@\(account.user.username)")
                 if let name = account.user.displayName { LabeledContent("Name", value: name) }

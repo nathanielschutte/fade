@@ -53,6 +53,9 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
     let keyResetAt: Int64?
     /// Their profile picture, if they have one (only friends get it).
     let avatarId: Int64?
+    /// On screen now, and when they last were: only if you both share it (`share_activity`).
+    let activeNow: Bool?
+    let lastSeenAt: Int64?
 
     /// What the app calls them: your nickname, their display name, or their username.
     var name: String { nickname ?? displayName ?? username }

@@ -44,14 +44,7 @@ struct ChatScreen: View {
                     }
                 }
                 ForEach(Array(conversation.bubbles.enumerated()), id: \.element.id) { index, bubble in
-                    if index == 0 || !Calendar.current.isDate(bubble.time, inSameDayAs: conversation.bubbles[index - 1].time) {
-                        Text(bubble.time.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                            .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
-                    }
-                    BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
-                        .id(bubble.id)
-                        .onLongPressGesture(minimumDuration: 0.35) { if holdable(bubble) { held = bubble } }
-                        .accessibilityAction(named: "Message actions") { if holdable(bubble) { held = bubble } }
+                    message(index, bubble)
                 }
                 ForEach(conversation.outbox) { item in
                     OutgoingView(item: item, quote: item.replyTo.map(quote),
@@ -119,7 +112,14 @@ struct ChatScreen: View {
                     } label: {
                         HStack(spacing: 8) {
                             Avatar(kind: .friend(friend.id), avatarId: friend.avatarId, name: friend.name, size: 28)
-                            Text(conversation.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(conversation.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                                TimelineView(.periodic(from: .now, by: 60)) { context in
+                                    if let active = conversation.activeText(now: context.date) {
+                                        Text(active).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
                         }
                     }
                     .accessibilityLabel("\(conversation.title): view profile")
@@ -167,6 +167,10 @@ struct ChatScreen: View {
                 .frame(maxWidth: .infinity).padding(12).background(.bar)
         } else if conversation.loaded {
             VStack(spacing: 6) {
+                if let typing = conversation.typingLine {
+                    Text(typing).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                }
                 if editing != nil || replyingTo != nil {
                     HStack {
                         Group {
@@ -188,6 +192,7 @@ struct ChatScreen: View {
                 }
                 HStack(alignment: .bottom, spacing: 8) {
                     TextField("Message", text: $draft, axis: .vertical)
+                        .onChange(of: draft) { _, text in if !text.isEmpty { conversation.noteTyping(live) } }
                         .lineLimit(1...5)
                         .focused($composing)
                         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -207,6 +212,22 @@ struct ChatScreen: View {
     }
 
     /// What a long press offers (app.js, the message actions).
+    /// One message: its day header when the day changes, the bubble, and "Seen" under my newest text once read.
+    @ViewBuilder private func message(_ index: Int, _ bubble: Bubble) -> some View {
+        if index == 0 || !Calendar.current.isDate(bubble.time, inSameDayAs: conversation.bubbles[index - 1].time) {
+            Text(bubble.time.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
+        }
+        BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
+            .id(bubble.id)
+            .onLongPressGesture(minimumDuration: 0.35) { if holdable(bubble) { held = bubble } }
+            .accessibilityAction(named: "Message actions") { if holdable(bubble) { held = bubble } }
+        if bubble.id == conversation.seenId {
+            Text("Seen").font(.caption2).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 4)
+        }
+    }
+
     /// What holding a message offers (app.js, the message actions): one row
     /// of reactions above it, and Reply, Copy, Edit below.
     private func actions(_ bubble: Bubble) -> [MessageActions.Action] {

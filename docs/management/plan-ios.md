@@ -92,8 +92,8 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Typing… and "Active now" (with the setting to share it) | – | Planned | `typing` frames, `presence` events, `share_activity` |
-| "Seen" on your texts, "Seen by" in groups | – | Planned | `read`, `group_read`, `/groups/{id}/reads` |
+| Typing… and "Active now" (with the setting to share it) | Nate | Done | 2026-10-30: "Ana is typing…" above the composer (gone 4 seconds after the last word, or when the message comes; sent at most every 2 seconds), "Active now" or "Active 5m ago" under the friend's name, and "Share when I'm active" in Settings (mutual) |
+| "Seen" on your texts, "Seen by" in groups | Nate | In progress | 2026-10-30: "Seen" under your newest direct text once read, live. "Seen by" in groups isn't yet |
 | Every version of an edited text | – | Planned | `GET .../edits` |
 | Tapping a reaction under a message adds yours | – | Planned | |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
