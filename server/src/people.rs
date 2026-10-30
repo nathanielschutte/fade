@@ -36,6 +36,12 @@ pub const AVATAR_MAX_BYTES: usize = 128 * 1024;
 /// `u`'s own display name. Needs `users u` in scope.
 pub const DISPLAY_NAME: &str = "(SELECT n.name FROM user_names n
      WHERE n.set_by = u.id AND n.user_id = u.id ORDER BY n.id DESC LIMIT 1)";
+/// When the viewer, bound as `?1`, last had their key replaced by an admin
+/// reset code (0 if never). What was sent to them before it is sealed to the
+/// old key and can't be opened, so it never counts as unread (D14); use it
+/// as `created_at > SINCE_MY_KEY` (whole seconds: the reset's own second is
+/// treated as before it). A recovery key keeps the key, so it doesn't count.
+pub const SINCE_MY_KEY: &str = "COALESCE((SELECT k.key_reset_at FROM users k WHERE k.id = ?1), 0)";
 /// The nickname the viewer, bound as `?1`, gave `u`.
 pub const NICKNAME: &str = "(SELECT n.name FROM user_names n
      WHERE n.set_by = ?1 AND n.user_id = u.id ORDER BY n.id DESC LIMIT 1)";

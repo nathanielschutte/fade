@@ -201,6 +201,26 @@ pub async fn upload(
     Ok(Json(message))
 }
 
+/// After an admin reset code (D14): pics waiting for `user` were sealed to
+/// their old key and can never be opened, so they expire now (as they would
+/// after 30 days), their files go, and both people hear. Returns how many.
+pub async fn expire_waiting_for(state: &SharedState, user: i64) -> sqlx::Result<usize> {
+    let waiting: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE recipient_id = ? AND kind = 'snap' AND snap_state = 'pending'",
+    )
+    .bind(user)
+    .fetch_all(&state.db)
+    .await?;
+    let mut expired = 0;
+    for id in waiting {
+        if let Some(message) = finish(state, id, "expired").await? {
+            notify(state, message);
+            expired += 1;
+        }
+    }
+    Ok(expired)
+}
+
 fn notify(state: &SharedState, message: Message) {
     state.hub.send_both(
         message.sender_id,

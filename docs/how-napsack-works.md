@@ -106,7 +106,7 @@ The password unlocks your private key, and nobody else has a copy. So "reset my 
 
 The server never sees the recovery key or the private key. Making a recovery key later, or a new one, needs your password. Otherwise someone with a stolen session could plant their own. The pinned test vectors are in `tests/vectors/recovery.json`.
 
-**A reset code from an admin (no history).** If you've lost both, an admin can give you a one-time reset code (16 characters, good for 24 hours, stored only as a hash). With it you choose a new password, and your browser makes a brand-new key pair. You keep your account, friends and groups, but messages from before can't be read by you or anyone else. Your friends see a changed safety code (below). The old keys aren't thrown away: if you ever remember the old password, the history it protects could still be unlocked.
+**A reset code from an admin (no history).** If you've lost both, an admin can give you a one-time reset code (16 characters, good for 24 hours, stored only as a hash). With it you choose a new password, and your browser makes a brand-new key pair. You keep your account, friends and groups, but messages from before can't be read by you or anyone else, so they don't count as unread, and pics still waiting for you expire. Your friends see a changed safety code (below). The old keys aren't thrown away: if you ever remember the old password, the history it protects could still be unlocked.
 
 ## Sending a message
 

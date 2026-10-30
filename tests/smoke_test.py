@@ -355,6 +355,7 @@ def check_account(tag):
     rec = ok(call("POST", "/auth/recover/finish", json={"username": name, "recovery_auth_key": rk, "new_auth_key": k4, "new_wrapped_private_key": w4})).json()
     assert rec["public_key"] == r["public_key"] and rec["wrapped_private_key"] == w4, "same key, new password"
     assert rec["user"]["has_recovery_key"] is True
+    assert rec["user"]["key_reset_at"] is None, "a recovery key keeps the key: history still opens, nothing is hidden"
     ok(call("GET", "/me", tok), 401)                                          # every old session ended
     tok = rec["token"]
     ok(login(k3), 400)
@@ -368,6 +369,14 @@ def check_account(tag):
     # Admin reset code: admins only, the newest code only, once; a new key pair that friends see.
     rf = ok(register(f"acctfriend_{tag}")).json()
     befriend(tok, rf["user"], rf["token"], u["id"])
+    # Sent before the reset: a text, a pic, and a group text, all unread.
+    ok(call("POST", f"/chats/{u['id']}/messages", rf["token"], json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    old_pic = ok(call("POST", f"/chats/{u['id']}/snaps?format=2", rf["token"], data=os.urandom(500))).json()
+    grp = ok(call("POST", "/groups", rf["token"], json={"name": f"reset {tag}", "member_ids": [u["id"]]})).json()
+    ok(call("POST", f"/groups/{grp['id']}/messages", rf["token"], json={"text": "before"}))
+    unread = lambda t: ([c for c in ok(call("GET", "/friends", t)).json() if c["id"] == rf["user"]["id"]][0]["unread"],
+                        [g for g in ok(call("GET", "/groups", t)).json() if g["id"] == grp["id"]][0]["unread"])
+    assert unread(tok) == (2, 1)
     adm = admin_token()
     ok(call("POST", f"/admin/users/{u['id']}/reset-code", tok), 404)       # not an admin
     ok(call("POST", "/admin/users/999999/reset-code", adm), 404)
@@ -382,6 +391,13 @@ def check_account(tag):
     ok(call("POST", "/auth/reset", json={**body, "code": issued["code"]}), 400)   # used
     ok(call("GET", "/me", tok), 401)
     ok(login(k5))
+    # D14: what came before is sealed to the old key: not unread, and the waiting pic has expired.
+    assert unread(res["token"]) == (0, 0), unread(res["token"])
+    pic_now = [m for m in ok(call("GET", f"/chats/{u['id']}/messages", rf["token"])).json() if m["id"] == old_pic["id"]][0]
+    assert pic_now["snap_state"] == "expired", pic_now
+    time.sleep(1.1)  # created_at is in whole seconds; the next one is after the reset
+    ok(call("POST", f"/chats/{u['id']}/messages", rf["token"], json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    assert unread(res["token"])[0] == 1, "what's sent after counts"
     seen = [c for c in ok(call("GET", "/friends", rf["token"])).json() if c["id"] == u["id"]][0]
     assert seen["public_key"] == new_pub and seen["key_reset_at"] == res["user"]["key_reset_at"]
     ok(call("POST", "/auth/recover/start", json={"username": name, "recovery_auth_key": rk}), 400)  # went with the old key

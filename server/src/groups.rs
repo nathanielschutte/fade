@@ -25,6 +25,7 @@ use crate::{
     db::{self, now},
     error::{AppError, AppResult},
     marks::{FAVORITE_GROUP, MUTED_GROUP},
+    people::SINCE_MY_KEY,
     ws::Event,
     SharedState,
 };
@@ -569,7 +570,8 @@ pub async fn list(
               WHERE gm.group_id = g.id AND gm.id > m.visible_after_id) AS last_id,
             (SELECT COUNT(*) FROM group_messages gm
               WHERE gm.group_id = g.id AND gm.id > m.last_read_id AND gm.kind = 'text'
-                AND gm.sender_id != ?1 AND gm.id > m.visible_after_id) AS unread,
+                AND gm.sender_id != ?1 AND gm.id > m.visible_after_id
+                AND gm.created_at > {SINCE_MY_KEY}) AS unread,
             {FAVORITE_GROUP} AS favorite, {MUTED_GROUP} AS muted_raw
          FROM group_members m JOIN groups g ON g.id = m.group_id
          WHERE m.user_id = ?1 AND m.left_at IS NULL"

@@ -24,7 +24,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [One add-a-friend QR and link; invite links gone](#x39-one-add-a-friend-qr-and-link-invite-links-gone) | Experience/visual | Nate | In progress | Nate (2026-10-30) |
-| 3 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | Debug | Nate | Up next | Nate (2026-10-30), from the intake |
+| 3 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | Debug | Nate | In progress | Nate (2026-10-30), from the intake |
 | 4 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
 | 5 | [Admins by user id](#s5-admins-by-user-id) | Security | – | Planned | Nate (2026-10-30), from the intake |
 | 6 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
@@ -401,8 +401,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### D14. After an admin reset code, old messages stay unread and notify
 - Nate (2026-10-30): after someone signs in with an admin reset code (F2: a new key, history lost), they still get notifications for messages they can no longer decrypt, and their past messages show as unread forever, since they can never be opened.
-- Fix: using a reset code marks everything sent to them before it as read (and their unopened pics as opened? no: those stay for the sender's "opened" truth; to be decided in the change) and clears their notifications; messages sent with their old key afterwards (by friends who haven't seen the new key) are the safety-code warning's job.
-- Check a recovery key too: there, history still opens (the key is restored), so nothing should be marked.
+- **Built:** nothing sent before the reset counts as unread (`people::SINCE_MY_KEY`, in the chat list and group counts), without marking it read, so friends see no false "Seen"; pics waiting for them expire at the reset (both people hear), as they would at 30 days. A recovery key keeps the key, so it changes nothing (checked). Notifications: ending sessions already stops their devices' notifications (only live sessions' subscriptions get them), so the lasting unread counts were the part that remained. Smoke: the reset section.
 
 ### Experience/visual
 
