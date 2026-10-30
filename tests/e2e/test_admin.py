@@ -81,7 +81,11 @@ async def main():
             await expect(admin.locator("#t-online-sub")).to_have_text("1 open connection")
         # The people list lives in the Users tab now (Admins only).
         await admin.goto(f"{BASE}/admin#users")
-        await expect(admin.locator("#users tr")).to_have_count(len(names), timeout=10000)
+        if stats["users"]["total"] > len(names):
+            # The overview's list stops at 500 (staging has more): the tab has at least those.
+            await expect(admin.locator("#users tr").nth(len(names) - 1)).to_be_attached(timeout=10000)
+        else:
+            await expect(admin.locator("#users tr")).to_have_count(len(names), timeout=10000)
         await admin.goto(f"{BASE}/admin#overview")
 
         # Tooltip on the last bar.

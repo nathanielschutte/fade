@@ -30,7 +30,8 @@ async def main():
         await expect(row(p, "Team Napsack")).to_be_visible(timeout=10000)
         await expect(row(p, "Team Napsack").locator(".chat-status")).to_contain_text("first message", timeout=10000)
         await row(p, "Team Napsack").locator(".chat-item").click()
-        await expect(p.locator(".msg", has_text=f"Hi {ADMIN}! This is Team Napsack's first message")).to_be_visible(timeout=10000)
+        # (The newest: on staging the Admin account stays, with each earlier run's message too.)
+        await expect(p.locator(".msg", has_text=f"Hi {ADMIN}! This is Team Napsack's first message").last).to_be_visible(timeout=10000)
         # Read-only: a note, and nothing to send with.
         await expect(p.locator("#deactivated-note")).to_contain_text("You can't reply here")
         await expect(p.locator("#composer-input")).to_be_disabled()
@@ -48,7 +49,7 @@ async def main():
         # A birthday one fills in your name; it isn't a friend you can put in a group.
         status, body = await p.evaluate(TRY, "birthday-wish")
         assert status == 200, body
-        await expect(p.locator(".msg", has_text=f"Happy birthday, {ADMIN}!")).to_be_visible(timeout=10000)
+        await expect(p.locator(".msg", has_text=f"Happy birthday, {ADMIN}!").last).to_be_visible(timeout=10000)
         await p.click("#back-button")
         await p.click("#start-button")
         await expect(p.locator("#new-group-friends")).not_to_contain_text("Team Napsack")
