@@ -35,13 +35,14 @@ navigator.mediaDevices.getUserMedia = async (want) => {
   track.getSettings = () => ({ ...real(), facingMode: 'environment' });
   return stream;
 };
-// How many recorders were made; window.__stuckRecorder: stop() never fires "stop".
+// How many recorders were made, and what each asked for; window.__stuckRecorder: stop() never fires "stop".
 window.__recorders = 0;
+window.__recorderOptions = [];
 window.__stuckRecorder = false;
 if (window.MediaRecorder) {
   const Real = window.MediaRecorder;
   window.MediaRecorder = class extends Real {
-    constructor(...args) { super(...args); window.__recorders++; }
+    constructor(...args) { super(...args); window.__recorders++; window.__recorderOptions.push(args[1]); }
     stop() { if (!window.__stuckRecorder) super.stop(); }
   };
 }
@@ -109,6 +110,14 @@ async def main():
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
         await expect(ana.locator(".snap-chip.done", has_text="Video sent")).to_be_visible()
         print("hold records a video; a tap is still a photo")
+
+        # F20: H.264 High where the browser makes it, at the bitrate the
+        # server's cap allows (6 MB over 3 seconds here: the 3 Mbit/s ceiling).
+        asked = await ana.evaluate("() => window.__recorderOptions[0]")
+        high = await ana.evaluate("() => MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.64001F,mp4a.40.2')")
+        assert asked["videoBitsPerSecond"] == 3_000_000, asked
+        assert not high or asked["mimeType"] == "video/mp4;codecs=avc1.64001F,mp4a.40.2", asked
+        print(f"recorded as {asked['mimeType']} at {asked['videoBitsPerSecond']} bit/s")
 
         # A quick tap the page was too busy to handle before the hold timer ran
         # (D11): still a photo, by when the finger came up, not when it was handled.
