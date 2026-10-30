@@ -1,10 +1,8 @@
 name: iOS app
 
 # The iOS app (ios/, docs/ios-onboarding.md): the Swift crypto against the
-# pinned vectors, then the app's build and unit tests on a simulator. Off for
-# now (`if: false`): the app is checked on the owner's Mac while it takes
-# shape. To turn it on, delete the `if:` line and check the runner's Xcode is
-# at least the one in docs/ios-onboarding.md.
+# pinned vectors, then the app's build and unit tests on a simulator. The live
+# tests (a real server) skip here; they run on a Mac with a local server.
 #
 # Runs only when something the app depends on changes; ci.yml's server and
 # Terraform checks skip changes that are only in ios/ and the docs.
@@ -23,7 +21,6 @@ concurrency:
 jobs:
   app:
     name: iOS app
-    if: false
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
@@ -31,8 +28,9 @@ jobs:
         run: xcodebuild -version
       - name: Crypto against the pinned vectors
         run: swift test --package-path ios/NapsackCrypto
+      # Signed for the Simulator only ("Sign to Run Locally", no team needed):
+      # unsigned, the app gets no Keychain, and KeychainTests fail.
       - name: Build and unit tests (simulator)
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
           -destination "platform=iOS Simulator,name=iPhone 17"
-          CODE_SIGNING_ALLOWED=NO

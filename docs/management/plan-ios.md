@@ -56,4 +56,4 @@ A skeleton that does the real thing against a server: sign in, see your chats, r
 | TestFlight: internal first, then friends by public link (needs a reviewer account on production) | – | Planned | [mobile.md](../design/mobile.md), TestFlight. Release docs get written with it |
 | The App Store | – | Planned | |
 | Retire `mobile/` (the Expo prototype) | – | Up next | Every vector passes in `ios/` now, the condition for removing it |
-| Turn on the iOS CI (`.github/workflows/ios.yml`) | Nate | Planned | When the app takes shape; GitHub's Macs are free for this public repository |
+| Turn on the iOS CI (`.github/workflows/ios.yml`) | Nate | Done | 2026-10-29 (#16): the crypto package's tests and the app's on a Simulator, on GitHub's macOS runners (Xcode 26.6 there), for changes to `ios/`, the vectors, or the shared crypto |
