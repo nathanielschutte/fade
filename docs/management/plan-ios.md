@@ -113,7 +113,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality). Native: a full-screen camera, pinch to zoom |
-| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | – | Planned | `GET /snaps/{id}`, `POST /snaps/{id}/opened`; nothing saved to the phone, and screenshots can't be stopped (say so where the web does) |
+| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | In progress | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and closes at its end. It counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted on close). Formats 1, 2, 4, 6 and groups' 3, 5, 7. Not yet: opening several back to back |
 | Sending a pic or video to several friends and groups at once, with a caption placed anywhere | – | Planned | `/chats/{id}/snaps`, `/groups/{id}/pics` with `X-Napsack-Keys` |
 | Drawing and stickers on a pic | – | Planned | Native: PencilKit |
 | Picking a photo from the library | – | Planned | Native: `PhotosPicker`, no full library access needed |

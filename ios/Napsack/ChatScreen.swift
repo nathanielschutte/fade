@@ -25,6 +25,8 @@ struct ChatScreen: View {
     @State private var held: Bubble?
     /// Counts what you've sent and reacted, for a light tap of haptics each time.
     @State private var tapped = 0
+    /// A pic or video being opened (once).
+    @State private var viewing: PicToOpen?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -98,6 +100,9 @@ struct ChatScreen: View {
         .animation(.easeOut(duration: 0.15), value: held?.id)
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .sensoryFeedback(.impact(weight: .light), trigger: tapped)
+        .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
+            PicViewer(pic: item.pic, conversation: conversation)
+        }
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -241,6 +246,7 @@ struct ChatScreen: View {
         BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index),
                    react: conversation.canSend && bubble.repliable ? { react(bubble, $0) } : nil)
             .id(bubble.id)
+            .onTapGesture { if let pic = bubble.opening { viewing = pic } }
             .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable) {
                 editing = nil
                 replyingTo = bubble
@@ -453,7 +459,12 @@ struct BubbleView: View {
                 if edited { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
             }
         case .media(let words):
-            Label(words, systemImage: words.contains("ideo") ? "video" : "photo").foregroundStyle(.secondary)
+            if let pic = bubble.opening {
+                Label(pic.isVideo ? "Tap to view video" : "Tap to view pic", systemImage: pic.isVideo ? "video.fill" : "photo.fill")
+                    .foregroundStyle(Color.accentColor).fontWeight(.semibold)
+            } else {
+                Label(words, systemImage: words.contains("ideo") ? "video" : "photo").foregroundStyle(.secondary)
+            }
         case .unreadable(let words):
             Label(words, systemImage: "lock.trianglebadge.exclamationmark").font(.callout).foregroundStyle(.secondary)
         case .event:
@@ -575,5 +586,16 @@ struct SwipeToReply: ViewModifier {
                     withAnimation(.spring(duration: 0.25)) { offset = 0 }
                 } : nil)
             .sensoryFeedback(.impact(weight: .light), trigger: fired) { _, now in now }
+    }
+}
+
+/// A pic to open, for `fullScreenCover(item:)`.
+struct IdentifiedPic: Identifiable {
+    let pic: PicToOpen
+    var id: String {
+        switch pic {
+        case .direct(let m): "d\(m.id)"
+        case .group(let m): "g\(m.id)"
+        }
     }
 }
