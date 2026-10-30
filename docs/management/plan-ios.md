@@ -31,25 +31,108 @@ A skeleton that does the real thing against a server: sign in, see your chats, r
 | Live updates over the WebSocket, and catching up after a reconnect | Nate | Done | 2026-10-29: while the app is on screen it keeps a socket (closed in the background): new and changed messages appear in the open chat (and are marked read), and the chat list refetches on any change. It pings every 25 seconds and starts over without an answer in 10, reconnects after a drop (1 second, doubling to 30), shows "Reconnecting…" after 4 seconds down, and on every `ready` catches the list and the open chat up from the API and sends any text that failed for the connection's sake. A session ended elsewhere signs out. Tested with a stand-in (arrivals, catching up across a gap, resending) and a real local server (a text arriving over the socket); seen on the Simulator. Not yet: typing, "active now", read receipts on texts, the announcement |
 | Reactions and edits | Nate | Done | 2026-10-29: holding a message lifts it over the dimmed chat with one row of reactions above it at about the size of the text (scrolling sideways when they don't fit; the same again takes it back, with a haptic) and the actions below:, replies, copies, or edits your own text for 15 minutes (encrypted group texts only, as on the web). Direct reactions are encrypted to the pinned key; group reactions are the emoji, which the server can see (as on the web). An edit is sealed with the edit's associated data, in a group for the text's own member list, and tried again with the same `client_id`; a failed edit goes back in the box. Tested against a stand-in (Alice opens each one) and a real local server (edits and reactions, taken back, seen from Ana's side); seen on the Simulator. Not yet: tapping a reaction to add the same, all of an edit's versions, typing |
 
-## 3. Pics and videos
+## 3. Safety and housekeeping
+
+What the web app does quietly that the app must do too, before more features lean on it.
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| The camera with AVFoundation: photos, holding to record video, zoom, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality) |
-| Sending and opening pics and videos (formats 6 and 7), view-once, captions and where they sit | – | Planned | |
+| Developer tools for Admins only; choosing a server moves there | Nate | Done | 2026-10-29 (#22): `role` from `/api/me`; sign-in has no server field unless an Admin pointed the phone elsewhere ([roles.md](../implementation/roles.md)) |
+| Client logs: what goes wrong on the phone reaches the log viewer (`POST /api/logs`, "ios app") | – | Up next | The web's `report()`: batched, ids, counts, and errors only, never content; flushed when the app leaves the screen |
+| Signing out leaves nothing: the account, every chat in memory, and later the cache, the notification token, and delivered notifications | – | Up next | The web's rule (CLAUDE.md, Security). Pins stay, per account, as on the web. A test like `test_sign_out.py` |
+| One outbox for the whole app: a "Not sent" text survives leaving its chat | – | Planned | Still only in memory, never written down |
+| The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Needs decision | Native screens, or the web's `/admin` in the app (it would need signing in there too). Until then, a browser |
+| Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | – | Planned | The web's `cache.js`. Native: a file with complete file protection (readable only while unlocked), wiped at sign-out |
 
-## 4. Notifications
+## 4. Your account
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Settings: your account, its safety, and signing out, as one screen | – | Planned | Native: a `Form` reached from the account menu, replacing the menu's growing list |
+| The recovery key: a reminder if you have none, and setting one later | – | Planned | `has_recovery_key`, `PUT /me/recovery` |
+| Change password (unlock first) | – | Planned | `/auth/unlock`, `/me/password`. Native: password AutoFill's new-password suggestion |
+| Forgot password: the recovery key or an admin's reset code | – | Planned | `/auth/recover/start`, `/auth/recover/finish`, `/auth/reset` |
+| Change your username (once a week) | – | Planned | `/me/username`, `next_rename_at` |
+| Account security: when the recovery key was set, devices signed in, sign out every other device | – | Planned | `/me/security`, `/me/sessions/end-others` |
+| Lock napsack with Face ID | Nate | Needs decision | Native, and not on the web: an optional lock when the app opens. Nate's call whether we want it |
+
+## 5. Friends
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Friend requests: incoming, outgoing, accept, decline, cancel; a badge for new ones | – | Planned | `/friends/requests`; live with `friends_changed` |
+| Add by username | – | Planned | |
+| Your QR code and link: show, share, reset | – | Planned | `/friend-link`. Native: CoreImage for the QR, `ShareLink` for the share sheet |
+| Scan a friend's QR with the camera | – | Planned | Native: VisionKit's `DataScannerViewController` |
+| One-time invite links: make, list who joined, revoke | – | Planned | `/invites` |
+| Opening a napsack link (`/i/<token>`) opens the app | – | Waiting | Universal Links need Associated Domains, a Developer Program capability. Until then, links open in Safari |
+| Unfriend | – | Planned | `DELETE /friends/{id}`; history stays (Rule 1) |
+| The friend map | – | Planned | `GET /graph`. Native: a SwiftUI `Canvas`, pinch and drag |
+
+## 6. Profiles
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Profile pictures in the list, the chat header, and profiles; tap to see it big | – | Planned | `/users/{id}/avatar/{avatar_id}`, cached |
+| Your profile: display name, picture, birthday | – | Planned | Native: `PhotosPicker` and a crop, a `DatePicker` |
+| A friend's profile: nickname, streak, friends in common, past usernames, safety code | – | Planned | Tapping the chat's title, as on the web |
+
+## 7. The chat list, native
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Swipe actions: hide, mute, favorite; leave a group | – | Planned | Native: `.swipeActions` (left and right) and the same in a long-press menu. `PUT /chats|groups/{id}/hidden|favorite|mute` |
+| Hidden chats: their own section, and undo | – | Planned | |
+| Search chat names and recent messages | – | Planned | Native: `.searchable`, on what's already decrypted on the phone |
+| Streaks 🔥 and birthdays 🎂 beside names | – | Planned | From `/api/friends` |
+| The Admins' announcement, dismissible | – | Planned | `GET /announcement`, the `announcement` event |
+| Pull down to refresh; a new friend or message animates in | Nate | Done | Pull to refresh since #13; live since #19 |
+
+## 8. Chats, native
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Typing… and "Active now" (with the setting to share it) | – | Planned | `typing` frames, `presence` events, `share_activity` |
+| "Seen" on your texts, "Seen by" in groups | – | Planned | `read`, `group_read`, `/groups/{id}/reads` |
+| Every version of an edited text | – | Planned | `GET .../edits` |
+| Tapping a reaction under a message adds yours | – | Planned | |
+| Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
+| Swipe a message to reply | – | Planned | Native, and quicker than holding |
+| Haptics where they help: sending, reacting, a new message in the open chat | – | Planned | `sensoryFeedback` |
+| Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | – | Planned | Before TestFlight |
+
+## 9. Groups
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| Create a group: a name and friends | – | Planned | `POST /groups` |
+| Group info: rename, picture, members (add, remove, leave), the privacy notice | – | Planned | Group pictures go through the server's `images::clean`; the notice says the name and picture aren't end-to-end encrypted (CLAUDE.md) |
+
+## 10. Pics and videos
+
+| Task | Who | Status | Notes |
+|---|---|---|---|
+| The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality). Native: a full-screen camera, pinch to zoom |
+| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | – | Planned | `GET /snaps/{id}`, `POST /snaps/{id}/opened`; nothing saved to the phone, and screenshots can't be stopped (say so where the web does) |
+| Sending a pic or video to several friends and groups at once, with a caption placed anywhere | – | Planned | `/chats/{id}/snaps`, `/groups/{id}/pics` with `X-Napsack-Keys` |
+| Drawing and stickers on a pic | – | Planned | Native: PencilKit |
+| Picking a photo from the library | – | Planned | Native: `PhotosPicker`, no full library access needed |
+| Double-tap a chat in the list to open the camera for it | – | Planned | As on the web |
+
+## 11. Notifications
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | APNs: the server's `push.rs` learns to deliver to iPhones beside Web Push; the app registers | – | Waiting | Needs the Apple Developer Program. A server change, so it ships first. Notifications say who, never what |
+| Opening a notification goes to that chat and marks it read; notifications clear when the app opens | – | Waiting | Same as the web ([X36](plan.md#x36-opening-a-notification-goes-there-and-reads-it)) |
+| The app's badge: unread chats | – | Waiting | |
 
-## 5. Into people's hands
+## 12. Into people's hands
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The Apple Developer Program | Nate | Waiting | Applied; needed for TestFlight, the App Store, and notifications |
-| Which server address the app uses, for good (a stable `api.` name, or a lookup) | Nate | Needs decision | Installed apps keep it for months ([mobile.md](../design/mobile.md), Decisions still open) |
+| Release builds talk to `https://api.napsack.io` | – | Waiting | Decided (Nate, 2026-10-29): a name only for the apps, so the site can move freely ([api-host.md](../design/api-host.md)). Waits on the DNS and Caddy change, which replaces the instance (Nate's to apply; plan.md [I10](plan.md#i10-apinapsackio-a-stable-address-for-the-apps)) |
 | The oldest iOS supported (17 today, in `Config/Base.xcconfig`) | Nate | Needs decision | |
 | Export compliance: the encryption declaration at the first upload | Nate | Needs decision | A legal declaration; Nate's to make |
 | Development-only pieces out of release builds: the development screens, and the vectors copied into the app (today the whole `tests/vectors/` folder, its Python scripts included) | – | Planned | Before the first TestFlight build |

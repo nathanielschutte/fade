@@ -27,8 +27,9 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
 | 5 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
-| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 6 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -626,6 +627,11 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I9. Email on napsack.io
 - Requested (2026-10-23), planning only: the simplest, cheapest way to have a real mailbox for nate@napsack.io on desktop and phone.
 - Options and a recommendation: [email.md](../design/email.md).
+
+#### I10. api.napsack.io: a stable address for the apps
+- Nate (2026-10-29): "api.napsack.io is a good idea for mobile clients (not same origin as desktop), that way we can route through that and version and update real hostnames accordingly."
+- Design: [api-host.md](../design/api-host.md). An `api.` name that serves only `/api/*` (the socket too), from the same server; release builds of the apps use it, so the site can move without breaking installed apps. Staging gets `api.staging.napsack.io`.
+- Needs decision: when to apply it. The Caddy part is the boot script, so it replaces the instance (staging first; ideally with the next change that replaces it anyway). Needed before the first TestFlight build.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now

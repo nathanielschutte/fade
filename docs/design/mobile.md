@@ -56,7 +56,7 @@ The app points at a server you choose: your own (`cargo run`, reached from the p
 
 ## Decisions still open
 
-- **Which address the app talks to.** An installed app keeps whatever server address it was built with, and old versions stay installed for months. Since the domain will change again, the app should use an address that never changes (for example a dedicated `api.` name, or a small "where is the server" lookup), or every move needs the old domain kept forever. Decide before the first TestFlight build.
+- **Which address the app talks to:** decided (Nate, 2026-10-29). Release builds use `api.napsack.io`, a name only for the apps, so the site can move without breaking installed apps ([api-host.md](api-host.md)). When to apply the infrastructure change is still open.
 - **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload, then set `ITSAppUsesNonExemptEncryption` in the app's `Info.plist` so it isn't asked on every build. This is a legal declaration, so it's yours to make; Apple's export compliance help in App Store Connect walks through it.
 - **A reviewer account for external TestFlight** (see TestFlight): one production account for Apple's reviewer, or wait on external testing.
 - **The oldest iOS supported.** Newer versions mean fewer workarounds; a recent iOS (17 or later) covers nearly every iPhone in use.
