@@ -76,6 +76,8 @@ python3 -m venv ~/.venvs/napsack-tests
 bash scripts/test.sh                         # everything; the first build takes a few minutes
 ```
 
+`make` lists the everyday commands, each a short name for a script: `make test` (that same run), `make test-fast` (no browser), `make browser T=test_chat.py`, `make smoke`, `make lint` (fmt and clippy, as CI checks), `make run` (the server on port 8080, you as an Admin), and on a Mac `make ios` (the iOS app's tests, live against a fresh server). Nothing in it deploys or touches production.
+
 `scripts/test.sh` finds that test environment (or uses `$PYTHON`) and Playwright's Chromium on its own. If Playwright says it doesn't support your Linux version, set `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64` before installing and running. Fonts differ between systems, which is why layout checks are made against the same Linux Chromium that CI uses.
 
 **Run it:**
