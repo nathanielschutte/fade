@@ -118,19 +118,13 @@ async def main():
         await ana.click("#friends-dialog [data-close]")
         await ana.click("#friends-button")
         await expect(ana.locator("#my-link")).to_have_text(mine)  # the same link every time
-        # One-time invite links are one step further in.
-        await ana.locator(".more-invites summary").click()
-        await ana.click("#invite-make")
-        await expect(ana.locator("#invite-qr svg")).to_be_visible()
-        link = await ana.locator("#invite-link").text_content()
-        await check_rendered(ana, link)
-        assert link.startswith(f"{BASE}/i/") and len(link) == len(f"{BASE}/i/") + 22, link
-        await expect(ana.locator("#invite-list .person").first).to_contain_text("0 of 10 used")
-        await shot(ana, "invite-link", full_page=False)
+        # Nothing else to make or reset (X39): one link does both jobs.
+        await expect(ana.locator("#friends-dialog details")).to_have_count(0)
+        await expect(ana.locator("#invite-make, #my-link-reset")).to_have_count(0)
 
         # A stranger opens it on a phone: no invite code needed, and they're friends.
         cal = await (await browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)).new_page()
-        await cal.goto(link)
+        await cal.goto(mine)
         await expect(cal.locator("#invite-banner")).to_contain_text(f"{ANA} invited you")
         await expect(cal.locator("#invite-field")).to_be_hidden()
         assert await cal.evaluate("location.pathname") == "/"
@@ -142,35 +136,18 @@ async def main():
         assert overflow <= 0, f"scrolls sideways by {overflow}px"
         print("stranger signed up through the link and is friends")
 
-        # Someone signed in opens it: "Add Ana?"
+        # Someone signed in opens the same link: "Add Ana?"
         ben = await (await browser.new_context()).new_page()
         await ben.goto(BASE)
         await sign_up(ben, BEN)
-        await ben.goto(link)
+        await ben.goto(mine)
         await expect(ben.locator("#invite-dialog")).to_be_visible(timeout=10000)
         await expect(ben.locator("#invite-text")).to_have_text(f"This is {ANA}'s napsack link. Add them as a friend?")
         await ben.click("#invite-accept")
         await expect(ben.locator("#chat-title")).to_have_text(ANA, timeout=10000)
-        print("signed-in friend added through the link")
+        print("signed-in friend added through the same link")
 
-        # Ana sees who joined, and can turn the link off.
-        await ana.click("#friends-dialog [data-close]")
-        await ana.click("#friends-button")
-        if not await ana.locator(".more-invites").evaluate("e => e.open"):
-            await ana.locator(".more-invites summary").click()
-        row = ana.locator("#invite-list .person").first
-        await expect(row).to_contain_text("2 of 10 used")
-        await expect(row).to_contain_text(CAL)
-        await expect(row).to_contain_text(BEN)
-        await row.locator("button", has_text="Turn off").click()
-        await expect(ana.locator("#invite-note")).to_have_text("That link no longer works.")
-        await expect(ana.locator("#invite-list .person").first).to_contain_text("turned off")
-        late = await (await browser.new_context()).new_page()
-        await late.goto(link)
-        await expect(late.locator("#invite-banner")).to_contain_text("expired, been used up, or been turned off")
-        print("inviter sees who joined; a turned-off link stops working")
-
-        # Ana's personal link: someone signed in adds her with it, any number of times.
+        # It keeps working, and stays the same.
         dee = await (await browser.new_context()).new_page()
         await dee.goto(BASE)
         await sign_up(dee, f"dee_{ANA[4:]}")
@@ -178,17 +155,15 @@ async def main():
         await expect(dee.locator("#invite-dialog")).to_be_visible(timeout=10000)
         await dee.click("#invite-accept")
         await expect(dee.locator("#chat-title")).to_have_text(ANA, timeout=10000)
-        # Resetting it (two taps): the old one stops working, and there's a new one.
-        await ana.click("#my-link-reset")
-        await expect(ana.locator("#my-link-reset")).to_have_text("Tap again: your old code stops working")
-        await ana.click("#my-link-reset")
-        await expect(ana.locator("#my-link-note")).to_contain_text("The old ones don't work any more")
-        renewed = await ana.locator("#my-link").text_content()
-        assert renewed != mine and renewed.startswith(f"{BASE}/i/")
-        gone = await (await browser.new_context()).new_page()
-        await gone.goto(mine)
-        await expect(gone.locator("#invite-banner")).to_contain_text("expired, been used up, or been turned off")
-        print("a personal link adds friends until it's reset")
+        await ana.click("#friends-dialog [data-close]")
+        await ana.click("#friends-button")
+        await expect(ana.locator("#my-link")).to_have_text(mine)
+
+        # A link that isn't anyone's says so.
+        bad = await (await browser.new_context()).new_page()
+        await bad.goto(f"{BASE}/i/{'A' * 22}")
+        await expect(bad.locator("#invite-banner")).to_contain_text("This link doesn't work")
+        print("the one link keeps adding friends; a wrong one says so")
 
         await browser.close()
     print("INVITES TEST PASSED")

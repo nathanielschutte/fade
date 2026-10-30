@@ -932,7 +932,7 @@ def check_admin_users(tag):
     x_tok, y_tok = r["x"]["token"], r["y"]["token"]
     befriend(y_tok, x, x_tok, y["id"])
     ok(call("POST", f"/chats/{x['id']}/messages", y_tok, json={"ciphertext": b64(os.urandom(48)), "format": 2}))
-    invite = ok(call("POST", "/invites", x_tok)).json()
+    invite = ok(call("GET", "/friend-link", x_tok)).json()
 
     people = ok(call("GET", "/admin/users", adm)).json()
     row = next(u for u in people["users"] if u["id"] == x["id"])
@@ -1357,17 +1357,26 @@ def check_videos(tag):
 
 
 def check_invites(tag):
-    """Invite links (invites.rs): stand in for the invite code, make friends,
-    work 10 times, can be turned off; only a hash is stored."""
+    """Each person's add-a-friend link (invites.rs, X25, X39): the same one
+    every time, no limit on uses; it stands in for the invite code and makes
+    friends at once, for someone new or someone signed in; only a hash is
+    stored. One-time links and resetting are gone."""
     ra, rb = ok(register(f"inva_{tag}")).json(), ok(register(f"invb_{tag}")).json()
     (a, a_tok), (b, b_tok) = (ra["user"], ra["token"]), (rb["user"], rb["token"])
-    made = ok(call("POST", "/invites", a_tok)).json()
-    token = made["path"].rsplit("/", 1)[-1]
-    assert made["path"] == f"/i/{token}" and len(token) == 22 and made["max_uses"] == 10
-    assert requests.get(BASE + made["path"]).status_code == 200, "the link opens the app"
+    ok(call("GET", "/friend-link", None), 401)
+    link = ok(call("GET", "/friend-link", a_tok)).json()
+    token = link["path"].rsplit("/", 1)[-1]
+    assert link["path"] == f"/i/{token}" and len(token) == 22 and link["uses"] == 0, link
+    assert ok(call("GET", "/friend-link", a_tok)).json()["path"] == link["path"], "the same every time"
+    assert ok(call("GET", "/friend-link", b_tok)).json()["path"] != link["path"]
+    assert requests.get(BASE + link["path"]).status_code == 200, "the link opens the app"
     assert ok(call("GET", f"/invites/lookup/{token}")).json() == {"inviter": {"id": a["id"], "username": a["username"]}}
     ok(call("GET", "/invites/lookup/not-a-real-token-at-all"), 404)
-    ok(call("POST", "/invites", None), 401)
+
+    # Gone (X39): one-time links, listing them, turning them off, resetting.
+    for method, path in [("POST", "/invites"), ("GET", "/invites"), ("POST", "/invites/1/revoke"), ("POST", "/friend-link/reset")]:
+        gone = call(method, path, a_tok)
+        assert gone.status_code in (404, 405), (method, path, gone.status_code)
 
     # A stranger signs up with the link instead of the invite code, and they're friends.
     body = lambda name, **extra: {"username": name, "auth_key": AUTH_KEY, "public_key": b64(os.urandom(91)),
@@ -1376,48 +1385,20 @@ def check_invites(tag):
     rc = ok(call("POST", "/auth/register", json=body(f"invc_{tag}", invite_token=token))).json()
     assert [f["id"] for f in ok(call("GET", "/friends", rc["token"])).json()] == [a["id"]]
 
-    # Someone signed in adds the inviter; their own link and a second accept do nothing more.
+    # Someone signed in adds them; their own link and a second accept do nothing more.
     ok(call("POST", "/invites/accept", a_tok, json={"token": token}), 400)
     assert ok(call("POST", "/invites/accept", b_tok, json={"token": token})).json()["already"] is False
     assert ok(call("POST", "/invites/accept", b_tok, json={"token": token})).json()["already"] is True
-    mine = ok(call("GET", "/invites", a_tok)).json()[0]
-    assert [(j["username"], j["kind"]) for j in mine["joined"]] == [(f"invc_{tag}", "signed_up"), (b["username"], "added")]
-    assert mine["live"] is True and "token" not in json.dumps(mine)
 
-    # Ten uses, then it's done.
-    used_up = ok(call("POST", "/invites", a_tok)).json()["path"].rsplit("/", 1)[-1]
-    for i in range(10):
-        ok(call("POST", "/auth/register", json=body(f"inv{i}_{tag}", invite_token=used_up)))
-    ok(call("POST", "/auth/register", json=body(f"invx_{tag}", invite_token=used_up)), 400)
-    ok(call("GET", f"/invites/lookup/{used_up}"), 404)
-
-    # Turned off: it stops working, for sign-up and for adding.
-    ok(call("POST", f"/invites/{made['id']}/revoke", b_tok), 404)                 # not theirs
-    ok(call("POST", f"/invites/{made['id']}/revoke", a_tok))
-    ok(call("GET", f"/invites/lookup/{token}"), 404)
-    ok(call("POST", "/auth/register", json=body(f"invy_{tag}", invite_token=token)), 400)
-
-    # The personal link (X25): the same one every time, past 10 uses, not in the
-    # invite list, until it's reset.
-    ok(call("GET", "/friend-link", None), 401)
-    ok(call("POST", "/friend-link/reset", None), 401)
-    personal = ok(call("GET", "/friend-link", a_tok)).json()["path"]
-    assert ok(call("GET", "/friend-link", a_tok)).json()["path"] == personal
-    assert ok(call("GET", "/friend-link", b_tok)).json()["path"] != personal
-    own = personal.rsplit("/", 1)[-1]
+    # No limit: well past the old one-time links' 10.
     for i in range(11):
-        ok(call("POST", "/auth/register", json=body(f"inp{i}_{tag}", invite_token=own)))
-    assert ok(call("GET", "/friend-link", a_tok)).json()["uses"] == 11
-    assert all(i["max_uses"] == 10 for i in ok(call("GET", "/invites", a_tok)).json()), "personal links aren't listed"
-    renewed = ok(call("POST", "/friend-link/reset", a_tok)).json()["path"]
-    assert renewed != personal and ok(call("GET", "/friend-link", a_tok)).json()["path"] == renewed
-    ok(call("GET", f"/invites/lookup/{own}"), 404)
-    ok(call("POST", "/auth/register", json=body(f"inpx_{tag}", invite_token=own)), 400)
-    assert ok(call("GET", f"/invites/lookup/{renewed.rsplit('/', 1)[-1]}")).json()["inviter"]["id"] == a["id"]
+        ok(call("POST", "/auth/register", json=body(f"inp{i}_{tag}", invite_token=token)))
+    assert ok(call("GET", "/friend-link", a_tok)).json()["uses"] == 13
+    assert ok(call("GET", "/friend-link", a_tok)).json()["path"] == link["path"], "still the same"
     if DB:
         stored = [h for (h,) in sqlite3.connect(DB).execute("SELECT token_hash FROM invites WHERE created_by = ?", (a["id"],))]
-        assert stored and all(t not in h for h in stored for t in (token, used_up, own)), "only hashes are stored"
-    print("  invites: sign up without the code, friends at once, 10 uses, turned off, hashed; personal link until reset")
+        assert stored and all(token not in h for h in stored), "only hashes are stored"
+    print("  add-a-friend link: the same every time, no limit, sign up without the code, friends at once, hashed; one-time links and reset gone")
 
 
 def check_rate_limits(tag):

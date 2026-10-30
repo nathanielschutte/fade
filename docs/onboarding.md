@@ -119,7 +119,7 @@ Almost every feature is this loop: **UI event → API call → handler (rules, S
 |---|---|
 | `main.rs` | Startup, settings (`Config`), shared state (`AppState`), **all routes** (`fn router`), request middleware |
 | `auth.rs`, `account.rs` | Sign up/in/out and sessions; password change, recovery keys, admin reset codes |
-| `friends.rs`, `invites.rs` | The chat list (`list_chats`), friend requests, unfriending; invite links and QR codes |
+| `friends.rs`, `invites.rs` | The chat list (`list_chats`), friend requests, unfriending; each person's add-a-friend link and QR code |
 | `chats.rs`, `snaps.rs` | Direct texts; direct pics (encrypted files on the data disk until opened) |
 | `groups.rs`, `group_pics.rs` | Group chats, members, group pics and group pictures |
 | `people.rs`, `profiles.rs`, `birthdays.rs` | Display names, private nicknames, profile pictures; the profile page; birthdays |

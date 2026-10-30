@@ -3,13 +3,13 @@ import Testing
 @testable import Napsack
 
 /// Friends against a real napsack server (a local one; it makes accounts):
-/// requests both ways, your link, and invite links. Runs only with
+/// requests both ways, and your add-a-friend link. Runs only with
 /// NAPSACK_TEST_SERVER set (LiveSignInTests says how).
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveFriendsTests {
     let live = LiveChatListTests()
 
-    @Test func requestsLinksAndInvites() async throws {
+    @Test func requestsAndYourLink() async throws {
         let ana = try await live.newAccount("ana"), ben = try await live.newAccount("ben"), cal = try await live.newAccount("cal")
         let anas = FriendsModel(account: ana), bens = FriendsModel(account: ben), cals = FriendsModel(account: cal)
 
@@ -38,20 +38,12 @@ struct LiveFriendsTests {
         #expect(cals.requests.outgoing.isEmpty)
         await #expect(throws: (any Error).self) { _ = try await anas.add(ana.user.username) }  // "That's you."
 
-        // Your link: the same until reset; reset makes a new one.
+        // Your link: the same every time (X39: no resets, no one-time links).
         try await anas.load()
         let link = try #require(anas.link).path
         #expect(link.hasPrefix("/i/") && anas.address(link).hasPrefix(live.address))
-        try await anas.resetLink()
-        #expect(anas.link?.path != link)
-
-        // A one-time invite link: made, listed, turned off.
-        try await anas.makeInvite()
-        #expect(anas.madeInvite?.contains("/i/") == true)
-        let invite = try #require(anas.invites.first)
-        #expect(invite.live && invite.maxUses == 10 && invite.joined.isEmpty)
-        try await anas.revoke(invite)
-        #expect(anas.invites.first?.live == false && anas.invites.first?.revokedAt != nil)
+        try await anas.load()
+        #expect(anas.link?.path == link)
     }
 
     @Test func aQRCodeIsMadeOnThePhone() {

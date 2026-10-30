@@ -15,7 +15,7 @@ Choosing someone opens their account:
 | Joined, last seen, online now | `users`, the live sockets |
 | Signed in on N devices, M with notifications | Current sessions, push subscriptions |
 | Friends, groups | Current friendships and memberships |
-| Texts, pics, and group messages sent; invite links made | Counts of rows they sent |
+| Texts, pics, and group messages sent; add-a-friend links made (one each since X39) | Counts of rows they sent |
 | Recovery key | Whether they saved one (not the key) |
 | Key reset | When an Admin reset code last gave them a new key |
 | Wrong passwords | Failed sign-ins in the current 15-minute window, and whether they're locked |
@@ -31,7 +31,7 @@ Every action takes two taps, and each is recorded (below).
 - every session ends and their live connections close, so their apps find themselves signed out;
 - signing in, recovering with a recovery key, or using a reset code says "This account has been turned off", but only after the right password or key, so it tells a guesser nothing;
 - friends keep the chat and can read all of it, but can't send texts, pics, or reactions to them; their chat list says "Account turned off" and the chat explains why sending is blocked;
-- nobody can find them to send a friend request, and their invite links stop working;
+- nobody can find them to send a friend request, and their add-a-friend link stops working;
 - nothing reaches their devices (notifications only go to live sessions);
 - they don't count toward the account cap.
 

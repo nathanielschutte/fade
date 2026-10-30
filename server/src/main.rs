@@ -227,7 +227,6 @@ pub struct AppState {
     /// New groups per person per day.
     pub group_create_limit: ratelimit::RateLimit,
     /// New invite links per person per day.
-    pub invite_create_limit: ratelimit::RateLimit,
     /// Talks to browsers' push services.
     pub http: reqwest::Client,
     /// Machine and server readings for the admin Metrics tab.
@@ -296,7 +295,6 @@ async fn main() -> anyhow::Result<()> {
         session_write_limit: ratelimit::RateLimit::new(600, Duration::from_secs(10 * 60)),
         friend_request_limit: ratelimit::RateLimit::new(50, Duration::from_secs(24 * 3600)),
         group_create_limit: ratelimit::RateLimit::new(20, Duration::from_secs(24 * 3600)),
-        invite_create_limit: ratelimit::RateLimit::new(20, Duration::from_secs(24 * 3600)),
         http: reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
@@ -386,11 +384,8 @@ fn router(state: SharedState) -> Router {
         .route("/me/name", axum::routing::put(people::set_display_name))
         .route("/me/birthday", axum::routing::put(birthdays::set))
         .route("/me/settings", axum::routing::put(presence::set_settings))
-        .route("/invites", get(invites::list).post(invites::create))
-        .route("/invites/{invite_id}/revoke", post(invites::revoke))
         .route("/invites/lookup/{token}", get(invites::lookup))
         .route("/friend-link", get(invites::friend_link))
-        .route("/friend-link/reset", post(invites::reset_friend_link))
         .route("/invites/accept", post(invites::accept))
         .route("/push/subscriptions", post(push::subscribe))
         .route("/push/subscriptions/remove", post(push::unsubscribe))
@@ -535,6 +530,10 @@ fn router(state: SharedState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), limit_writes))
         .route("/config", get(web::config))
         .route("/health", get(health::get))
+        // An address the API doesn't have (or no longer has, like X39's
+        // invite routes): a 404 in the API's words, and like everything
+        // else here, never cached.
+        .fallback(|| async { error::AppError::not_found("There's nothing here.") })
         // Nothing from the API belongs in a cache: it's private, or it changes.
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,

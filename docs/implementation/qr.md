@@ -1,12 +1,12 @@
 # How qr.js works
 
-[`server/static/qr.js`](../../server/static/qr.js) turns an invite link, or someone's personal add-me link, into a QR code, entirely in the browser. It's about 300 lines and has no dependencies. This walks through it top to bottom; read it with the file open.
+[`server/static/qr.js`](../../server/static/qr.js) turns someone's add-a-friend link into a QR code, entirely in the browser. It's about 300 lines and has no dependencies. This walks through it top to bottom; read it with the file open.
 
 ## Why napsack has its own
 
 The web app's security policy only lets the page run napsack's own scripts: no CDNs, no third-party code (see Code standards in [CLAUDE.md](../../CLAUDE.md)). A QR library would have to be copied in and reviewed anyway, and a QR encoder for one job (a short link) is small. So it's written here, and checked against an independent encoder (see [How we know it's right](#how-we-know-its-right)).
 
-It does exactly what invite links need and no more:
+It does exactly what those links need and no more:
 
 | | |
 |---|---|
@@ -15,7 +15,7 @@ It does exactly what invite links need and no more:
 | Error correction | Level M (about 15% of the code can be damaged or covered and it still scans) |
 | Sizes | Versions 1 to 10: 21 × 21 up to 57 × 57 modules, up to 213 bytes |
 
-An invite link like `https://napsack.getattr.com/i/` plus a 22-character token is 52 bytes, which lands on **version 4: 33 × 33 modules**.
+A link like `https://napsack.getattr.com/i/` plus a 22-character token is 52 bytes, which lands on **version 4: 33 × 33 modules**.
 
 ## What a QR code is made of
 
