@@ -387,14 +387,14 @@ struct ChatScreen: View {
         }
         .task { limits = try? await Server(AppInfo.server).config() }
         .sheet(item: $photoToSend) { photo in
-            PhotoSendSheet(photo: photo, to: conversation.title) { caption in
+            PhotoSendSheet(photo: photo, to: conversation.title) { caption, y in
                 switch photo.media {
                 case .photo(let image):
                     guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                    try await conversation.sendPhoto(jpeg, caption: caption, maxBytes: limits?.snapMaxBytes)
+                    try await conversation.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
                 case .video(let url):
                     defer { try? FileManager.default.removeItem(at: url) }
-                    try await conversation.sendVideo(try Data(contentsOf: url), caption: caption, maxBytes: limits?.videoMaxBytes)
+                    try await conversation.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
                 }
                 tapped += 1
             }
@@ -691,22 +691,17 @@ struct PhotoSendSheet: View {
     @Environment(\.dismiss) private var dismiss
     let photo: PhotoToSend
     let to: String
-    let send: (String) async throws -> Void
+    let send: (String, Double) async throws -> Void
     @State private var caption = ""
+    @State private var y = 0.8
     @State private var sending = false
     @State private var problem: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                Group {
-                    switch photo.media {
-                    case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
-                    case .video(let url): LoopingVideo(url: url)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .frame(maxHeight: .infinity)
+                CaptionedPreview(media: photo.media, caption: caption, y: $y)
+                    .frame(maxHeight: .infinity)
                 TextField("Add a caption", text: $caption, axis: .vertical)
                     .lineLimit(1...3)
                     .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
@@ -726,7 +721,7 @@ struct PhotoSendSheet: View {
                         Task {
                             defer { sending = false }
                             do {
-                                try await send(caption)
+                                try await send(caption, y)
                                 dismiss()
                             } catch {
                                 Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))

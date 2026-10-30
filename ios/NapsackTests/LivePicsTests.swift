@@ -95,7 +95,7 @@ struct LivePicsTests {
         try await anas.load(ana)
         let toBen = Conversation(.friend(try #require(anas.reader?.friends[ben.user.id])), account: ana, reader: try #require(anas.reader))
         try await toBen.loadNewest()
-        try await toBen.sendPhoto(jpeg, caption: "  from my phone  ")
+        try await toBen.sendPhoto(jpeg, caption: "  from my phone  ", y: 0.3)
         #expect(toBen.bubbles.last?.content == .media("Sent a pic"))
         let id = try await GroupModel.create(name: "Photos", members: [ben.user.id], account: ana)
         try await anas.load(ana)
@@ -109,7 +109,7 @@ struct LivePicsTests {
         let fromAna = Conversation(.friend(try #require(list.reader?.friends[ana.user.id])), account: ben, reader: try #require(list.reader))
         try await fromAna.loadNewest()
         let direct = try await fromAna.open(try #require(fromAna.bubbles.compactMap(\.opening).first))
-        #expect(direct.image == jpeg && direct.caption == "from my phone")
+        #expect(direct.image == jpeg && direct.caption == "from my phone" && direct.y == 0.3)  // where the sender put it
         let group = Conversation(.group(try #require(list.groups[id])), account: ben, reader: try #require(list.reader))
         try await group.loadNewest()
         let inGroup = try await group.open(try #require(group.bubbles.compactMap(\.opening).first))
