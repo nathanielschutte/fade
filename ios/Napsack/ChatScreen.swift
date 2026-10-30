@@ -3,9 +3,10 @@ import SwiftUI
 /// An open chat: its history, newest at the bottom, older pages loading as you
 /// scroll up. Opening it marks it read. A friend's changed key shows a warning
 /// at the top until it's accepted. Texts are written at the bottom; a long
-/// press on a message replies to it.
+/// press on a message replies to it. New messages arrive live (Live.swift).
 struct ChatScreen: View {
     @Environment(Session.self) private var session
+    @Environment(Live.self) private var live
     @State var conversation: Conversation
     /// The message at the top of the screen, kept there while older ones load above it.
     @State private var position: Int64?
@@ -65,6 +66,10 @@ struct ChatScreen: View {
         .scrollPosition(id: $position, anchor: .top)
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) { composer(proxy) }
+        .onChange(of: conversation.bubbles.last?.id) { before, after in
+            // A newer message came (older pages change the first, not the last).
+            if before != nil, let after { withAnimation { proxy.scrollTo(after, anchor: .bottom) } }
+        }
         .overlay {
             if !conversation.loaded {
                 if let problem = conversation.problem {
@@ -74,6 +79,7 @@ struct ChatScreen: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
         .safeAreaInset(edge: .top) {
             if conversation.keyChanged, let friend = conversation.friend {
                 KeyWarning(friend: friend, compare: { showingSafetyCode = true }, accept: { Task { await accept() } })
@@ -101,6 +107,8 @@ struct ChatScreen: View {
             }
         }
         }
+        .onAppear { live.openChat = conversation }
+        .onDisappear { if live.openChat === conversation { live.openChat = nil } }
         .task {
             do {
                 try await conversation.loadNewest()

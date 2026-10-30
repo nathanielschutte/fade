@@ -19,6 +19,8 @@ struct DirectMessage: Decodable, Sendable, Equatable {
     let snapState: String?
     let createdAt: Int64
     let readAt: Int64?
+    /// Picked by the sender's app, so a resend isn't stored twice.
+    let clientId: String?
     /// The newest edit of a text, sealed like it.
     let editCiphertext: String?
     /// Encrypted like the texts, each bound to this message.
@@ -305,6 +307,18 @@ struct Reader: Sendable {
 
     init(pinStore: any PinStore = KeychainPinStore()) {
         self.pinStore = pinStore
+    }
+
+    @ObservationIgnored private var reloading: Task<Void, Never>?
+
+    /// Many changes at once (a burst of messages) make one reload, a moment later.
+    func reloadSoon(_ account: Account, transport: any Transport = NetworkTransport()) {
+        reloading?.cancel()
+        reloading = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            try? await load(account, transport: transport)
+        }
     }
 
     func load(_ account: Account, transport: any Transport = NetworkTransport()) async throws {
