@@ -10,6 +10,9 @@ import UIKit
 struct ChatScreen: View {
     @Environment(Session.self) private var session
     @Environment(Live.self) private var live
+    @Environment(\.dismiss) private var dismiss
+    /// Unfriended from their profile: back to the list once the profile's gone.
+    @State private var unfriended = false
     @State var conversation: Conversation
     /// The message at the top of the screen, kept there while older ones load above it.
     @State private var position: Int64?
@@ -107,6 +110,21 @@ struct ChatScreen: View {
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // A friend's name (and picture) opens their profile, as on the web.
+            if let friend = conversation.friend, friend.system != true, let account = session.account {
+                ToolbarItem(placement: .principal) {
+                    NavigationLink {
+                        FriendProfileScreen(friend: friend, account: account, safetyCode: conversation.safetyCode ?? "",
+                                            unfriended: { unfriended = true }, model: ProfileModel(account: account))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Avatar(kind: .friend(friend.id), avatarId: friend.avatarId, name: friend.name, size: 28)
+                            Text(conversation.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                        }
+                    }
+                    .accessibilityLabel("\(conversation.title): view profile")
+                }
+            }
             if conversation.friend != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSafetyCode = true } label: {
@@ -125,7 +143,10 @@ struct ChatScreen: View {
             }
         }
         }
-        .onAppear { live.openChat = conversation }
+        .onAppear {
+            if unfriended { return dismiss() }
+            live.openChat = conversation
+        }
         .onDisappear { if live.openChat === conversation { live.openChat = nil } }
         .task {
             do {

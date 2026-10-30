@@ -51,6 +51,8 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
     let system: Bool?
     /// When an admin reset their account, which gives them a new key.
     let keyResetAt: Int64?
+    /// Their profile picture, if they have one (only friends get it).
+    let avatarId: Int64?
 
     /// What the app calls them: your nickname, their display name, or their username.
     var name: String { nickname ?? displayName ?? username }
@@ -102,6 +104,8 @@ struct GroupSummary: Decodable, Sendable, Identifiable, Equatable {
     let unread: Int
     let favorite: Bool
     let muted: Bool
+    /// The group's picture, if it has one. Not end-to-end encrypted (each group says so).
+    let avatarId: Int64?
 }
 
 /// One row of the list.
@@ -123,6 +127,8 @@ struct ChatRow: Identifiable, Equatable, Sendable {
     let favorite: Bool
     let muted: Bool
     let hidden: Bool
+    /// The friend's or group's picture, if any.
+    var avatarId: Int64? = nil
 
     var id: Kind { kind }
     var isGroup: Bool { if case .group = kind { true } else { false } }
@@ -156,7 +162,7 @@ struct Reader: Sendable {
         let (preview, waiting) = status(friend)
         return ChatRow(kind: .friend(friend.id), name: friend.name, preview: preview, waiting: waiting,
                        time: friend.lastMessage.map { Date(timeIntervalSince1970: TimeInterval($0.createdAt)) },
-                       favorite: friend.favorite, muted: friend.muted, hidden: friend.hidden)
+                       favorite: friend.favorite, muted: friend.muted, hidden: friend.hidden, avatarId: friend.avatarId)
     }
 
     func status(_ friend: Friend) -> (String, ChatRow.Waiting?) {
@@ -210,7 +216,7 @@ struct Reader: Sendable {
         let (preview, waiting) = status(group)
         return ChatRow(kind: .group(group.id), name: group.name, preview: preview, waiting: waiting,
                        time: group.lastMessage.map { Date(timeIntervalSince1970: TimeInterval($0.createdAt)) },
-                       favorite: group.favorite, muted: group.muted, hidden: false)
+                       favorite: group.favorite, muted: group.muted, hidden: false, avatarId: group.avatarId)
     }
 
     func status(_ group: GroupSummary) -> (String, ChatRow.Waiting?) {

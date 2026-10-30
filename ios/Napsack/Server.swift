@@ -40,6 +40,8 @@ struct Me: Codable, Equatable, Sendable {
     /// "user", "power", or "admin" (roles.md); the server checks it on every request.
     let role: String
     let hasRecoveryKey: Bool
+    /// Your profile picture, if you have one (Settings). Older kept accounts lack it.
+    var avatarId: Int64? = nil
 
     var isAdmin: Bool { role == "admin" }
     /// PowerUser, PowerXtreme (the same, for now), or Admin.
@@ -173,6 +175,26 @@ struct Server: Sendable {
             if status == 426 {
                 throw ServerError.updateRequired(message ?? "This version of napsack is too old for the server. Update it to keep going.")
             }
+            throw ServerError.refused(message ?? "Request failed (\(status)).", status: status)
+        }
+    }
+
+    /// Sends raw bytes (a profile picture): the same answers as `send`.
+    func upload(_ path: String, data: Data, contentType: String, token: String) async throws -> Data {
+        var req = request(path, method: "POST", token: token)
+        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        let body: Data, response: HTTPURLResponse
+        do {
+            (body, response) = try await transport.send(req)
+        } catch {
+            throw ServerError.unreachable
+        }
+        switch response.statusCode {
+        case 200..<300: return body
+        case 401: throw ServerError.sessionEnded
+        case let status:
+            let message = (try? JSONDecoder().decode([String: String].self, from: body))?["error"]
             throw ServerError.refused(message ?? "Request failed (\(status)).", status: status)
         }
     }
