@@ -110,6 +110,25 @@ async def main():
         await expect(ana.locator(".snap-chip.done", has_text="Video sent")).to_be_visible()
         print("hold records a video; a tap is still a photo")
 
+        # A quick tap the page was too busy to handle before the hold timer ran
+        # (D11): still a photo, by when the finger came up, not when it was handled.
+        await ana.click("#camera-button")
+        await ana.wait_for_timeout(500)
+        await ana.evaluate("""async () => {
+          const shutter = document.querySelector('#shutter');
+          const at = { pointerId: 7, bubbles: true, isPrimary: true, pointerType: 'touch' };
+          shutter.dispatchEvent(new PointerEvent('pointerdown', at));
+          const up = new PointerEvent('pointerup', at);  // let go at once...
+          await new Promise((r) => setTimeout(r, 700));  // ...but handled only after the hold timer ran
+          shutter.dispatchEvent(up);
+          shutter.click();
+        }""")
+        await expect(ana.locator("#camera-preview")).to_be_visible(timeout=10000)
+        await expect(ana.locator("#camera-preview-video")).to_be_hidden()
+        await ana.click("#retake")
+        await ana.click("#capture-controls [data-close]")
+        print("a quick tap handled late is still a photo")
+
         # Ben: a new video, watched once, with its caption, then gone.
         await expect(row(ben, ANA).locator(".chat-status")).to_have_text("New video", timeout=15000)
         await row(ben, ANA).click()

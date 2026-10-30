@@ -28,7 +28,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
 | 6 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
-| 7 | [A tap on the shutter can count as a hold](#d11-a-tap-on-the-shutter-can-count-as-a-hold-when-the-page-is-busy) | Debug | – | Planned | Flaky `test_chat.py` on main |
+| 7 | [A tap on the shutter could count as a hold](#d11-a-tap-on-the-shutter-could-count-as-a-hold-when-the-page-was-busy-fixed-in-0430) | Debug | Nate | In progress | Fixed for 0.43.0 (#28) with D12, iPhone videos |
 | 8 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
 | 9 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
 | 10 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
@@ -341,9 +341,9 @@ Oldest first; newly shipped rows go at the bottom.
 - Also (Nate, 2026-10-29): zoom now returns to 1× for each new pic or video (it stayed where the last video had zoomed to).
 - Open: if it happens again, the log viewer has the details. Nate: the web app's camera on phones may just be less reliable; the iOS app's camera (AVFoundation) is the long-term answer.
 
-#### D11. A tap on the shutter can count as a hold when the page is busy
+#### D11. A tap on the shutter could count as a hold when the page was busy (fixed in 0.43.0)
 - `test_chat.py` failed once on main (2026-10-29, CI for `99c0b7c`): after the shutter tap, Send never appeared. Likely cause: the shutter starts a video when its hold timer (`HOLD_MS`) fires before the pointer is let go. On a busy page the timer can run before the queued `pointerup`, so a quick tap becomes a short video and no photo. A slow phone could do the same to a person.
-- Fix: decide tap or hold by the events' own times (`pointerup.timeStamp - pointerdown.timeStamp`), not by which callback ran first. A test that holds the page busy across a tap.
+- Fixed (0.43.0): tap or hold is decided by the events' own times (`pointerup.timeStamp - pointerdown.timeStamp`), not by which callback ran first; a recording the timer started too soon is discarded and the click takes the photo. `test_video.py` handles a quick tap only after the hold timer ran, and fails without the fix.
 
 #### D10. 0.39.0's fix for D9 cut the bottom off (undone in 0.41.1)
 - Reported (Nate, 2026-10-29), on an iPhone 16 Pro and a friend's phone, both from the Home Screen: the composer and tab bar were half off the bottom, and a chat couldn't scroll to its newest messages (pics there couldn't be tapped). 0.39.0 sized the app to the screen's height as the phone reported it, which was taller than what's visible. Undone: the app is pinned to the visible edges again (0.36.0 to 0.38.0), which may leave a gap under the tabs but never hides anything. Nate: a gap is acceptable; nothing may be cut off. The gap needs a real iPhone to diagnose, not a guess (D9 stays open).

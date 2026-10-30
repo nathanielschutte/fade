@@ -4449,8 +4449,9 @@ $("#shutter").addEventListener("pointerdown", (e) => {
   if (!camera.stream || e.button > 0 || !videoMime()) return;
   rec.held = true;
   rec.pointerId = e.pointerId;
+  rec.downAt = e.timeStamp;
   rec.startY = e.clientY;
-  $("#shutter").setPointerCapture?.(e.pointerId);
+  try { $("#shutter").setPointerCapture?.(e.pointerId); } catch { /* the pointer's already gone: nothing to follow */ }
   clearTimeout(rec.timer);
   rec.timer = setTimeout(() => {
     rec.timer = null;
@@ -4465,9 +4466,19 @@ $("#shutter").addEventListener("pointermove", (e) => {
 function releaseShutter(e) {
   if (e.pointerId !== rec.pointerId) return;
   rec.held = false;
+  // Tap or hold, by when the finger went down and came up (the events' own
+  // times), not by which ran first: on a busy page the hold timer can run
+  // before a quick let-go is handled, and a tap must still be a photo (D11).
+  const tap = e.timeStamp - rec.downAt < HOLD_MS;
   if (rec.timer) {
     clearTimeout(rec.timer); // a tap: the click takes a photo
     rec.timer = null;
+  } else if (tap) {
+    if (rec.recorder) {
+      rec.discard = true; // started too soon: not a video after all
+      stopRecording();
+    }
+    rec.suppressClick = false; // the click takes the photo
   } else if (rec.recorder) {
     stopRecording();
   }
