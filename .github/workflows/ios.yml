@@ -28,8 +28,9 @@ jobs:
         run: xcodebuild -version
       - name: Crypto against the pinned vectors
         run: swift test --package-path ios/NapsackCrypto
+      # Signed for the Simulator only ("Sign to Run Locally", no team needed):
+      # unsigned, the app gets no Keychain, and KeychainTests fail.
       - name: Build and unit tests (simulator)
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
           -destination "platform=iOS Simulator,name=iPhone 17"
-          CODE_SIGNING_ALLOWED=NO
