@@ -30,7 +30,6 @@ struct ChatListScreen: View {
     @State private var makingGroup = false
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
-    @State private var captured: Captured?
     @State private var search = ""
     @State private var showingHidden = false
     @State private var muting: ChatRow?
@@ -53,8 +52,22 @@ struct ChatListScreen: View {
             // Only while it's the tab shown: the camera is let go of otherwise.
             Group {
                 if tab == .camera {
+                    // Send picks the chats on the next screen; back returns to the pic.
                     CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
-                                 close: { tab = .chats }) { captured = $0 }
+                                 send: .pick(sendable, { kind, ready in
+                                     guard let chat = conversation(kind) else { throw SendError.cantOpen }
+                                     switch ready.media {
+                                     case .photo(let image):
+                                         guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                                         try await chat.sendPhoto(jpeg, caption: ready.caption, y: ready.y, maxBytes: limits?.snapMaxBytes)
+                                     case .video(let url):
+                                         try await chat.sendVideo(try Data(contentsOf: url), caption: ready.caption, y: ready.y, maxBytes: limits?.videoMaxBytes)
+                                     }
+                                 }, done: { words in
+                                     toast = Toast(text: words, undo: nil)
+                                     tab = .chats  // where it went, as on the web
+                                 }),
+                                 close: { tab = .chats })
                 } else {
                     Color.black.ignoresSafeArea()
                 }
@@ -64,22 +77,6 @@ struct ChatListScreen: View {
             NavigationStack { SettingsScreen(account: account) }
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
                 .tag(HomeTab.profile)
-        }
-        .sheet(item: $captured) { media in
-            SendToSheet(media: media, chats: sendable, send: { kind, caption, y in
-                guard let chat = conversation(kind) else { throw SendError.cantOpen }
-                switch media {
-                case .photo(let image):
-                    guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                    try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
-                case .video(let url):
-                    try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
-                }
-            }, done: {
-                toast = Toast(text: $0, undo: nil)
-                tab = .chats  // where it went, as on the web
-            })
-            .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }
         }
         .environment(pictures)
         .onChange(of: scenePhase) { _, phase in
