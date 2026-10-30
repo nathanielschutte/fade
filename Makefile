@@ -18,6 +18,9 @@ help: ## This list
 run: ## The server and web app on http://127.0.0.1:8080 (PORT=), with nate as an Admin (ADMIN=); web files reload as they change
 	cd server && FADE_BIND=127.0.0.1:$(PORT) FADE_ADMINS=$(ADMIN) cargo run
 
+run-lan: ## The server and web app on http://0.0.0.0:8080 (PORT=), with nate as an Admin (ADMIN=); web files reload as they change
+	cd server && FADE_BIND=0.0.0.0:$(PORT) FADE_ADMINS=$(ADMIN) cargo run
+
 test: ## Everything for the server and web app: unit, crypto, smoke, and browser tests (scripts/test.sh)
 	bash scripts/test.sh
 
