@@ -11,7 +11,7 @@ struct ChatScreen: View {
     @Environment(Session.self) private var session
     @Environment(Live.self) private var live
     @Environment(\.dismiss) private var dismiss
-    /// Unfriended from their profile: back to the list once the profile's gone.
+    /// Unfriended from their profile, or left the group: back to the list once that screen's gone.
     @State private var unfriended = false
     @State var conversation: Conversation
     /// The message at the top of the screen, kept there while older ones load above it.
@@ -104,6 +104,23 @@ struct ChatScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // A friend's name (and picture) opens their profile, as on the web.
+            if case .group(let group) = conversation.chat, let account = session.account {
+                ToolbarItem(placement: .principal) {
+                    NavigationLink {
+                        GroupInfoScreen(model: GroupModel(id: group.id, account: account), account: account, avatarId: group.avatarId,
+                                        friends: conversation.friendsById, left: { unfriended = true })
+                    } label: {
+                        HStack(spacing: 8) {
+                            Avatar(kind: .group(group.id), avatarId: group.avatarId, name: group.name, size: 28)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(conversation.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                                Text("\(group.memberCount) people").font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .accessibilityLabel("\(conversation.title): group info")
+                }
+            }
             if let friend = conversation.friend, friend.system != true, let account = session.account {
                 ToolbarItem(placement: .principal) {
                     NavigationLink {

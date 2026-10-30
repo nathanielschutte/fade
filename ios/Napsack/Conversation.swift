@@ -299,6 +299,9 @@ enum SendError: LocalizedError {
 
     func bubble(_ id: Int64) -> Bubble? { bubbles.first { $0.id == id } }
 
+    /// Friends by id, for names (a group's members, adding people).
+    var friendsById: [Int64: Friend] { reader.friends }
+
     /// The friend in a direct chat.
     var friend: Friend? {
         if case .friend(let friend) = chat { return friend }
