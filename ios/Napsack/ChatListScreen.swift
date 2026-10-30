@@ -69,8 +69,8 @@ struct ChatListScreen: View {
     private func conversation(_ kind: ChatRow.Kind) -> Conversation? {
         guard let reader = list.reader else { return nil }
         switch kind {
-        case .friend(let id): return reader.friends[id].map { Conversation(.friend($0), account: account, reader: reader) }
-        case .group(let id): return list.groups[id].map { Conversation(.group($0), account: account, reader: reader) }
+        case .friend(let id): return reader.friends[id].map { Conversation(.friend($0), account: account, reader: reader, pinBook: list.pinBook) }
+        case .group(let id): return list.groups[id].map { Conversation(.group($0), account: account, reader: reader, pinBook: list.pinBook) }
         }
     }
 

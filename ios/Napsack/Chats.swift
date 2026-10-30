@@ -47,6 +47,8 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
     let deactivated: Bool?
     /// Team Napsack, napsack's own account (team-napsack.md).
     let system: Bool?
+    /// When an admin reset their account, which gives them a new key.
+    let keyResetAt: Int64?
 
     /// What the app calls them: your nickname, their display name, or their username.
     var name: String { nickname ?? displayName ?? username }
@@ -131,6 +133,13 @@ struct Reader: Sendable {
     let identity: P256.KeyAgreement.PrivateKey
     /// Friends by id, for their names and keys.
     let friends: [Int64: Friend]
+    /// Whose keys to trust (Pins.swift): messages are read with these, not
+    /// whatever key the server hands out now.
+    var pins = Pins()
+    /// Friends whose key changed and hasn't been accepted.
+    var changed: Set<Int64> = []
+    /// Mine, for opening what I sent to a group.
+    var myPublicKey = ""
 
     var myName: String { me.displayName ?? me.username }
 
@@ -149,6 +158,7 @@ struct Reader: Sendable {
     }
 
     func status(_ friend: Friend) -> (String, ChatRow.Waiting?) {
+        if changed.contains(friend.id) { return ("Safety code changed", nil) }
         if friend.deactivated == true { return ("Account turned off", nil) }
         guard let m = friend.lastMessage else { return ("Say hi", nil) }
         let mine = m.senderId == me.id
@@ -172,18 +182,24 @@ struct Reader: Sendable {
 
     /// A direct text opened: what it says now (its newest edit), what it replies to, whether it was edited.
     func body(_ m: DirectMessage, with friend: Friend) -> (text: E2E.Text, edited: Bool)? {
-        guard [1, 2].contains(m.format), let ciphertext = m.ciphertext, let key = pairKey(friend),
-              let body = try? E2E.decryptAnyText(key, ciphertext, format: m.format, sender: m.senderId, recipient: m.recipientId)
-        else { return nil }
-        if let edit = m.editCiphertext,
-           let edited = try? E2E.decryptEdit(key, edit, sender: m.senderId, recipient: m.recipientId, message: m.id) {
-            return (E2E.Text(text: edited, replyTo: body.replyTo), true)
+        guard [1, 2].contains(m.format), let ciphertext = m.ciphertext else { return nil }
+        for key in readingKeys(friend) {
+            guard let body = try? E2E.decryptAnyText(key, ciphertext, format: m.format, sender: m.senderId, recipient: m.recipientId)
+            else { continue }
+            if let edit = m.editCiphertext,
+               let edited = try? E2E.decryptEdit(key, edit, sender: m.senderId, recipient: m.recipientId, message: m.id) {
+                return (E2E.Text(text: edited, replyTo: body.replyTo), true)
+            }
+            return (body, false)
         }
-        return (body, false)
+        return nil
     }
 
-    func pairKey(_ friend: Friend) -> SymmetricKey? {
-        try? E2E.pairKey(mine: identity, theirs: friend.publicKey, myId: me.id, theirId: friend.id)
+    /// Chat keys that can read a friend's messages: with the pinned key, then any accepted before it.
+    func readingKeys(_ friend: Friend) -> [SymmetricKey] {
+        pins.readingKeys(friend.id, server: friend.publicKey).compactMap {
+            try? E2E.pairKey(mine: identity, theirs: $0, myId: me.id, theirId: friend.id)
+        }
     }
 
     // ---------- groups ----------
@@ -216,21 +232,30 @@ struct Reader: Sendable {
 
     func groupBody(_ m: GroupMessage) -> (text: E2E.Text, edited: Bool)? {
         if m.format == 0 { return (E2E.Text(text: m.body, replyTo: m.replyTo), false) }
-        guard m.format == E2E.groupFormat, let content = m.content, let wrap = m.key, let senderKey = m.senderPublicKey,
-              let bytes = try? E2E.fromB64(content),
-              let wrapKey = try? E2E.groupWrapKey(mine: identity, theirs: senderKey, myId: me.id, theirId: m.senderId)
+        guard m.format == E2E.groupFormat, let content = m.content, let wrap = m.key, let bytes = try? E2E.fromB64(content)
         else { return nil }
-        let opening = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: me.id,
-                                       clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
-        guard let body = try? E2E.decryptGroupText(bytes, wrap: wrap, opening) else { return nil }
-        if let editContent = m.editContent, let editKey = m.editKey, let editBytes = try? E2E.fromB64(editContent) {
-            var edit = opening
-            edit.clientId = m.editClientId ?? ""
-            if let edited = try? E2E.decryptGroupEdit(editBytes, wrap: editKey, message: m.id, edit) {
-                return (E2E.Text(text: edited, replyTo: body.replyTo), true)
+        for senderKey in senderKeys(m.senderId, server: m.senderPublicKey) {
+            guard let wrapKey = try? E2E.groupWrapKey(mine: identity, theirs: senderKey, myId: me.id, theirId: m.senderId) else { continue }
+            let opening = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: me.id,
+                                           clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
+            guard let body = try? E2E.decryptGroupText(bytes, wrap: wrap, opening) else { continue }
+            if let editContent = m.editContent, let editKey = m.editKey, let editBytes = try? E2E.fromB64(editContent) {
+                var edit = opening
+                edit.clientId = m.editClientId ?? ""
+                if let edited = try? E2E.decryptGroupEdit(editBytes, wrap: editKey, message: m.id, edit) {
+                    return (E2E.Text(text: edited, replyTo: body.replyTo), true)
+                }
             }
+            return (body, false)
         }
-        return (body, false)
+        return nil
+    }
+
+    /// Keys that could have sealed a group message from someone: mine for my
+    /// own, else the pinned ones (the server's only on first sight).
+    func senderKeys(_ sender: Int64, server: String?) -> [String] {
+        if sender == me.id { return [myPublicKey.isEmpty ? server : myPublicKey].compactMap { $0 } }
+        return pins.readingKeys(sender, server: server)
     }
 
     func eventText(_ m: GroupMessage) -> String {
@@ -269,11 +294,19 @@ struct Reader: Sendable {
     /// What opening a chat needs: who's who, their keys, and the groups.
     private(set) var reader: Reader?
     private(set) var groups: [Int64: GroupSummary] = [:]
+    /// Whose keys to trust (Pins.swift), shared with open chats.
+    private(set) var pinBook: PinBook?
 
     var favorites: [ChatRow] { rows.filter { $0.favorite && !$0.hidden } }
     var others: [ChatRow] { rows.filter { !$0.favorite && !$0.hidden } }
 
     /// Both lists at once; the rows are worked out (decrypted) off the main thread.
+    private let pinStore: any PinStore
+
+    init(pinStore: any PinStore = KeychainPinStore()) {
+        self.pinStore = pinStore
+    }
+
     func load(_ account: Account, transport: any Transport = NetworkTransport()) async throws {
         do {
             let server = try Server(account.server, transport: transport)
@@ -281,7 +314,12 @@ struct Reader: Sendable {
             async let groups = server.groups(token: account.token)
             let (f, g) = try await (friends, groups)
             let identity = try account.identity()
-            let reader = Reader(me: account.user, identity: identity, friends: Dictionary(uniqueKeysWithValues: f.map { ($0.id, $0) }))
+            let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore)
+            self.pinBook = pinBook
+            pinBook.see(friends: f)
+            pinBook.see(senders: g.compactMap { m in m.lastMessage.flatMap { m in m.senderPublicKey.map { (m.senderId, $0) } } })
+            let reader = Reader(me: account.user, identity: identity, friends: Dictionary(uniqueKeysWithValues: f.map { ($0.id, $0) }),
+                                pins: pinBook.pins, changed: pinBook.changed, myPublicKey: account.publicKey)
             rows = await Task.detached(priority: .userInitiated) { reader.rows(friends: f, groups: g) }.value
             self.reader = reader
             self.groups = Dictionary(uniqueKeysWithValues: g.map { ($0.id, $0) })
