@@ -11,7 +11,10 @@ ios/
 ├── Napsack.xcodeproj      the Xcode project: open this
 ├── Napsack/               the app's code (SwiftUI)
 │   ├── NapsackApp.swift       where the app starts
-│   ├── ServerScreen.swift     the screen you see
+│   ├── SignInScreen.swift     signing in
+│   ├── HomeScreen.swift       once signed in (the chat list goes here next)
+│   ├── Session.swift          who's signed in, kept in the Keychain
+│   ├── DeveloperScreen.swift  a server's settings, the app's version, the checks
 │   ├── VectorScreen.swift     the encryption's checks, run on the phone
 │   ├── Server.swift           talking to a napsack server
 │   └── Assets.xcassets        the icon and accent color
@@ -75,6 +78,12 @@ A free team's builds stop opening after **7 days**; run it from Xcode again. Pus
   ```
   `xcrun simctl list devices available` lists the simulators there are.
 - **Logs:** the app's `print` output and crashes show in Xcode's console (⇧⌘C) while it runs from Xcode.
+- **The live tests** sign up, in, and out against a real server, so they run only when told where, and only against your own (they make an account). With the server running (`cd server && FADE_INVITE_CODE=letmein cargo run`):
+  ```sh
+  TEST_RUNNER_NAPSACK_TEST_SERVER=http://127.0.0.1:8080 xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack \
+    -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:NapsackTests/LiveSignInTests
+  ```
+  `xcodebuild` hands the tests any variable that starts with `TEST_RUNNER_`, without the prefix. Otherwise they show as skipped.
 
 ### Pointing the app at your own server
 
@@ -86,13 +95,16 @@ The app starts on staging (`NAPSACK_SERVER_URL`, `Config/Base.xcconfig`), and th
   cd server && FADE_BIND=0.0.0.0:8080 cargo run
   ```
   In the app, use `http://<that name>.local:8080`. iOS asks once to allow napsack on the local network; if you said no, turn it on in Settings › Privacy & Security › Local Network. Plain `http` is allowed only for the local network (`NSAllowsLocalNetworking` in `App-Info.plist`); anything else has to be `https`.
-- To start fresh installs somewhere else, set `NAPSACK_SERVER_URL` in your `Local.xcconfig`. The `$()` in `https:/$()/` keeps an xcconfig from reading `//` as a comment.
+- **An account to sign in with:** make one on that server in a browser (`http://127.0.0.1:8080`, the invite code is `FADE_INVITE_CODE`; `cargo run` sets none, so no code is asked), then sign in with it in the app. Staging works the same way. On production, your real account works too, but a phone counts as one of your 4 signed-in devices, and the oldest is signed out to make room.
+- To start fresh installs somewhere else, set `NAPSACK_SERVER_URL` in your `Local.xcconfig`, never in `Base.xcconfig` (that one's shared). The `$()` in `https:/$()/` keeps an xcconfig from reading `//` as a comment.
 
 ## How it works
 
-- **`NapsackApp.swift`** is where the app starts (`@main`). It shows `ServerScreen`.
-- **`Server.swift`** talks to a napsack server. Every request says which app is asking (`X-Napsack-Client: ios/0.1.0+1`), so a server can turn away an app older than it supports. `ServerConfig` is `GET /api/config` ([api.md](spec/api.md)). `ClientVersion` compares versions the way the server does (`server/src/version.rs`).
-- **`ServerScreen.swift`** is the development screen. It checks a server, shows its version and formats, and warns when the server needs a newer app. **Run every encryption check** opens `VectorScreen.swift`.
+- **`NapsackApp.swift`** is where the app starts (`@main`). It makes the `Session` and shows the sign-in screen or the home screen, depending on whether someone's signed in.
+- **`Session.swift`** is who's signed in. Signing in works as the web app's does: the password is turned into keys on the phone (600,000 rounds of PBKDF2, about half a second on an iPhone 16 Pro), only the auth key goes to the server (`POST /api/auth/login`), and the private key comes back wrapped, which only the password unwraps. What's kept is one `Account` (the server, the session token, who you are, and the private key), saved as one Keychain item. At launch the app goes straight in with it, then asks the server (`GET /api/me`); if the session was ended (signed out elsewhere, turned off), it signs out and says so. No connection keeps you in. Signing out ends the session on the server and removes the item.
+- **`Keychain.swift`** keeps secrets in the iPhone's Keychain, readable only while the phone is unlocked and only on this phone: never synced to your other devices, never moved by a backup (`WhenUnlockedThisDeviceOnly`). The password is never kept anywhere.
+- **`SignInScreen.swift`** and **`HomeScreen.swift`** are the two screens there are so far; **`DeveloperScreen.swift`** (the Developer button on both) checks a server's settings and opens the encryption's checks.
+- **`Server.swift`** talks to a napsack server. Every request says which app is asking (`X-Napsack-Client: ios/0.1.0+1`), so a server can turn away an app older than it supports (426, whose message the app shows). Errors are the server's own words (`{"error": "..."}`), or the web app's ("Can't reach the server. Check your connection."). Requests go through a `Transport`, the network in the app and a stand-in in tests (`SessionTests`). `ServerConfig` is `GET /api/config` ([api.md](spec/api.md)). `ClientVersion` compares versions the way the server does (`server/src/version.rs`).
 - **`VectorScreen.swift`** runs every encryption check on the phone, against the vectors Xcode copies into the app from `tests/vectors/` (the project's blue `vectors` folder), and shows how long the 600,000-round key derivation a sign-in runs takes there. It has to stay near a second.
 - **`NapsackCrypto`** is the encryption. It implements the formats in `shared/crypto/crypto.js` (the reference) with Apple's CryptoKit and CommonCrypto, byte for byte ([how-napsack-works.md](how-napsack-works.md)). A file per area, like `crypto.js`'s sections: `E2E.swift` (the password, the identity, format 1), `Recovery`, `Texts` (format 2 texts, reactions, edits), `Pics`, `Groups` (format 3), `Media` (formats 4 to 7), `SafetyCode`, and `JSJSON`, which writes and reads the envelopes' JSON exactly as JavaScript does (their bytes are sealed, so they must match). Its second module, **`NapsackCryptoChecks`**, is `shared/crypto/vector-checks.js` in Swift: the same 64 checks, in the same order, under the same names. `swift test` runs them on the Mac (`VectorTests.swift`, which also fails if the list drifts from JavaScript's), and the app runs them on the phone.
 

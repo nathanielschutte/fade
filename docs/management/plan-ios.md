@@ -21,8 +21,8 @@ A skeleton that does the real thing against a server: sign in, see your chats, r
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Sign in: username and password to keys, the private key unwrapped and kept in the Keychain (this device only, readable while unlocked), the session token too | Nate | In progress | `POST /api/auth/login` ([api.md](../spec/api.md)); errors shown as the server words them |
-| The API client: the `X-Napsack-Client` header on everything, signed out on 401, an update screen on 426 | – | Planned | `Server.swift` today; [releasing.md](../operations/releasing.md), rule 4 |
+| Sign in: username and password to keys, the private key unwrapped and kept in the Keychain (this device only, readable while unlocked), the session token too | Nate | In progress | Built (2026-10-29): `Session`, `Keychain`, the sign-in and home screens; at launch, straight in and then checked with `GET /api/me`. Tested against a stand-in server (the vectors' account) and a real local one (sign up, in, out, the token refused after). Left: Nate signs in on the iPhone |
+| The API client: the `X-Napsack-Client` header on everything, signed out on 401, an update screen on 426 | – | Up next | Mostly there with sign-in (`Server.swift`: the header, the server's words for errors, 401 ends the session, 426's message shown); left: a screen of its own for 426, with a way to the App Store |
 | Sign up: invite code, a new identity, the recovery key shown once | – | Planned | `createIdentity`, `newRecoveryKey` are ready |
 | The chat list: friends and groups, newest first, previews decrypted | – | Planned | `GET /api/friends` and the groups ([api.md](../spec/api.md)) |
 | A chat: texts of every format, newest 50 then paging back, replies shown | – | Planned | `?before=&limit=50` (plan F3) |
