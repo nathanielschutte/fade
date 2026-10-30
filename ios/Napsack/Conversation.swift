@@ -179,7 +179,7 @@ enum SendError: LocalizedError {
         case .keyChanged(let username): "\(username)'s safety code changed. Messages are blocked."
         case .cantEdit: "This text can't be edited: napsack doesn't have the key of everyone it went to."
         case .cantOpen: "This pic couldn't be shown. It's still unopened."
-        case .tooLarge: "That photo is too large to send."
+        case .tooLarge: "That's too large to send."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }

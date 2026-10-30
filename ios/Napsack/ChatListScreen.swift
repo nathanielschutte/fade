@@ -25,6 +25,8 @@ struct ChatListScreen: View {
     @State private var path: [ChatRow.Kind] = []
     @State private var makingGroup = false
     @State private var usingCamera = false
+    /// The server's limits for pics and videos (its /api/config).
+    @State private var limits: ServerConfig?
     @State private var captured: Captured?
     @State private var search = ""
     @State private var showingHidden = false
@@ -109,6 +111,7 @@ struct ChatListScreen: View {
                 Text("You won't get its new messages. Someone in it can add you back.")
             }
             .refreshable { await load() }
+            .task { limits = try? await Server(AppInfo.server).config() }
             .task {
                 live.onEvent = handle
                 live.start()
@@ -116,7 +119,7 @@ struct ChatListScreen: View {
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
             .fullScreenCover(isPresented: $usingCamera) {
-                CameraScreen(maxSeconds: 10) { media in
+                CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20) { media in
                     usingCamera = false
                     captured = media
                 }
@@ -127,9 +130,9 @@ struct ChatListScreen: View {
                     switch media {
                     case .photo(let image):
                         guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                        try await chat.sendPhoto(jpeg, caption: caption, y: y)
+                        try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
                     case .video(let url):
-                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y)
+                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
                     }
                 }, done: { toast = Toast(text: $0, undo: nil) })
                 .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }
