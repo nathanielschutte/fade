@@ -5,7 +5,7 @@
 # the iOS app docs/ios-onboarding.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open test-staging
+.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging test-staging
 
 PORT ?= 8080
 ADMIN ?= nate
@@ -49,6 +49,9 @@ ios: ## The iOS app: the crypto package, then the app's tests on a Simulator, li
 
 ios-quick: ## The same without a server, as the iOS CI runs it
 	bash scripts/test-ios.sh --no-live
+
+ios-staging: ## The iOS app's tests live against staging (makes test accounts there; never production)
+	bash scripts/test-ios.sh --staging
 
 ios-crypto: ## The iOS crypto package against the pinned vectors (swift test), seconds
 	swift test --package-path ios/NapsackCrypto

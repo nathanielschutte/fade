@@ -38,6 +38,7 @@ FADE_STACK=staging scripts/deploy.sh      # a local build instead, to staging on
 FADE_STACK=staging scripts/ssh.sh "sudo journalctl -u fade -n 30"
 scripts/test-staging.sh                   # smoke test + all browser tests against staging
 scripts/test-staging.sh --no-browser      # smoke test only
+scripts/test-ios.sh --staging             # the iOS app's live tests against staging (make ios-staging; a Mac)
 scripts/load-staging.sh --stages 50,100,200 --rate 6 --duration 60
 ```
 
