@@ -66,7 +66,7 @@ Push the branch and open a pull request, described by the template (`.github/pul
 3. deletes all but the newest ten candidates (releases are kept forever; see below);
 4. runs `fade-update` on staging through SSM, and checks `https://staging.napsack.io/api/config` reports that commit.
 
-Pushes to `main` never cancel each other, so every commit gets its candidate. A pull request runs the tests only.
+Pushes to `main` don't cancel each other while running, but GitHub keeps only one waiting run: if three land close together, the middle one is cancelled before it starts and gets no candidate. That commit can't be released (step 2 below refuses it); release the newer one, which includes it. Pushes that change only `ios/` or the docs don't run CI on `main` at all (they'd make no candidate), so they never cause this. A pull request runs the tests only.
 
 ### 3. Check staging
 
