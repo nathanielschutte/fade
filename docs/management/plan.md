@@ -24,7 +24,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [PowerXtreme: a role above PowerUser](#s4-powerxtreme) | Security | Nate | In progress | Nate (2026-10-29); built for 0.43.0 |
-| 3 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
+| 3 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | Nate | In progress | Fixed for 0.43.0 |
 | 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 5 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
 | 6 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
@@ -446,6 +446,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### X38. Group names cut short in the chat header
 - Nate (2026-10-29), bug: in a group chat, the name at the top is cut off early, seemingly always the last three characters, even when there's room: "Rats" shows as "R...", "Gayboiz" as "Gayb...", "Dusty Relics" as "Dusty Rel...". Direct chats, titled with the person's name, aren't affected.
 - Where to look: the header title (`#chat-title`, filled for groups in `app.js` where a group opens; its ellipsis is in `style.css`, `.chat-title`). Something in the group header takes room the title needs, or the title's width is fixed before the name is in. Reproduce in a browser test at phone and desktop widths; the fix's test checks a short group name shows in full.
+- Fixed (0.43.0): the header's heading was only as wide as its content, and the title button's `max-width: 100%` resolved against that width less the title's own padding, so it came out a few pixels short of the name, whatever its length (the last two or three letters went to the ellipsis). The heading now takes the bar's free space. `test_group_title.py`: short names in full on a phone and a desktop, a long one still ends in an ellipsis without spilling off the screen. Direct chats had room only because their lock button sits beside the heading. The iOS app's title is the system's own and isn't affected.
 
 ### Security
 

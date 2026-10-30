@@ -678,7 +678,10 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 
 /* ---------- groups ---------- */
 
-.chat-heading { display: flex; flex-direction: column; min-width: 0; }
+/* The heading takes the bar's free space: sized to its content, its title's
+   max-width (100% of a box that has padding) came out a few pixels short of
+   the name, which lost its last letters (X38). */
+.chat-heading { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .chat-sub { padding-left: 0.5rem; font-size: 0.75rem; color: var(--fixer); line-height: 1.1; }
 /* A long name stays on one line in the header (it's in full on the profile). */
 .chat-title, .chat-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
