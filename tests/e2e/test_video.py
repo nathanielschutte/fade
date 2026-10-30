@@ -110,10 +110,16 @@ async def main():
         print("the friend watches it once; the sender sees it opened")
 
         # Sound off (X37): what's sent has no sound at all, not just a quiet player.
-        async def sound_decoded(page):
+        # Waits for what it checks, never a fixed time: on a busy machine audio
+        # can start decoding well after the picture (it failed CI that way).
+        async def no_sound_after_a_second(page):
             await expect(page.locator("#viewer-video")).to_be_visible(timeout=15000)
-            await page.wait_for_timeout(1200)
-            return await page.locator("#viewer-video").evaluate("v => v.webkitAudioDecodedByteCount")
+            await page.wait_for_function("() => { const v = document.querySelector('#viewer-video'); return v.currentTime >= 1 || v.ended; }", timeout=15000)
+            return await page.locator("#viewer-video").evaluate("v => v.webkitAudioDecodedByteCount") == 0
+        async def some_sound(page):
+            await expect(page.locator("#viewer-video")).to_be_visible(timeout=15000)
+            await page.wait_for_function("() => document.querySelector('#viewer-video').webkitAudioDecodedByteCount > 0", timeout=15000)
+            return True
         await ana.click("#camera-button")
         await ana.wait_for_timeout(500)
         await hold_shutter(ana, 1600)
@@ -126,7 +132,7 @@ async def main():
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
         await ben.locator("button.snap-chip", has_text="Tap to view video").click()
-        assert await sound_decoded(ben) == 0, "a muted video carries no sound"
+        assert await no_sound_after_a_second(ben), "a muted video carries no sound"
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
         # With sound, it has some.
         await ana.click("#camera-button")
@@ -136,7 +142,7 @@ async def main():
         await ana.click("#send-snap")
         await expect(ana.locator("#camera-dialog")).to_be_hidden(timeout=20000)
         await ben.locator("button.snap-chip", has_text="Tap to view video").click()
-        assert await sound_decoded(ben) > 0, "with sound, there's sound"
+        assert await some_sound(ben), "with sound, there's sound"
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
         print("sound off sends a video without any; the ring fills; double tap switches cameras mid-video")
 
