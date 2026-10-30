@@ -2,7 +2,9 @@ import SwiftUI
 
 /// The chat list: friends and groups together, newest first, favorites on
 /// top, each row with its newest message (decrypted here). Pull to refresh;
-/// tapping a row opens the chat, and coming back refreshes the list. While
+/// tapping a row opens the chat, and coming back refreshes the list. Swipe a
+/// row (or hold it) to favorite, mute, hide, or leave; search finds chats by
+/// name or newest message. While
 /// the app is on screen the live connection (Live.swift) keeps the list and
 /// the open chat current.
 struct ChatListScreen: View {
@@ -16,6 +18,12 @@ struct ChatListScreen: View {
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
     @State private var settingUpRecovery = false
+    @State private var search = ""
+    @State private var showingHidden = false
+    @State private var muting: ChatRow?
+    @State private var leaving: ChatRow?
+    /// A short note at the bottom, with Undo where it can be undone (app.js, `showToast`).
+    @State private var toast: Toast?
 
     init(account: Account) {
         self.account = account
@@ -42,17 +50,54 @@ struct ChatListScreen: View {
                     if list.problem == nil {
                         Label("Loading…", systemImage: "ellipsis").foregroundStyle(.secondary)
                     }
-                } else if list.rows.filter({ !$0.hidden }).isEmpty {
+                } else if !search.isEmpty {
+                    let found = list.search(search)
+                    if found.isEmpty { ContentUnavailableView.search(text: search) } else { rows(found) }
+                } else if list.rows.filter({ !$0.hidden }).isEmpty && list.hiddenRows.isEmpty {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.bubble.right",
                                            description: Text("Friends you add show up here."))
-                } else if list.favorites.isEmpty {
-                    rows(list.others)
                 } else {
-                    Section("Favorites") { rows(list.favorites) }
-                    Section("Chats") { rows(list.others) }
+                    if list.favorites.isEmpty {
+                        rows(list.others)
+                    } else {
+                        Section("Favorites") { rows(list.favorites) }
+                        Section("Chats") { rows(list.others) }
+                    }
+                    if !list.hiddenRows.isEmpty {
+                        Section {
+                            Button(showingHidden ? "Hide hidden chats" : "Hidden chats (\(list.hiddenRows.count))") {
+                                withAnimation { showingHidden.toggle() }
+                            }
+                            .foregroundStyle(.secondary)
+                            if showingHidden { rows(list.hiddenRows) }
+                        }
+                    }
                 }
             }
             .listStyle(.plain)
+            .searchable(text: $search, prompt: "Search")
+            .safeAreaInset(edge: .bottom) {  // (above the search field, which sits at the bottom on newer iOS)
+                if let toast {
+                    ToastView(toast: toast) { self.toast = nil }
+                        .padding(.horizontal, 16).padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: toast?.id)
+            .confirmationDialog(muting.map { "Mute \($0.name)" } ?? "", isPresented: .init(get: { muting != nil }, set: { if !$0 { muting = nil } }),
+                                titleVisibility: .visible, presenting: muting) { row in
+                Button("For 8 hours") { mute(row, hours: 8) }
+                Button("For a week") { mute(row, hours: 168) }
+                Button("Until I turn it back on") { mute(row, hours: nil) }
+            } message: { _ in
+                Text("No notifications and no unread dot from this chat. It's still there to open whenever you like.")
+            }
+            .confirmationDialog(leaving.map { "Leave \($0.name)?" } ?? "", isPresented: .init(get: { leaving != nil }, set: { if !$0 { leaving = nil } }),
+                                titleVisibility: .visible, presenting: leaving) { row in
+                Button("Leave", role: .destructive) { act(row) { try await list.leave(row, account: account) } }
+            } message: { _ in
+                Text("You won't get its new messages. Someone in it can add you back.")
+            }
             .refreshable { await load() }
             .task {
                 live.onEvent = handle
@@ -101,6 +146,62 @@ struct ChatListScreen: View {
     private func rows(_ rows: [ChatRow]) -> some View {
         ForEach(rows) { row in
             NavigationLink(value: row.kind) { ChatRowView(row: row) }
+                .swipeActions(edge: .leading) {
+                    Button(row.favorite ? "Unfavorite" : "Favorite", systemImage: row.favorite ? "star.slash" : "star") {
+                        act(row) { try await list.setFavorite(row, !row.favorite, account: account) }
+                    }
+                    .tint(.yellow)
+                }
+                .swipeActions(edge: .trailing) { rowActions(row, swiping: true) }
+                .contextMenu {
+                    Button(row.favorite ? "Unfavorite" : "Favorite", systemImage: row.favorite ? "star.slash" : "star") {
+                        act(row) { try await list.setFavorite(row, !row.favorite, account: account) }
+                    }
+                    rowActions(row, swiping: false)
+                }
+        }
+    }
+
+    /// Hide or leave, and mute: the same whether swiped or held.
+    @ViewBuilder private func rowActions(_ row: ChatRow, swiping: Bool) -> some View {
+        if row.isGroup {
+            Button("Leave", systemImage: "rectangle.portrait.and.arrow.right") { leaving = row }.tint(.red)
+        } else if row.hidden {
+            Button("Unhide", systemImage: "tray.and.arrow.up") {
+                act(row) { try await list.setHidden(row, false, account: account) }
+            }
+            .tint(.blue)
+        } else {
+            Button("Hide", systemImage: "archivebox") {
+                act(row) {
+                    try await list.setHidden(row, true, account: account)
+                    toast = Toast(text: "Hid your chat with \(row.name).") { act(row) { try await list.setHidden(row, false, account: account) } }
+                }
+            }
+            .tint(.gray)
+        }
+        if row.muted {
+            Button("Unmute", systemImage: "bell") { act(row) { try await list.setMuted(row, false, account: account) } }.tint(.indigo)
+        } else {
+            Button("Mute", systemImage: "bell.slash") { muting = row }.tint(.indigo)
+        }
+    }
+
+    private func mute(_ row: ChatRow, hours: Int?) {
+        act(row) {
+            try await list.setMuted(row, true, hours: hours, account: account)
+            toast = Toast(text: "Muted \(row.name).") { act(row) { try await list.setMuted(row, false, account: account) } }
+        }
+    }
+
+    /// Runs a row's action; what goes wrong is said in the server's words.
+    private func act(_ row: ChatRow, _ work: @escaping () async throws -> Void) {
+        Task {
+            do { try await work() } catch {
+                Reporter.shared.report(.warn, "chat list action failed", Reporter.fields(error))
+                session.noticed(error)
+                toast = Toast(text: error.localizedDescription, undo: nil)
+            }
         }
     }
 
@@ -240,4 +341,40 @@ struct ReconnectingNote: View {
 /// observed: opening a chat shouldn't redraw the list.
 final class OpenedChats {
     var chats: [ChatRow.Kind: Conversation] = [:]
+}
+
+/// A note at the bottom of the list for a few seconds, with Undo when it can be undone.
+struct Toast: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    let undo: (() -> Void)?
+
+    init(text: String, undo: (() -> Void)?) {
+        self.text = text
+        self.undo = undo
+    }
+
+    static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+}
+
+struct ToastView: View {
+    let toast: Toast
+    let done: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(toast.text).font(.callout)
+            Spacer()
+            if let undo = toast.undo {
+                Button("Undo") { undo(); done() }.bold()
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
+        .task(id: toast.id) {
+            try? await Task.sleep(for: .seconds(6))
+            if !Task.isCancelled { done() }
+        }
+    }
 }
