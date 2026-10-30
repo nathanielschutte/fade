@@ -9,6 +9,7 @@ Central task tracking doc for napsack, for everyone who works on it (and their C
 - **Claim a task:** put your name in **Who** and set **Status** to In progress, in your branch's first commit, and open a draft pull request so others can see it. **Who** and **Author** are always a person's name ("Nate"); a Claude session writes the person it works for, never itself (its part is in the commits, as co-author).
 - **A new idea** goes into an Epic first (an entry with a short id, like `X38`: what was asked, by whom and when, and the decisions), then into the Tracker by priority.
 - **As you go:** keep your row's Status current, and add "Built (version): ..." notes to the Epic entry when it ships. The plan changes travel in the same pull request as the work.
+- **The iOS app** is one Tracker row with its own task list, [plan-ios.md](plan-ios.md), which follows the same rules.
 - **When it ships:** the row leaves the Tracker for the bottom of the Done table, with the version it shipped in (or `infra`, `process`) and its author, and the Tracker is renumbered.
 
 ## Tracker
@@ -21,7 +22,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
-| 1 | [iOS app](#f1-ios-app) | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
+| 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
@@ -177,14 +178,14 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F1. iOS app
 - iOS app. This is the big one.
-- Plan and milestones: [mobile.md](../design/mobile.md). Push notifications are part of it.
+- Plan and milestones: [mobile.md](../design/mobile.md). Push notifications are part of it. **The task list: [plan-ios.md](plan-ios.md).**
 - **Decided (Nate, 2026-10-29): native Swift**, in Xcode, instead of React Native and Expo; Android later as its own Kotlin port. The encryption is ported to each language and held to the pinned vectors. First milestone: the Swift crypto passing every vector.
 - Needs: a Mac with Xcode (no paid account to start: the Simulator, and a free Apple ID's Personal Team on Nate's iPhone); the Apple Developer Program for push notifications and TestFlight (waiting on Apple).
 - Getting it to early users: TestFlight (internal testers first, then an external group by public link, which needs a short Beta App Review).
 - Built (0.42.0): `/api/config` lists `group_message_formats` (0, 3, 5, 7) beside `message_formats`, so the app learns every format a history can hold from the call it makes at launch.
 - **Set up (2026-10-29):** `ios/Napsack.xcodeproj` (SwiftUI; settings in `ios/Config/*.xcconfig`, the signing team per machine) and `ios/NapsackCrypto` (a Swift package; format 1 passes its vectors, read straight from `tests/vectors/`). The app is one development screen: a server's `/api/config` with the `X-Napsack-Client` header and the minimum-version check, and the key derivation timed on the phone. Built and tested on the Simulator; Nate runs it on his iPhone 16 Pro with a free Apple ID (`.dev` bundle id, so `com.getattr.napsack` stays free for the paid team). [ios-onboarding.md](../ios-onboarding.md) explains it all for someone new to Xcode.
 - **How iOS work goes (Nate, 2026-10-29):** a working branch and a pull request, checked locally (`swift test`, the app's tests, the phone); no server CI, staging, or release tag unless the server changes too (`ci.yml` skips pull requests that change only `ios/` and the docs). The app's CI (`ios.yml`) is kept current but off until the app takes shape.
-- Next: the other formats in Swift (2, 3 to 7, edits, reactions, recovery, safety codes), each with its vector tests; then the vectors on the phone itself.
+- **Every format in Swift (2026-10-29):** `NapsackCryptoChecks` is `vector-checks.js` in Swift; all 64 checks pass on the Mac and in the app (a screen, and ⌘U on the phone), and keys and messages made in Swift open in the web client.
 - Earlier (2026-10-19): crypto moved to `shared/crypto/` and checked in Node and Chromium; `mobile/` became an Expo app whose one screen ran every vector check on a phone. Retired with the move to Swift; `mobile/` goes once `ios/` passes every vector.
 
 #### F2. Password reset and recovery

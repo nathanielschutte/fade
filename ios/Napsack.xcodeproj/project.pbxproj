@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		4E5A00000000000000000015 /* NapsackCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = 4E5A00000000000000000014 /* NapsackCrypto */; };
+		4E5A00000000000000000027 /* NapsackCryptoChecks in Frameworks */ = {isa = PBXBuildFile; productRef = 4E5A00000000000000000028 /* NapsackCryptoChecks */; };
+		4E5A0000000000000000002A /* vectors in Resources */ = {isa = PBXBuildFile; fileRef = 4E5A00000000000000000029 /* vectors */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,6 +33,7 @@
 		4E5A0000000000000000001B /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		4E5A0000000000000000001C /* App-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "App-Info.plist"; sourceTree = "<group>"; };
 		4E5A00000000000000000026 /* NapsackCrypto */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = NapsackCrypto; sourceTree = "<group>"; };
+		4E5A00000000000000000029 /* vectors */ = {isa = PBXFileReference; lastKnownFileType = folder; name = vectors; path = ../tests/vectors; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +55,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4E5A00000000000000000015 /* NapsackCrypto in Frameworks */,
+				4E5A00000000000000000027 /* NapsackCryptoChecks in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +75,7 @@
 				4E5A00000000000000000005 /* Napsack */,
 				4E5A00000000000000000006 /* NapsackTests */,
 				4E5A00000000000000000026 /* NapsackCrypto */,
+				4E5A00000000000000000029 /* vectors */,
 				4E5A00000000000000000004 /* Config */,
 				4E5A00000000000000000003 /* Products */,
 			);
@@ -120,6 +125,7 @@
 			name = Napsack;
 			packageProductDependencies = (
 				4E5A00000000000000000014 /* NapsackCrypto */,
+				4E5A00000000000000000028 /* NapsackCryptoChecks */,
 			);
 			productName = Napsack;
 			productReference = 4E5A00000000000000000007 /* Napsack.app */;
@@ -195,6 +201,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4E5A0000000000000000002A /* vectors in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -318,6 +325,10 @@
 		4E5A00000000000000000014 /* NapsackCrypto */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = NapsackCrypto;
+		};
+		4E5A00000000000000000028 /* NapsackCryptoChecks */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NapsackCryptoChecks;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
