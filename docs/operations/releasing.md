@@ -76,14 +76,16 @@ Pushes to `main` never cancel each other, so every commit gets its candidate. A 
 
 When staging looks good:
 1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), usually as part of the feature's pull request, or in a small one of its own (`server 1.4.0`). Once merged, that commit is a candidate too; it's the one you'll release, so let it reach staging.
-2. The owner tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
+2. The owner (or a Claude session the owner has allowed to release) tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
 
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
-2. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte. Only if it's no longer kept (more than ten pushes ago) does it run the tests and build again;
-3. publishes it as `releases/tags/fade-server-<version>`, refusing if that version already exists (a fix is a new version), and as `releases/fade-server`, which is what production runs;
-4. backs up production's database (`fade-backup`, the hourly job, run now), so there's a fresh copy before any migration;
-5. runs `fade-update` on every production server through SSM, and checks `https://napsack.io/api/config` reports the commit.
+2. checks that staging ran that commit: `main`'s CI passed for it and its **Release candidate on staging** job succeeded (`release.sh staging-ran`). Otherwise it stops before anything is built or changed, saying so. Since 0.43.0: 0.42.2 once reached production without staging, when `main`'s CI had failed on a flaky test and the release fell back to building it again;
+3. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte. Only if it's no longer kept (more than ten pushes ago) does it run the tests and build again;
+4. publishes it as `releases/tags/fade-server-<version>`, refusing if that version already exists (a fix is a new version), and as `releases/fade-server`, which is what production runs;
+5. backs up production's database (`fade-backup`, the hourly job, run now), so there's a fresh copy before any migration;
+6. runs `fade-update` on every production server through SSM, and checks `https://napsack.io/api/config` reports the commit;
+7. creates the GitHub Release for the tag, marked latest, its notes the pull requests merged since the previous `server-v*` tag (`release.sh github-release`). Only once production runs it, so a Release on GitHub means it's live.
 
 If you've added required reviewers to the `production` environment in GitHub, it waits for approval first. Then check production as CLAUDE.md's Shipping section says: the new `build` in `/api/config`, the pages you changed, and a clean start in the log.
 
