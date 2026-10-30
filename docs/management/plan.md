@@ -26,10 +26,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [Group names cut short in the chat header](#x38-group-names-cut-short-in-the-chat-header) | Experience | – | Up next | Nate (2026-10-29): bug, every group |
 | 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 4 | [A GitHub Release for every server release](#p7-a-github-release-for-every-server-release) | Process | – | Planned | Nate (2026-10-29) |
-| 5 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
-| 6 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 5 | [A release refuses a commit staging never ran](#p8-a-release-refuses-a-commit-staging-never-ran) | Process | – | Needs decision | 0.42.2 reached production without staging (2026-10-29) |
+| 6 | [A tap on the shutter can count as a hold](#d11-a-tap-on-the-shutter-can-count-as-a-hold-when-the-page-is-busy) | Debug | – | Planned | Flaky `test_chat.py` on main |
+| 7 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
+| 8 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 9 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 10 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -175,6 +177,11 @@ Oldest first; newly shipped rows go at the bottom.
 #### P7. A GitHub Release for every server release
 - Nate (2026-10-29): the release pipeline also creates a GitHub Release for the new `server-v<version>` tag, with release notes generated automatically, marked as the latest release.
 - Notes: GitHub's generated notes list the pull requests merged since the previous tag, which now covers every change (they all arrive through pull requests). Create it in `release-server.yml` after production is updated, so a Release means it's live; the job needs `contents: write` for it. Open: when iOS releases (`ios-v*`) start, which one is "latest" (probably the server's, with the app's as its own Releases).
+
+#### P8. A release refuses a commit staging never ran
+- Found 2026-10-29: 0.42.2 (`99c0b7c`) reached production without staging ever running it. Main's CI for that commit failed (D11, a flaky browser test), so it made no candidate, and staging stayed on 0.42.1. The release then found no candidate and fell back to "built too long ago": it tested without the browser tests, built, and shipped. The code was fine (the browser tests had passed on its pull request, production checked out clean, and the job was rerun green afterwards), but the rule "tag a commit staging has run" was only a habit.
+- Proposal: `release-server.yml` asks GitHub whether main's CI passed for the tagged commit, and refuses the release when it didn't (or never ran), saying so. Rebuilding stays for candidates that aged out. Also: `releasing.md` and the release checklist say to check staging's `/api/config` build before tagging.
+- Needs decision (Nate): whether to make it a hard stop.
 
 ### Features
 
@@ -322,6 +329,10 @@ Oldest first; newly shipped rows go at the bottom.
 - Whatever is chosen: compare on real phones (an iPhone and an Android), and check sizes stay under the cap.
 
 ### Debug
+
+#### D11. A tap on the shutter can count as a hold when the page is busy
+- `test_chat.py` failed once on main (2026-10-29, CI for `99c0b7c`): after the shutter tap, Send never appeared. Likely cause: the shutter starts a video when its hold timer (`HOLD_MS`) fires before the pointer is let go. On a busy page the timer can run before the queued `pointerup`, so a quick tap becomes a short video and no photo. A slow phone could do the same to a person.
+- Fix: decide tap or hold by the events' own times (`pointerup.timeStamp - pointerdown.timeStamp`), not by which callback ran first. A test that holds the page busy across a tap.
 
 #### D10. 0.39.0's fix for D9 cut the bottom off (undone in 0.41.1)
 - Reported (Nate, 2026-10-29), on an iPhone 16 Pro and a friend's phone, both from the Home Screen: the composer and tab bar were half off the bottom, and a chat couldn't scroll to its newest messages (pics there couldn't be tapped). 0.39.0 sized the app to the screen's height as the phone reported it, which was taller than what's visible. Undone: the app is pinned to the visible edges again (0.36.0 to 0.38.0), which may leave a gap under the tabs but never hides anything. Nate: a gap is acceptable; nothing may be cut off. The gap needs a real iPhone to diagnose, not a guess (D9 stays open).
