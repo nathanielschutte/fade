@@ -4424,7 +4424,7 @@ const HOLD_MS = 350;
 const ZOOM_SLIDE_PX = 110; // was 60, which zoomed too fast (Nate, 2026-10-29)
 const VIDEO_EDGE = 1280;
 const rec = { timer: null, held: false, pointerId: null, startY: 0, startZoom: 1, suppressClick: false,
-  recorder: null, chunks: [], started: 0, draw: 0, tick: 0, discard: false, stopTimer: null, timedOut: false };
+  recorder: null, chunks: [], started: 0, stopDrawing: () => {}, tick: 0, discard: false, stopTimer: null, timedOut: false };
 
 // Safari, and every browser on an iPhone (all WebKit): one recorder at a time.
 // With a second one recording the silent copy alongside (X37, 0.41.0), the
@@ -4437,11 +4437,48 @@ const ONE_RECORDER = /iPhone|iPad|iPod/.test(navigator.userAgent)
 // this long, the video finishes with what was recorded.
 const STOP_WAIT_MS = 3000;
 
+// MP4 where the browser can make it (Safari, newer Chrome): it plays
+// everywhere. H.264 High first, then Main, then Baseline: the higher profiles
+// look better at the same size and play wherever MP4 does (F20).
+const VIDEO_TYPES = [
+  "video/mp4;codecs=avc1.64001F,mp4a.40.2",
+  "video/mp4;codecs=avc1.4D401F,mp4a.40.2",
+  "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4",
+  "video/webm;codecs=vp8,opus",
+  "video/webm",
+];
+
 function videoMime() {
   if (typeof MediaRecorder === "undefined") return null;
-  // MP4 where the browser can make it (Safari, newer Chrome): it plays everywhere.
-  return ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm"]
-    .find((t) => MediaRecorder.isTypeSupported(t)) ?? null;
+  return VIDEO_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) ?? null;
+}
+
+// The video bitrate for the server's cap (F20, docs/design/video-quality.md):
+// what fits in it over the longest video, less the sound and a fifth for
+// encoders that overshoot on fast motion, at most 3 Mbit/s (past that, 720p
+// gains little). The iOS app works it out the same way (VideoEncoder.swift).
+function videoBitrate() {
+  const max = state.config?.video_max_bytes ?? 4 * 1024 * 1024;
+  const seconds = state.config?.video_max_seconds ?? 10;
+  const total = (Math.max(max - 16 * 1024, 0) * 8) / Math.max(seconds, 1);
+  return Math.round(Math.min(3_000_000, Math.max(250_000, total * 0.8 - 64_000)));
+}
+
+// Calls `draw` for each new camera frame where the browser says when one
+// arrives, so each is drawn once (F20), or else at each screen refresh.
+// Returns what stops it.
+function eachFrame(video, draw) {
+  let id;
+  if (video.requestVideoFrameCallback) {
+    const loop = () => { draw(); id = video.requestVideoFrameCallback(loop); };
+    loop();
+    return () => video.cancelVideoFrameCallback(id);
+  }
+  const loop = () => { draw(); id = requestAnimationFrame(loop); };
+  loop();
+  return () => cancelAnimationFrame(id);
 }
 
 $("#shutter").addEventListener("pointerdown", (e) => {
@@ -4506,6 +4543,7 @@ async function startRecording() {
   canvas.width = Math.round(video.videoWidth * scale / 2) * 2; // even sizes, for the encoder
   canvas.height = Math.round(video.videoHeight * scale / 2) * 2;
   const g = canvas.getContext("2d");
+  g.imageSmoothingQuality = "high"; // the default "low" softens the shrink to 1280
   const draw = () => {
     const crop = camera.hwZoom ? 1 : camera.zoom;
     const w = video.videoWidth / crop, h = video.videoHeight / crop;
@@ -4516,18 +4554,17 @@ async function startRecording() {
     }
     g.drawImage(video, (video.videoWidth - w) / 2, (video.videoHeight - h) / 2, w, h, 0, 0, canvas.width, canvas.height);
     g.restore();
-    rec.draw = requestAnimationFrame(draw);
   };
-  draw();
+  rec.stopDrawing = eachFrame(video, draw);
   const stream = canvas.captureStream(30);
   for (const t of camera.audio?.getAudioTracks() ?? []) stream.addTrack(t);
   rec.chunks = [];
   rec.discard = false;
   rec.startZoom = camera.zoom;
   try {
-    rec.recorder = new MediaRecorder(stream, { mimeType: videoMime(), videoBitsPerSecond: 1_500_000, audioBitsPerSecond: 64_000 });
+    rec.recorder = new MediaRecorder(stream, { mimeType: videoMime(), videoBitsPerSecond: videoBitrate(), audioBitsPerSecond: 64_000 });
   } catch (err) {
-    cancelAnimationFrame(rec.draw);
+    rec.stopDrawing();
     cameraMessage("This browser can't record video here. Tap for a photo instead.");
     report("warn", "video recorder failed", errorFields(err));
     return;
@@ -4541,7 +4578,7 @@ async function startRecording() {
   rec.silentDone = null;
   if (stream.getAudioTracks().length && !ONE_RECORDER) {
     try {
-      const silent = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: videoMime(), videoBitsPerSecond: 1_500_000 });
+      const silent = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: videoMime(), videoBitsPerSecond: videoBitrate() });
       const chunks = [];
       silent.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       // Its last piece comes with "stop", so the copy is whole only then.
@@ -4626,7 +4663,7 @@ function finishRecording() {
   rec.timedOut = false;
   const type = recorder.mimeType || videoMime();
   const seconds = (Date.now() - rec.started) / 1000;
-  cancelAnimationFrame(rec.draw);
+  rec.stopDrawing();
   rec.recorder = null;
   $("#shutter").classList.remove("recording");
   $("#shutter").style.removeProperty("--progress");
@@ -4650,7 +4687,7 @@ function finishRecording() {
     report("warn", "video too large", { bytes: blob.size, seconds: Math.round(seconds) });
     return;
   }
-  report("debug", "video recorded", { seconds: Math.round(seconds * 10) / 10, bytes: blob.size, type: type.split(";")[0] });
+  report("debug", "video recorded", { seconds: Math.round(seconds * 10) / 10, bytes: blob.size, type });
   showPreview(blob, type);
   camera.withSound = blob;
   // The silent copy finishes a moment after; then the sound button shows.

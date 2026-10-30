@@ -67,7 +67,7 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Favorites | 10 per person (direct chats and groups together) | Turning one on or off adds a row (Rule 1); writes are capped by the write budgets |
 | Edits | 20 per text, within 15 minutes of sending | Every version is kept (Rule 1) |
 | Username changes | once a week (Admins exempt) | Old names are reserved for their owner forever |
-| Size of one pic, one video | 512 KB, 4 MB (videos run 10 seconds at most) | `FADE_SNAP_MAX_KB`, `FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS` |
+| Size of one pic, one video | 512 KB, 6 MB (videos run 10 seconds at most) | `FADE_SNAP_MAX_KB`, `FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS` |
 | Unopened pics and videos on disk | 2 GB direct, 1.5 GB group (production; 256 MB and 200 MB by default) | `FADE_SNAP_DISK_MB`, `FADE_GROUP_PIC_DISK_MB` |
 | Uploads stop when the data disk has less than | 150 MB free | |
 | All writes stop when the data disk has less than | 40 MB free (so the database can't fill the disk) | |

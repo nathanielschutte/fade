@@ -138,7 +138,7 @@ impl Config {
             // Clients compress to ~200 KB; this is the hard ceiling on what the server accepts.
             snap_max_bytes: env_or::<usize>("FADE_SNAP_MAX_KB", 512)? * 1024,
             // Clients record about 1.5 Mbit/s, so 10 seconds is about 2 MB.
-            video_max_bytes: env_or::<usize>("FADE_VIDEO_MAX_KB", 4096)? * 1024,
+            video_max_bytes: env_or::<usize>("FADE_VIDEO_MAX_KB", 6144)? * 1024,
             video_max_seconds: env_or::<u64>("FADE_VIDEO_MAX_SECONDS", 10)?.clamp(1, 60),
             snap_disk_bytes: env_or::<usize>("FADE_SNAP_DISK_MB", 256)? * 1024 * 1024,
             session_days: env_or("FADE_SESSION_DAYS", 90)?,
