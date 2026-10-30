@@ -55,7 +55,7 @@ enum VideoEncoder {
     static func encode(_ source: URL, to out: URL, videoBitrate: Int) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else { throw Problem.noVideo }
-        let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         let (natural, transform) = try await videoTrack.load(.naturalSize, .preferredTransform)
         let size = size(for: natural)
 
@@ -85,14 +85,28 @@ enum VideoEncoder {
         reader.add(videoOut)
         writer.add(videoIn)
 
-        var audio: (AVAssetReaderTrackOutput, AVAssetWriterInput)?
-        if let audioTrack {
-            let channels = try await audioTrack.load(.formatDescriptions).first
-                .flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mChannelsPerFrame } ?? 1
-            let audioOut = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+        // Sound, mixed down to stereo while it's read: newer iPhones record
+        // more channels than two (four microphones), which AAC at this size
+        // can't take as they are (the encode failed on an iPhone 16 Pro).
+        var audio: (AVAssetReaderAudioMixOutput, AVAssetWriterInput)?
+        if !audioTracks.isEmpty {
+            var stereo = AudioChannelLayout()
+            stereo.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+            let layout = Data(bytes: &stereo, count: MemoryLayout<AudioChannelLayout>.size)
+            let audioOut = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 2,
+                AVChannelLayoutKey: layout,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+            ])
             let audioIn = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVNumberOfChannelsKey: min(max(Int(channels), 1), 2),
+                AVNumberOfChannelsKey: 2,
+                AVChannelLayoutKey: layout,
                 AVSampleRateKey: 44_100,
                 AVEncoderBitRateKey: audioBitrate,
             ])

@@ -61,6 +61,19 @@ import Testing
     #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
 }
 
+/// Sound recorded with more than two channels (newer iPhones record four
+/// microphones) still comes out as stereo AAC.
+@Test(.timeLimit(.minutes(1))) func fourChannelSoundIsMixedToStereo() async throws {
+    let source = try await TestMovie.make(seconds: 1, channels: 4)
+    defer { try? FileManager.default.removeItem(at: source) }
+    let out = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
+    defer { try? FileManager.default.removeItem(at: out) }
+    let audio = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .audio).first)
+    let format = try #require(try await audio.load(.formatDescriptions).first)
+    #expect(CMFormatDescriptionGetMediaSubType(format) == kAudioFormatMPEG4AAC)
+    #expect(CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mChannelsPerFrame == 2)
+}
+
 /// A cap nothing can fit says so, rather than sending something the server refuses.
 @Test(.timeLimit(.minutes(1))) func aCapTooSmallIsSaid() async throws {
     let source = try await TestMovie.make(seconds: 1, sound: false)
@@ -74,7 +87,7 @@ import Testing
 /// turned upright by the track's transform, 30 a second, moving detail, and
 /// optionally a tone and a location.
 enum TestMovie {
-    static func make(seconds: Int, sound: Bool = true) async throws -> URL {
+    static func make(seconds: Int, sound: Bool = true, channels: UInt32 = 1) async throws -> URL {
         let dir = FileManager.default.temporaryDirectory
         let video = dir.appending(path: "test-video-\(UUID().uuidString).mov")
         try await writeFrames(to: video, seconds: seconds)
@@ -82,7 +95,7 @@ enum TestMovie {
         defer { try? FileManager.default.removeItem(at: video) }
         let tone = dir.appending(path: "test-tone-\(UUID().uuidString).m4a")
         defer { try? FileManager.default.removeItem(at: tone) }
-        try writeTone(to: tone, seconds: seconds)
+        try writeTone(to: tone, seconds: seconds, channels: channels)
 
         let mix = AVMutableComposition()
         let videoAsset = AVURLAsset(url: video), toneAsset = AVURLAsset(url: tone)
@@ -145,14 +158,19 @@ enum TestMovie {
         #expect(writer.status == .completed)
     }
 
-    private static func writeTone(to url: URL, seconds: Int) throws {
-        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
-        let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100, AVNumberOfChannelsKey: 1])
+    private static func writeTone(to url: URL, seconds: Int, channels: UInt32) throws {
+        let layout = try #require(AVAudioChannelLayout(layoutTag: channels == 4 ? kAudioChannelLayoutTag_Quadraphonic : kAudioChannelLayoutTag_Mono))
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channelLayout: layout)
+        var settings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100, AVNumberOfChannelsKey: channels]
+        if channels > 2 { settings[AVChannelLayoutKey] = Data(bytes: layout.layout, count: MemoryLayout<AudioChannelLayout>.size) }
+        let file = try AVAudioFile(forWriting: url, settings: settings)
         let frames = AVAudioFrameCount(44_100 * seconds)
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
         buffer.frameLength = frames
-        let samples = try #require(buffer.floatChannelData?[0])
-        for i in 0..<Int(frames) { samples[i] = 0.3 * sin(Float(i) * 2 * .pi * 440 / 44_100) }
+        for c in 0..<Int(channels) {
+            let samples = try #require(buffer.floatChannelData?[c])
+            for i in 0..<Int(frames) { samples[i] = 0.3 * sin(Float(i) * 2 * .pi * Float(440 + 110 * c) / 44_100) }
+        }
         try file.write(from: buffer)
     }
 }

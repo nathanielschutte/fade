@@ -4,9 +4,12 @@ import SwiftUI
 
 /// The camera, done the iOS way (AVFoundation), as the web app's camera does
 /// it: tap for a photo, hold for a video (with sound, up to the server's
-/// limit), pinch to zoom (back to 1× for each new capture), and flip, the
-/// front camera's photo mirrored as the preview shows it. Everything here runs
-/// on the camera's own queue, as AVFoundation asks; the screen only calls in.
+/// limit), zoom (back to 1× for each new capture), and flip, the front
+/// camera's photo mirrored as the preview shows it. Zoom is in the Camera
+/// app's terms (1× the main camera, 0.5× the ultra wide), on the phone's
+/// real lenses where it has them: the back camera is the multi-camera device
+/// that switches lenses itself as the zoom passes each one. Everything here
+/// runs on the camera's own queue, as AVFoundation asks; the screen only calls in.
 final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureDelegate, AVCaptureFileOutputRecordingDelegate {
     enum Problem: LocalizedError {
         case noCamera, denied, failed
@@ -28,6 +31,32 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     private var facing: AVCaptureDevice.Position = .back
     private var photoDone: CheckedContinuation<Data, any Error>?
     private var movieDone: CheckedContinuation<URL, any Error>?
+    /// Shown zoom = the device's zoom factor × this (0.5 on a camera whose
+    /// factor 1 is the ultra wide). Only touched on `queue`.
+    private var multiplier: CGFloat = 1
+    /// A recording that turned out to be a tap: thrown away when it ends.
+    private var discarding = false
+
+    /// The zoom a camera offers, as the Camera app shows it.
+    struct Lenses: Equatable, Sendable {
+        /// The lens buttons: 0.5 (ultra wide), 1, 2, and the telephoto's (3 or 5), as the phone has them.
+        var presets: [CGFloat] = [1]
+        var min: CGFloat = 1
+        var max: CGFloat = 1
+
+        /// From a device's numbers: `multiplier` (shown = factor × it), where
+        /// it switches lenses (`switchOvers`, in its own factors), and its range.
+        static func of(multiplier: CGFloat, switchOvers: [CGFloat], minFactor: CGFloat, maxFactor: CGFloat) -> Lenses {
+            let lowest = minFactor * multiplier, highest = Swift.min(maxFactor * multiplier, 15)
+            var presets: [CGFloat] = [1]
+            if lowest < 0.99 { presets.append((lowest * 10).rounded() / 10) }  // the ultra wide
+            if highest >= 2 { presets.append(2) }  // the main camera's 2× (a crop of its sensor on newer phones)
+            for at in switchOvers.map({ ($0 * multiplier * 10).rounded() / 10 }) where at > 2.01 && at <= highest {
+                presets.append(at)  // a telephoto
+            }
+            return Lenses(presets: Array(Set(presets)).sorted(), min: Swift.min(lowest, 1), max: Swift.max(highest, 1))
+        }
+    }
 
     static func allowed(_ type: AVMediaType) async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: type) {
@@ -37,15 +66,16 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
-    /// Opens the camera (asking the first time). Throws why it can't.
-    func start() async throws {
+    /// Opens the camera (asking the first time), at 1×. Throws why it can't.
+    func start() async throws -> Lenses {
         guard await Self.allowed(.video) else { throw Problem.denied }
         let withSound = await Self.allowed(.audio)  // without it, videos have no sound (the web says so too)
-        try await run { [self] in
+        return try await run { [self] in
             session.beginConfiguration()
+            let lenses: Lenses
             do {
                 session.sessionPreset = .high
-                try use(facing)
+                lenses = try use(facing)
                 if withSound, microphone == nil, let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
                    session.canAddInput(input) {
                     session.addInput(input)
@@ -62,6 +92,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             // starting inside beginConfiguration/commitConfiguration (the
             // frozen black camera on a phone, 2026-10-30).
             if !session.isRunning { session.startRunning() }
+            return lenses
         }
     }
 
@@ -69,20 +100,27 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         queue.async { [self] in if session.isRunning { session.stopRunning() } }
     }
 
-    /// The other camera, front or back.
-    func flip() async throws {
+    /// The other camera, front or back, at 1×.
+    func flip() async throws -> Lenses {
         try await run { [self] in
             session.beginConfiguration()
             defer { session.commitConfiguration() }
-            try use(facing == .back ? .front : .back)
+            return try use(facing == .back ? .front : .back)
         }
     }
 
-    /// Zoom, 1× and up to what the camera allows (at most 10×).
-    func zoom(_ factor: CGFloat) {
+    /// Zoom as shown (1× the main camera), within what the camera allows.
+    /// `smoothly` glides there, as the lens buttons do; otherwise it follows a finger.
+    func zoom(_ shown: CGFloat, smoothly: Bool = false) {
         queue.async { [self] in
             guard let device = input?.device, (try? device.lockForConfiguration()) != nil else { return }
-            device.videoZoomFactor = min(max(1, factor), min(device.activeFormat.videoMaxZoomFactor, 10))
+            let factor = min(max(shown / multiplier, device.minAvailableVideoZoomFactor), min(device.maxAvailableVideoZoomFactor, 15 / multiplier))
+            if smoothly {
+                device.ramp(toVideoZoomFactor: factor, withRate: 8)
+            } else {
+                device.cancelVideoZoomRamp()
+                device.videoZoomFactor = factor
+            }
             device.unlockForConfiguration()
         }
     }
@@ -151,10 +189,30 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         return try await VideoEncoder.mp4(recorded, maxBytes: maxBytes, seconds: seconds)
     }
 
+    /// Stops a recording that was really a tap (D11) and throws it away.
+    func discardRecording() {
+        queue.async { [self] in
+            if movie.isRecording {
+                discarding = true
+                movie.stopRecording()
+            } else if let pending = pendingMovie {
+                pendingMovie = nil
+                try? FileManager.default.removeItem(at: pending)
+            }
+        }
+    }
+
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo url: URL, from connections: [AVCaptureConnection], error: (any Error)?) {
         // Reaching the time limit "fails" with the file complete: that's a finished video.
         let finished = (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? (error == nil)
-        queue.async { [self] in finishMovie(finished ? url : nil, finished ? nil : Problem.failed) }
+        queue.async { [self] in
+            if discarding {
+                discarding = false
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
+            finishMovie(finished ? url : nil, finished ? nil : Problem.failed)
+        }
     }
 
     private var pendingMovie: URL?
@@ -168,8 +226,19 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
-    private func use(_ position: AVCaptureDevice.Position) throws {
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else { throw Problem.noCamera }
+    /// The cameras to try, best first: on the back, the multi-camera devices
+    /// (they switch between the real lenses as the zoom changes); on the front, one camera.
+    private static func camera(_ position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        let types: [AVCaptureDevice.DeviceType] = position == .back
+            ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
+            : [.builtInTrueDepthCamera, .builtInWideAngleCamera]
+        let found = AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: position).devices
+        return types.lazy.compactMap { type in found.first { $0.deviceType == type } }.first
+    }
+
+    /// Switches to the camera facing `position`, at 1×, and says what zoom it offers.
+    private func use(_ position: AVCaptureDevice.Position) throws -> Lenses {
+        guard let device = Self.camera(position) else { throw Problem.noCamera }
         let new = try AVCaptureDeviceInput(device: device)
         if let input { session.removeInput(input) }
         guard session.canAddInput(new) else {
@@ -179,12 +248,29 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         session.addInput(new)
         input = new
         facing = position
+        multiplier = Self.multiplier(of: device)
+        let lenses = Lenses.of(multiplier: multiplier, switchOvers: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) },
+                               minFactor: device.minAvailableVideoZoomFactor, maxFactor: device.maxAvailableVideoZoomFactor)
+        if (try? device.lockForConfiguration()) != nil {
+            device.videoZoomFactor = min(max(1 / multiplier, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+            device.unlockForConfiguration()
+        }
+        return lenses
     }
 
-    private func run(_ work: @escaping @Sendable () throws -> Void) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    /// Shown zoom = factor × this. iOS 18 says; before, a camera with an
+    /// ultra wide starts there, and the main camera begins at its first switch-over.
+    private static func multiplier(of device: AVCaptureDevice) -> CGFloat {
+        if #available(iOS 18, *) { return device.displayVideoZoomFactorMultiplier }
+        guard device.constituentDevices.contains(where: { $0.deviceType == .builtInUltraWideCamera }),
+              let first = device.virtualDeviceSwitchOverVideoZoomFactors.first?.doubleValue, first > 0 else { return 1 }
+        return 1 / CGFloat(first)
+    }
+
+    private func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, any Error>) in
             queue.async {
-                do { try work(); continuation.resume() } catch { continuation.resume(throwing: error) }
+                do { continuation.resume(returning: try work()) } catch { continuation.resume(throwing: error) }
             }
         }
     }
@@ -209,7 +295,7 @@ struct CameraPreview: UIViewRepresentable {
     func updateUIView(_ view: Preview, context: Context) {}
 }
 
-/// Something captured, for the send sheet.
+/// Something captured.
 enum Captured: Identifiable {
     case photo(UIImage)
     case video(URL)
@@ -221,83 +307,216 @@ enum Captured: Identifiable {
     }
 }
 
-/// The camera screen: the preview, a shutter (tap for a photo, hold for a
-/// video), flip, and close. What's captured goes to the send sheet.
+/// A capture ready to go: the photo as drawn on, its caption, and where the
+/// caption sits (0 top, 1 bottom; recipients see it there, X33).
+struct ReadyToSend {
+    let media: Captured
+    let caption: String
+    let y: Double
+}
+
+/// What the camera's Send does.
+enum CameraSend {
+    /// Straight to one chat ("Send to Ben"), from that chat's camera.
+    case chat(String, (ReadyToSend) async throws -> Void)
+    /// To chats picked on the next screen, from the Camera tab; `done` says where it went.
+    case pick([ChatRow], (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+}
+
+/// The camera screen. Live: the preview, a shutter (tap for a photo, hold for
+/// a video and slide up to zoom it), the lens buttons and pinch, flip, a photo
+/// from the library, and close. After a capture it stays here, the photo
+/// frozen in place or the video looping (Nate, 2026-10-30: no separate
+/// screen), with a caption, the pen (photos), retake, and Send.
 struct CameraScreen: View {
     @Environment(\.dismiss) private var dismiss
     let maxSeconds: Int
     let maxBytes: Int
+    let send: CameraSend
     /// What the close button does: in the Camera tab, back to Chats; otherwise it's dismissed.
     var close: (() -> Void)?
-    let captured: (Captured) -> Void
     @State private var camera = CameraSession()
+    @State private var lenses = CameraSession.Lenses()
     @State private var problem: String?
     @State private var recording = false
     @State private var recordStart: Date?
     @State private var zoom: CGFloat = 1
     @State private var pinchFrom: CGFloat = 1
     @State private var picked: PhotosPickerItem?
+    // The press on the shutter: when it began, where, and the zoom then (for sliding up).
+    @State private var pressAt: Date?
+    @State private var pressY: CGFloat = 0
+    @State private var zoomAtPress: CGFloat = 1
+    @State private var holdTask: Task<Void, Never>?
+    // After a capture.
+    @State private var shot: Captured?
+    @State private var caption = ""
+    @State private var captionY = 0.75
+    @State private var editingCaption = false
+    @FocusState private var captionFocused: Bool
+    @State private var strokes: [Stroke] = []
+    @State private var penOn = false
+    @State private var shownSize: CGSize = .zero
+    @State private var sending = false
+    /// Why the last send didn't go, by the Send button.
+    @State private var sendProblem: String?
+    @State private var choosing = false
+    @State private var prepared: ReadyToSend?
+
+    init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil) {
+        self.maxSeconds = maxSeconds
+        self.maxBytes = maxBytes
+        self.send = send
+        self.close = close
+        _shot = State(initialValue: start)
+    }
+
+    /// Sliding a held finger up this far zooms in by 1×, as on the web (`ZOOM_SLIDE_PX`).
+    static let slidePerZoom: CGFloat = 110
+    /// Shorter than this, a press is a tap: a photo. Decided by the touch's own
+    /// times, not by when the hold timer ran (D11).
+    static let holdSeconds = 0.4
+
+    static func isTap(from: Date, to: Date) -> Bool { to.timeIntervalSince(from) < holdSeconds }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            CameraPreview(session: camera.session).ignoresSafeArea()
-                .gesture(MagnifyGesture()
-                    .onChanged { value in zoom = max(1, pinchFrom * value.magnification); camera.zoom(zoom) }
-                    .onEnded { _ in pinchFrom = zoom })
-            if let problem {
-                Text(problem).foregroundStyle(.white).multilineTextAlignment(.center).padding()
-                    .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12)).padding()
-            }
-            VStack {
-                HStack {
-                    Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Image(systemName: "xmark").font(.title2).padding() }
-                        .accessibilityLabel("Close")
-                    Spacer()
-                    if zoom > 1.05 { Text(String(format: "%.1f×", zoom)).font(.callout.bold()).padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(.black.opacity(0.5), in: Capsule()) }
-                    Spacer()
-                    Button { Task { try? await camera.flip(); zoom = 1; pinchFrom = 1 } } label: {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title2).padding()
-                    }
-                    .accessibilityLabel("Switch cameras")
-                }
-                .foregroundStyle(.white)
-                Spacer()
-                ZStack {
-                    shutter
-                    HStack {
-                        // A photo from the library instead (what the camera's messages offer).
-                        PhotosPicker(selection: $picked, matching: .images) {
-                            Image(systemName: "photo.on.rectangle").font(.title2).foregroundStyle(.white).padding()
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                CameraPreview(session: camera.session).ignoresSafeArea()
+                    .gesture(MagnifyGesture()
+                        .onChanged { value in
+                            guard shot == nil, !recording else { return }  // pinch is for photos; videos zoom by sliding up
+                            setZoom(pinchFrom * value.magnification)
                         }
-                        .accessibilityLabel("Choose a photo")
-                        Spacer()
-                    }
-                    .padding(.horizontal, 24)
-                }
-                .padding(.bottom, 30)
-            }
-        }
-        .statusBarHidden()
-        .task {
-            do { try await camera.start() } catch { problem = error.localizedDescription }
-        }
-        .onDisappear { camera.stop() }
-        .onChange(of: picked) { _, item in
-            guard let item else { return }
-            Task {
-                defer { picked = nil }
-                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                    captured(.photo(image))
+                        .onEnded { _ in pinchFrom = zoom })
+                if let shot {
+                    review(shot)
                 } else {
-                    problem = "Couldn't open that photo."
+                    live
+                }
+                if let problem, shot == nil {  // the camera's; a capture on screen isn't covered by it
+                    Text(problem).foregroundStyle(.white).multilineTextAlignment(.center).padding()
+                        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12)).padding()
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
+            .statusBarHidden()
+            .task {
+                do {
+                    lenses = try await camera.start()
+                    zoom = 1
+                    pinchFrom = 1
+                } catch { problem = error.localizedDescription }
+            }
+            .onDisappear { camera.stop() }  // also while choosing who to send to
+            .onChange(of: picked) { _, item in
+                guard let item else { return }
+                Task {
+                    defer { picked = nil }
+                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                        captured(.photo(image))
+                    } else {
+                        problem = "Couldn't open that photo."
+                    }
+                }
+            }
+            .navigationDestination(isPresented: $choosing) {
+                if case .pick(let chats, let go, let done) = send, let prepared {
+                    SendToScreen(ready: prepared, chats: chats, send: go) { words in
+                        retake()
+                        done(words)
+                    }
+                }
+            }
+        }
+        .onDisappear { discardShot() }
+    }
+
+    // ---------- live ----------
+
+    private var live: some View {
+        VStack {
+            HStack {
+                Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Image(systemName: "xmark").font(.title2).padding() }
+                    .accessibilityLabel("Close")
+                Spacer()
+                Button {
+                    Task {
+                        if let flipped = try? await camera.flip() { lenses = flipped }
+                        zoom = 1
+                        pinchFrom = 1
+                    }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title2).padding()
+                }
+                .accessibilityLabel("Switch cameras")
+                .disabled(recording)
+            }
+            .foregroundStyle(.white)
+            Spacer()
+            lensButtons.padding(.bottom, 12)
+            ZStack {
+                shutter
+                HStack {
+                    // A photo from the library instead (what the camera's messages offer).
+                    PhotosPicker(selection: $picked, matching: .images) {
+                        Image(systemName: "photo.on.rectangle").font(.title2).foregroundStyle(.white).padding()
+                    }
+                    .accessibilityLabel("Choose a photo")
+                    .opacity(recording ? 0 : 1)
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+            }
+            .padding(.bottom, 30)
         }
     }
 
-    /// Tap for a photo; hold (half a second) to record, let go to stop.
+    /// The Camera app's lens buttons (.5, 1×, 2, 5, as the phone has them): the
+    /// one in use shows the exact zoom; tapping one glides there.
+    @ViewBuilder private var lensButtons: some View {
+        if lenses.presets.count > 1 {
+            let current = lenses.presets.last { $0 <= zoom + 0.01 } ?? lenses.presets[0]
+            HStack(spacing: 10) {
+                ForEach(lenses.presets, id: \.self) { preset in
+                    let on = preset == current
+                    Button {
+                        zoom = preset
+                        pinchFrom = preset
+                        camera.zoom(preset, smoothly: true)
+                    } label: {
+                        Text(on ? Self.zoomWords(zoom) + "×" : Self.zoomWords(preset))
+                            .font(.system(size: on ? 13 : 11, weight: .bold))
+                            .foregroundStyle(on ? Color.yellow : .white)
+                            .frame(width: on ? 38 : 30, height: on ? 38 : 30)
+                            .background(.black.opacity(0.45), in: Circle())
+                    }
+                    .accessibilityLabel("\(Self.zoomWords(preset)) times zoom")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            .padding(6)
+            .background(.black.opacity(0.25), in: Capsule())
+        } else if zoom > 1.05 {
+            Text(Self.zoomWords(zoom) + "×").font(.callout.bold()).foregroundStyle(.white)
+                .padding(.horizontal, 10).padding(.vertical, 4).background(.black.opacity(0.5), in: Capsule())
+        }
+    }
+
+    /// "1", "2.4", ".5", as the Camera app writes zoom.
+    static func zoomWords(_ z: CGFloat) -> String {
+        let r = (z * 10).rounded() / 10
+        let text = r == r.rounded() ? String(Int(r)) : String(format: "%.1f", r)
+        return text.hasPrefix("0.") ? String(text.dropFirst()) : text
+    }
+
+    private func setZoom(_ wanted: CGFloat) {
+        zoom = min(max(wanted, lenses.min), lenses.max)
+        camera.zoom(zoom)
+    }
+
+    /// Tap for a photo; hold to record, sliding up to zoom; let go to stop.
     private var shutter: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { context in
             let progress = recordStart.map { min(1, context.date.timeIntervalSince($0) / Double(maxSeconds)) } ?? 0
@@ -309,116 +528,329 @@ struct CameraScreen: View {
             }
         }
         .contentShape(Circle())
-        .onTapGesture { photo() }
-        .onLongPressGesture(minimumDuration: 0.4, perform: {}, onPressingChanged: { pressing in
-            if pressing { holdStarted() } else { stopRecording() }  // a quick tap cancels the hold before it starts
-        })
+        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { pressMoved($0) }
+            .onEnded { pressEnded($0) })
         .accessibilityLabel(recording ? "Recording. Let go to stop" : "Take photo. Hold for a video")
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction { photo() }
         .sensoryFeedback(.impact(weight: .medium), trigger: recording)
         .disabled(problem != nil)
     }
 
+    private func pressMoved(_ press: DragGesture.Value) {
+        guard pressAt != nil else {
+            pressAt = press.time
+            pressY = press.location.y
+            holdTask = Task {
+                try? await Task.sleep(for: .seconds(Self.holdSeconds))
+                guard !Task.isCancelled else { return }
+                startRecording()
+                // At the limit it stops by itself, even while still held (as on the web).
+                try? await Task.sleep(for: .seconds(Double(maxSeconds) + 0.2))
+                if !Task.isCancelled, recording { stopRecording() }
+            }
+            return
+        }
+        if recording {  // slide up to zoom in, as on the web; back down to where it started
+            setZoom(zoomAtPress + max(0, pressY - press.location.y) / Self.slidePerZoom)
+        }
+    }
+
+    private func pressEnded(_ press: DragGesture.Value) {
+        let began = pressAt ?? press.time
+        pressAt = nil
+        holdTask?.cancel()
+        if Self.isTap(from: began, to: press.time) {
+            if recording {  // the hold timer ran first, but the finger was up in time: a photo
+                recording = false
+                recordStart = nil
+                camera.discardRecording()
+            }
+            photo()
+        } else {
+            stopRecording()
+        }
+    }
+
+    private func startRecording() {
+        recording = true
+        recordStart = .now
+        zoomAtPress = zoom
+        camera.startRecording(seconds: maxSeconds)
+    }
+
     private func photo() {
-        guard !recording else { return }
+        guard !recording, shot == nil else { return }
         Task {
             do {
                 let data = try await camera.takePhoto()
                 guard let image = UIImage(data: data) else { throw CameraSession.Problem.failed }
-                reset()
                 captured(.photo(image))
             } catch { problem = error.localizedDescription }
         }
     }
 
-    @State private var holdTask: Task<Void, Never>?
-
-    private func holdStarted() {
-        // A hold, not a tap: decided by time held (as the web, D11), so a quick tap stays a photo.
-        holdTask = Task {
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            recording = true
-            recordStart = .now
-            camera.startRecording(seconds: maxSeconds)
-            // At the limit it stops by itself, even while still held (as on the web).
-            try? await Task.sleep(for: .seconds(Double(maxSeconds) + 0.2))
-            if recording { stopRecording() }
-        }
-    }
-
     private func stopRecording() {
-        guard recording else { holdTask?.cancel(); return }
+        guard recording else { return }
         recording = false
         recordStart = nil
         Task {
             do {
-                let url = try await camera.stopRecording(maxBytes: maxBytes, seconds: maxSeconds)
-                reset()
-                captured(.video(url))
+                captured(.video(try await camera.stopRecording(maxBytes: maxBytes, seconds: maxSeconds)))
             } catch { problem = error.localizedDescription }
         }
     }
 
-    /// Each new capture starts at 1× (Nate, 2026-10-29).
-    private func reset() {
+    /// Shown in place; the next capture starts at 1× (Nate, 2026-10-29).
+    private func captured(_ media: Captured) {
+        shot = media
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
     }
+
+    // ---------- after a capture ----------
+
+    private func review(_ media: Captured) -> some View {
+        ZStack {
+            GeometryReader { geo in
+                ZStack {
+                    switch media {
+                    case .photo(let image):
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height).clipped()
+                        PenLayer(image: image.size, box: geo.size, strokes: $strokes, drawing: penOn)
+                    case .video(let url):
+                        LoopingPlayer(url: url)
+                    }
+                    captionBar(in: geo.size)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { at in
+                    // A tap on the picture starts a caption there (as on the web).
+                    guard !penOn, !editingCaption, caption.isEmpty else { return }
+                    startCaption(at: at.y / max(geo.size.height, 1))
+                }
+                .onAppear { shownSize = geo.size }
+                .onChange(of: geo.size) { _, size in shownSize = size }
+            }
+            .ignoresSafeArea()
+            reviewControls(media)
+        }
+    }
+
+    @ViewBuilder private func captionBar(in size: CGSize) -> some View {
+        if editingCaption || !caption.isEmpty {
+            Group {
+                if editingCaption {
+                    TextField("", text: $caption)
+                        .focused($captionFocused)
+                        .submitLabel(.done)
+                        .onSubmit { editingCaption = false }
+                        .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
+                } else {
+                    Text(caption)
+                }
+            }
+            .font(.body).foregroundStyle(.white).multilineTextAlignment(.center)
+            .padding(.vertical, 8).padding(.horizontal, 16)
+            .frame(width: size.width)
+            .background(.black.opacity(0.55))
+            // Above the keyboard while it's written; then where it was put.
+            .position(x: size.width / 2, y: size.height * (editingCaption ? min(captionY, 0.42) : captionY))
+            .gesture(DragGesture().onChanged { drag in
+                guard !editingCaption else { return }
+                captionY = min(max(drag.location.y / max(size.height, 1), 0.08), 0.92)
+            })
+            .onTapGesture { startCaption(at: captionY) }
+            .accessibilityLabel(caption.isEmpty ? "Caption" : "Caption: \(caption)")
+            .accessibilityHint("Drag up or down to place it")
+            .accessibilityAdjustableAction { direction in
+                captionY = min(max(captionY + (direction == .increment ? 0.1 : -0.1), 0.08), 0.92)
+            }
+        }
+    }
+
+    private func startCaption(at y: Double) {
+        captionY = min(max(y, 0.08), 0.92)
+        editingCaption = true
+        captionFocused = true
+    }
+
+    private func reviewControls(_ media: Captured) -> some View {
+        VStack {
+            HStack(alignment: .top) {
+                Button { retake() } label: { Image(systemName: "xmark").font(.title2).padding() }
+                    .accessibilityLabel("Retake")
+                Spacer()
+                VStack(spacing: 18) {
+                    if penOn {
+                        Button("Done") { penOn = false }.font(.headline)
+                        Button { _ = strokes.popLast() } label: { Image(systemName: "arrow.uturn.backward").font(.title3) }
+                            .accessibilityLabel("Undo").disabled(strokes.isEmpty)
+                    } else {
+                        Button { startCaption(at: caption.isEmpty ? 0.75 : captionY) } label: {
+                            Image(systemName: "textformat").font(.title2)
+                        }
+                        .accessibilityLabel("Caption")
+                        if case .photo = media {
+                            Button { editingCaption = false; penOn = true } label: { Image(systemName: "pencil.tip").font(.title2) }
+                                .accessibilityLabel("Draw")
+                        }
+                    }
+                }
+                .padding()
+            }
+            .foregroundStyle(.white)
+            .shadow(radius: 3)
+            Spacer()
+            if !penOn && !editingCaption {
+                if let sendProblem {
+                    Text(sendProblem).font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
+                        .padding(10).background(.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 20)
+                }
+                HStack {
+                    Spacer()
+                    Button { sendTapped() } label: {
+                        HStack(spacing: 8) {
+                            if sending { ProgressView().tint(.black) }
+                            Text(sendWords).font(.headline).lineLimit(1)
+                            Image(systemName: "paperplane.fill")
+                        }
+                        .padding(.horizontal, 18).padding(.vertical, 12)
+                        .foregroundStyle(.black)
+                        .background(.white, in: Capsule())
+                    }
+                    .disabled(sending)
+                }
+                .padding(.horizontal, 20).padding(.bottom, 30)
+            }
+        }
+    }
+
+    private var sendWords: String {
+        switch send {
+        case .chat(let name, _): "Send to \(name)"
+        case .pick: "Send to…"
+        }
+    }
+
+    private func sendTapped() {
+        guard let shot else { return }
+        editingCaption = false
+        var media = shot
+        if case .photo(let image) = shot, !strokes.isEmpty {
+            media = .photo(Pen.flatten(image, strokes: strokes))
+        }
+        let ready = ReadyToSend(media: media, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines), y: captionY)
+        switch send {
+        case .chat(_, let go):
+            sending = true
+            sendProblem = nil
+            Task {
+                defer { sending = false }
+                do {
+                    try await go(ready)
+                    retake()
+                } catch {
+                    Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
+                    sendProblem = error.localizedDescription
+                }
+            }
+        case .pick:
+            prepared = ready
+            choosing = true
+        }
+    }
+
+    /// Back to the live camera; a recorded video's file goes.
+    private func retake() {
+        discardShot()
+        caption = ""
+        captionY = 0.75
+        editingCaption = false
+        strokes = []
+        penOn = false
+        prepared = nil
+        sendProblem = nil
+    }
+
+    private func discardShot() {
+        if case .video(let url) = shot { try? FileManager.default.removeItem(at: url) }
+        shot = nil
+    }
 }
 
-/// Where a pic or video from the camera button goes: any of your chats, as
-/// many as you like, with one caption (the web app's camera tab, Send to…).
-/// Chats that can't take one (a changed key, a turned-off account, Team
-/// Napsack) aren't offered.
-struct SendToSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let media: Captured
+/// A recorded video filling the screen, looping with its sound, until it's sent or retaken.
+struct LoopingPlayer: UIViewRepresentable {
+    let url: URL
+
+    final class PlayerView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        var looper: AVPlayerLooper?
+    }
+
+    func makeUIView(context: Context) -> PlayerView {
+        let view = PlayerView()
+        let player = AVQueuePlayer()
+        view.looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspectFill
+        player.play()
+        return view
+    }
+
+    func updateUIView(_ view: PlayerView, context: Context) {}
+
+    static func dismantleUIView(_ view: PlayerView, coordinator: ()) {
+        view.playerLayer.player?.pause()
+        view.looper = nil
+    }
+}
+
+/// Who a pic or video from the Camera tab goes to: any of your chats, as many
+/// as you like (the web app's camera tab, Send to…). Back returns to the
+/// camera, the pic still there. Chats that can't take one (a changed key, a
+/// turned-off account, Team Napsack) aren't offered.
+struct SendToScreen: View {
+    let ready: ReadyToSend
     let chats: [ChatRow]
     /// Sends to one chat; throws what went wrong there.
-    let send: (ChatRow.Kind, String, Double) async throws -> Void
+    let send: (ChatRow.Kind, ReadyToSend) async throws -> Void
     let done: (String) -> Void
     @State private var picked: [ChatRow.Kind] = []
-    @State private var caption = ""
-    @State private var y = 0.8
     @State private var search = ""
     @State private var sending = false
     @State private var problem: String?
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                CaptionedPreview(media: media, caption: caption, y: $y)
-                    .frame(maxHeight: 220).padding(.horizontal)
-                TextField("Add a caption", text: $caption, axis: .vertical).lineLimit(1...3)
-                    .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
-                    .padding(10).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12)).padding()
-                List(shown) { row in
-                    Button {
-                        if let i = picked.firstIndex(of: row.kind) { picked.remove(at: i) } else { picked.append(row.kind) }
-                    } label: {
-                        HStack {
-                            Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name, size: 32)
-                            Text(row.name).foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
-                        }
+        List {
+            if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
+            ForEach(shown) { row in
+                Button {
+                    if let i = picked.firstIndex(of: row.kind) { picked.remove(at: i) } else { picked.append(row.kind) }
+                } label: {
+                    HStack {
+                        Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name, size: 32)
+                        Text(row.name).foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
                     }
-                    .accessibilityAddTraits(picked.contains(row.kind) ? .isSelected : [])
                 }
-                .listStyle(.plain)
-                .searchable(text: $search, prompt: "Search")
-                if let problem { Text(problem).foregroundStyle(.red).font(.footnote).padding() }
+                .accessibilityAddTraits(picked.contains(row.kind) ? .isSelected : [])
             }
-            .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
-                }
+        }
+        .listStyle(.plain)
+        .searchable(text: $search, prompt: "Search")
+        .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
             }
         }
     }
@@ -438,58 +870,19 @@ struct SendToSheet: View {
             for kind in picked {
                 let name = chats.first { $0.kind == kind }?.name ?? "a chat"
                 do {
-                    try await send(kind, caption, y)
+                    try await send(kind, ready)
                     sent.append(name)
                 } catch {
                     failed.append((name, error.localizedDescription))
                 }
             }
             if failed.isEmpty {
-                let word = if case .video = media { "Video" } else { "Pic" }
+                let word = if case .video = ready.media { "Video" } else { "Pic" }
                 done(sent.count == 1 ? "\(word) sent to \(sent[0])." : "\(word) sent to \(sent[0]) and \(sent.count - 1) more.")
-                dismiss()
             } else {
                 picked = picked.filter { kind in failed.contains { $0.0 == chats.first { $0.kind == kind }?.name } }
                 problem = failed.map { "Not sent to \($0.0): \($0.1)" }.joined(separator: "\n")
             }
         }
-    }
-}
-
-/// The photo or video being sent, with its caption where it'll sit: drag it
-/// up or down (0 top, 1 bottom), as on the web (X33). Recipients see it there.
-struct CaptionedPreview: View {
-    let media: Captured
-    let caption: String
-    @Binding var y: Double
-
-    var body: some View {
-        Group {
-            switch media {
-            case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
-            case .video(let url): LoopingVideo(url: url)
-            }
-        }
-        .overlay {
-            if !caption.isEmpty {
-                GeometryReader { geo in
-                    Text(caption).font(.callout).foregroundStyle(.white).multilineTextAlignment(.center)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                        .padding(.horizontal, 12)
-                        .frame(width: geo.size.width)
-                        .position(x: geo.size.width / 2, y: geo.size.height * y)
-                        .gesture(DragGesture().onChanged { value in
-                            y = min(max(value.location.y / max(geo.size.height, 1), 0.08), 0.92)
-                        })
-                        .accessibilityLabel("Caption: \(caption)")
-                        .accessibilityHint("Drag up or down to place it")
-                        .accessibilityAdjustableAction { direction in
-                            y = min(max(y + (direction == .increment ? 0.1 : -0.1), 0.08), 0.92)
-                        }
-                }
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

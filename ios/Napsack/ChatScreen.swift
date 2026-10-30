@@ -31,10 +31,11 @@ struct ChatScreen: View {
     @State private var viewing: PicToOpen?
     /// An edited text whose versions are showing.
     @State private var versionsOf: Bubble?
-    /// A photo from the library, picked and waiting for its caption.
+    /// A photo from the library: it opens in the camera, ready for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
-    @State private var photoToSend: PhotoToSend?
     @State private var usingCamera = false
+    /// What the camera opens on: a picked photo, or nothing (the live camera).
+    @State private var cameraStart: Captured?
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
@@ -373,32 +374,30 @@ struct ChatScreen: View {
                     failure = "Couldn't open that photo."
                     return
                 }
-                photoToSend = PhotoToSend(media: .photo(image))
+                cameraStart = .photo(image)
+                usingCamera = true
             }
         }
         .sheet(item: $versionsOf) { bubble in
             EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
         }
-        .fullScreenCover(isPresented: $usingCamera) {
-            CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20) { captured in
-                usingCamera = false
-                photoToSend = PhotoToSend(media: captured)
-            }
+        .fullScreenCover(isPresented: $usingCamera, onDismiss: { cameraStart = nil }) {
+            // Captured, it stays on the camera until it's sent here (Nate, 2026-10-30).
+            CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
+                         send: .chat(conversation.title) { ready in
+                             switch ready.media {
+                             case .photo(let image):
+                                 guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                                 try await conversation.sendPhoto(jpeg, caption: ready.caption, y: ready.y, maxBytes: limits?.snapMaxBytes)
+                             case .video(let url):
+                                 try await conversation.sendVideo(try Data(contentsOf: url), caption: ready.caption, y: ready.y, maxBytes: limits?.videoMaxBytes)
+                             }
+                             tapped += 1
+                             usingCamera = false
+                         },
+                         start: cameraStart)
         }
         .task { limits = try? await Server(AppInfo.server).config() }
-        .sheet(item: $photoToSend) { photo in
-            PhotoSendSheet(photo: photo, to: conversation.title) { caption, y, drawn in
-                switch photo.media {
-                case .photo(let image):
-                    guard let jpeg = Conversation.photoJPEG(drawn ?? image) else { throw SendError.tooLarge }
-                    try await conversation.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
-                case .video(let url):
-                    defer { try? FileManager.default.removeItem(at: url) }
-                    try await conversation.sendVideo(try Data(contentsOf: url), caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
-                }
-                tapped += 1
-            }
-        }
         .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
             // This one, then the others still waiting after it.
             let waiting = conversation.bubbles.compactMap(\.opening)
@@ -680,70 +679,6 @@ struct IdentifiedPic: Identifiable {
     }
 }
 
-/// A photo (from the library or the camera) or a video, before it's sent.
-struct PhotoToSend: Identifiable {
-    let id = UUID()
-    let media: Captured
-}
-
-/// The photo, a caption (sealed in with it, so only they see it), and Send.
-struct PhotoSendSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let photo: PhotoToSend
-    let to: String
-    /// Sends it: the caption, where it sits, and the photo as drawn on (if it was).
-    let send: (String, Double, UIImage?) async throws -> Void
-    @State private var caption = ""
-    @State private var y = 0.8
-    /// The photo as drawn on (PencilKit), if it was.
-    @State private var drawn: UIImage?
-    @State private var drawing = false
-    @State private var sending = false
-    @State private var problem: String?
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                CaptionedPreview(media: drawn.map(Captured.photo) ?? photo.media, caption: caption, y: $y)
-                    .frame(maxHeight: .infinity)
-                if case .photo(let image) = photo.media {
-                    Button("Draw", systemImage: "pencil.tip") { drawing = true }
-                        .fullScreenCover(isPresented: $drawing) { DrawOnPhoto(image: drawn ?? image) { drawn = $0 } }
-                }
-                TextField("Add a caption", text: $caption, axis: .vertical)
-                    .lineLimit(1...3)
-                    .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
-            }
-            .padding()
-            .navigationTitle("To \(to)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(sending ? "Sending…" : "Send") {
-                        sending = true
-                        problem = nil
-                        Task {
-                            defer { sending = false }
-                            do {
-                                try await send(caption, y, drawn)
-                                dismiss()
-                            } catch {
-                                Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
-                                problem = error.localizedDescription
-                            }
-                        }
-                    }
-                    .disabled(sending)
-                }
-            }
-        }
-    }
-}
-
 /// Every version of an edited text, oldest first, each opened on the phone (app.js, `showEdits`).
 struct EditsSheet: View {
     let bubble: Bubble
@@ -769,24 +704,5 @@ struct EditsSheet: View {
                 do { versions = try await conversation.versions(of: bubble) } catch { problem = error.localizedDescription }
             }
         }
-    }
-}
-
-/// A recorded video, playing on a loop (muted) while its caption's written.
-struct LoopingVideo: View {
-    let url: URL
-    @State private var player: AVQueuePlayer?
-    @State private var looper: AVPlayerLooper?
-
-    var body: some View {
-        VideoPlayer(player: player)
-            .onAppear {
-                let queue = AVQueuePlayer()
-                queue.isMuted = true
-                looper = AVPlayerLooper(player: queue, templateItem: AVPlayerItem(url: url))
-                player = queue
-                queue.play()
-            }
-            .onDisappear { player?.pause() }
     }
 }
