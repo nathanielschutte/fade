@@ -42,11 +42,14 @@ import UIKit
     /// A one-time invite link just made: its address is shown only now.
     private(set) var madeInvite: String?
 
-    private let account: Account
+    let account: Account
     private let transport: any Transport
+    /// Friends' names as you call them (for the friend map); the chat list's.
+    var friendNames: [Int64: String] = [:]
 
-    init(account: Account, transport: any Transport = NetworkTransport()) {
+    init(account: Account, friendNames: [Int64: String] = [:], transport: any Transport = NetworkTransport()) {
         self.account = account
+        self.friendNames = friendNames
         self.transport = transport
     }
 
@@ -200,6 +203,13 @@ struct FriendsScreen: View {
                 Text("Add a friend")
             } footer: {
                 Text(note ?? "Show them your code, send them your link, or type their username.")
+            }
+            Section {
+                NavigationLink {
+                    FriendMapScreen(model: FriendMapModel(account: model.account), names: model.friendNames, me: model.account.user.username)
+                } label: {
+                    Label("See your friend map", systemImage: "point.3.connected.trianglepath.dotted")
+                }
             }
             if !model.requests.outgoing.isEmpty {
                 Section("Waiting on them") {
