@@ -74,13 +74,14 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | Done | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only; tapping one on a profile or group info shows it big |
-| Your profile: display name, picture, birthday | Nate | Done | 2026-10-30: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
+| Your profile: display name, picture, birthday | Nate | In progress | Nate (2026-10-30): the birthday is one field, unset until you set it, saved as soon as it's set (no Birthday switch, no Save button), with a "Show the year" switch, saved the same way; tap your own picture to see it big, as on the web. Before: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
 | A friend's profile: nickname, streak, friends in common, past usernames, safety code | Nate | Done | 2026-10-30: tap the chat's title (with their picture): name, @username and past usernames, a nickname only you see, friends since, birthday, streak, texts and pics together, friends in common, safety code, and Unfriend (confirmed; the chat stays) |
 
 ## 7. The chat list, native
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
+| A tab bar: Chats, Camera, Profile | Nate | In progress | Nate (2026-10-30): as the web app on a phone, the iOS way (a `TabView`): Chats, the Camera, and Profile (your profile and settings), instead of the camera and person buttons at the top of the chat list |
 | Swipe actions: hide, mute, favorite; leave a group | Nate | Done | 2026-10-30: swipe right to favorite, left to hide (or leave a group, confirmed) and mute (8 hours, a week, or until turned back on); the same in a long-press menu; Undo for hiding and muting, in the web's words |
 | Hidden chats: their own section, and undo | Nate | Done | 2026-10-30: "Hidden chats (n)" at the end of the list, Unhide by swiping |
 | Search chat names and recent messages | Nate | In progress | 2026-10-30: `.searchable`, by name and newest message. The web also searches each chat's newest 200 messages; that waits for the encrypted cache (section 3) |
@@ -105,19 +106,19 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Create a group: a name and friends | Nate | Done | 2026-10-30: the compose button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
+| Create a group: a name and friends | Nate | Done | Nate (2026-10-30): its button looks like "new message"; a group icon instead (custom artwork comes later). 2026-10-30: the button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
 | Group info: rename, picture, members (add, remove, leave), the privacy notice | Nate | Done | 2026-10-30: tap the group's title: the notice in the web's words, its picture (`PhotosPicker`, made small here, cleaned by the server), rename (any member), members (the owner removes by swiping; who can, said plainly), add friends, Leave (confirmed) |
 
 ## 10. Pics and videos
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | Nate | In progress | 2026-10-30: the camera button beside the message box: full screen, tap for a photo, hold for a video with sound (stops at the server's limit, made MP4), pinch to zoom (1× again for each capture), flip, the front camera's photo mirrored; then the caption sheet. Built and tested up to the capture on the Simulator (which has no camera); **needs trying on a phone**. Not yet: flip while recording, mute |
+| The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | Nate | In progress | 2026-10-30: the camera button beside the message box: full screen, tap for a photo, hold for a video with sound (stops at the server's limit, made MP4), pinch to zoom (1× again for each capture), flip, the front camera's photo mirrored; then the caption sheet. Built and tested up to the capture on the Simulator (which has no camera); **needs trying on a phone**. Nate (2026-10-30): on the phone it freezes on a black screen, with an uncaught exception: fixing. Not yet: flip while recording, mute |
 | Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | Done | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and moves on at its end; tapping goes to the next waiting one, then closes. Each counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted after). Formats 1, 2, 4, 6 and groups' 3, 5, 7 |
 | Sending a pic or video to several friends and groups at once, with a caption placed anywhere | Nate | Done | 2026-10-30: from a chat (the camera or library button) or from the chat list's camera button: Send to… any number of chats (search; not those that can't take one), one caption, each sealed for its chat; what fails is said and stays picked. Formats 6 and 4 direct, 7 and 5 in groups. The caption shows on the preview and drags up or down; recipients see it there |
 | Drawing and stickers on a pic | Nate | In progress | 2026-10-30: Draw on a photo's send preview: PencilKit's pens, colors, and undo (a finger or Apple Pencil), flattened into the photo before it's sealed. Not yet: stickers |
 | Picking a photo from the library | Nate | Done | 2026-10-30: the photo button beside the message box (`PhotosPicker`, no access to the whole library), a caption (up to 200, sealed in), Send. Made at most 1280 on its longest side, JPEG, as the web does |
-| Video at 720p, H.264 High, about 2.5 Mbit/s (our own `AVAssetWriter` encode) | – | Needs decision | 2026-10-30: today's MediumQuality export makes 568×320 video, far below the web's 720p; fix before TestFlight. Measured in [video-quality.md](../design/video-quality.md) (option 1, with F20's other choices) |
+| Video at 720p, H.264 High, about 3 Mbit/s (our own `AVAssetWriter` encode) | Nate | In progress | Nate (2026-10-30): go ([F20](plan.md#f20-better-video-quality)). Today's MediumQuality export makes 568×320 video, far below the web's 720p. The bitrate is worked out from the server's limits (`video_max_bytes`, `video_max_seconds`), so it fits whatever cap the server has; measured in [video-quality.md](../design/video-quality.md) |
 | Double-tap a chat in the list to open the camera for it | – | Decided | 2026-10-30: not on iOS: a tap already opens the chat, and both the chat's camera button and the list's camera (Send to…) are one tap away. Nate can overrule |
 
 ## 11. Notifications

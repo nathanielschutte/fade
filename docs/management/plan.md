@@ -23,11 +23,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 3 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): which to try. 2026-10-30: measured, with a suggestion: [video-quality.md](../design/video-quality.md) |
-| 4 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 5 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 6 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [Better video quality](#f20-better-video-quality) | Features | Nate | In progress | Nate (2026-10-30): step 1 of [video-quality.md](../design/video-quality.md), the cap to 6 MB, 10 seconds kept |
+| 3 | [The data volume to 5 GB](#i11-the-data-volume-to-5-gb) | Infrastructure | Nate | In progress | Nate (2026-10-30), with the bigger video cap |
+| 4 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 5 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -320,6 +321,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F20. Better video quality
 - Nate (2026-10-29): the video quality is pretty low. Fine for now; list the options (formats, resolutions, sizes). Metadata is always stripped from videos, as from pictures.
+- **Decided (Nate, 2026-10-30):** step 1 of the suggestion (the iOS app encodes 720p H.264 High itself; the web asks for High first and draws its canvas more smoothly), the cap raised to 6 MB, 10 seconds kept, and the data volume grown to 5 GB ([I11](#i11-the-data-volume-to-5-gb)). Both apps aim for about 3 Mbit/s, worked out from `video_max_bytes` and `video_max_seconds` in `/api/config`, so the cap can change without a client release.
 - **Researched and measured (2026-10-30): [video-quality.md](../design/video-quality.md)**, with the decisions it needs. Found: the iOS app's export makes 568×320 video (fix before TestFlight); the web uses half its 4 MB and asks for Baseline. Suggested: iOS encodes 720p H.264 High itself, the web asks for High and smooths the canvas, then possibly a 6 MB cap at about 3 Mbit/s. The list below is the first sketch; the document supersedes it.
 - Today (0.36.0, X28): drawn through a canvas at 30 frames a second, longest edge 1280 px, 1.5 Mbit/s of video and 64 kbit/s of sound; H.264 (Baseline) and AAC in MP4 where the browser records it (Safari, newer Chrome), otherwise VP8 and Opus in WebM. At most 4 MB and 10 seconds (`FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS`).
 - Metadata: re-recording on the device means a video carries nothing from the camera's own file (no location, device, or time). The server can't strip anything, since videos are end-to-end encrypted, so every option below keeps the re-encode on the device.
@@ -670,6 +672,10 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Nate (2026-10-29): "api.napsack.io is a good idea for mobile clients (not same origin as desktop), that way we can route through that and version and update real hostnames accordingly."
 - Design: [api-host.md](../design/api-host.md). An `api.` name that serves only `/api/*` (the socket too), from the same server; release builds of the apps use it, so the site can move without breaking installed apps. Staging gets `api.staging.napsack.io`.
 - Needs decision: when to apply it. The Caddy part is the boot script, so it replaces the instance (staging first; ideally with the next change that replaces it anyway). Needed before the first TestFlight build.
+
+#### I11. The data volume to 5 GB
+- Nate (2026-10-30): grow the data volume from 1 GB to 5 GB, with the video cap going to 6 MB ([F20](#f20-better-video-quality)); about $0.32 a month more.
+- An in-place change to `aws_ebs_volume.data` (`data_volume_gb`), then the filesystem grown on the running instance (`xfs_growfs`, online). The Rule 1 procedure: a snapshot first, read the plan, row counts before and after. Staging stays at 1 GB.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
