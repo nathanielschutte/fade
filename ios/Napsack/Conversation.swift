@@ -159,7 +159,7 @@ enum SendError: LocalizedError {
 
     static let page = 50
 
-    let chat: Chat
+    private(set) var chat: Chat
     private let account: Account
     private var reader: Reader
     private let transport: any Transport
@@ -225,6 +225,13 @@ enum SendError: LocalizedError {
     var safetyCode: String? {
         guard let friend else { return nil }
         return E2E.safetyCode(account.publicKey, friend.publicKey)
+    }
+
+    /// Opened again: the chat list's newest view of who's who, their keys, and this chat.
+    /// What's shown and what's still being sent carry on.
+    func update(_ chat: Chat, reader: Reader) {
+        self.chat = chat
+        self.reader = reader
     }
 
     /// Why nothing can be sent here, when it's the chat itself (the web app's words).
