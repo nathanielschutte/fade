@@ -18,6 +18,8 @@ struct ChatScreen: View {
     @State private var replyingTo: Bubble?
     @State private var editing: Bubble?
     @State private var failure: String?
+    /// The message being held: its reactions and actions show over the chat.
+    @State private var held: Bubble?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -45,7 +47,8 @@ struct ChatScreen: View {
                     }
                     BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
                         .id(bubble.id)
-                        .contextMenu { actions(bubble) }
+                        .onLongPressGesture(minimumDuration: 0.35) { if holdable(bubble) { held = bubble } }
+                        .accessibilityAction(named: "Message actions") { if holdable(bubble) { held = bubble } }
                 }
                 ForEach(conversation.outbox) { item in
                     OutgoingView(item: item, quote: item.replyTo.map(quote),
@@ -84,6 +87,18 @@ struct ChatScreen: View {
                     .padding(.horizontal, 12).padding(.top, 4).background(.bar)
             }
         }
+        .overlay {
+            if let held {
+                MessageActions(bubble: held, quote: held.replyTo.map(quote),
+                               reactions: conversation.canSend && held.repliable ? E2E.reactions : [],
+                               actions: actions(held),
+                               react: { react(held, $0) },
+                               dismiss: { self.held = nil })
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: held?.id)
+        .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -169,33 +184,34 @@ struct ChatScreen: View {
     }
 
     /// What a long press offers (app.js, the message actions).
-    @ViewBuilder private func actions(_ bubble: Bubble) -> some View {
+    /// What holding a message offers (app.js, the message actions): one row
+    /// of reactions above it, and Reply, Copy, Edit below.
+    private func actions(_ bubble: Bubble) -> [MessageActions.Action] {
+        var actions: [MessageActions.Action] = []
         if conversation.canSend, bubble.repliable {
-            ForEach([E2E.reactions.prefix(3), E2E.reactions.suffix(3)], id: \.self) { row in
-                ControlGroup {
-                    ForEach(Array(row), id: \.self) { emoji in
-                        Button(bubble.myReaction == emoji ? "\(emoji)✓" : emoji) { react(bubble, emoji) }
-                            .accessibilityLabel(bubble.myReaction == emoji ? "Take back \(emoji)" : "React \(emoji)")
-                    }
-                }
-            }
-            Button("Reply", systemImage: "arrowshape.turn.up.left") {
+            actions.append(.init(title: "Reply", icon: "arrowshape.turn.up.left") {
                 editing = nil
                 replyingTo = bubble
                 composing = true
-            }
+            })
         }
         if case .text(let text, _) = bubble.content {
-            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+            actions.append(.init(title: "Copy", icon: "doc.on.doc") { UIPasteboard.general.string = text })
         }
         if conversation.canSend, bubble.canEdit, case .text(let text, _) = bubble.content {
-            Button("Edit", systemImage: "pencil") {
+            actions.append(.init(title: "Edit", icon: "pencil") {
                 replyingTo = nil
                 editing = bubble
                 draft = text
                 composing = true
-            }
+            })
         }
+        return actions
+    }
+
+    /// Whether holding this message offers anything at all.
+    private func holdable(_ bubble: Bubble) -> Bool {
+        (conversation.canSend && bubble.repliable) || !actions(bubble).isEmpty
     }
 
     private func react(_ bubble: Bubble, _ emoji: String) {
@@ -346,7 +362,7 @@ struct BubbleView: View {
         switch bubble.content {
         case .text(let text, let edited):
             VStack(alignment: .leading, spacing: 2) {
-                Text(text).textSelection(.enabled)
+                Text(text)
                 if edited { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
             }
         case .media(let words):
@@ -355,6 +371,87 @@ struct BubbleView: View {
             Label(words, systemImage: "lock.trianglebadge.exclamationmark").font(.callout).foregroundStyle(.secondary)
         case .event:
             EmptyView()
+        }
+    }
+}
+
+/// A held message, lifted over the dimmed chat: one row of reactions above it
+/// (scrolling sideways when they don't all fit), its actions below. Tapping
+/// anywhere else puts it down.
+struct MessageActions: View {
+    struct Action: Identifiable {
+        let title: String
+        let icon: String
+        let run: () -> Void
+        var id: String { title }
+    }
+
+    let bubble: Bubble
+    let quote: String?
+    let reactions: [String]
+    let actions: [Action]
+    let react: (String) -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+                .onTapGesture(perform: dismiss)
+                .accessibilityAddTraits(.isButton).accessibilityLabel("Close")
+            VStack(alignment: bubble.mine ? .trailing : .leading, spacing: 10) {
+                if !reactions.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(reactions, id: \.self) { emoji in
+                                let mine = bubble.myReaction == emoji
+                                Button {
+                                    react(emoji)
+                                    dismiss()
+                                } label: {
+                                    // About the size of the message's words, a touch bigger.
+                                    Text(emoji).font(.system(size: 26))
+                                        .frame(width: 44, height: 44)
+                                        .background(mine ? Color.accentColor.opacity(0.35) : .clear, in: Circle())
+                                }
+                                .accessibilityLabel(mine ? "Take back \(emoji)" : "React \(emoji)")
+                            }
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
+                    .frame(maxWidth: min(CGFloat(reactions.count) * 48 + 16, 340))  // hugs them; scrolls past that
+                }
+                BubbleView(bubble: bubble, quote: quote, showTime: false)
+                    .allowsHitTesting(false)
+                    .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+                if !actions.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(actions) { action in
+                            Button {
+                                dismiss()
+                                action.run()
+                            } label: {
+                                HStack {
+                                    Text(action.title)
+                                    Spacer()
+                                    Image(systemName: action.icon)
+                                }
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            if action.id != actions.last?.id { Divider() }
+                        }
+                    }
+                    .frame(width: 230)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
         }
     }
 }
