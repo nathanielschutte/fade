@@ -69,6 +69,12 @@ if [ "$LIVE" = 1 ]; then
        TEST_RUNNER_NAPSACK_TEST_ADMIN="$NAPSACK_ADMIN")
 fi
 
+section "release build, without the vectors"
+REL="$TMP/release"
+xcodebuild build -project ios/Napsack.xcodeproj -scheme Napsack -configuration Release -destination "generic/platform=iOS Simulator" \
+  -derivedDataPath "$REL" CODE_SIGNING_ALLOWED=NO -quiet >"$TMP/release.log" 2>&1 || { tail -20 "$TMP/release.log"; exit 1; }
+if ls "$REL/Build/Products/Release-iphonesimulator/Napsack.app" | grep -q vectors; then echo "a release build carries the test vectors"; exit 1; fi
+
 section "app tests on the $SIMULATOR Simulator$([ "$LIVE" = 1 ] && echo ", live against $NAPSACK_URL")"
 LOG="$TMP/ios-test.log"
 ARGS=(test -project ios/Napsack.xcodeproj -scheme Napsack -destination "platform=iOS Simulator,name=$SIMULATOR")

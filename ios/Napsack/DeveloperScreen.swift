@@ -37,6 +37,7 @@ struct DeveloperScreen: View {
                 LabeledContent("Version", value: "\(AppInfo.version) (\(AppInfo.build))")
                 LabeledContent("Says it is", value: AppInfo.clientHeader)
             }
+            #if DEBUG  // release builds don't carry the vectors (App.xcconfig)
             Section {
                 NavigationLink("Run every encryption check") { VectorScreen() }
             } header: {
@@ -44,6 +45,7 @@ struct DeveloperScreen: View {
             } footer: {
                 Text("Every format against the pinned vectors, on this phone, and how long a sign-in's key derivation takes here. Nothing is sent anywhere.")
             }
+            #endif
         }
         .navigationTitle("Developer")
     }

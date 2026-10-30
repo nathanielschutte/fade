@@ -34,3 +34,9 @@ jobs:
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
           -destination "platform=iOS Simulator,name=iPhone 17"
+      # What ships: a Release build compiles, and carries no test data (App.xcconfig).
+      - name: Release build, without the vectors
+        run: |
+          xcodebuild build -project ios/Napsack.xcodeproj -scheme Napsack -configuration Release \
+            -destination "generic/platform=iOS Simulator" -derivedDataPath build/release CODE_SIGNING_ALLOWED=NO -quiet
+          ! ls build/release/Build/Products/Release-iphonesimulator/Napsack.app | grep -q vectors

@@ -18,3 +18,7 @@ ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
 ENABLE_PREVIEWS = YES
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 SWIFT_EMIT_LOC_STRINGS = YES
+
+// Release builds carry no test data: the pinned vectors (and their scripts) are for
+// the encryption checks, which only development builds run (plan-ios.md, section 12).
+EXCLUDED_SOURCE_FILE_NAMES[config=Release] = vectors
