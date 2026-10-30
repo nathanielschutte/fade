@@ -10,6 +10,9 @@ INFOPLIST_KEY_UILaunchScreen_Generation = YES
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
 // Asked the first time the app reaches a development server on your network.
 INFOPLIST_KEY_NSLocalNetworkUsageDescription = napsack connects to a development server on your network.
+INFOPLIST_KEY_NSCameraUsageDescription = napsack uses the camera for the pics and videos you send.
+INFOPLIST_KEY_NSMicrophoneUsageDescription = napsack records sound with the videos you send.
+INFOPLIST_KEY_NSPhotoLibraryUsageDescription = napsack sends photos you choose.
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
 ENABLE_PREVIEWS = YES

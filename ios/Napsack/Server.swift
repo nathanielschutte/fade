@@ -32,6 +32,10 @@ struct ServerConfig: Decodable, Equatable {
     /// Servers before 0.42.0 don't say.
     let groupMessageFormats: [Int]?
     let minClientVersions: [String: String]
+    /// The largest pic and video the server takes (sealed), and the longest video.
+    let snapMaxBytes: Int?
+    let videoMaxBytes: Int?
+    let videoMaxSeconds: Int?
 
     static func decode(_ data: Data) throws -> ServerConfig {
         try Server.decoder.decode(ServerConfig.self, from: data)

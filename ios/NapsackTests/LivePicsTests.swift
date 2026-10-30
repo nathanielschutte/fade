@@ -114,5 +114,17 @@ struct LivePicsTests {
         try await group.loadNewest()
         let inGroup = try await group.open(try #require(group.bubbles.compactMap(\.opening).first))
         #expect(inGroup.image == jpeg && inGroup.caption == "for the group")
+
+        // A video from the app (as the camera makes one: MP4), to Ben and to the group.
+        let clip = Data((0..<4096).map { UInt8(($0 * 7) % 256) })
+        try await toBen.sendVideo(clip, caption: "listen")
+        try await toGroup.sendVideo(clip, caption: "")
+        try await fromAna.catchUp()
+        let video = try await fromAna.open(try #require(fromAna.bubbles.compactMap(\.opening).first { $0.isVideo }))
+        #expect(try Data(contentsOf: try #require(video.video)) == clip && video.caption == "listen")
+        try await group.catchUp()
+        let groupVideo = try await group.open(try #require(group.bubbles.compactMap(\.opening).first { $0.isVideo }))
+        #expect(try Data(contentsOf: try #require(groupVideo.video)) == clip)
+        await #expect(throws: SendError.self) { try await toBen.sendPhoto(jpeg, caption: "", maxBytes: 100) }  // over the server's limit
     }
 }
