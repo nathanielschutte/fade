@@ -21,6 +21,8 @@ enum LiveEvent: Sendable {
     case presence(user: Int64, active: Bool, lastSeenAt: Int64?)
     /// A friend read your texts up to `at`.
     case read(by: Int64, at: Int64)
+    /// Someone in a group read up to a message.
+    case groupRead(group: Int64, user: Int64, last: Int64)
     /// The Admins' announcement changed: a new one, or none.
     case announcement(ChatList.Announcement?)
     /// Typing, presence, announcements: not shown in the app yet.
@@ -51,7 +53,10 @@ enum LiveEvent: Sendable {
             return (try? Server.decoder.decode(Presence.self, from: data)).map { .presence(user: $0.userId, active: $0.active, lastSeenAt: $0.lastSeenAt) } ?? .other
         case "read":
             return (try? Server.decoder.decode(Read.self, from: data)).map { .read(by: $0.by, at: $0.at) } ?? .listChanged
-        case "friends_changed", "groups_changed", "group_read": return .listChanged
+        case "group_read":
+            struct GroupRead: Decodable { let groupId: Int64; let userId: Int64; let lastReadId: Int64 }
+            return (try? Server.decoder.decode(GroupRead.self, from: data)).map { .groupRead(group: $0.groupId, user: $0.userId, last: $0.lastReadId) } ?? .listChanged
+        case "friends_changed", "groups_changed": return .listChanged
         default: return .other
         }
     }

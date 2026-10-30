@@ -292,6 +292,9 @@ struct ChatListScreen: View {
         case .read(let by, let at):
             chat?.read(by: by, at: at)
             list.reloadSoon(account)
+        case .groupRead(let group, let user, let last):
+            chat?.groupRead(group: group, user: user, last: last)
+            list.reloadSoon(account)
         case .announcement(let a):
             list.announce(a)
         case .listChanged:

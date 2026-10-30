@@ -93,8 +93,8 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Typing… and "Active now" (with the setting to share it) | Nate | Done | 2026-10-30: "Ana is typing…" above the composer (gone 4 seconds after the last word, or when the message comes; sent at most every 2 seconds), "Active now" or "Active 5m ago" under the friend's name, and "Share when I'm active" in Settings (mutual) |
-| "Seen" on your texts, "Seen by" in groups | Nate | In progress | 2026-10-30: "Seen" under your newest direct text once read, live. "Seen by" in groups isn't yet |
-| Every version of an edited text | – | Planned | `GET .../edits` |
+| "Seen" on your texts, "Seen by" in groups | Nate | Done | 2026-10-30: "Seen" under your newest direct text once read; "Seen by Ana and Ben" (or "everyone", or "…and 3 others") under a group's newest message; both live |
+| Every version of an edited text | Nate | Done | 2026-10-30: hold an edited text › Edits: as sent, then each edit with its time, each opened on the phone |
 | Tapping a reaction under a message adds yours | Nate | Done | 2026-10-30: reactions under a message are counted and tappable; yours is marked, and tapping it takes it back |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
