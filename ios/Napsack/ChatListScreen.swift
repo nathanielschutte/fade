@@ -11,6 +11,10 @@ struct ChatListScreen: View {
     let account: Account
     @State private var list = ChatList()
     @State private var live: Live
+    /// Every chat opened this session, kept: a text that hasn't gone yet keeps
+    /// trying after you leave its chat, and coming back is instant. (Only in
+    /// memory, and gone with the session.)
+    @State private var opened = OpenedChats()
 
     init(account: Account) {
         self.account = account
@@ -89,10 +93,22 @@ struct ChatListScreen: View {
 
     private func conversation(_ kind: ChatRow.Kind) -> Conversation? {
         guard let reader = list.reader else { return nil }
+        let chat: Conversation.Chat
         switch kind {
-        case .friend(let id): return reader.friends[id].map { Conversation(.friend($0), account: account, reader: reader, pinBook: list.pinBook) }
-        case .group(let id): return list.groups[id].map { Conversation(.group($0), account: account, reader: reader, pinBook: list.pinBook) }
+        case .friend(let id):
+            guard let friend = reader.friends[id] else { return nil }
+            chat = .friend(friend)
+        case .group(let id):
+            guard let group = list.groups[id] else { return nil }
+            chat = .group(group)
         }
+        if let kept = opened.chats[kind] {
+            kept.update(chat, reader: reader)
+            return kept
+        }
+        let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook)
+        opened.chats[kind] = new
+        return new
     }
 
     /// What the live connection says: the open chat takes its own messages,
@@ -105,7 +121,9 @@ struct ChatListScreen: View {
         case .ready:
             // Anything could have happened while disconnected.
             list.reloadSoon(account)
-            if let chat { Task { try? await chat.catchUp(); await chat.flush() } }
+            if let chat { Task { try? await chat.catchUp() } }
+            // Texts that couldn't go for the connection's sake, in every chat, go now.
+            for kept in opened.chats.values { Task { await kept.flush() } }
         case .message(let m):
             if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
             list.reloadSoon(account)
@@ -203,4 +221,10 @@ struct ReconnectingNote: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 6).background(.bar)
         }
     }
+}
+
+/// The chats opened this session (ChatListScreen). A plain holder, not
+/// observed: opening a chat shouldn't redraw the list.
+final class OpenedChats {
+    var chats: [ChatRow.Kind: Conversation] = [:]
 }

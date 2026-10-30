@@ -94,6 +94,29 @@ import Testing
         await chat.flush()  // reconnected
         #expect(chat.outbox.isEmpty && chat.bubbles.count == 1)
     }
+
+    /// A chat opened again (ChatListScreen keeps them): what's shown and what
+    /// hasn't gone yet carry on, with the list's newest view of the friend.
+    @Test func aChatOpenedAgainKeepsItsUnsentTexts() async throws {
+        let online = Counter()
+        let server = StubServer { request in
+            if request.httpMethod == "GET" { return (200, json([])) }
+            if online.value == 0 { throw URLError(.networkConnectionLost) }
+            return (200, SendingTests.stored(request))
+        }
+        let chat = Conversation(.friend(alice), account: account, reader: reader, transport: server)
+        chat.retryDelays = [.zero, .zero]
+        try await chat.loadNewest()
+        await chat.send("still there?", replyTo: nil)
+        let off = try list.direct(list.message(from: 7, to: 3, read: true), extra: ["deactivated": true])
+        chat.update(.friend(off), reader: reader)  // left, then opened again after the list reloaded
+        #expect(chat.outbox.count == 1 && chat.loaded)
+        #expect(chat.blockedNote?.hasPrefix("This account has been turned off") == true)
+        chat.update(.friend(alice), reader: reader)
+        online.add()
+        await chat.flush()  // reconnected, while the chat isn't even on screen
+        #expect(chat.outbox.isEmpty && chat.bubbles.count == 1)
+    }
 }
 
 /// Answers in turn; the last one again once they run out.

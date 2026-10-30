@@ -129,7 +129,8 @@ struct ChatScreen: View {
         .onDisappear { if live.openChat === conversation { live.openChat = nil } }
         .task {
             do {
-                try await conversation.loadNewest()
+                // Opened before this session: just what's new since.
+                if conversation.loaded { try await conversation.catchUp() } else { try await conversation.loadNewest() }
                 await conversation.markRead()
             } catch {
                 Reporter.shared.report(.warn, "loading a chat failed", Reporter.fields(error))
