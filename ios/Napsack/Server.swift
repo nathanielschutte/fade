@@ -178,6 +178,26 @@ struct Server: Sendable {
         try Self.decoder.decode([GroupSummary].self, from: await send("groups", token: token))
     }
 
+    /// A direct chat's messages, oldest first: the newest `limit`, or those before `before`.
+    func directMessages(friend: Int64, before: Int64?, limit: Int, token: String) async throws -> [DirectMessage] {
+        try Self.decoder.decode([DirectMessage].self, from: await send(
+            "chats/\(friend)/messages", token: token, query: Self.page(before: before, limit: limit)))
+    }
+
+    func groupMessages(group: Int64, before: Int64?, limit: Int, token: String) async throws -> [GroupMessage] {
+        try Self.decoder.decode([GroupMessage].self, from: await send(
+            "groups/\(group)/messages", token: token, query: Self.page(before: before, limit: limit)))
+    }
+
+    static func page(before: Int64?, limit: Int) -> [URLQueryItem] {
+        [URLQueryItem(name: "limit", value: String(limit))] + (before.map { [URLQueryItem(name: "before", value: String($0))] } ?? [])
+    }
+
+    /// `chats/{friend}/read` or `groups/{id}/read`.
+    func markRead(path: String, token: String) async throws {
+        _ = try await send(path, method: "POST", token: token)
+    }
+
     /// Ends this session on the server (the token stops working).
     func logout(token: String) async throws {
         _ = try await send("auth/logout", method: "POST", token: token)
