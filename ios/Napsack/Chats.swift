@@ -21,6 +21,14 @@ struct DirectMessage: Decodable, Sendable, Equatable {
     let readAt: Int64?
     /// The newest edit of a text, sealed like it.
     let editCiphertext: String?
+    /// Encrypted like the texts, each bound to this message.
+    let reactions: [Reaction]?
+
+    struct Reaction: Decodable, Sendable, Equatable {
+        let senderId: Int64
+        let ciphertext: String
+        let createdAt: Int64
+    }
 }
 
 struct Friend: Decodable, Sendable, Identifiable, Equatable {
@@ -62,6 +70,15 @@ struct GroupMessage: Decodable, Sendable, Equatable {
     let format: Int
     let createdAt: Int64
     let pic: Pic?
+    /// Format 0's reply; format 3 carries its own inside the sealed text.
+    let replyTo: Int64?
+    /// Group reactions aren't encrypted (CLAUDE.md, Security; each group says so).
+    let reactions: [Reaction]?
+
+    struct Reaction: Decodable, Sendable, Equatable {
+        let userId: Int64
+        let emoji: String
+    }
     // Format 3 (group-encryption.md): the sealed content, and only my own wrap of its key.
     let clientId: String?
     let recipients: [Int64]?
@@ -150,15 +167,23 @@ struct Reader: Sendable {
 
     /// A direct text, decrypted (its newest edit if it has one), or nil if it can't be.
     func text(_ m: DirectMessage, with friend: Friend) -> String? {
-        guard [1, 2].contains(m.format), let ciphertext = m.ciphertext,
-              let key = try? E2E.pairKey(mine: identity, theirs: friend.publicKey, myId: me.id, theirId: friend.id),
+        body(m, with: friend)?.text.text
+    }
+
+    /// A direct text opened: what it says now (its newest edit), what it replies to, whether it was edited.
+    func body(_ m: DirectMessage, with friend: Friend) -> (text: E2E.Text, edited: Bool)? {
+        guard [1, 2].contains(m.format), let ciphertext = m.ciphertext, let key = pairKey(friend),
               let body = try? E2E.decryptAnyText(key, ciphertext, format: m.format, sender: m.senderId, recipient: m.recipientId)
         else { return nil }
         if let edit = m.editCiphertext,
            let edited = try? E2E.decryptEdit(key, edit, sender: m.senderId, recipient: m.recipientId, message: m.id) {
-            return edited
+            return (E2E.Text(text: edited, replyTo: body.replyTo), true)
         }
-        return body.text
+        return (body, false)
+    }
+
+    func pairKey(_ friend: Friend) -> SymmetricKey? {
+        try? E2E.pairKey(mine: identity, theirs: friend.publicKey, myId: me.id, theirId: friend.id)
     }
 
     // ---------- groups ----------
@@ -186,7 +211,11 @@ struct Reader: Sendable {
 
     /// A group text: format 0 as it is, format 3 opened with my wrap (and its newest edit).
     func groupText(_ m: GroupMessage) -> String? {
-        if m.format == 0 { return m.body }
+        groupBody(m)?.text.text
+    }
+
+    func groupBody(_ m: GroupMessage) -> (text: E2E.Text, edited: Bool)? {
+        if m.format == 0 { return (E2E.Text(text: m.body, replyTo: m.replyTo), false) }
         guard m.format == E2E.groupFormat, let content = m.content, let wrap = m.key, let senderKey = m.senderPublicKey,
               let bytes = try? E2E.fromB64(content),
               let wrapKey = try? E2E.groupWrapKey(mine: identity, theirs: senderKey, myId: me.id, theirId: m.senderId)
@@ -197,9 +226,11 @@ struct Reader: Sendable {
         if let editContent = m.editContent, let editKey = m.editKey, let editBytes = try? E2E.fromB64(editContent) {
             var edit = opening
             edit.clientId = m.editClientId ?? ""
-            if let edited = try? E2E.decryptGroupEdit(editBytes, wrap: editKey, message: m.id, edit) { return edited }
+            if let edited = try? E2E.decryptGroupEdit(editBytes, wrap: editKey, message: m.id, edit) {
+                return (E2E.Text(text: edited, replyTo: body.replyTo), true)
+            }
         }
-        return body.text
+        return (body, false)
     }
 
     func eventText(_ m: GroupMessage) -> String {
@@ -235,6 +266,9 @@ struct Reader: Sendable {
     private(set) var rows: [ChatRow] = []
     private(set) var loaded = false
     private(set) var problem: String?
+    /// What opening a chat needs: who's who, their keys, and the groups.
+    private(set) var reader: Reader?
+    private(set) var groups: [Int64: GroupSummary] = [:]
 
     var favorites: [ChatRow] { rows.filter { $0.favorite && !$0.hidden } }
     var others: [ChatRow] { rows.filter { !$0.favorite && !$0.hidden } }
@@ -249,6 +283,8 @@ struct Reader: Sendable {
             let identity = try account.identity()
             let reader = Reader(me: account.user, identity: identity, friends: Dictionary(uniqueKeysWithValues: f.map { ($0.id, $0) }))
             rows = await Task.detached(priority: .userInitiated) { reader.rows(friends: f, groups: g) }.value
+            self.reader = reader
+            self.groups = Dictionary(uniqueKeysWithValues: g.map { ($0.id, $0) })
             problem = nil
             loaded = true
         } catch {

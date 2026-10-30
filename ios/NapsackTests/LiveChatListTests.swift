@@ -65,5 +65,29 @@ struct LiveChatListTests {
         let group = try #require(list.rows.first { $0.kind == .group(created.id) })
         #expect(group.preview == "\(ana.user.username): the group, sealed in Swift")
         #expect(group.waiting == .text)
+
+        // Opening them: the group's history (from its start) and the direct chat, paged.
+        let reader = try #require(list.reader)
+        let groupChat = Conversation(.group(try #require(list.groups[created.id])), account: ben, reader: reader)
+        try await groupChat.loadNewest()
+        #expect(groupChat.bubbles.last?.content == .text("the group, sealed in Swift", edited: false))
+        #expect(groupChat.reachedStart)
+        for n in 1...55 {
+            let c = try E2E.encryptText2(key, "number \(n)", replyTo: nil, sender: ana.user.id, recipient: ben.user.id)
+            _ = try await server.send("chats/\(ben.user.id)/messages", method: "POST", token: ana.token, json: Text(ciphertext: c, format: 2))
+        }
+        let chat = Conversation(.friend(try #require(reader.friends[ana.user.id])), account: ben, reader: reader)
+        try await chat.loadNewest()
+        #expect(chat.bubbles.count == 50 && !chat.reachedStart)
+        #expect(chat.bubbles.last?.content == .text("number 55", edited: false))
+        try await chat.loadOlder()
+        #expect(chat.bubbles.count == 56 && chat.reachedStart)
+        #expect(chat.bubbles.first?.content == .text("hello from the iPhone 🌿", edited: false))
+
+        // Read: the list says so.
+        await chat.markRead()
+        await groupChat.markRead()
+        try await list.load(ben)
+        #expect(list.rows.allSatisfy { $0.waiting == nil })
     }
 }

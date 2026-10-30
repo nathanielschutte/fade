@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The chat list: friends and groups together, newest first, favorites on
-/// top, each row with its newest message (decrypted here). Pull to refresh.
-/// Opening a chat comes next (plan-ios.md).
+/// top, each row with its newest message (decrypted here). Pull to refresh;
+/// tapping a row opens the chat, and coming back refreshes the list.
 struct ChatListScreen: View {
     @Environment(Session.self) private var session
     let account: Account
@@ -35,6 +35,12 @@ struct ChatListScreen: View {
             .task { await load() }
             .navigationTitle("Chats")
             .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen() }
+            .navigationDestination(for: ChatRow.Kind.self) { kind in
+                if let conversation = conversation(kind) {
+                    ChatScreen(conversation: conversation)
+                        .onDisappear { Task { await load() } }  // reads and new messages since
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -55,7 +61,17 @@ struct ChatListScreen: View {
     }
 
     private func rows(_ rows: [ChatRow]) -> some View {
-        ForEach(rows) { ChatRowView(row: $0) }
+        ForEach(rows) { row in
+            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+        }
+    }
+
+    private func conversation(_ kind: ChatRow.Kind) -> Conversation? {
+        guard let reader = list.reader else { return nil }
+        switch kind {
+        case .friend(let id): return reader.friends[id].map { Conversation(.friend($0), account: account, reader: reader) }
+        case .group(let id): return list.groups[id].map { Conversation(.group($0), account: account, reader: reader) }
+        }
     }
 
     private func load() async {
