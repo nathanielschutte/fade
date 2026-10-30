@@ -24,7 +24,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 3 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): options listed; which to try |
+| 3 | [Better video quality](#f20-better-video-quality) | Features | – | Needs decision | Nate (2026-10-29): which to try. 2026-10-30: measured, with a suggestion: [video-quality.md](../design/video-quality.md) |
 | 4 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
 | 5 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 6 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
@@ -320,6 +320,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F20. Better video quality
 - Nate (2026-10-29): the video quality is pretty low. Fine for now; list the options (formats, resolutions, sizes). Metadata is always stripped from videos, as from pictures.
+- **Researched and measured (2026-10-30): [video-quality.md](../design/video-quality.md)**, with the decisions it needs. Found: the iOS app's export makes 568×320 video (fix before TestFlight); the web uses half its 4 MB and asks for Baseline. Suggested: iOS encodes 720p H.264 High itself, the web asks for High and smooths the canvas, then possibly a 6 MB cap at about 3 Mbit/s. The list below is the first sketch; the document supersedes it.
 - Today (0.36.0, X28): drawn through a canvas at 30 frames a second, longest edge 1280 px, 1.5 Mbit/s of video and 64 kbit/s of sound; H.264 (Baseline) and AAC in MP4 where the browser records it (Safari, newer Chrome), otherwise VP8 and Opus in WebM. At most 4 MB and 10 seconds (`FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS`).
 - Metadata: re-recording on the device means a video carries nothing from the camera's own file (no location, device, or time). The server can't strip anything, since videos are end-to-end encrypted, so every option below keeps the re-encode on the device.
 - Options, cheapest first:
