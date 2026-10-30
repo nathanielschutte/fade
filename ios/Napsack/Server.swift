@@ -88,8 +88,20 @@ protocol Transport: Sendable {
 }
 
 struct NetworkTransport: Transport {
+    /// The app's one connection to napsack: ephemeral, with no cache and no
+    /// cookies, so nothing of an account's requests is ever written to the
+    /// phone by the system (signing out has nothing of it to clear).
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
+    }()
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ServerError.unreachable }
         return (data, http)
     }

@@ -152,6 +152,33 @@ func body(_ request: URLRequest) -> [String: Any] {
         #expect(try store.load() == nil)
     }
 
+    /// Nothing of the account stays (CLAUDE.md, Security): no session, no
+    /// reports sent as it, nothing the system kept for its requests. Its pins
+    /// stay, as on the web: public keys only.
+    @Test func signingOutLeavesNothingOfTheAccount() async throws {
+        let store = MemoryStore(try keptAccount())
+        let meAnswer = json(me)
+        let server = StubServer { request in
+            request.url!.path == "/api/me" ? (200, meAnswer) : (204, Data())
+        }
+        let reporter = Reporter(transport: server)
+        let session = Session(transport: server, store: store, reporter: reporter)
+        await session.restore(defaultServer: "https://napsack.test")
+        #expect(reporter.signedIn)
+        let pins = MemoryPinStore()
+        var pinned = Pins()
+        _ = pinned.see(7, "a friend's public key")
+        try pins.save(pinned, account: 3)
+
+        await session.signOut()
+        #expect(try store.load() == nil && session.account == nil)
+        #expect(!reporter.signedIn)
+        // The system never kept the account's requests: no cache, no cookies.
+        let config = NetworkTransport.session.configuration
+        #expect(config.urlCache == nil && config.httpCookieStorage == nil && !config.httpShouldSetCookies)
+        #expect(pins.load(account: 3) == pinned)
+    }
+
     @Test func signingOutOfflineStillForgetsTheKeys() async throws {
         let store = MemoryStore(try keptAccount())
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: store)

@@ -261,6 +261,11 @@ enum SignInError: LocalizedError, Equatable {
         endLocally(notice: nil)
     }
 
+    /// Signing out leaves nothing of the account on the phone (CLAUDE.md,
+    /// Security): the account and its key go from the Keychain; the chats, the
+    /// socket, and open chats go with the signed-in screens (NapsackApp); the
+    /// system never kept its requests (NetworkTransport). Pins stay, per
+    /// account, as on the web: public keys, which open nothing.
     private func endLocally(notice: String?) {
         if notice != nil { reporter.report(.info, "session ended") }
         try? store.delete()

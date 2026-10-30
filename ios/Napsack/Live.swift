@@ -90,7 +90,7 @@ enum LiveEvent: Sendable {
         guard let url = Self.socketURL(account.server) else { return }
         var request = URLRequest(url: url)
         request.setValue(AppInfo.clientHeader, forHTTPHeaderField: "X-Napsack-Client")
-        let task = URLSession.shared.webSocketTask(with: request)
+        let task = NetworkTransport.session.webSocketTask(with: request)
         self.task = task
         task.resume()
         send(["type": "auth", "token": account.token], on: task)

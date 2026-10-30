@@ -19,6 +19,8 @@ struct NapsackApp: App {
                         SignInScreen()
                     case .signedIn(let account):
                         ChatListScreen(account: account)
+                            // A new session is a new screen: nothing of the last one carries over.
+                            .id(account.token)
                             .sheet(isPresented: .constant(session.recoveryKeyToShow != nil)) {
                                 RecoveryKeyScreen(key: session.recoveryKeyToShow ?? "") { session.recoveryKeyToShow = nil }
                             }

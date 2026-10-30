@@ -36,6 +36,9 @@ import Foundation
         self.transport = transport
     }
 
+    /// Whether reports go as an account.
+    var signedIn: Bool { token != nil }
+
     /// Who's signed in now, or only the server, while signed out.
     func use(server: String?, token: String?) {
         self.server = server
