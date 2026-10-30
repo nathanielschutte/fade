@@ -23,10 +23,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 3 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 4 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 5 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [One add-a-friend QR and link; invite links gone](#x39-one-add-a-friend-qr-and-link-invite-links-gone) | Experience/visual | Nate | In progress | Nate (2026-10-30) |
+| 3 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | Debug | Nate | Up next | Nate (2026-10-30), from the intake |
+| 4 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | – | Planned | Nate (2026-10-30), from the intake |
+| 6 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 8 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 9 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 10 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -336,6 +341,11 @@ Oldest first; newly shipped rows go at the bottom.
   7. **The iOS app** ([F1](#f1-ios-app)) records with AVFoundation (HEVC or H.264, at settings it chooses), which is where iPhones gain most.
 - Whatever is chosen: compare on real phones (an iPhone and an Android), and check sizes stay under the cap.
 
+#### F21. See who reacted
+- Nate (2026-10-30): tapping a reaction under a message shows who reacted with that emoji, and a summary of every emoji (who reacted with what). On phones, tap and hold is the only way to react (the desktop still reacts by clicking the message).
+- Direct chats: two people, so the list is you and them. Groups: reactions aren't end-to-end encrypted yet (the server has who and which emoji), so the list comes with the messages; once group reactions are encrypted (row 7's work), the list is worked out on each member's phone from what it decrypts.
+- Every client: the web (desktop and phone) and the iOS app.
+
 ### Debug
 
 #### D13. "Database is locked" under load (fixed)
@@ -388,6 +398,11 @@ Oldest first; newly shipped rows go at the bottom.
 - Requested (2026-10-21): the admin overview's "Online now" / "open connections" doesn't always look right; Nate saw 0 while he was online looking at it.
 - Found: the count itself was right (people with at least one live connection, and the connections), but the admin page held no connection of its own. Looking at /admin without the app open elsewhere (and on the Home Screen app, Admin replaces the app page) meant you weren't counted: 0 while plainly online. A phone app in the background also drops its connection (iOS suspends it), so it isn't counted until it's opened again; that part is expected.
 - Done (0.20.0): the admin page keeps its own live connection while it's showing, so looking at it counts as being online, and the tiles refresh once it's connected. It never claims to be on screen, so notifications still arrive. `test_admin.py` checks the tile reads 1 with only the admin page open (it read 0 before).
+
+#### D14. After an admin reset code, old messages stay unread and notify
+- Nate (2026-10-30): after someone signs in with an admin reset code (F2: a new key, history lost), they still get notifications for messages they can no longer decrypt, and their past messages show as unread forever, since they can never be opened.
+- Fix: using a reset code marks everything sent to them before it as read (and their unopened pics as opened? no: those stay for the sender's "opened" truth; to be decided in the change) and clears their notifications; messages sent with their old key afterwards (by friends who haven't seen the new key) are the safety-code warning's job.
+- Check a recovery key too: there, history still opens (the key is restored), so nothing should be marked.
 
 ### Experience/visual
 
@@ -461,6 +476,12 @@ Oldest first; newly shipped rows go at the bottom.
 - Where to look: the header title (`#chat-title`, filled for groups in `app.js` where a group opens; its ellipsis is in `style.css`, `.chat-title`). Something in the group header takes room the title needs, or the title's width is fixed before the name is in. Reproduce in a browser test at phone and desktop widths; the fix's test checks a short group name shows in full.
 - Fixed (0.43.0): the header's heading was only as wide as its content, and the title button's `max-width: 100%` resolved against that width less the title's own padding, so it came out a few pixels short of the name, whatever its length (the last two or three letters went to the ellipsis). The heading now takes the bar's free space. `test_group_title.py`: short names in full on a phone and a desktop, a long one still ends in an ellipsis without spilling off the screen. Direct chats had room only because their lock button sits beside the heading. The iOS app's title is the system's own and isn't affected.
 
+#### X39. One add-a-friend QR and link; invite links gone
+- Nate (2026-10-30): remove invite links entirely: the one-time links (10 people, 7 days), resetting your link, their whole UI, and their server endpoints, on the web and the iOS app. The single "Add a friend" QR and link (X25) does both: someone with an account adds you, someone new signs up with it and you're friends. It never expires, and there's only ever one per person.
+- Rule 1: nothing is deleted. The `invites` rows stay; one-time links simply stop being honored, and a link someone reset stays off.
+- The API shrinks here, against the usual rule (releasing.md): the only clients are the web app, which ships inside the server, and the iOS app, not yet released.
+- **Concern for Nate:** with no reset, a link that gets out to the wrong people can't be stopped, and opening it makes them friends at once. A backstop worth having: an Admin can reset someone's link from System → Users.
+
 ### Security
 
 #### S2. Roles
@@ -486,6 +507,10 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-29), bug: signing out and back in as another account (same server, a desktop browser) showed the previous account's chat list. Signing out must clear all local data: storage, IndexedDB, everything.
 - Cause: `signOutLocally` reset a list of state by hand and missed the chat list itself, which the next account's screen drew until its own arrived.
 - **Fixed (0.42.2):** sign-out, and any session the server ends, deletes everything the browser keeps (localStorage, sessionStorage, the cache, the keystore but its pins, the push subscription), then reloads the page, so no state can be missed. **Decided (Nate):** the pinned keys stay: friends' public keys, which can't open anything, kept per account so a key swapped while signed out is still caught and old messages from before a friend's reset stay readable. `test_sign_out.py` holds the next account's chat list back and checks the last one's never shows (it fails on the old code).
+
+#### S5. Admins by user id
+- Nate (2026-10-30): name Admins by their user id (fixed forever) instead of their username, which can change.
+- Today the `/fade/admins` parameter lists usernames, and a renamed Admin stays one through their old name (roles.md). With ids: the parameter (and `FADE_ADMINS` in development) takes ids; for one release it takes both, so production can switch without a gap.
 
 ### Infrastructure
 
@@ -678,6 +703,11 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Nate (2026-10-30): grow the data volume from 1 GB to 5 GB, with the video cap going to 6 MB ([F20](#f20-better-video-quality)); about $0.32 a month more.
 - An in-place change to `aws_ebs_volume.data` (`data_volume_gb`), then the filesystem grown on the running instance (`xfs_growfs`, online). The Rule 1 procedure: a snapshot first, read the plan, row counts before and after. Staging stays at 1 GB.
 - **Done 2026-10-30 (#48):** snapshot `snap-0063c1ec7208bff90` first; the plan was only the volume's size (1 → 5, in place) and the settings parameter; `xfs_growfs` online (960 MB → 5.0 GB, 105 MB used); row counts the same before and after (28 users, 50 friendships, 600 messages, 93 sessions); a clean restart with the new ceilings (2048 MB direct, 1536 MB group).
+
+#### I12. Reset staging's data
+- Nate (2026-10-30): a way to clear staging of load-test accounts and data for good, a general reset. Maybe a ready-made database for non-production copies, with the data we want already in it, kept in S3.
+- Staging has no user data, so a reset is safe there (never production: the same guards as `test-staging.sh`). Options: (a) stop the server, replace `fade.db` with a seed copy from S3, start; (b) a fresh empty database plus a seeding script (an Admin, a few friends, groups, messages) run against the API, so the seed always matches the current schema. (b) keeps working as migrations are added; (a) needs regenerating when they are.
+- **Needs decision:** what staging should start with (accounts, friends, groups, history), and whether the seed is a file or a script.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
