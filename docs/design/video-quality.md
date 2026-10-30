@@ -1,6 +1,6 @@
 # Video quality (decision)
 
-Status: **needs a decision from Nate** ([F20](../management/plan.md#f20-better-video-quality)). Researched and measured 2026-10-30.
+Status: **decided and built** ([F20](../management/plan.md#f20-better-video-quality)). Researched and measured 2026-10-30. Nate chose options 1–3 and a 6 MB cap, keeping 10 seconds, with the data volume grown to 5 GB; shipped in server 0.44.0 and the iOS app (#47, #49).
 
 Nate (2026-10-29): "the video quality is pretty low." This page puts the options next to numbers so the call can be made. It covers the web app (desktop and phone) and the iOS app; Android, when it comes, gets whatever is chosen here.
 

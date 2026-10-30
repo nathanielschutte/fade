@@ -23,11 +23,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Better video quality](#f20-better-video-quality) | Features | Nate | In progress | Nate (2026-10-30): step 1 of [video-quality.md](../design/video-quality.md), the cap to 6 MB, 10 seconds kept |
-| 3 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 4 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 5 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 6 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 3 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 4 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 5 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -104,6 +103,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [iPhone videos came out black, and the ring stuck](#d12-iphone-videos-came-out-black-and-the-ring-stuck-fixed-in-0430) | 0.43.0 | Nate |
 | ["Database is locked" under load](#d13-database-is-locked-under-load-fixed) | 0.43.0 | Nate |
 | [The data volume to 5 GB](#i11-the-data-volume-to-5-gb) | infra | Nate |
+| [Better video quality](#f20-better-video-quality) | 0.44.0 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -321,7 +321,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F20. Better video quality
 - Nate (2026-10-29): the video quality is pretty low. Fine for now; list the options (formats, resolutions, sizes). Metadata is always stripped from videos, as from pictures.
-- **Built (2026-10-30):** the cap is 6 MB; the web asks for H.264 High first (`avc1.64001F`, then Main, then Baseline), at a bitrate worked out from the cap (at most 3 Mbit/s), drawing its canvas with high-quality smoothing once per camera frame (`requestVideoFrameCallback`); the iOS app encodes 720p H.264 High itself (`VideoEncoder.swift`). Still to do: compare on real phones.
+- **Built (2026-10-30):** the cap is 6 MB; the web asks for H.264 High first (`avc1.64001F`, then Main, then Baseline), at a bitrate worked out from the cap (at most 3 Mbit/s), drawing its canvas with high-quality smoothing once per camera frame (`requestVideoFrameCallback`); the iOS app encodes 720p H.264 High itself (`VideoEncoder.swift`). Shipped in 0.44.0 (web, the 6 MB cap) and the iOS app (#47). Still to do: look at videos from real phones (an iPhone in Safari and the home-screen app, an Android phone, and the iOS app), something fast-moving, and check their sizes stay under the cap.
 - **Decided (Nate, 2026-10-30):** step 1 of the suggestion (the iOS app encodes 720p H.264 High itself; the web asks for High first and draws its canvas more smoothly), the cap raised to 6 MB, 10 seconds kept, and the data volume grown to 5 GB ([I11](#i11-the-data-volume-to-5-gb)). Both apps aim for about 3 Mbit/s, worked out from `video_max_bytes` and `video_max_seconds` in `/api/config`, so the cap can change without a client release.
 - **Researched and measured (2026-10-30): [video-quality.md](../design/video-quality.md)**, with the decisions it needs. Found: the iOS app's export makes 568×320 video (fix before TestFlight); the web uses half its 4 MB and asks for Baseline. Suggested: iOS encodes 720p H.264 High itself, the web asks for High and smooths the canvas, then possibly a 6 MB cap at about 3 Mbit/s. The list below is the first sketch; the document supersedes it.
 - Today (0.36.0, X28): drawn through a canvas at 30 frames a second, longest edge 1280 px, 1.5 Mbit/s of video and 64 kbit/s of sound; H.264 (Baseline) and AAC in MP4 where the browser records it (Safari, newer Chrome), otherwise VP8 and Opus in WebM. At most 4 MB and 10 seconds (`FADE_VIDEO_MAX_KB`, `FADE_VIDEO_MAX_SECONDS`).
