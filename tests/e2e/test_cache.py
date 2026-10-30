@@ -66,7 +66,9 @@ async def main():
         await ana.evaluate("fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } })")
         await ana.reload()
         await expect(ana.locator("#auth")).to_be_visible(timeout=15000)
-        assert await ana.evaluate(KEPT) == "[]", "signing out deletes what was kept"
+        # (The fresh page keeps the server's public settings again at once; the same for everyone.)
+        kept = await ana.evaluate("async () => (await (await import('/cache.js')).all()).map(([k]) => k)")
+        assert set(kept) <= {"config"}, f"signing out deletes what was kept: {kept}"
         print("an ended session still signs out, and what was kept is gone")
 
         assert not errors, errors

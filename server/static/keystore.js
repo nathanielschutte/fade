@@ -1,7 +1,7 @@
 // Where the web app keeps its unlocked key and pinned friend keys: IndexedDB.
 // The unwrapped private key is a non-extractable CryptoKey, so page script can
 // use it but never read it out, and a reload doesn't need the password.
-// Signing out deletes it. (The iOS app uses the Keychain instead.)
+// Signing out deletes it, and all else but the pins. (The iOS app uses the Keychain instead.)
 const DB_NAME = "napsack";
 const STORE = "keys";
 
@@ -31,3 +31,13 @@ async function idbDo(mode, fn) {
 export const saveLocal = (key, value) => idbDo("readwrite", (s) => s.put(value, key));
 export const loadLocal = (key) => idbDo("readonly", (s) => s.get(key));
 export const deleteLocal = (key) => idbDo("readwrite", (s) => s.delete(key));
+
+/** Signing out: everything but the pinned keys (`pins:<id>`, `pastPins:<id>`),
+ * which are friends' public keys, kept per account so a key swapped while
+ * signed out is still caught. They can't open anything; the private key that
+ * could goes with everything else. */
+export async function forgetAllButPins() {
+  const keys = await idbDo("readonly", (s) => s.getAllKeys());
+  const gone = keys.filter((k) => !/^(pins|pastPins):/.test(String(k)));
+  if (gone.length) await idbDo("readwrite", (s) => { for (const k of gone) s.delete(k); });
+}

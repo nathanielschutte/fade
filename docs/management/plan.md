@@ -98,6 +98,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [Faster tests, same coverage](#p4-faster-test-runs-same-coverage): four at a time, shared helpers, no waiting out timeouts; sockets answer a close; Metrics tips go with a redraw | 0.42.1 | Nate |
 | [Development on a Mac](#p6-development-on-a-mac): tests on macOS, Terraform state in S3, the Mac's SSH key on both servers | infra, 2026-10-29 | Nate |
 
+| Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
 ## Epics
 
@@ -438,6 +439,11 @@ Oldest first; newly shipped rows go at the bottom.
 - The admin list moves out of source control into its own SSM parameter, reloadable without a deploy.
 - Design: [roles.md](../implementation/roles.md).
 - Done (0.28.0). Production's admin list moved to `/fade/admins` (`scripts/set-admins.sh`, `scripts/reload-admins.sh`); `admin_usernames` in Terraform is no longer used.
+
+#### S3. Signing out leaves nothing behind
+- Nate (2026-10-29), bug: signing out and back in as another account (same server, a desktop browser) showed the previous account's chat list. Signing out must clear all local data: storage, IndexedDB, everything.
+- Cause: `signOutLocally` reset a list of state by hand and missed the chat list itself, which the next account's screen drew until its own arrived.
+- **Fixed (0.42.2):** sign-out, and any session the server ends, deletes everything the browser keeps (localStorage, sessionStorage, the cache, the keystore but its pins, the push subscription), then reloads the page, so no state can be missed. **Decided (Nate):** the pinned keys stay: friends' public keys, which can't open anything, kept per account so a key swapped while signed out is still caught and old messages from before a friend's reset stay readable. `test_sign_out.py` holds the next account's chat list back and checks the last one's never shows (it fails on the old code).
 
 ### Infrastructure
 
