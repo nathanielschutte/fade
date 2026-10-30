@@ -7,8 +7,7 @@ How napsack's pieces are versioned, how each one ships, and the rules that keep 
 | Piece | Version lives in | Ships by | Tag |
 |---|---|---|---|
 | Server (with the web client inside) | `server/Cargo.toml` | GitHub Actions: every push to `main` goes to staging, a tag goes to production. `scripts/deploy.sh` for hotfixes | `server-v1.4.0` |
-| iOS app, native build | `mobile/app.config.ts` `version`; build number managed by EAS | EAS Build → TestFlight → App Store | `ios-v1.2.0` |
-| iOS app, JavaScript-only fix | same version, new update ID | EAS Update (over the air) | none |
+| iOS app | `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `ios/Config/Base.xcconfig` | Xcode → TestFlight → App Store, with the Developer Program ([mobile.md](../design/mobile.md)) | `ios-v1.2.0` |
 | Infrastructure | git history | `terraform apply` by hand | none |
 
 The web client is compiled into the server binary, so it always matches the server. Every running server reports what it is at `GET /api/config`: `server_version`, `build` (git short sha, `-dirty` if built from uncommitted code), `api_version`, `message_formats`, and `min_client_versions`. The admin panel shows the same.
