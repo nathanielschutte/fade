@@ -23,6 +23,14 @@ struct Bubble: Identifiable, Equatable, Sendable {
     let time: Date
     let reactions: [String]
 
+    /// Texts and pics can be replied to; group events can't, nor what couldn't be opened.
+    var repliable: Bool {
+        switch content {
+        case .text, .media: true
+        case .event, .unreadable: false
+        }
+    }
+
     /// A line about it, for a reply's quote.
     var gist: String {
         switch content {
@@ -89,8 +97,40 @@ extension Reader {
     }
 }
 
+/// A text on its way: shown at once, below the chat, until the server has it.
+struct Outgoing: Identifiable, Equatable, Sendable {
+    enum Status: Equatable, Sendable {
+        case sending
+        /// Why, in words ("Not sent: no connection.").
+        case failed(String)
+    }
+
+    /// The message's `client_id`: the same on every try, so the server never stores it twice.
+    let id: String
+    let text: String
+    let replyTo: Int64?
+    var status: Status = .sending
+}
+
+/// Why napsack won't send.
+enum SendError: LocalizedError {
+    case keyChanged(String)
+    case memberKeyChanged(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .keyChanged(let username): "\(username)'s safety code changed. Messages are blocked."
+        case .memberKeyChanged(let name):
+            "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
+        }
+    }
+}
+
 /// An open chat: its history, newest page first, older pages as you scroll
-/// back (plan F3: 50 at a time), each message opened on arrival.
+/// back (plan F3: 50 at a time), each message opened on arrival. Texts you
+/// send wait in an outbox until the server has them (app.js, the outbox): a
+/// bad connection is tried again, and a text that still can't go waits as
+/// "Not sent" with Try again. Unsent texts are only in memory, never kept.
 @MainActor @Observable final class Conversation {
     enum Chat: Sendable {
         case friend(Friend)
@@ -113,6 +153,13 @@ extension Reader {
     private(set) var reachedStart = false
     private(set) var loadingOlder = false
     private(set) var problem: String?
+    /// Texts on their way, oldest first.
+    private(set) var outbox: [Outgoing] = []
+    /// Sealed once per text, so every try sends the same bytes.
+    private var sealedTexts: [String: String] = [:]
+    private var sealedGroupTexts: [String: E2E.GroupMessage] = [:]
+    /// Waits between tries while the connection is the problem.
+    var retryDelays: [Duration] = [.seconds(1), .seconds(3)]
 
     init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, transport: any Transport = NetworkTransport()) {
         self.chat = chat
@@ -156,6 +203,131 @@ extension Reader {
     var safetyCode: String? {
         guard let friend else { return nil }
         return E2E.safetyCode(account.publicKey, friend.publicKey)
+    }
+
+    /// Why nothing can be sent here, when it's the chat itself (the web app's words).
+    var blockedNote: String? {
+        guard let friend else { return nil }
+        if friend.system == true { return "Messages from Team Napsack, for birthdays and other occasions. You can't reply here." }
+        if friend.deactivated == true { return "This account has been turned off. You can read your chat, but nothing new can be sent." }
+        return nil
+    }
+
+    var canSend: Bool { loaded && !keyChanged && blockedNote == nil }
+
+    /// Sends a text: it shows at once, and goes when it can.
+    func send(_ text: String, replyTo: Int64?) async {
+        await retry(queue(text, replyTo: replyTo))
+    }
+
+    /// Puts a text in the outbox, to show at once; `retry` sends it.
+    func queue(_ text: String, replyTo: Int64?) -> String {
+        let item = Outgoing(id: Self.newClientId(), text: text, replyTo: replyTo)
+        outbox.append(item)
+        return item.id
+    }
+
+    /// Sends a queued text, or tries one that wasn't sent again.
+    func retry(_ id: String) async { await attempt(id) }
+
+    /// Gives up on a text; returns it, so it can go back in the box.
+    func discard(_ id: String) -> String? {
+        guard let i = outbox.firstIndex(where: { $0.id == id }) else { return nil }
+        sealedTexts[id] = nil
+        sealedGroupTexts[id] = nil
+        return outbox.remove(at: i).text
+    }
+
+    /// 16 random bytes, base64url, as the web app makes them.
+    static func newClientId() -> String {
+        E2E.toB64(Data((0..<16).map { _ in UInt8.random(in: 0...255) }))
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
+    private func attempt(_ id: String) async {
+        guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
+        outbox[i].status = .sending
+        var failure: (any Error)?
+        for n in 0...retryDelays.count {
+            guard let item = outbox.first(where: { $0.id == id }) else { return }
+            do {
+                let bubble = try await post(item)
+                settle(id, bubble)
+                return
+            } catch {
+                failure = error
+                guard (error as? ServerError)?.retryable == true, n < retryDelays.count else { break }
+                try? await Task.sleep(for: retryDelays[n])
+            }
+        }
+        guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
+        let offline = failure.map { ($0 as? ServerError)?.retryable == true } ?? true
+        let why = offline ? "no connection." : failure?.localizedDescription ?? "no connection."
+        outbox[i].status = .failed("Not sent: \(why)")
+    }
+
+    /// It's in: the server's copy joins the chat, and the outbox lets it go.
+    private func settle(_ id: String, _ bubble: Bubble) {
+        _ = discard(id)
+        guard !bubbles.contains(where: { $0.id == bubble.id }) else { return }
+        bubbles.append(bubble)
+        bubbles.sort { $0.id < $1.id }
+    }
+
+    private func post(_ item: Outgoing) async throws -> Bubble {
+        let server = try Server(account.server, transport: transport)
+        switch chat {
+        case .friend(let friend):
+            if keyChanged { throw SendError.keyChanged(friend.username) }
+            let ciphertext = try sealedTexts[item.id] ?? {
+                // To the key I pinned, never one the server swapped in.
+                let key = try E2E.pairKey(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
+                                          myId: account.user.id, theirId: friend.id)
+                return try E2E.encryptText2(key, item.text, replyTo: item.replyTo, sender: account.user.id, recipient: friend.id)
+            }()
+            sealedTexts[item.id] = ciphertext
+            let m = try await server.sendText(to: friend.id, ciphertext: ciphertext, clientId: item.id, token: account.token)
+            return reader.bubble(m, with: friend)
+        case .group(let group):
+            var sealed: E2E.GroupMessage
+            if let kept = sealedGroupTexts[item.id] { sealed = kept } else { sealed = try await seal(item, for: group, server: server) }
+            sealedGroupTexts[item.id] = sealed
+            let m: GroupMessage
+            do {
+                m = try await server.sendGroupText(to: group.id, sealed, token: account.token)
+            } catch ServerError.refused(_, status: 409) {
+                // Someone joined or left since it was sealed: seal it again for who's there now.
+                sealed = try await seal(item, for: group, server: server)
+                sealedGroupTexts[item.id] = sealed
+                m = try await server.sendGroupText(to: group.id, sealed, token: account.token)
+            }
+            return reader.bubble(m)
+        }
+    }
+
+    /// Seals a group text for its members now, each to the key I pinned for them.
+    private func seal(_ item: Outgoing, for group: GroupSummary, server: Server) async throws -> E2E.GroupMessage {
+        let members = try await server.group(group.id, token: account.token).members
+        var wrapKeys: [Int64: SymmetricKey] = [:]
+        for member in members {
+            wrapKeys[member.id] = try E2E.groupWrapKey(mine: reader.identity, theirs: sendingKey(member),
+                                                       myId: account.user.id, theirId: member.id)
+        }
+        return try E2E.encryptGroupText(item.text, replyTo: item.replyTo, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
+    }
+
+    /// Mine, the one pinned for them, or (first seen, friend or not) the server's, which is pinned.
+    /// A key that differs from the pin blocks the group, as a direct chat is blocked.
+    private func sendingKey(_ member: Server.GroupDetail.Member) throws -> String {
+        if member.id == account.user.id { return account.publicKey }
+        if let pinned = reader.pins.current[member.id] {
+            guard pinned == member.publicKey else { throw SendError.memberKeyChanged(reader.name(member.id, member.username)) }
+            return pinned
+        }
+        pinBook?.see(senders: [(member.id, member.publicKey)])
+        reader.pins = pinBook?.pins ?? reader.pins
+        if pinBook == nil { _ = reader.pins.see(member.id, member.publicKey) }
+        return member.publicKey
     }
 
     /// Trusts the friend's new key (compared or not), then reopens the chat with it.
