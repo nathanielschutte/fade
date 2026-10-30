@@ -584,7 +584,10 @@ pub async fn reset_with_code(
     tx.commit().await?;
     let ended = end_sessions(&state, id, None).await?;
     let token = create_session(&state, id).await?;
-    tracing::info!(ip = %who.ip, user_id = id, sessions_ended = ended, "account reset with code");
+    // What came before can't be opened now: it isn't unread (SINCE_MY_KEY),
+    // and pics waiting for them expire rather than wait 30 days (D14).
+    let expired = crate::snaps::expire_waiting_for(&state, id).await?;
+    tracing::info!(ip = %who.ip, user_id = id, sessions_ended = ended, pics_expired = expired, "account reset with code");
     // Friends need the new public key (and will see a changed safety code).
     let mut ids: Vec<i64> = crate::profiles::friends_of(&state.db, id)
         .await?

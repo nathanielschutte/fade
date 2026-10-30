@@ -12,7 +12,7 @@ use crate::{
     db::{self, now, pair, Message, UserPublic},
     error::{AppError, AppResult},
     marks::{FAVORITE_FRIEND, HIDDEN_UPTO, MUTED_FRIEND},
-    people::{AVATAR_ID, DISPLAY_NAME, NICKNAME},
+    people::{AVATAR_ID, DISPLAY_NAME, NICKNAME, SINCE_MY_KEY},
     ws::Event,
     SharedState,
 };
@@ -104,7 +104,9 @@ pub async fn list_chats(
             (SELECT COUNT(*) FROM messages m
               WHERE m.sender_id = u.id AND m.recipient_id = ?1
                 AND ((m.kind = 'text' AND m.read_at IS NULL)
-                  OR (m.kind = 'snap' AND m.snap_state = 'pending'))) AS unread
+                  OR (m.kind = 'snap' AND m.snap_state = 'pending'))
+                -- Nothing from before an admin reset code: it's sealed to the old key (D14).
+                AND m.created_at > {SINCE_MY_KEY}) AS unread
          FROM users u
          WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
                         FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
