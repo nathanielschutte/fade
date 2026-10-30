@@ -6,7 +6,7 @@ environment; see common.py."""
 import asyncio, json, re, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import launch, no_placeholders, shot, PHONE, befriend, row, sign_up
+from common import launch, no_placeholders, open_page, shot, PHONE, befriend, row, sign_in, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
@@ -35,6 +35,16 @@ navigator.mediaDevices.getUserMedia = async (want) => {
   track.getSettings = () => ({ ...real(), facingMode: 'environment' });
   return stream;
 };
+// How many recorders were made; window.__stuckRecorder: stop() never fires "stop".
+window.__recorders = 0;
+window.__stuckRecorder = false;
+if (window.MediaRecorder) {
+  const Real = window.MediaRecorder;
+  window.MediaRecorder = class extends Real {
+    constructor(...args) { super(...args); window.__recorders++; }
+    stop() { if (!window.__stuckRecorder) super.stop(); }
+  };
+}
 """
 
 
@@ -85,6 +95,11 @@ async def main():
         await expect(ana.locator("#camera-preview")).to_be_hidden()
         await expect(ana.locator("#draw-tools")).to_be_hidden()  # drawing is for photos
         await expect(ana.locator("#zoom-chip")).to_be_hidden()
+        # Retake: the next one starts at 1× again, not where this one was zoomed to.
+        await ana.click("#retake")
+        await expect(ana.locator("#zoom-chip")).to_have_text("1×")
+        await hold_shutter(ana, 1600)
+        await expect(ana.locator("#camera-preview-video")).to_be_visible(timeout=10000)
         assert await ana.locator("#camera-preview-video").evaluate("v => !v.paused && v.loop"), "the preview plays, looping"
         await expect(ana.locator("#send-who")).to_have_text(f"To {BEN} +")
         await ana.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
@@ -221,6 +236,36 @@ async def main():
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)
         await expect(ben.locator(".snap-chip.done", has_text="Viewed")).to_be_visible()
         print("group videos are sealed and watched once too")
+
+        # A recorder that never says it stopped (seen on iPhones): the camera
+        # doesn't stay stuck; the video finishes with what was recorded.
+        await ana.click("#tab-chats")
+        await row(ana, BEN).click()
+        await ana.evaluate("window.__stuckRecorder = true")
+        await ana.click("#camera-button")
+        await ana.wait_for_timeout(500)
+        await hold_shutter(ana, 1600)
+        await expect(ana.locator("#camera-preview-video")).to_be_visible(timeout=10000)
+        await expect(ana.locator("#shutter")).not_to_have_class(re.compile(r"\brecording\b"))
+        await ana.click("#retake")
+        await ana.click("#capture-controls [data-close]")
+        await ana.evaluate("window.__stuckRecorder = false")
+        print("a recorder that never stops doesn't leave the camera stuck")
+
+        # On an iPhone (every browser there is WebKit): one recorder only, so no silent copy.
+        phone = await open_page(browser, errors=errors, init=STUB, permissions=["camera", "microphone"],
+                                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+                                **PHONE)
+        await sign_in(phone, ANA)
+        await row(phone, BEN).click()
+        await phone.click("#camera-button")
+        await phone.wait_for_timeout(500)
+        await hold_shutter(phone, 1600)
+        await expect(phone.locator("#camera-preview-video")).to_be_visible(timeout=10000)
+        assert await phone.evaluate("window.__recorders") == 1, await phone.evaluate("window.__recorders")
+        await expect(phone.locator("#video-sound")).to_be_hidden()
+        await phone.context.close()
+        print("on an iPhone, one recorder: videos without the silent copy")
 
         assert not errors, errors
         await browser.close()

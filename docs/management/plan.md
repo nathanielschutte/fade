@@ -335,6 +335,12 @@ Oldest first; newly shipped rows go at the bottom.
 - Found 2026-10-29 by the iOS app's tests (sending to a group while other tests ran): a 500, "database is locked". A transaction that reads before it writes (most of ours) can't wait for SQLite's write lock if another write landed in between, and fails at once despite the 5-second busy timeout. Rare at production's size, but it loses a send.
 - Fixed: every transaction begins `IMMEDIATE` (`db::write_tx`), taking the write lock first and waiting its turn; `db::tests::transactions_take_the_write_lock` keeps it that way, and `concurrent_writers_wait_their_turn` fails without it.
 
+#### D12. iPhone videos came out black, and the ring stuck (fixed in 0.43.0)
+- Reported (Nate, 2026-10-29), in the installed web app on an iPhone, not every time: the video was black, stayed black after recording, and the recording ring stayed where it was. Likely cause: 0.41.0 (X37) records a silent copy alongside each video so "send without sound" carries none, and WebKit (Safari and every iPhone browser) doesn't reliably run two recorders at once; when the main one never says it stopped, nothing finished the video.
+- Fixed: on WebKit, one recorder only, as before 0.41.0 (no "send without sound" there for now). Everywhere, a recorder that hasn't finished 3 seconds after stopping is finished with what it recorded, or says to try again, and the app reports "video recorder never stopped" (with its type and how much it had) to the log viewer, so another case shows up there. `test_video.py` covers both.
+- Also (Nate, 2026-10-29): zoom now returns to 1× for each new pic or video (it stayed where the last video had zoomed to).
+- Open: if it happens again, the log viewer has the details. Nate: the web app's camera on phones may just be less reliable; the iOS app's camera (AVFoundation) is the long-term answer.
+
 #### D11. A tap on the shutter can count as a hold when the page is busy
 - `test_chat.py` failed once on main (2026-10-29, CI for `99c0b7c`): after the shutter tap, Send never appeared. Likely cause: the shutter starts a video when its hold timer (`HOLD_MS`) fires before the pointer is let go. On a busy page the timer can run before the queued `pointerup`, so a quick tap becomes a short video and no photo. A slow phone could do the same to a person.
 - Fix: decide tap or hold by the events' own times (`pointerup.timeStamp - pointerdown.timeStamp`), not by which callback ran first. A test that holds the page busy across a tap.
