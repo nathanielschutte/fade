@@ -49,8 +49,8 @@ The people picker lists only the PowerUser and their friends. Anyone else is rea
 
 ## Where Admins come from
 
-- **Production:** the SSM parameter `/fade/admins` (SecureString, comma-separated usernames). The server reads it at start, using the instance role and its own SigV4 signing (`aws.rs`), and again on **Reload admin list** (System → Roles, Admins only) or `scripts/reload-admins.sh`, which sends the service `SIGHUP`. The parameter is set with `scripts/set-admins.sh`, outside Terraform, so the list isn't in source control or Terraform state.
-- **A renamed Admin stays one.** Admins are listed by username, and an old username stays its owner's forever (usernames.rs), so the list matches a name someone has now or had before. Update the list to the new name when convenient.
+- **Production:** the SSM parameter `/fade/admins` (SecureString, comma-separated). An entry is a user id, `id:7`, fixed forever and the way to name Admins (S5), or a username. The server reads it at start, using the instance role and its own SigV4 signing (`aws.rs`), and again on **Reload admin list** (System → Roles, Admins only) or `scripts/reload-admins.sh`, which sends the service `SIGHUP`. The parameter is set with `scripts/set-admins.sh`, outside Terraform, so the list isn't in source control or Terraform state.
+- **By id, or by name.** An `id:` entry holds whatever the person is called. A username entry matches a name someone has now or had before (an old username stays its owner's forever, usernames.rs), so a renamed Admin stays one either way. Usernames can't contain `:`, so an all-digit username is never taken for an id.
 - **Development and tests:** `FADE_ADMINS` (comma-separated), as before. Production sets `FADE_ADMINS_PARAM=/fade/admins` and no `FADE_ADMINS`.
 - **Both, if both are set:** the union. If the parameter can't be read at start, the server keeps `FADE_ADMINS` (possibly empty) and logs an error. If a reload fails, the current list stays.
 

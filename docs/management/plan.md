@@ -26,7 +26,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [One add-a-friend QR and link; invite links gone](#x39-one-add-a-friend-qr-and-link-invite-links-gone) | Experience/visual | Nate | In progress | Nate (2026-10-30) |
 | 3 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | Debug | Nate | In progress | Nate (2026-10-30), from the intake |
 | 4 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | – | Planned | Nate (2026-10-30), from the intake |
+| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Nate (2026-10-30), from the intake |
 | 6 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
 | 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 8 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
@@ -511,6 +511,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### S5. Admins by user id
 - Nate (2026-10-30): name Admins by their user id (fixed forever) instead of their username, which can change.
 - Today the `/fade/admins` parameter lists usernames, and a renamed Admin stays one through their old name (roles.md). With ids: the parameter (and `FADE_ADMINS` in development) takes ids; for one release it takes both, so production can switch without a gap.
+- **Built:** an entry `id:7` names user 7 (`Admins::contains_id`, `usernames::is_listed_admin`); usernames keep working, so the switch has no gap. `scripts/set-admins.sh id:1,id:5` takes them. To finish (Nate's, a production setting): set the parameter to the Admins' ids and reload (`scripts/reload-admins.sh`).
 
 ### Infrastructure
 

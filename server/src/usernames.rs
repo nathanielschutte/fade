@@ -61,7 +61,7 @@ pub async fn is_listed_admin(
     user: i64,
     username: &str,
 ) -> sqlx::Result<bool> {
-    if admins.contains(username) {
+    if admins.contains_id(user) || admins.contains(username) {
         return Ok(true);
     }
     Ok(past_of(db, user)
@@ -70,7 +70,7 @@ pub async fn is_listed_admin(
         .any(|(name, _)| admins.contains(name)))
 }
 
-/// Everyone who is an Admin by a name they have now or had before.
+/// Everyone who is an Admin: by id, or by a name they have now or had before.
 pub async fn admin_ids(
     db: &SqlitePool,
     admins: &crate::roles::Admins,
@@ -80,11 +80,13 @@ pub async fn admin_ids(
     )
     .fetch_all(db)
     .await?;
-    Ok(names
+    let mut ids: std::collections::HashSet<i64> = names
         .into_iter()
         .filter(|(_, name)| admins.contains(name))
         .map(|(id, _)| id)
-        .collect())
+        .collect();
+    ids.extend(admins.ids());
+    Ok(ids)
 }
 
 #[cfg(test)]
@@ -129,6 +131,14 @@ mod tests {
         assert_eq!(
             admin_ids(&db, &admins).await.unwrap(),
             [1].into_iter().collect()
+        );
+        // By id (S5): whatever they're called.
+        let admins = crate::roles::Admins::new(vec!["id:2".into()], None);
+        assert!(is_listed_admin(&db, &admins, 2, "anything").await.unwrap());
+        assert!(!is_listed_admin(&db, &admins, 1, "anna").await.unwrap());
+        assert_eq!(
+            admin_ids(&db, &admins).await.unwrap(),
+            [2].into_iter().collect()
         );
     }
 }
