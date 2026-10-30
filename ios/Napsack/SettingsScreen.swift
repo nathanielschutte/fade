@@ -20,6 +20,7 @@ struct SettingsScreen: View {
     @State private var birthday = Date()
     @State private var withYear = false
     @State private var profileNote: String?
+    @State private var serverLabel: String?
 
     var body: some View {
         Form {
@@ -63,7 +64,7 @@ struct SettingsScreen: View {
             Section("Account") {
                 LabeledContent("Username", value: "@\(account.user.username)")
                 if let name = account.user.displayName { LabeledContent("Name", value: name) }
-                LabeledContent("Server", value: URL(string: account.server)?.host() ?? account.server)
+                if let serverLabel { LabeledContent("Server", value: serverLabel) }  // not in production
                 Button("Change username") { asking = .username }
             }
             Section {
@@ -79,7 +80,7 @@ struct SettingsScreen: View {
             }
             if account.user.isAdmin {  // debugging tools: Admins only, for now
                 Section {
-                    NavigationLink("Developer") { DeveloperScreen(signedInTo: account.server) }
+                    NavigationLink("Developer") { DeveloperScreen() }
                 }
             }
             Section {
@@ -93,6 +94,7 @@ struct SettingsScreen: View {
         .navigationTitle("Settings")
         .task { await loadSecurity() }
         .task { await loadProfile() }
+        .task { serverLabel = AppInfo.serverLabel(environment: (try? await Server(AppInfo.server).config())?.environment) }
         .onChange(of: picked) { _, item in
             guard let item else { return }
             Task {

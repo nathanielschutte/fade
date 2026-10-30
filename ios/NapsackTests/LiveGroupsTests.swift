@@ -6,7 +6,7 @@ import UIKit
 /// Groups against a real napsack server (a local one; it makes accounts):
 /// made with friends, renamed, a picture, members added and removed (the owner
 /// only), and leaving. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveGroupsTests {
     let live = LiveChatListTests()
 

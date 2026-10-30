@@ -5,7 +5,7 @@ import Testing
 /// The chat list's own actions against a real napsack server (a local one;
 /// it makes accounts): favorite, mute, hide and unhide, leave a group, and
 /// search. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveListActionsTests {
     let live = LiveChatListTests()
 

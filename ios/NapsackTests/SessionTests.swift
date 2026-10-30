@@ -123,7 +123,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func aKeptSessionTheServerEndedSignsOut() async throws {
         let store = MemoryStore(try keptAccount())
         let session = Session(transport: StubServer { _ in (401, json(["error": "Sign in first."])) }, store: store)
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         #expect(session.state == .signedOut)
         #expect(session.notice == "Your session ended. Sign in again.")
         #expect(try store.load() == nil)
@@ -132,7 +132,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func aKeptSessionStaysWhenTheServerIsOutOfReach() async throws {
         let kept = try keptAccount()
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: MemoryStore(kept))
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         #expect(session.state == .signedIn(kept))
     }
 
@@ -143,7 +143,7 @@ func body(_ request: URLRequest) -> [String: Any] {
             request.url!.path == "/api/me" ? (200, meAnswer) : (200, json(["ok": true]))
         }
         let session = Session(transport: server, store: store)
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         await session.signOut()
         let logout = try #require(await server.requests.last)
         #expect(logout.url?.path == "/api/auth/logout" && logout.httpMethod == "POST")
@@ -163,7 +163,7 @@ func body(_ request: URLRequest) -> [String: Any] {
         }
         let reporter = Reporter(transport: server)
         let session = Session(transport: server, store: store, reporter: reporter)
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         #expect(reporter.signedIn)
         let pins = MemoryPinStore()
         var pinned = Pins()
@@ -182,7 +182,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func signingOutOfflineStillForgetsTheKeys() async throws {
         let store = MemoryStore(try keptAccount())
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: store)
-        await session.restore(defaultServer: "https://napsack.test")
+        await session.restore(server: "https://napsack.test")
         await session.signOut()
         #expect(session.state == .signedOut)
         #expect(try store.load() == nil)
@@ -205,4 +205,11 @@ extension JSONDecoder {
     #expect(!me("powerxtreme").isAdmin && me("powerxtreme").isPowerUser)
     #expect(!me("user").isAdmin && !me("user").isPowerUser)
     #expect(!me("something new").isAdmin)
+}
+
+/// The one server is named outside production only (Nate, 2026-10-30).
+@Test func theServerIsNamedOnlyOutsideProduction() {
+    #expect(AppInfo.serverLabel(environment: nil, server: "https://napsack.io") == nil)
+    #expect(AppInfo.serverLabel(environment: "staging", server: "https://staging.napsack.io") == "staging.napsack.io (staging)")
+    #expect(AppInfo.serverLabel(environment: nil, server: "http://Nates-Laptop.local:8080")?.lowercased() == "nates-laptop.local")
 }

@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Debugging tools, for Admins only (from the account menu): what a server
-/// says about itself, what this app says it is, the encryption's checks run on
-/// this phone (VectorScreen), and which server the next sign-in uses.
+/// Debugging tools, for Admins only (from Settings): what the server says
+/// about itself, what this app says it is, and the encryption's checks run on
+/// this phone (VectorScreen). The server is the build's own (AppInfo.server).
 struct DeveloperScreen: View {
-    /// The server this account is on.
-    let signedInTo: String
-    @AppStorage("server") private var address = AppInfo.defaultServer
+    private let address = AppInfo.server
     @State private var config: ServerConfig?
     @State private var problem: String?
     @State private var checking = false
@@ -14,18 +12,11 @@ struct DeveloperScreen: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Signed in to", value: signedInTo)
-                TextField("https://staging.napsack.io", text: $address)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                LabeledContent("Address", value: address)
                 Button(checking ? "Checking…" : "Check") { Task { await check() } }
                     .disabled(checking)
                 if let problem {
                     Text(problem).foregroundStyle(.red)
-                }
-                if address != AppInfo.defaultServer {
-                    Button("Use napsack's server") { address = AppInfo.defaultServer }
                 }
                 if let config {
                     LabeledContent("Version", value: config.serverVersion)
@@ -40,7 +31,7 @@ struct DeveloperScreen: View {
             } header: {
                 Text("Server")
             } footer: {
-                Text("The address is the server the next sign-in uses; sign out to go there. Check shows what it says about itself.")
+                Text("Set by the build (NAPSACK_SERVER_URL in Config/Local.xcconfig). Check shows what the server says about itself.")
             }
             Section("This app") {
                 LabeledContent("Version", value: "\(AppInfo.version) (\(AppInfo.build))")
@@ -75,5 +66,5 @@ struct DeveloperScreen: View {
 }
 
 #Preview {
-    NavigationStack { DeveloperScreen(signedInTo: AppInfo.defaultServer) }
+    NavigationStack { DeveloperScreen() }
 }

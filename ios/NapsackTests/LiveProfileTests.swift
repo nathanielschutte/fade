@@ -6,7 +6,7 @@ import UIKit
 /// Profiles against a real napsack server (a local one; it makes accounts):
 /// your name, birthday, and picture as a friend sees them; a nickname only you
 /// see; unfriending. Runs only with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveProfileTests {
     let live = LiveChatListTests()
 

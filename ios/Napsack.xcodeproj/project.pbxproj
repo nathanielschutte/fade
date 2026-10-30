@@ -258,6 +258,11 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 4E5A00000000000000000019 /* App.xcconfig */;
 			buildSettings = {
+				INFOPLIST_KEY_CFBundleDisplayName = napsack;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "napsack connects to a development server on your network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 			};
 			name = Debug;
 		};
@@ -265,6 +270,11 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 4E5A00000000000000000019 /* App.xcconfig */;
 			buildSettings = {
+				INFOPLIST_KEY_CFBundleDisplayName = napsack;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "napsack connects to a development server on your network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 			};
 			name = Release;
 		};

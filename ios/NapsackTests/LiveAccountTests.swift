@@ -6,7 +6,7 @@ import Testing
 /// accounts): other devices, the password, the recovery key, and the username,
 /// each proven by signing in again afterwards. Runs only with
 /// NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveAccountTests {
     let live = LiveChatListTests()
     let password = "correct horse battery"

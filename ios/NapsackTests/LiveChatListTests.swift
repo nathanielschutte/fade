@@ -8,7 +8,7 @@ import Testing
 /// accounts). Two new accounts become friends; Ana sends Ben a text and a group
 /// text, each sealed here in Swift; Ben's list shows both, decrypted. Runs only
 /// with NAPSACK_TEST_SERVER set (LiveSignInTests says how).
-@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil))
+@MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveChatListTests {
     let address = ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] ?? ""
     let invite = ProcessInfo.processInfo.environment["NAPSACK_TEST_INVITE"] ?? "letmein"

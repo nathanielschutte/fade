@@ -7,7 +7,7 @@ import Testing
 /// NAPSACK_TEST_SERVER and NAPSACK_TEST_ADMIN (a username in the server's
 /// FADE_ADMINS; it's signed up, or signed in if it exists, with the live tests' password).
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil
-                           && ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"] != nil))
+                           && ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"] != nil), .timeLimit(.minutes(1)))
 struct LiveReporterTests {
     let live = LiveChatListTests()
 
