@@ -73,7 +73,7 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | In progress | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only. Not yet: tapping to see one big |
+| Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | Done | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only; tapping one on a profile or group info shows it big |
 | Your profile: display name, picture, birthday | Nate | Done | 2026-10-30: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
 | A friend's profile: nickname, streak, friends in common, past usernames, safety code | Nate | Done | 2026-10-30: tap the chat's title (with their picture): name, @username and past usernames, a nickname only you see, friends since, birthday, streak, texts and pics together, friends in common, safety code, and Unfriend (confirmed; the chat stays) |
 
@@ -98,7 +98,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Tapping a reaction under a message adds yours | Nate | Done | 2026-10-30: reactions under a message are counted and tappable; yours is marked, and tapping it takes it back |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
-| Haptics where they help: sending, reacting, a new message in the open chat | Nate | In progress | 2026-10-30: holding a message, swiping to reply, sending, and reacting. Not yet: a new message in the open chat |
+| Haptics where they help: sending, reacting, a new message in the open chat | Nate | Done | 2026-10-30: holding a message, swiping to reply, sending, reacting, and a new message from them in the open chat |
 | Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | – | Planned | Before TestFlight |
 
 ## 9. Groups

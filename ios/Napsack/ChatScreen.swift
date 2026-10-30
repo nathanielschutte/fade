@@ -106,6 +106,10 @@ struct ChatScreen: View {
         .animation(.easeOut(duration: 0.15), value: held?.id)
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .sensoryFeedback(.impact(weight: .light), trigger: tapped)
+        // A new message from them in the open chat: a light tap (only newer ones, not a page loading).
+        .sensoryFeedback(.impact(weight: .light), trigger: conversation.bubbles.last?.id) { before, after in
+            before != nil && after != nil && conversation.bubbles.last?.mine == false
+        }
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
             Task {
