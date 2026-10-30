@@ -232,7 +232,7 @@ pub async fn subscribe(
     let p256dh = req.keys.p256dh.trim_end_matches('=');
     let auth = req.keys.auth.trim_end_matches('=');
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     // The app sends its subscription on every launch; an unchanged one is
     // already recorded, so it doesn't need a new row each time.
     let unchanged: Option<i64> = sqlx::query_scalar(

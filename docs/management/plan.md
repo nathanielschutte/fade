@@ -330,6 +330,10 @@ Oldest first; newly shipped rows go at the bottom.
 
 ### Debug
 
+#### D13. "Database is locked" under load (fixed)
+- Found 2026-10-29 by the iOS app's tests (sending to a group while other tests ran): a 500, "database is locked". A transaction that reads before it writes (most of ours) can't wait for SQLite's write lock if another write landed in between, and fails at once despite the 5-second busy timeout. Rare at production's size, but it loses a send.
+- Fixed: every transaction begins `IMMEDIATE` (`db::write_tx`), taking the write lock first and waiting its turn; `db::tests::transactions_take_the_write_lock` keeps it that way, and `concurrent_writers_wait_their_turn` fails without it.
+
 #### D11. A tap on the shutter can count as a hold when the page is busy
 - `test_chat.py` failed once on main (2026-10-29, CI for `99c0b7c`): after the shutter tap, Send never appeared. Likely cause: the shutter starts a video when its hold timer (`HOLD_MS`) fires before the pointer is let go. On a busy page the timer can run before the queued `pointerup`, so a quick tap becomes a short video and no photo. A slow phone could do the same to a person.
 - Fix: decide tap or hold by the events' own times (`pointerup.timeStamp - pointerdown.timeStamp`), not by which callback ran first. A test that holds the page busy across a tap.

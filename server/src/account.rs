@@ -157,7 +157,7 @@ pub async fn change_password(
     validate_auth_key(&req.new_auth_key)?;
     check_wrapped(&req.new_wrapped_private_key)?;
     let hash = hash_secret(req.new_auth_key).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     keep_history(&mut tx, me.id, "password_changed").await?;
     sqlx::query("UPDATE users SET auth_hash = ?, wrapped_private_key = ? WHERE id = ?")
         .bind(&hash)
@@ -215,7 +215,7 @@ pub async fn rename(
         return Err(AppError::bad("That username is taken."));
     }
     let hash = hash_secret(req.new_auth_key).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     // The credentials change exactly as in a password change (the username
     // is the password's salt), and past_usernames records the rename itself.
     // credential_history's reasons are fixed by a CHECK in its table.
@@ -274,7 +274,7 @@ pub async fn set_recovery(
     check_wrapped(&req.recovery_wrapped_key)?;
     let hash = hash_secret(req.recovery_auth_key).await?;
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     keep_history(&mut tx, me.id, "recovery_key_set").await?;
     sqlx::query(
         "UPDATE users SET recovery_hash = ?, recovery_wrapped_key = ?, recovery_set_at = ? WHERE id = ?",
@@ -412,7 +412,7 @@ pub async fn recover_finish(
     validate_auth_key(&req.new_auth_key)?;
     check_wrapped(&req.new_wrapped_private_key)?;
     let hash = hash_secret(req.new_auth_key).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     keep_history(&mut tx, user.id, "recovered").await?;
     sqlx::query("UPDATE users SET auth_hash = ?, wrapped_private_key = ? WHERE id = ?")
         .bind(&hash)
@@ -481,7 +481,7 @@ pub async fn issue_reset_code(
     }
     let code = new_code();
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     sqlx::query(
         "UPDATE reset_codes SET revoked_at = ? WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL",
     )
@@ -557,7 +557,7 @@ pub async fn reset_with_code(
         return Err(AppError::bad(auth::TURNED_OFF));
     }
     let hash = hash_secret(req.new_auth_key).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let claimed =
         sqlx::query("UPDATE reset_codes SET used_at = ? WHERE id = ? AND used_at IS NULL")
             .bind(at)

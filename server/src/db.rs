@@ -26,6 +26,16 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
+/// A transaction that writes. It takes SQLite's write lock at the start
+/// (`BEGIN IMMEDIATE`), so it waits its turn (`busy_timeout`) when another
+/// write is under way. A plain (deferred) transaction that reads first can't
+/// wait when it comes to write after another write landed: SQLite answers
+/// "database is locked" at once, a 500 (seen 2026-10-29, a group text under
+/// load). `db::tests::transactions_take_the_write_lock` keeps every one here.
+pub async fn write_tx(db: &SqlitePool) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    db.begin_with("BEGIN IMMEDIATE").await
+}
+
 /// `pics` next to the SQLite file in a `sqlite://path?opts` URL.
 pub fn default_pic_dir(database_url: &str) -> std::path::PathBuf {
     let path = database_url
@@ -270,6 +280,57 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn transactions_take_the_write_lock() {
+        let needle = [".begin", "()"].concat();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap();
+            for (n, line) in src.lines().enumerate() {
+                assert!(
+                    !line.contains(&needle),
+                    "{}:{} begins a transaction that can fail with \"database is locked\"; use db::write_tx",
+                    path.display(),
+                    n + 1
+                );
+            }
+        }
+    }
+
+    /// Two writers at once, each reading before it writes: with write_tx the
+    /// second waits for the first instead of failing.
+    #[tokio::test]
+    async fn concurrent_writers_wait_their_turn() {
+        let db = temp_db().await;
+        sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (1, 'ana', 'h', 'k', 'w', 0)")
+            .execute(&db).await.unwrap();
+        let writes = (0..8).map(|n| {
+            let db = db.clone();
+            tokio::spawn(async move {
+                let mut tx = write_tx(&db).await?;
+                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM server_keys")
+                    .fetch_one(&mut *tx)
+                    .await?;
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                sqlx::query("INSERT INTO server_keys (name, value, created_at) VALUES (?, 'v', ?)")
+                    .bind(format!("k{n}-{count}"))
+                    .bind(n)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await
+            })
+        });
+        for w in writes.collect::<Vec<_>>() {
+            w.await.unwrap().expect("every writer gets its turn");
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM server_keys")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert!(count >= 8);
     }
 
     #[test]

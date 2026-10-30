@@ -226,7 +226,7 @@ pub async fn edit_group_text(
             .unwrap_or_default();
         recipients.sort_unstable();
         let wraps = groups::check_e2e(&recipients, &req.keys)?;
-        let mut tx = state.db.begin().await?;
+        let mut tx = crate::db::write_tx(&state.db).await?;
         let edit: i64 = sqlx::query_scalar(
             "INSERT INTO group_message_edits (message_id, content, client_id, created_at)
              VALUES (?, ?, ?, ?) RETURNING id",

@@ -122,7 +122,7 @@ pub async fn create(
     }
     let token = new_token();
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO invites (created_by, token_hash, created_at, expires_at, max_uses) VALUES (?, ?, ?, ?, ?) RETURNING id",
     )
