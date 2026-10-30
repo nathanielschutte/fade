@@ -123,7 +123,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func aKeptSessionTheServerEndedSignsOut() async throws {
         let store = MemoryStore(try keptAccount())
         let session = Session(transport: StubServer { _ in (401, json(["error": "Sign in first."])) }, store: store)
-        await session.restore()
+        await session.restore(defaultServer: "https://napsack.test")
         #expect(session.state == .signedOut)
         #expect(session.notice == "Your session ended. Sign in again.")
         #expect(try store.load() == nil)
@@ -132,7 +132,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func aKeptSessionStaysWhenTheServerIsOutOfReach() async throws {
         let kept = try keptAccount()
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: MemoryStore(kept))
-        await session.restore()
+        await session.restore(defaultServer: "https://napsack.test")
         #expect(session.state == .signedIn(kept))
     }
 
@@ -143,7 +143,7 @@ func body(_ request: URLRequest) -> [String: Any] {
             request.url!.path == "/api/me" ? (200, meAnswer) : (200, json(["ok": true]))
         }
         let session = Session(transport: server, store: store)
-        await session.restore()
+        await session.restore(defaultServer: "https://napsack.test")
         await session.signOut()
         let logout = try #require(await server.requests.last)
         #expect(logout.url?.path == "/api/auth/logout" && logout.httpMethod == "POST")
@@ -155,7 +155,7 @@ func body(_ request: URLRequest) -> [String: Any] {
     @Test func signingOutOfflineStillForgetsTheKeys() async throws {
         let store = MemoryStore(try keptAccount())
         let session = Session(transport: StubServer { _ in throw URLError(.notConnectedToInternet) }, store: store)
-        await session.restore()
+        await session.restore(defaultServer: "https://napsack.test")
         await session.signOut()
         #expect(session.state == .signedOut)
         #expect(try store.load() == nil)

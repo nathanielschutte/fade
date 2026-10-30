@@ -48,6 +48,16 @@ struct LiveSignInTests {
         await #expect(throws: ServerError.sessionEnded) { try await server.me(token: account.token) }
     }
 
+    @Test func signsUpWithARecoveryKey() async throws {
+        let username = "ios_\(UUID().uuidString.prefix(8).lowercased())"
+        let session = Session(store: MemoryStore())
+        try await session.signUp(server: address, username: username, password: "correct horse battery", inviteCode: invite)
+        let account = try #require(session.account)
+        #expect(session.recoveryKeyToShow != nil)
+        #expect(try await Server(address).me(token: account.token).hasRecoveryKey)
+        await session.signOut()
+    }
+
     @Test func aWrongPasswordIsRefusedInTheServersWords() async throws {
         let session = Session(store: MemoryStore())
         await #expect(throws: ServerError.self) {
