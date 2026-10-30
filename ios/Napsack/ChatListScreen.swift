@@ -13,6 +13,8 @@ struct ChatListScreen: View {
     let account: Account
     @State private var list = ChatList()
     @State private var live: Live
+    /// Profile and group pictures, for this session only.
+    @State private var pictures: Pictures
     /// Every chat opened this session, kept: a text that hasn't gone yet keeps
     /// trying after you leave its chat, and coming back is instant. (Only in
     /// memory, and gone with the session.)
@@ -28,6 +30,7 @@ struct ChatListScreen: View {
     init(account: Account) {
         self.account = account
         _live = State(initialValue: Live(account: account))
+        _pictures = State(initialValue: Pictures(account: account))
     }
 
     var body: some View {
@@ -137,6 +140,7 @@ struct ChatListScreen: View {
                 }
             }
         }
+        .environment(pictures)
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { live.start() } else if phase == .background { live.stop() }
         }
@@ -244,6 +248,13 @@ struct ChatListScreen: View {
         case .groupMessage(let m):
             if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
             list.reloadSoon(account)
+        case .typing(let from, let group):
+            chat?.typing(from: from, group: group)
+        case .presence(let user, let active, let lastSeenAt):
+            chat?.presence(user: user, active: active, lastSeenAt: lastSeenAt)
+        case .read(let by, let at):
+            chat?.read(by: by, at: at)
+            list.reloadSoon(account)
         case .listChanged:
             list.reloadSoon(account)
         case .pong, .other:
@@ -265,7 +276,7 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Initial(name: row.name, group: row.isGroup)
+            Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(row.name).font(.headline).lineLimit(1)
@@ -312,13 +323,14 @@ struct ChatRowView: View {
 struct Initial: View {
     let name: String
     let group: Bool
+    var size: CGFloat = 44
 
     var body: some View {
-        let shape = group ? AnyShape(RoundedRectangle(cornerRadius: 13, style: .continuous)) : AnyShape(Circle())
+        let shape = group ? AnyShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)) : AnyShape(Circle())
         Text(name.first.map { String($0).uppercased() } ?? "?")
-            .font(.title3.weight(.semibold))
+            .font(.system(size: size * 0.45, weight: .semibold))
             .foregroundStyle(Color.accentColor)
-            .frame(width: 44, height: 44)
+            .frame(width: size, height: size)
             .background(Color.accentColor.opacity(0.18), in: shape)
             .accessibilityHidden(true)
     }

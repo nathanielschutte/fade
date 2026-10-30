@@ -304,7 +304,7 @@ enum SignInError: LocalizedError, Equatable {
         let unlocked = try await unlock(password)
         recoveryKeyToShow = try await setUpRecovery(Server(account.server, transport: transport), token: account.token,
                                                     keys: unlocked.keys, wrapped: unlocked.wrapped)
-        updateUser { Me(id: $0.id, username: $0.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: true) }
+        updateUser { Me(id: $0.id, username: $0.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: true, avatarId: $0.avatarId) }
         reporter.report(.info, "recovery key set")
     }
 
@@ -333,13 +333,22 @@ enum SignInError: LocalizedError, Equatable {
         let answer = try Server.decoder.decode(Renamed.self, from: await Server(account.server, transport: transport).send(
             "me/username", method: "POST", token: account.token,
             json: Rename(username: username, authKey: old.keys.authKey, newAuthKey: next.authKey, newWrappedPrivateKey: rewrapped)))
-        updateUser { Me(id: $0.id, username: answer.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: $0.hasRecoveryKey) }
+        updateUser { Me(id: $0.id, username: answer.username, displayName: $0.displayName, role: $0.role, hasRecoveryKey: $0.hasRecoveryKey, avatarId: $0.avatarId) }
         reporter.report(.info, "username changed")
     }
 
     private func signedIn() throws -> Account {
         guard let account else { throw ServerError.sessionEnded }
         return account
+    }
+
+    /// Friends see when you're active or typing, and you theirs (both must share).
+    func setShareActivity(_ on: Bool) async throws {
+        let account = try signedIn()
+        struct Settings: Encodable { let shareActivity: Bool }
+        _ = try await Server(account.server, transport: transport).send("me/settings", method: "PUT", token: account.token,
+                                                                        json: Settings(shareActivity: on))
+        updateUser { var me = $0; me.shareActivity = on; return me }
     }
 
     /// The signed-in person, changed here and in the Keychain.

@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// Your account, from the person button on the chat list: your username,
@@ -12,9 +13,53 @@ struct SettingsScreen: View {
     @State private var asking: PasswordSheet.Purpose?
     @State private var confirmingEndOthers = false
     @State private var signingOut = false
+    @State private var profile: ProfileModel?
+    @State private var name = ""
+    @State private var picked: PhotosPickerItem?
+    @State private var hasBirthday = false
+    @State private var birthday = Date()
+    @State private var withYear = false
+    @State private var profileNote: String?
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 16) {
+                    Avatar(kind: .friend(account.user.id), avatarId: profile?.profile?.avatarId, name: account.user.username, size: 64)
+                    VStack(alignment: .leading, spacing: 6) {
+                        PhotosPicker(profile?.profile?.avatarId == nil ? "Choose a picture" : "Change picture", selection: $picked, matching: .images)
+                        if profile?.profile?.avatarId != nil {
+                            Button("Remove picture", role: .destructive) { change { try await $0.removePicture() } }
+                        }
+                    }
+                }
+                HStack {
+                    TextField("Your name, for friends", text: $name).textContentType(.name).onSubmit(saveName)
+                    Button("Save", action: saveName).disabled(name == (profile?.profile?.displayName ?? ""))
+                }
+                Toggle("Birthday", isOn: $hasBirthday.animation())
+                if hasBirthday {
+                    DatePicker("Date", selection: $birthday, in: ...Date.now, displayedComponents: .date)
+                    Toggle("Show the year", isOn: $withYear)
+                    Button("Save birthday") { saveBirthday() }
+                }
+            } header: {
+                Text("Profile")
+            } footer: {
+                Text(profileNote ?? "Your friends see your name, picture, and birthday. They aren't end-to-end encrypted.")
+            }
+            Section {
+                Toggle("Share when I'm active", isOn: Binding(get: { account.user.shareActivity ?? true }, set: { on in
+                    Task {
+                        do { try await session.setShareActivity(on) } catch {
+                            note = error.localizedDescription
+                            session.noticed(error)
+                        }
+                    }
+                }))
+            } footer: {
+                Text("Friends see when you're active or typing, and you see theirs. It goes both ways: turn it off and you see nobody's.")
+            }
             Section("Account") {
                 LabeledContent("Username", value: "@\(account.user.username)")
                 if let name = account.user.displayName { LabeledContent("Name", value: name) }
@@ -47,6 +92,21 @@ struct SettingsScreen: View {
         }
         .navigationTitle("Settings")
         .task { await loadSecurity() }
+        .task { await loadProfile() }
+        .onChange(of: picked) { _, item in
+            guard let item else { return }
+            Task {
+                defer { picked = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    profileNote = "Couldn't open that picture."
+                    return
+                }
+                change { try await $0.setPicture(image) }
+            }
+        }
+        .onChange(of: hasBirthday) { _, on in
+            if !on, profile?.profile?.birthday != nil { change { try await $0.setBirthday(month: nil, day: nil, year: nil) } }
+        }
         .sheet(item: $asking) { purpose in
             PasswordSheet(purpose: purpose, hasRecoveryKey: account.user.hasRecoveryKey) { note = $0; Task { await loadSecurity() } }
         }
@@ -65,6 +125,43 @@ struct SettingsScreen: View {
         } ?? "No recovery key yet."
         let others = security.activeSessions - 1
         return saved + " " + (others > 0 ? "Signed in on \(others) other \(others == 1 ? "device" : "devices")." : "Not signed in anywhere else.")
+    }
+
+    private func loadProfile() async {
+        let model = profile ?? ProfileModel(account: account)
+        profile = model
+        do {
+            try await model.load(account.user.id)
+            name = model.profile?.displayName ?? ""
+            if let b = model.profile?.birthday {
+                hasBirthday = true
+                withYear = b.year != nil
+                birthday = Calendar.current.date(from: DateComponents(year: b.year ?? 2000, month: b.month, day: b.day)) ?? .now
+            }
+        } catch {
+            session.noticed(error)
+        }
+    }
+
+    /// A change to your profile, then what it says now.
+    private func change(_ work: @escaping (ProfileModel) async throws -> Void) {
+        guard let profile else { return }
+        Task {
+            do {
+                try await work(profile)
+                profileNote = "Saved."
+            } catch {
+                profileNote = error.localizedDescription
+                session.noticed(error)
+            }
+        }
+    }
+
+    private func saveName() { change { [name] in try await $0.setName(name) } }
+
+    private func saveBirthday() {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: birthday)
+        change { [withYear] in try await $0.setBirthday(month: parts.month, day: parts.day, year: withYear ? parts.year : nil) }
     }
 
     private func loadSecurity() async {

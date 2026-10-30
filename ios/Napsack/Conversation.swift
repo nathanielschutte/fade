@@ -28,6 +28,8 @@ struct Bubble: Identifiable, Equatable, Sendable {
     var editable = false
     /// A group text's member list: an edit is sealed for exactly these.
     var recipients: [Int64]? = nil
+    /// One of my direct texts the friend has read.
+    var seen = false
 
     /// Your own texts can be edited for 15 minutes after sending (app.js, `canEdit`).
     static let editWindow: TimeInterval = 15 * 60
@@ -82,6 +84,7 @@ extension Reader {
                             time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions.map(\.1))
         bubble.myReaction = reactions.first { $0.0 == me.id }?.1
         if case .text = content { bubble.editable = mine }
+        bubble.seen = mine && m.kind == "text" && m.readAt != nil
         return bubble
     }
 
@@ -178,6 +181,14 @@ enum SendError: LocalizedError {
     /// Sealed once per text, so every try sends the same bytes.
     private var sealedTexts: [String: String] = [:]
     private var sealedGroupTexts: [String: E2E.GroupMessage] = [:]
+    /// Who's typing here, until when (app.js, TYPING_MS: 4 seconds after the last word).
+    private(set) var typingUntil: [Int64: Date] = [:]
+    /// The friend on screen now, or when they last were (only if you both share it).
+    private(set) var activeNow = false
+    private(set) var lastSeenAt: Int64?
+    @ObservationIgnored private var lastTypingSent = Date.distantPast
+    static let typingFor: TimeInterval = 4
+
     /// Texts that failed for the connection's sake: they go again on reconnect.
     private var offline: Set<String> = []
     /// Waits between tries while the connection is the problem.
@@ -189,6 +200,86 @@ enum SendError: LocalizedError {
         self.reader = reader
         self.pinBook = pinBook
         self.transport = transport
+        if case .friend(let friend) = chat {
+            activeNow = friend.activeNow == true
+            lastSeenAt = friend.lastSeenAt
+        }
+    }
+
+    // ---------- typing, active now, seen ----------
+
+    /// "Ana is typing…", "Ana and Ben are typing…", "3 people are typing…" (the web app's words).
+    var typingLine: String? {
+        let now = Date()
+        let names = typingUntil.filter { $0.value > now }.keys.sorted().map { id in
+            reader.friends[id]?.name ?? (friend?.id == id ? friend?.name : nil) ?? "Someone"
+        }
+        switch names.count {
+        case 0: return nil
+        case 1: return "\(names[0]) is typing…"
+        case 2: return "\(names[0]) and \(names[1]) are typing…"
+        default: return "\(names.count) people are typing…"
+        }
+    }
+
+    /// Someone's typing: shown for 4 seconds after the last word. Returns whether it's this chat.
+    @discardableResult func typing(from user: Int64, group: Int64?) -> Bool {
+        switch chat {
+        case .friend(let friend) where group == nil && user == friend.id: break
+        case .group(let g) where group == g.id: break
+        default: return false
+        }
+        let until = Date().addingTimeInterval(Self.typingFor)
+        typingUntil[user] = until
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.typingFor + 0.05))
+            if let self, self.typingUntil[user] == until { self.typingUntil[user] = nil }
+        }
+        return true
+    }
+
+    /// The friend came on screen or left.
+    func presence(user: Int64, active: Bool, lastSeenAt: Int64?) {
+        guard friend?.id == user else { return }
+        activeNow = active
+        if let lastSeenAt { self.lastSeenAt = lastSeenAt }
+    }
+
+    /// "Active now", "Active 5m ago", or nothing past a day (app.js, `activeText`).
+    func activeText(now: Date = .now) -> String? {
+        if activeNow { return "Active now" }
+        guard let lastSeenAt else { return nil }
+        let ago = now.timeIntervalSince1970 - TimeInterval(lastSeenAt)
+        if ago > 86_400 { return nil }
+        if ago < 60 { return "Active just now" }
+        if ago < 3600 { return "Active \(Int(ago / 60))m ago" }
+        return "Active \(Int(ago / 3600))h ago"
+    }
+
+    /// The friend read my texts up to `at`: they're seen.
+    func read(by user: Int64, at: Int64) {
+        guard let friend, friend.id == user else { return }
+        typingUntil[user] = nil  // they've read it; whatever they were typing will come as a message
+        let upTo = Date(timeIntervalSince1970: TimeInterval(at))
+        for i in bubbles.indices where bubbles[i].mine && !bubbles[i].seen && bubbles[i].time <= upTo {
+            if case .text = bubbles[i].content { bubbles[i].seen = true }
+        }
+    }
+
+    /// The newest of my texts they've seen, if it's my newest text ("Seen" goes under it).
+    var seenId: Int64? {
+        guard let newest = bubbles.last(where: { b in b.mine && { if case .text = b.content { true } else { false } }() }) else { return nil }
+        return newest.seen ? newest.id : nil
+    }
+
+    /// I'm typing: tells them, at most every couple of seconds (the web app's pace).
+    func noteTyping(_ live: Live) {
+        guard canSend, Date().timeIntervalSince(lastTypingSent) >= 2 else { return }
+        lastTypingSent = Date()
+        switch chat {
+        case .friend(let friend): live.sendTyping(to: .friend(friend.id))
+        case .group(let group): live.sendTyping(to: .group(group.id))
+        }
     }
 
     var title: String {
@@ -398,6 +489,7 @@ enum SendError: LocalizedError {
         guard loaded, let friend, [m.senderId, m.recipientId].contains(friend.id) else { return false }
         if m.senderId == account.user.id, let clientId = m.clientId { _ = discard(clientId) }  // it went
         let new = !bubbles.contains { $0.id == m.id }
+        if new { typingUntil[m.senderId] = nil }  // their message is in: they're done typing
         upsert(reader.bubble(m, with: friend))
         return new && m.senderId == friend.id && m.kind == "text"
     }
@@ -414,6 +506,7 @@ enum SendError: LocalizedError {
             reader.pins = pinBook.pins
         }
         let new = !bubbles.contains { $0.id == m.id }
+        if new { typingUntil[m.senderId] = nil }
         upsert(reader.bubble(m))
         return new && m.senderId != account.user.id
     }

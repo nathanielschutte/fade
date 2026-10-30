@@ -66,16 +66,16 @@ What the web app does quietly that the app must do too, before more features lea
 | Scan a friend's QR with the camera | – | Planned | Native: VisionKit's `DataScannerViewController` |
 | One-time invite links: make, list who joined, revoke | Nate | Done | 2026-10-30: made with its QR and share sheet, listed with who joined, turned off |
 | Opening a napsack link (`/i/<token>`) opens the app | – | Waiting | Universal Links need Associated Domains, a Developer Program capability. Until then, links open in Safari |
-| Unfriend | – | Planned | `DELETE /friends/{id}`; history stays (Rule 1) |
+| Unfriend | Nate | Done | 2026-10-30: from their profile, confirmed; history stays (Rule 1) |
 | The friend map | – | Planned | `GET /graph`. Native: a SwiftUI `Canvas`, pinch and drag |
 
 ## 6. Profiles
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Profile pictures in the list, the chat header, and profiles; tap to see it big | – | Planned | `/users/{id}/avatar/{avatar_id}`, cached |
-| Your profile: display name, picture, birthday | – | Planned | Native: `PhotosPicker` and a crop, a `DatePicker` |
-| A friend's profile: nickname, streak, friends in common, past usernames, safety code | – | Planned | Tapping the chat's title, as on the web |
+| Profile pictures in the list, the chat header, and profiles; tap to see it big | Nate | In progress | 2026-10-30: friends' and groups' pictures in the list, the chat header, and profiles, fetched once each and kept in memory for the session only. Not yet: tapping to see one big |
+| Your profile: display name, picture, birthday | Nate | Done | 2026-10-30: at the top of Settings. A picture from `PhotosPicker` (no access to the whole library), squared to 512 and under 128 KB on the phone (the server cleans it again); the name; the birthday, the year optional. Says they aren't end-to-end encrypted |
+| A friend's profile: nickname, streak, friends in common, past usernames, safety code | Nate | Done | 2026-10-30: tap the chat's title (with their picture): name, @username and past usernames, a nickname only you see, friends since, birthday, streak, texts and pics together, friends in common, safety code, and Unfriend (confirmed; the chat stays) |
 
 ## 7. The chat list, native
 
@@ -92,8 +92,8 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| Typing… and "Active now" (with the setting to share it) | – | Planned | `typing` frames, `presence` events, `share_activity` |
-| "Seen" on your texts, "Seen by" in groups | – | Planned | `read`, `group_read`, `/groups/{id}/reads` |
+| Typing… and "Active now" (with the setting to share it) | Nate | Done | 2026-10-30: "Ana is typing…" above the composer (gone 4 seconds after the last word, or when the message comes; sent at most every 2 seconds), "Active now" or "Active 5m ago" under the friend's name, and "Share when I'm active" in Settings (mutual) |
+| "Seen" on your texts, "Seen by" in groups | Nate | In progress | 2026-10-30: "Seen" under your newest direct text once read, live. "Seen by" in groups isn't yet |
 | Every version of an edited text | – | Planned | `GET .../edits` |
 | Tapping a reaction under a message adds yours | – | Planned | |
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
