@@ -22,6 +22,16 @@ struct Bubble: Identifiable, Equatable, Sendable {
     let replyTo: Int64?
     let time: Date
     let reactions: [String]
+    /// The one I gave, if any (the same again takes it back).
+    var myReaction: String? = nil
+    /// One of my texts that can be edited (format 3 in a group), within the window.
+    var editable = false
+    /// A group text's member list: an edit is sealed for exactly these.
+    var recipients: [Int64]? = nil
+
+    /// Your own texts can be edited for 15 minutes after sending (app.js, `canEdit`).
+    static let editWindow: TimeInterval = 15 * 60
+    var canEdit: Bool { editable && Date().timeIntervalSince(time) < Self.editWindow }
 
     /// Texts and pics can be replied to; group events can't, nor what couldn't be opened.
     var repliable: Bool {
@@ -63,12 +73,16 @@ extension Reader {
             content = .unreadable(Self.cantOpen)
         }
         let keys = readingKeys(friend)
-        let reactions = (m.reactions ?? []).compactMap { r -> String? in
+        let reactions = (m.reactions ?? []).compactMap { r -> (Int64, String)? in
             let to = r.senderId == me.id ? friend.id : me.id
             return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
+                .map { (r.senderId, $0) }
         }
-        return Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
-                      time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions)
+        var bubble = Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
+                            time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions.map(\.1))
+        bubble.myReaction = reactions.first { $0.0 == me.id }?.1
+        if case .text = content { bubble.editable = mine }
+        return bubble
     }
 
     func bubble(_ m: GroupMessage) -> Bubble {
@@ -91,9 +105,13 @@ extension Reader {
         } else {
             content = .unreadable(Self.cantOpen)
         }
-        return Bubble(id: m.id, mine: mine, sender: mine || m.kind == "event" ? nil : name(m.senderId, m.senderName),
-                      content: content, replyTo: replyTo, time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)),
-                      reactions: (m.reactions ?? []).map(\.emoji))
+        var bubble = Bubble(id: m.id, mine: mine, sender: mine || m.kind == "event" ? nil : name(m.senderId, m.senderName),
+                            content: content, replyTo: replyTo, time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)),
+                            reactions: (m.reactions ?? []).map(\.emoji))
+        bubble.myReaction = m.reactions?.first { $0.userId == me.id }?.emoji
+        if case .text = content { bubble.editable = mine && m.format == E2E.groupFormat }
+        bubble.recipients = m.recipients
+        return bubble
     }
 }
 
@@ -116,10 +134,12 @@ struct Outgoing: Identifiable, Equatable, Sendable {
 enum SendError: LocalizedError {
     case keyChanged(String)
     case memberKeyChanged(String)
+    case cantEdit
 
     var errorDescription: String? {
         switch self {
         case .keyChanged(let username): "\(username)'s safety code changed. Messages are blocked."
+        case .cantEdit: "This text can't be edited: napsack doesn't have the key of everyone it went to."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
@@ -281,13 +301,8 @@ enum SendError: LocalizedError {
         let server = try Server(account.server, transport: transport)
         switch chat {
         case .friend(let friend):
-            if keyChanged { throw SendError.keyChanged(friend.username) }
-            let ciphertext = try sealedTexts[item.id] ?? {
-                // To the key I pinned, never one the server swapped in.
-                let key = try E2E.pairKey(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
-                                          myId: account.user.id, theirId: friend.id)
-                return try E2E.encryptText2(key, item.text, replyTo: item.replyTo, sender: account.user.id, recipient: friend.id)
-            }()
+            let ciphertext = try sealedTexts[item.id]
+                ?? E2E.encryptText2(sendingPairKey(friend), item.text, replyTo: item.replyTo, sender: account.user.id, recipient: friend.id)
             sealedTexts[item.id] = ciphertext
             let m = try await server.sendText(to: friend.id, ciphertext: ciphertext, clientId: item.id, token: account.token)
             return reader.bubble(m, with: friend)
@@ -388,6 +403,69 @@ enum SendError: LocalizedError {
         let new = !bubbles.contains { $0.id == m.id }
         upsert(reader.bubble(m))
         return new && m.senderId != account.user.id
+    }
+
+    /// Reacts to a message; the same emoji again takes it back, another replaces it.
+    /// Direct reactions are encrypted; group reactions aren't (each group says so).
+    func react(_ bubble: Bubble, _ emoji: String) async throws {
+        let server = try Server(account.server, transport: transport)
+        let next = bubble.myReaction == emoji ? nil : emoji
+        switch chat {
+        case .friend(let friend):
+            let key = try sendingPairKey(friend)
+            let ciphertext = try next.map { try E2E.encryptReaction(key, $0, sender: account.user.id, recipient: friend.id, message: bubble.id) }
+            upsert(reader.bubble(try await server.react(to: bubble.id, friend: friend.id, ciphertext: ciphertext, token: account.token), with: friend))
+        case .group(let group):
+            upsert(reader.bubble(try await server.react(to: bubble.id, group: group.id, emoji: next, token: account.token)))
+        }
+    }
+
+    /// Replaces one of my texts with new words. Every version is kept on the
+    /// server; the newest shows. Tried again while the connection is the
+    /// problem, with the same `client_id`, so a retry isn't a second edit.
+    func edit(_ bubble: Bubble, to text: String) async throws {
+        let server = try Server(account.server, transport: transport)
+        let clientId = Self.newClientId()
+        switch chat {
+        case .friend(let friend):
+            let ciphertext = try E2E.encryptEdit(try sendingPairKey(friend), text, sender: account.user.id, recipient: friend.id, message: bubble.id)
+            let m = try await retrying { try await server.editText(bubble.id, friend: friend.id, ciphertext: ciphertext, clientId: clientId, token: self.account.token) }
+            upsert(reader.bubble(m, with: friend))
+        case .group(let group):
+            let members = try await server.group(group.id, token: account.token).members
+            var wrapKeys: [Int64: SymmetricKey] = [:]
+            for id in bubble.recipients ?? [] {
+                let key: String
+                if let member = members.first(where: { $0.id == id }) {
+                    key = try sendingKey(member)
+                } else if let known = id == account.user.id ? account.publicKey : reader.pins.current[id] {
+                    key = known  // left the group since: the key I pinned
+                } else {
+                    throw SendError.cantEdit
+                }
+                wrapKeys[id] = try E2E.groupWrapKey(mine: reader.identity, theirs: key, myId: account.user.id, theirId: id)
+            }
+            let sealed = try E2E.encryptGroupEdit(text, message: bubble.id, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
+            let m = try await retrying { try await server.editGroupText(bubble.id, group: group.id, sealed, token: self.account.token) }
+            upsert(reader.bubble(m))
+        }
+    }
+
+    /// Up to three tries while the connection is the problem.
+    private func retrying<T>(_ body: () async throws -> T) async throws -> T {
+        for delay in retryDelays {
+            do { return try await body() } catch let error as ServerError where error.retryable {
+                try? await Task.sleep(for: delay)
+            }
+        }
+        return try await body()
+    }
+
+    /// The chat key for sending to a friend: with the key I pinned, never one the server swapped in.
+    private func sendingPairKey(_ friend: Friend) throws -> SymmetricKey {
+        if keyChanged { throw SendError.keyChanged(friend.username) }
+        return try E2E.pairKey(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
+                               myId: account.user.id, theirId: friend.id)
     }
 
     /// Back online: texts that couldn't go for the connection's sake go now.

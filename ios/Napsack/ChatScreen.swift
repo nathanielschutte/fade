@@ -1,9 +1,12 @@
+import NapsackCrypto
 import SwiftUI
+import UIKit
 
 /// An open chat: its history, newest at the bottom, older pages loading as you
 /// scroll up. Opening it marks it read. A friend's changed key shows a warning
-/// at the top until it's accepted. Texts are written at the bottom; a long
-/// press on a message replies to it. New messages arrive live (Live.swift).
+/// at the top until it's accepted. Texts are written at the bottom. A long
+/// press on a message reacts, replies, copies, or (your own text, for 15
+/// minutes) edits it. New messages arrive live (Live.swift).
 struct ChatScreen: View {
     @Environment(Session.self) private var session
     @Environment(Live.self) private var live
@@ -13,6 +16,8 @@ struct ChatScreen: View {
     @State private var showingSafetyCode = false
     @State private var draft = ""
     @State private var replyingTo: Bubble?
+    @State private var editing: Bubble?
+    @State private var failure: String?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -40,14 +45,7 @@ struct ChatScreen: View {
                     }
                     BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index))
                         .id(bubble.id)
-                        .contextMenu {
-                            if conversation.canSend, bubble.repliable {
-                                Button("Reply", systemImage: "arrowshape.turn.up.left") {
-                                    replyingTo = bubble
-                                    composing = true
-                                }
-                            }
-                        }
+                        .contextMenu { actions(bubble) }
                 }
                 ForEach(conversation.outbox) { item in
                     OutgoingView(item: item, quote: item.replyTo.map(quote),
@@ -85,6 +83,11 @@ struct ChatScreen: View {
                 KeyWarning(friend: friend, compare: { showingSafetyCode = true }, accept: { Task { await accept() } })
                     .padding(.horizontal, 12).padding(.top, 4).background(.bar)
             }
+        }
+        .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(failure ?? "")
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -126,13 +129,23 @@ struct ChatScreen: View {
                 .frame(maxWidth: .infinity).padding(12).background(.bar)
         } else if conversation.loaded {
             VStack(spacing: 6) {
-                if let replyingTo {
+                if editing != nil || replyingTo != nil {
                     HStack {
-                        Text("Replying to \(replyingTo.mine ? "yourself" : replyingTo.sender ?? conversation.title): \(replyingTo.gist)")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Group {
+                            if editing != nil {
+                                Text("Editing your message")
+                            } else if let replyingTo {
+                                Text("Replying to \(replyingTo.mine ? "yourself" : replyingTo.sender ?? conversation.title): \(replyingTo.gist)")
+                            }
+                        }
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         Spacer()
-                        Button("Cancel reply", systemImage: "xmark") { self.replyingTo = nil }
-                            .labelStyle(.iconOnly).font(.caption)
+                        Button(editing != nil ? "Cancel editing" : "Cancel reply", systemImage: "xmark") {
+                            if editing != nil { draft = "" }
+                            editing = nil
+                            replyingTo = nil
+                        }
+                        .labelStyle(.iconOnly).font(.caption)
                     }
                 }
                 HStack(alignment: .bottom, spacing: 8) {
@@ -155,10 +168,65 @@ struct ChatScreen: View {
         }
     }
 
+    /// What a long press offers (app.js, the message actions).
+    @ViewBuilder private func actions(_ bubble: Bubble) -> some View {
+        if conversation.canSend, bubble.repliable {
+            ForEach([E2E.reactions.prefix(3), E2E.reactions.suffix(3)], id: \.self) { row in
+                ControlGroup {
+                    ForEach(Array(row), id: \.self) { emoji in
+                        Button(bubble.myReaction == emoji ? "\(emoji)✓" : emoji) { react(bubble, emoji) }
+                            .accessibilityLabel(bubble.myReaction == emoji ? "Take back \(emoji)" : "React \(emoji)")
+                    }
+                }
+            }
+            Button("Reply", systemImage: "arrowshape.turn.up.left") {
+                editing = nil
+                replyingTo = bubble
+                composing = true
+            }
+        }
+        if case .text(let text, _) = bubble.content {
+            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+        }
+        if conversation.canSend, bubble.canEdit, case .text(let text, _) = bubble.content {
+            Button("Edit", systemImage: "pencil") {
+                replyingTo = nil
+                editing = bubble
+                draft = text
+                composing = true
+            }
+        }
+    }
+
+    private func react(_ bubble: Bubble, _ emoji: String) {
+        Task {
+            do { try await conversation.react(bubble, emoji) } catch { trouble(error) }
+        }
+    }
+
+    private func trouble(_ error: any Error) {
+        session.noticed(error)
+        failure = error.localizedDescription
+    }
+
     private func send(_ proxy: ScrollViewProxy) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, conversation.canSend else { return }
         draft = ""
+        if let editing {
+            self.editing = nil
+            guard case .text(let before, _) = editing.content, before != text else { return }  // nothing changed
+            Task {
+                do {
+                    try await conversation.edit(editing, to: text)
+                } catch {
+                    // Nothing lost: it's back in the box to try again.
+                    if draft.isEmpty { draft = text; self.editing = editing }
+                    trouble(error)
+                }
+            }
+            return
+        }
         let reply = replyingTo?.id
         replyingTo = nil
         let id = conversation.queue(text, replyTo: reply)
