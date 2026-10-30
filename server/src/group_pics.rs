@@ -258,7 +258,7 @@ pub async fn upload(
     }
 
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let pic: i64 = sqlx::query_scalar(
         "INSERT INTO group_pics (group_id, sender_id, bytes, mime, caption, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
@@ -365,7 +365,7 @@ async fn upload_e2e(
     }
 
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let started = groups::mark_encrypted_start(&mut tx, group, me, at).await?;
     let pic: i64 = sqlx::query_scalar(
         "INSERT INTO group_pics (group_id, sender_id, bytes, mime, caption, created_at, expires_at, format)
@@ -665,7 +665,7 @@ pub async fn set_avatar(
     // Only the re-encoded image is ever stored or served (images.rs).
     let body = crate::images::clean(body, 512).await?;
     let mime = "image/jpeg";
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let avatar: i64 = sqlx::query_scalar(
         "INSERT INTO group_avatars (group_id, set_by, image, mime, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
     )

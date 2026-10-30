@@ -82,7 +82,7 @@ pub async fn ensure(db: &SqlitePool) -> anyhow::Result<i64> {
     let unusable = crate::auth::hash_secret(B64.encode(rand::random::<[u8; 32]>()))
         .await
         .map_err(|_| anyhow::anyhow!("hashing failed"))?;
-    let mut tx = db.begin().await?;
+    let mut tx = crate::db::write_tx(db).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, auth_hash, public_key, wrapped_private_key, created_at)
          VALUES (?, ?, ?, '', ?) RETURNING id",

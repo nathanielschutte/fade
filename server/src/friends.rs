@@ -230,7 +230,7 @@ pub async fn record_event<'e, E: sqlx::SqliteExecutor<'e>>(
 pub async fn make_friends(db: &SqlitePool, accepter: i64, other: i64) -> sqlx::Result<()> {
     let (lo, hi) = pair(accepter, other);
     let at = now();
-    let mut tx = db.begin().await?;
+    let mut tx = crate::db::write_tx(db).await?;
     sqlx::query(
         "UPDATE friend_requests SET resolved_at = ?, resolution = 'accepted'
          WHERE ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)) AND resolved_at IS NULL",

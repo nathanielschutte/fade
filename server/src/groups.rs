@@ -640,7 +640,7 @@ pub async fn create(
     }
 
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let group: i64 = sqlx::query_scalar(
         "INSERT INTO groups (name, created_by, created_at) VALUES (?, ?, ?) RETURNING id",
     )
@@ -712,7 +712,7 @@ pub async fn rename(
 ) -> AppResult<Json<GroupDetail>> {
     let (role, _) = require_member(&state.db, group, me.id).await?;
     let name = clean_name(&req.name)?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     sqlx::query("UPDATE groups SET name = ? WHERE id = ?")
         .bind(&name)
         .bind(group)
@@ -763,7 +763,7 @@ pub async fn add_member(
     }
     let target_name = username(&state.db, target).await?;
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     // Rejoining reuses the row; the earlier membership is in the group's events.
     sqlx::query(
         "INSERT INTO group_members (group_id, user_id, role, added_by, joined_at, visible_after_id)
@@ -817,7 +817,7 @@ pub async fn remove_member(
         .ok_or_else(|| AppError::not_found("They're not in this group."))?;
     let target_name = username(&state.db, target).await?;
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     sqlx::query(
         "UPDATE group_members SET left_at = ?, removed_by = ?
          WHERE group_id = ? AND user_id = ? AND left_at IS NULL",
@@ -1016,7 +1016,7 @@ async fn send_e2e(
     let recipients =
         serde_json::to_string(&members).map_err(|e| AppError::Internal(e.to_string()))?;
     let at = now();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let started = mark_encrypted_start(&mut tx, group, me, at).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO group_messages (group_id, sender_id, kind, body, format, created_at, client_id, recipients)

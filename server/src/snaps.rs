@@ -136,7 +136,7 @@ pub async fn upload(
 
     // The row and the file go in together: the file is written (then renamed,
     // so a crash never leaves half a pic) before the row commits.
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::write_tx(&state.db).await?;
     let message = sqlx::query_as::<_, Message>(&format!(
         "INSERT INTO messages (sender_id, recipient_id, kind, format, snap_state, snap_bytes, created_at, client_id)
          VALUES (?, ?, 'snap', ?, 'pending', ?, ?, ?) RETURNING {MESSAGE_COLS}"
