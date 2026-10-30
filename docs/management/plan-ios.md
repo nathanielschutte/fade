@@ -41,7 +41,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Client logs: what goes wrong on the phone reaches the log viewer (`POST /api/logs`, "ios app") | Nate | Done | 2026-10-29: `Reporter`, as the web's `report()`: batched (50 a request), errors within half a second, everything when the app leaves the screen; ids, statuses, and error wording only. Reports sign-in failures, sends, loading, key changes, the socket, and messages that couldn't be opened (how many). A live test reads it back from the log viewer as an Admin |
 | Signing out leaves nothing: the account, every chat in memory, and later the cache, the notification token, and delivered notifications | Nate | Done | 2026-10-29: the Keychain account goes; the signed-in screens (chats, socket, open chats) are tied to the session and go with it; requests use an ephemeral connection with no cache or cookies, so the system never writes them down; reports stop going as the account. Pins stay. `signingOutLeavesNothingOfTheAccount`. When the cache and notifications come, they join it |
 | One outbox for the whole app: a "Not sent" text survives leaving its chat | Nate | Done | 2026-10-29: every chat opened in a session is kept (only in memory, gone with the session), so its unsent texts keep trying after you leave, all of them go again on reconnect, and reopening a chat is instant (it catches up instead of reloading) |
-| The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Needs decision | Native screens, or the web's `/admin` in the app (it would need signing in there too). Until then, a browser |
+| The System pages (Metrics, Logs, Users, ...) for PowerUsers and Admins | Nate | Decided | Nate (2026-10-30): desktop only. The iOS app doesn't show them |
 | Keeping chats on the phone, encrypted, so the list and each chat's newest page show at once and offline | – | Planned | The web's `cache.js`. Native: a file with complete file protection (readable only while unlocked), wiped at sign-out |
 
 ## 4. Your account
@@ -114,9 +114,9 @@ What the web app does quietly that the app must do too, before more features lea
 |---|---|---|---|
 | The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | – | Planned | Same size limits as the web app ([F20](plan.md#f20-better-video-quality) for video quality). Native: a full-screen camera, pinch to zoom |
 | Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | In progress | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and closes at its end. It counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted on close). Formats 1, 2, 4, 6 and groups' 3, 5, 7. Not yet: opening several back to back |
-| Sending a pic or video to several friends and groups at once, with a caption placed anywhere | – | Planned | `/chats/{id}/snaps`, `/groups/{id}/pics` with `X-Napsack-Keys` |
+| Sending a pic or video to several friends and groups at once, with a caption placed anywhere | Nate | In progress | 2026-10-30: a photo to the open chat (format 6 direct, 7 groups, sealed once, resealed if the group changed). Not yet: to several at once, videos, placing the caption |
 | Drawing and stickers on a pic | – | Planned | Native: PencilKit |
-| Picking a photo from the library | – | Planned | Native: `PhotosPicker`, no full library access needed |
+| Picking a photo from the library | Nate | Done | 2026-10-30: the photo button beside the message box (`PhotosPicker`, no access to the whole library), a caption (up to 200, sealed in), Send. Made at most 1280 on its longest side, JPEG, as the web does |
 | Double-tap a chat in the list to open the camera for it | – | Planned | As on the web |
 
 ## 11. Notifications

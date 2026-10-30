@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import UIKit
 import NapsackCrypto
 
 /// One message as a chat shows it, opened.
@@ -147,12 +148,14 @@ enum SendError: LocalizedError {
     case memberKeyChanged(String)
     case cantEdit
     case cantOpen
+    case tooLarge
 
     var errorDescription: String? {
         switch self {
         case .keyChanged(let username): "\(username)'s safety code changed. Messages are blocked."
         case .cantEdit: "This text can't be edited: napsack doesn't have the key of everyone it went to."
         case .cantOpen: "This pic couldn't be shown. It's still unopened."
+        case .tooLarge: "That photo is too large to send."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
@@ -459,13 +462,86 @@ struct OpenedPic: Sendable {
 
     /// Seals a group text for its members now, each to the key I pinned for them.
     private func seal(_ item: Outgoing, for group: GroupSummary, server: Server) async throws -> E2E.GroupMessage {
+        try E2E.encryptGroupText(item.text, replyTo: item.replyTo, groupId: group.id, senderId: account.user.id,
+                                 wrapKeys: await wrapKeys(for: group, server: server))
+    }
+
+    /// Each member's wrap key, to the key I pinned for them (the group is blocked if one changed).
+    private func wrapKeys(for group: GroupSummary, server: Server) async throws -> [Int64: SymmetricKey] {
         let members = try await server.group(group.id, token: account.token).members
         var wrapKeys: [Int64: SymmetricKey] = [:]
         for member in members {
             wrapKeys[member.id] = try E2E.groupWrapKey(mine: reader.identity, theirs: sendingKey(member),
                                                        myId: account.user.id, theirId: member.id)
         }
-        return try E2E.encryptGroupText(item.text, replyTo: item.replyTo, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
+        return wrapKeys
+    }
+
+    // ---------- sending a photo ----------
+
+    /// Sends a photo (a JPEG made on the phone) with its caption sealed in:
+    /// format 6 to a friend, 7 to a group (app.js, `sendSnapTo`, `sendGroupPicTo`).
+    /// Sealed once and sent with the same id on every try, so a retry is never
+    /// a second pic; a group that changed meanwhile (409) is sealed again for who's there now.
+    func sendPhoto(_ jpeg: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil) async throws {
+        let server = try Server(account.server, transport: transport)
+        let caption = String(caption.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        switch chat {
+        case .friend(let friend):
+            let sealed = try E2E.encryptImage(sendingPairKey(friend), jpeg, caption: caption, sender: account.user.id, recipient: friend.id, y: y)
+            if let maxBytes, sealed.count > maxBytes { throw SendError.tooLarge }
+            let query = [URLQueryItem(name: "format", value: String(E2E.imageFormat)), URLQueryItem(name: "client_id", value: Self.newClientId())]
+            let data = try await retrying {
+                try await server.upload("chats/\(friend.id)/snaps", data: sealed, contentType: "application/octet-stream",
+                                        token: self.account.token, query: query)
+            }
+            upsert(reader.bubble(try Server.decoder.decode(DirectMessage.self, from: data), with: friend))
+        case .group(let group):
+            func seal() async throws -> E2E.GroupMessage {
+                try E2E.encryptGroupImage(jpeg, caption: caption, y: y, groupId: group.id, senderId: account.user.id,
+                                          wrapKeys: await wrapKeys(for: group, server: server))
+            }
+            func post(_ sealed: E2E.GroupMessage) async throws -> Data {
+                let keys = try JSONSerialization.data(withJSONObject: [
+                    "client_id": sealed.clientId, "recipients": sealed.recipients,
+                    "wraps": Dictionary(uniqueKeysWithValues: sealed.wraps.map { (String($0.key), $0.value) }),
+                ])
+                return try await retrying {
+                    try await server.upload("groups/\(group.id)/pics", data: sealed.content, contentType: "application/octet-stream",
+                                            token: self.account.token, query: [URLQueryItem(name: "format", value: String(E2E.groupImageFormat))],
+                                            headers: ["X-Napsack-Keys": String(decoding: keys, as: UTF8.self)])
+                }
+            }
+            var sealed = try await seal()
+            if let maxBytes, sealed.content.count > maxBytes { throw SendError.tooLarge }
+            let data: Data
+            do {
+                data = try await post(sealed)
+            } catch ServerError.refused(_, status: 409) {
+                sealed = try await seal()  // someone joined or left since
+                data = try await post(sealed)
+            }
+            upsert(reader.bubble(try Server.decoder.decode(GroupMessage.self, from: data)))
+        }
+        Reporter.shared.report(.info, "pic sent", ["group": groupFlag, "bytes": String(jpeg.count)])
+    }
+
+    /// A photo as napsack sends one: at most 1280 on its longest side, JPEG,
+    /// smaller and smaller until it fits (app.js, `compressPhoto`).
+    nonisolated static func photoJPEG(_ image: UIImage, maxBytes: Int = 900_000) -> Data? {
+        var edge: CGFloat = 1280
+        while edge >= 320 {
+            let scale = min(1, edge / max(image.size.width, image.size.height))
+            let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let drawn = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+            for quality in [0.8, 0.68, 0.56] {
+                if let data = drawn.jpegData(compressionQuality: quality), data.count <= maxBytes { return data }
+            }
+            edge *= 0.75
+        }
+        return nil
     }
 
     /// Mine, the one pinned for them, or (first seen, friend or not) the server's, which is pinned.

@@ -1,4 +1,5 @@
 import NapsackCrypto
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -27,6 +28,9 @@ struct ChatScreen: View {
     @State private var tapped = 0
     /// A pic or video being opened (once).
     @State private var viewing: PicToOpen?
+    /// A photo from the library, picked and waiting for its caption.
+    @State private var pickedPhoto: PhotosPickerItem?
+    @State private var photoToSend: PhotoToSend?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -100,6 +104,24 @@ struct ChatScreen: View {
         .animation(.easeOut(duration: 0.15), value: held?.id)
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .sensoryFeedback(.impact(weight: .light), trigger: tapped)
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                defer { pickedPhoto = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    failure = "Couldn't open that photo."
+                    return
+                }
+                photoToSend = PhotoToSend(image: image)
+            }
+        }
+        .sheet(item: $photoToSend) { photo in
+            PhotoSendSheet(photo: photo, to: conversation.title) { caption in
+                guard let jpeg = Conversation.photoJPEG(photo.image) else { throw SendError.tooLarge }
+                try await conversation.sendPhoto(jpeg, caption: caption)
+                tapped += 1
+            }
+        }
         .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
             PicViewer(pic: item.pic, conversation: conversation)
         }
@@ -216,6 +238,13 @@ struct ChatScreen: View {
                     }
                 }
                 HStack(alignment: .bottom, spacing: 8) {
+                    if editing == nil {
+                        PhotosPicker(selection: $pickedPhoto, matching: .images) {
+                            Image(systemName: "photo.on.rectangle").font(.system(size: 22)).frame(width: 32, height: 36)
+                        }
+                        .disabled(!conversation.canSend)
+                        .accessibilityLabel("Send a photo")
+                    }
                     TextField("Message", text: $draft, axis: .vertical)
                         .onChange(of: draft) { _, text in if !text.isEmpty { conversation.noteTyping(live) } }
                         .lineLimit(1...5)
@@ -596,6 +625,62 @@ struct IdentifiedPic: Identifiable {
         switch pic {
         case .direct(let m): "d\(m.id)"
         case .group(let m): "g\(m.id)"
+        }
+    }
+}
+
+/// A photo picked from the library, before it's sent.
+struct PhotoToSend: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+/// The photo, a caption (sealed in with it, so only they see it), and Send.
+struct PhotoSendSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let photo: PhotoToSend
+    let to: String
+    let send: (String) async throws -> Void
+    @State private var caption = ""
+    @State private var sending = false
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Image(uiImage: photo.image).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxHeight: .infinity)
+                TextField("Add a caption", text: $caption, axis: .vertical)
+                    .lineLimit(1...3)
+                    .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
+            }
+            .padding()
+            .navigationTitle("To \(to)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(sending ? "Sending…" : "Send") {
+                        sending = true
+                        problem = nil
+                        Task {
+                            defer { sending = false }
+                            do {
+                                try await send(caption)
+                                dismiss()
+                            } catch {
+                                Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
+                                problem = error.localizedDescription
+                            }
+                        }
+                    }
+                    .disabled(sending)
+                }
+            }
         }
     }
 }

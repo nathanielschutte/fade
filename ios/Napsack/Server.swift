@@ -181,10 +181,12 @@ struct Server: Sendable {
         }
     }
 
-    /// Sends raw bytes (a profile picture): the same answers as `send`.
-    func upload(_ path: String, data: Data, contentType: String, token: String) async throws -> Data {
-        var req = request(path, method: "POST", token: token)
+    /// Sends raw bytes (a picture, sealed or not): the same answers as `send`.
+    func upload(_ path: String, data: Data, contentType: String, token: String,
+                query: [URLQueryItem] = [], headers: [String: String] = [:]) async throws -> Data {
+        var req = request(path, method: "POST", token: token, query: query)
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers { req.setValue(value, forHTTPHeaderField: name) }
         req.httpBody = data
         let body: Data, response: HTTPURLResponse
         do {
