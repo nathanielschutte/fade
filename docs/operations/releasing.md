@@ -7,8 +7,7 @@ How napsack's pieces are versioned, how each one ships, and the rules that keep 
 | Piece | Version lives in | Ships by | Tag |
 |---|---|---|---|
 | Server (with the web client inside) | `server/Cargo.toml` | GitHub Actions: every push to `main` goes to staging, a tag goes to production. `scripts/deploy.sh` for hotfixes | `server-v1.4.0` |
-| iOS app, native build | `mobile/app.config.ts` `version`; build number managed by EAS | EAS Build → TestFlight → App Store | `ios-v1.2.0` |
-| iOS app, JavaScript-only fix | same version, new update ID | EAS Update (over the air) | none |
+| iOS app | `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `ios/Config/Base.xcconfig` | Xcode → TestFlight → App Store, with the Developer Program ([mobile.md](../design/mobile.md)) | `ios-v1.2.0` |
 | Infrastructure | git history | `terraform apply` by hand | none |
 
 The web client is compiled into the server binary, so it always matches the server. Every running server reports what it is at `GET /api/config`: `server_version`, `build` (git short sha, `-dirty` if built from uncommitted code), `api_version`, `message_formats`, and `min_client_versions`. The admin panel shows the same.
@@ -124,8 +123,7 @@ It makes that build what production runs and installs it. Rule 5 is what makes t
 ## Releasing the iOS app
 
 The details live in [mobile.md](../design/mobile.md). The short version:
-- **Native changes** (new native modules, permissions, Expo SDK upgrades): bump `version`, tag `ios-v1.2.0`, and EAS builds it in the cloud, uploads it to TestFlight, and after you test it, you submit it for App Store review.
-- **JavaScript-only fixes** go out with EAS Update to installed apps whose native code matches. No review wait, but it's still bound by rules 1-3.
+- **Every change** to the app is a new build: bump `MARKETING_VERSION` (and the build number, `CURRENT_PROJECT_VERSION`) in `ios/Config/Base.xcconfig`, tag `ios-v1.2.0`, upload it to TestFlight, and after testing it, submit it for App Store review. How exactly comes with the Developer Program ([mobile.md](../design/mobile.md)).
 
 ## One-time setup
 

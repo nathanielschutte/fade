@@ -26,7 +26,6 @@ shared/crypto/     crypto.js: the reference implementation (web), and vector-che
 tests/vectors/     the pinned vectors every implementation must reproduce exactly
 ios/               the Swift app: Napsack.xcodeproj, and NapsackCrypto (the formats, a Swift package)
 android/           the Kotlin app, later
-mobile/            the retired Expo prototype; removed once ios/ passes every vector
 ```
 
 - **Crypto in Swift.** Everything the formats use is built into iOS:
