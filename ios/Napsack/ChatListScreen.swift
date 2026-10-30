@@ -158,7 +158,7 @@ struct ChatListScreen: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink { FriendsScreen(model: FriendsModel(account: account)) } label: {
+                    NavigationLink { FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name))) } label: {
                         Image(systemName: "person.2")
                             .overlay(alignment: .topTrailing) {
                                 if list.incoming > 0 {

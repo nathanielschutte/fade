@@ -67,7 +67,7 @@ What the web app does quietly that the app must do too, before more features lea
 | One-time invite links: make, list who joined, revoke | Nate | Done | 2026-10-30: made with its QR and share sheet, listed with who joined, turned off |
 | Opening a napsack link (`/i/<token>`) opens the app | – | Waiting | Universal Links need Associated Domains, a Developer Program capability. Until then, links open in Safari |
 | Unfriend | Nate | Done | 2026-10-30: from their profile, confirmed; history stays (Rule 1) |
-| The friend map | – | Planned | `GET /graph`. Native: a SwiftUI `Canvas`, pinch and drag |
+| The friend map | Nate | Done | 2026-10-30: Friends › See your friend map: you, your friends by name, who among them know each other, and a "?" for each person a friend knows that you don't; laid out on the phone (the same way each time), a SwiftUI `Canvas`, pinch and drag. Not yet: group chats on it (`?chats=1`) |
 
 ## 6. Profiles
 
@@ -99,7 +99,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Holding a message: one row of reactions at text size, actions below | Nate | Done | 2026-10-29 (#21), after Nate tried the system menu on his phone |
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
 | Haptics where they help: sending, reacting, a new message in the open chat | Nate | Done | 2026-10-30: holding a message, swiping to reply, sending, reacting, and a new message from them in the open chat |
-| Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | – | Planned | Before TestFlight |
+| Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | Nate | In progress | 2026-10-30: chats checked at the largest standard text size (everything wraps, nothing cut off); controls have VoiceOver labels and actions (holding a message has a "Message actions" action). Not yet: a full VoiceOver walk-through on a phone, Reduce Motion |
 
 ## 9. Groups
 
@@ -113,11 +113,11 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The camera with AVFoundation: photos, holding to record video, zoom, flip (while recording too), mute, the front camera mirrored | Nate | In progress | 2026-10-30: the camera button beside the message box: full screen, tap for a photo, hold for a video with sound (stops at the server's limit, made MP4), pinch to zoom (1× again for each capture), flip, the front camera's photo mirrored; then the caption sheet. Built and tested up to the capture on the Simulator (which has no camera); **needs trying on a phone**. Not yet: flip while recording, mute |
-| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | In progress | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and closes at its end. It counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted on close). Formats 1, 2, 4, 6 and groups' 3, 5, 7. Not yet: opening several back to back |
+| Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone | Nate | Done | 2026-10-30: "Tap to view pic" opens it full screen, its caption where the sender put it; a video plays and moves on at its end; tapping goes to the next waiting one, then closes. Each counts as opened only once shown; nothing is saved (a video plays from a protected temporary file, deleted after). Formats 1, 2, 4, 6 and groups' 3, 5, 7 |
 | Sending a pic or video to several friends and groups at once, with a caption placed anywhere | Nate | In progress | 2026-10-30: from a chat (the camera or library button) or from the chat list's camera button: Send to… any number of chats (search; not those that can't take one), one caption, each sealed for its chat; what fails is said and stays picked. Formats 6 and 4 direct, 7 and 5 in groups. Not yet: placing the caption |
 | Drawing and stickers on a pic | – | Planned | Native: PencilKit |
 | Picking a photo from the library | Nate | Done | 2026-10-30: the photo button beside the message box (`PhotosPicker`, no access to the whole library), a caption (up to 200, sealed in), Send. Made at most 1280 on its longest side, JPEG, as the web does |
-| Double-tap a chat in the list to open the camera for it | – | Planned | As on the web |
+| Double-tap a chat in the list to open the camera for it | – | Decided | 2026-10-30: not on iOS: a tap already opens the chat, and both the chat's camera button and the list's camera (Send to…) are one tap away. Nate can overrule |
 
 ## 11. Notifications
 

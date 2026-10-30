@@ -46,12 +46,28 @@ protocol PinStore: Sendable {
 }
 
 struct KeychainPinStore: PinStore {
+    /// Pins are a server's account's: the same id on another server (staging
+    /// and production, say) is someone else, whose keys mustn't be mixed in.
+    /// (A browser keeps each site's apart by itself.)
+    let server: String
+
+    init(server: String) {
+        self.server = server
+    }
+
+    /// `pins:<host>[:port]:<account>`.
+    func key(_ account: Int64) -> String {
+        let url = URL(string: server)
+        let host = (url?.host() ?? server).lowercased() + (url?.port.map { ":\($0)" } ?? "")
+        return "pins:\(host):\(account)"
+    }
+
     func load(account: Int64) -> Pins {
-        (try? Keychain.read(account: "pins:\(account)")).flatMap { try? JSONDecoder().decode(Pins.self, from: $0) } ?? Pins()
+        (try? Keychain.read(account: key(account))).flatMap { try? JSONDecoder().decode(Pins.self, from: $0) } ?? Pins()
     }
 
     func save(_ pins: Pins, account: Int64) throws {
-        try Keychain.save(JSONEncoder().encode(pins), account: "pins:\(account)")
+        try Keychain.save(JSONEncoder().encode(pins), account: key(account))
     }
 }
 
@@ -63,7 +79,7 @@ struct KeychainPinStore: PinStore {
     private let account: Int64
     private let store: any PinStore
 
-    init(account: Int64, store: any PinStore = KeychainPinStore()) {
+    init(account: Int64, store: any PinStore) {
         self.account = account
         self.store = store
         pins = store.load(account: account)
