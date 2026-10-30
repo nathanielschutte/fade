@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import PhotosUI
 import SwiftUI
 
 /// The camera, done the iOS way (AVFoundation), as the web app's camera does
@@ -220,6 +221,7 @@ struct CameraScreen: View {
     @State private var recordStart: Date?
     @State private var zoom: CGFloat = 1
     @State private var pinchFrom: CGFloat = 1
+    @State private var picked: PhotosPickerItem?
 
     var body: some View {
         ZStack {
@@ -247,7 +249,19 @@ struct CameraScreen: View {
                 }
                 .foregroundStyle(.white)
                 Spacer()
-                shutter.padding(.bottom, 30)
+                ZStack {
+                    shutter
+                    HStack {
+                        // A photo from the library instead (what the camera's messages offer).
+                        PhotosPicker(selection: $picked, matching: .images) {
+                            Image(systemName: "photo.on.rectangle").font(.title2).foregroundStyle(.white).padding()
+                        }
+                        .accessibilityLabel("Choose a photo")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 24)
+                }
+                .padding(.bottom, 30)
             }
         }
         .statusBarHidden()
@@ -255,6 +269,17 @@ struct CameraScreen: View {
             do { try await camera.start() } catch { problem = error.localizedDescription }
         }
         .onDisappear { camera.stop() }
+        .onChange(of: picked) { _, item in
+            guard let item else { return }
+            Task {
+                defer { picked = nil }
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    captured(.photo(image))
+                } else {
+                    problem = "Couldn't open that photo."
+                }
+            }
+        }
     }
 
     /// Tap for a photo; hold (half a second) to record, let go to stop.
@@ -325,5 +350,97 @@ struct CameraScreen: View {
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
+    }
+}
+
+/// Where a pic or video from the camera button goes: any of your chats, as
+/// many as you like, with one caption (the web app's camera tab, Send to…).
+/// Chats that can't take one (a changed key, a turned-off account, Team
+/// Napsack) aren't offered.
+struct SendToSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let media: Captured
+    let chats: [ChatRow]
+    /// Sends to one chat; throws what went wrong there.
+    let send: (ChatRow.Kind, String) async throws -> Void
+    let done: (String) -> Void
+    @State private var picked: [ChatRow.Kind] = []
+    @State private var caption = ""
+    @State private var search = ""
+    @State private var sending = false
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Group {
+                    switch media {
+                    case .photo(let image): Image(uiImage: image).resizable().scaledToFit()
+                    case .video(let url): LoopingVideo(url: url)
+                    }
+                }
+                .frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 12)).padding(.horizontal)
+                TextField("Add a caption", text: $caption, axis: .vertical).lineLimit(1...3)
+                    .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
+                    .padding(10).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12)).padding()
+                List(shown) { row in
+                    Button {
+                        if let i = picked.firstIndex(of: row.kind) { picked.remove(at: i) } else { picked.append(row.kind) }
+                    } label: {
+                        HStack {
+                            Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name, size: 32)
+                            Text(row.name).foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
+                        }
+                    }
+                    .accessibilityAddTraits(picked.contains(row.kind) ? .isSelected : [])
+                }
+                .listStyle(.plain)
+                .searchable(text: $search, prompt: "Search")
+                if let problem { Text(problem).foregroundStyle(.red).font(.footnote).padding() }
+            }
+            .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
+                }
+            }
+        }
+    }
+
+    private var shown: [ChatRow] {
+        let words = search.trimmingCharacters(in: .whitespaces)
+        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) }
+    }
+
+    /// One after another; what failed is said, and only what failed stays picked to try again.
+    private func go() {
+        sending = true
+        problem = nil
+        Task {
+            defer { sending = false }
+            var sent: [String] = [], failed: [(String, String)] = []
+            for kind in picked {
+                let name = chats.first { $0.kind == kind }?.name ?? "a chat"
+                do {
+                    try await send(kind, caption)
+                    sent.append(name)
+                } catch {
+                    failed.append((name, error.localizedDescription))
+                }
+            }
+            if failed.isEmpty {
+                let word = if case .video = media { "Video" } else { "Pic" }
+                done(sent.count == 1 ? "\(word) sent to \(sent[0])." : "\(word) sent to \(sent[0]) and \(sent.count - 1) more.")
+                dismiss()
+            } else {
+                picked = picked.filter { kind in failed.contains { $0.0 == chats.first { $0.kind == kind }?.name } }
+                problem = failed.map { "Not sent to \($0.0): \($0.1)" }.joined(separator: "\n")
+            }
+        }
     }
 }

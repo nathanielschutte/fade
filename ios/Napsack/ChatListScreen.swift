@@ -24,6 +24,8 @@ struct ChatListScreen: View {
     @AppStorage(ChatList.dismissedAnnouncementKey) private var dismissedAnnouncement: Int = 0
     @State private var path: [ChatRow.Kind] = []
     @State private var makingGroup = false
+    @State private var usingCamera = false
+    @State private var captured: Captured?
     @State private var search = ""
     @State private var showingHidden = false
     @State private var muting: ChatRow?
@@ -113,6 +115,25 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
+            .fullScreenCover(isPresented: $usingCamera) {
+                CameraScreen(maxSeconds: 10) { media in
+                    usingCamera = false
+                    captured = media
+                }
+            }
+            .sheet(item: $captured) { media in
+                SendToSheet(media: media, chats: sendable, send: { kind, caption in
+                    guard let chat = conversation(kind) else { throw SendError.cantOpen }
+                    switch media {
+                    case .photo(let image):
+                        guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
+                        try await chat.sendPhoto(jpeg, caption: caption)
+                    case .video(let url):
+                        try await chat.sendVideo(try Data(contentsOf: url), caption: caption)
+                    }
+                }, done: { toast = Toast(text: $0, undo: nil) })
+                .onDisappear { if case .video(let url) = media { try? FileManager.default.removeItem(at: url) } }
+            }
             .sheet(isPresented: $makingGroup) {
                 let friends = (list.reader?.friends.values.map { $0 } ?? [])
                     .filter { $0.system != true && $0.deactivated != true }
@@ -148,6 +169,12 @@ struct ChatListScreen: View {
                             }
                             .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { usingCamera = true } label: {
+                        Image(systemName: "camera").accessibilityLabel("Camera")
+                    }
+                    .disabled(list.reader == nil)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { makingGroup = true } label: {
@@ -243,6 +270,15 @@ struct ChatListScreen: View {
                 session.noticed(error)
                 toast = Toast(text: error.localizedDescription, undo: nil)
             }
+        }
+    }
+
+    /// Chats a pic can go to: not a changed key, a turned-off account, or Team Napsack.
+    private var sendable: [ChatRow] {
+        list.rows.filter { row in
+            guard case .friend(let id) = row.kind else { return true }
+            guard let friend = list.reader?.friends[id] else { return false }
+            return friend.system != true && friend.deactivated != true && list.reader?.changed.contains(id) != true
         }
     }
 
