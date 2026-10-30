@@ -1,0 +1,203 @@
+import SwiftUI
+
+/// Your account, from the person button on the chat list: your username,
+/// the account's safety (recovery key, password, other devices), the
+/// debugging tools for Admins, and signing out. The words are the web app's
+/// Security panel's.
+struct SettingsScreen: View {
+    @Environment(Session.self) private var session
+    let account: Account
+    @State private var security: Session.Security?
+    @State private var note: String?
+    @State private var asking: PasswordSheet.Purpose?
+    @State private var confirmingEndOthers = false
+    @State private var signingOut = false
+
+    var body: some View {
+        Form {
+            Section("Account") {
+                LabeledContent("Username", value: "@\(account.user.username)")
+                if let name = account.user.displayName { LabeledContent("Name", value: name) }
+                LabeledContent("Server", value: URL(string: account.server)?.host() ?? account.server)
+                Button("Change username") { asking = .username }
+            }
+            Section {
+                Text(status).foregroundStyle(.secondary)
+                Button(account.user.hasRecoveryKey ? "Make a new recovery key" : "Make a recovery key") { asking = .recovery }
+                Button("Change password") { asking = .password }
+                Button("Sign out other devices") { confirmingEndOthers = true }
+                    .disabled((security?.activeSessions ?? 2) <= 1)
+            } header: {
+                Text("Security")
+            } footer: {
+                if let note { Text(note) }
+            }
+            if account.user.isAdmin {  // debugging tools: Admins only, for now
+                Section {
+                    NavigationLink("Developer") { DeveloperScreen(signedInTo: account.server) }
+                }
+            }
+            Section {
+                Button("Sign out", role: .destructive) {
+                    signingOut = true
+                    Task { await session.signOut() }
+                }
+                .disabled(signingOut)
+            }
+        }
+        .navigationTitle("Settings")
+        .task { await loadSecurity() }
+        .sheet(item: $asking) { purpose in
+            PasswordSheet(purpose: purpose, hasRecoveryKey: account.user.hasRecoveryKey) { note = $0; Task { await loadSecurity() } }
+        }
+        .confirmationDialog("Sign out every other device?", isPresented: $confirmingEndOthers, titleVisibility: .visible) {
+            Button("Sign out other devices", role: .destructive) { Task { await endOthers() } }
+        } message: {
+            Text("They'll need your password to sign in again. This phone stays signed in.")
+        }
+    }
+
+    /// "Recovery key saved October 29, 2026. Signed in on 1 other device."
+    private var status: String {
+        guard let security else { return account.user.hasRecoveryKey ? "Recovery key saved." : "No recovery key yet." }
+        let saved = security.recoverySetAt.map {
+            "Recovery key saved \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .long, time: .omitted))."
+        } ?? "No recovery key yet."
+        let others = security.activeSessions - 1
+        return saved + " " + (others > 0 ? "Signed in on \(others) other \(others == 1 ? "device" : "devices")." : "Not signed in anywhere else.")
+    }
+
+    private func loadSecurity() async {
+        do {
+            security = try await session.security()
+        } catch {
+            Reporter.shared.report(.warn, "loading security failed", Reporter.fields(error))
+            session.noticed(error)
+        }
+    }
+
+    private func endOthers() async {
+        do {
+            let ended = try await session.endOtherSessions()
+            note = ended > 0 ? "Signed out \(ended) other \(ended == 1 ? "device" : "devices")." : "No other devices were signed in."
+            await loadSecurity()
+        } catch {
+            note = error.localizedDescription
+            session.noticed(error)
+        }
+    }
+}
+
+/// Asks for the password (and what's new) for the changes that need it: the
+/// key is unlocked with it and locked again, all on the phone.
+struct PasswordSheet: View {
+    enum Purpose: String, Identifiable {
+        case password, recovery, username
+        var id: String { rawValue }
+    }
+
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let purpose: Purpose
+    let hasRecoveryKey: Bool
+    let done: (String) -> Void
+    @State private var current = ""
+    @State private var new = ""
+    @State private var confirm = ""
+    @State private var username = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if purpose == .username {
+                        TextField("New username", text: $username)
+                            .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    SecureField(purpose == .password ? "Current password" : "Password", text: $current)
+                        .textContentType(.password)
+                    if purpose == .password {
+                        SecureField("New password", text: $new).textContentType(.newPassword)
+                        SecureField("New password again", text: $confirm).textContentType(.newPassword)
+                    }
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(explanation)
+                        if let problem { Text(problem).foregroundStyle(.red) }
+                    }
+                }
+                Section {
+                    Button(working ? working(purpose) : action, action: submit)
+                        .disabled(working || current.isEmpty || (purpose == .password && new.isEmpty) || (purpose == .username && username.isEmpty))
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+
+    private var title: String {
+        switch purpose {
+        case .password: "Change password"
+        case .recovery: "Recovery key"
+        case .username: "Change username"
+        }
+    }
+
+    private var action: String {
+        switch purpose {
+        case .password: "Change password"
+        case .recovery: "Make a recovery key"
+        case .username: "Change username"
+        }
+    }
+
+    private func working(_ purpose: Purpose) -> String {
+        purpose == .recovery ? "Unlocking…" : "Locking your keys…"
+    }
+
+    private var explanation: String {
+        switch purpose {
+        case .password:
+            "Your messages stay readable: your key is locked again under the new password. Other devices will be signed out."
+        case .recovery:
+            hasRecoveryKey
+                ? "Making a new recovery key replaces your old one, which stops working. Enter your password to continue."
+                : "Enter your password to make a recovery key."
+        case .username:
+            "Your key is locked again under the new name, and you sign in with it from now on. Your old username stays yours."
+        }
+    }
+
+    private func submit() {
+        if purpose == .password {
+            guard new.count >= 8 else { problem = "Passwords need at least 8 characters."; return }
+            guard new == confirm else { problem = "The new passwords don't match."; return }
+        }
+        working = true
+        problem = nil
+        Task {
+            defer { working = false }
+            do {
+                switch purpose {
+                case .password:
+                    let ended = try await session.changePassword(current: current, new: new)
+                    done("Password changed." + (ended > 0 ? " Signed out \(ended) other \(ended == 1 ? "device" : "devices")." : ""))
+                case .recovery:
+                    try await session.makeRecoveryKey(password: current)
+                    done("Recovery key saved.")
+                case .username:
+                    try await session.changeUsername(to: username, password: current)
+                    done("Your username is now @\(session.account?.user.username ?? username). Sign in with it from now on.")
+                }
+                dismiss()
+            } catch {
+                problem = error.localizedDescription
+                session.noticed(error)
+            }
+        }
+    }
+}

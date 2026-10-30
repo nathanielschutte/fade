@@ -20,8 +20,6 @@ struct ChatListScreen: View {
         self.account = account
         _live = State(initialValue: Live(account: account))
     }
-    @State private var showDeveloper = false
-    @State private var signingOut = false
 
     var body: some View {
         NavigationStack {
@@ -52,7 +50,6 @@ struct ChatListScreen: View {
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
             .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showDeveloper) { DeveloperScreen(signedInTo: account.server) }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
@@ -62,19 +59,8 @@ struct ChatListScreen: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Section("@\(account.user.username) on \(URL(string: account.server)?.host() ?? account.server)") {
-                            if account.user.isAdmin {  // debugging tools: Admins only, for now
-                                Button("Developer", systemImage: "hammer") { showDeveloper = true }
-                            }
-                            Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                                signingOut = true
-                                Task { await session.signOut() }
-                            }
-                            .disabled(signingOut)
-                        }
-                    } label: {
-                        Image(systemName: "person.crop.circle").accessibilityLabel("Account")
+                    NavigationLink { SettingsScreen(account: account) } label: {
+                        Image(systemName: "person.crop.circle").accessibilityLabel("Settings")
                     }
                 }
             }
