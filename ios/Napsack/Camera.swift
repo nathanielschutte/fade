@@ -258,13 +258,9 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         return lenses
     }
 
-    /// Shown zoom = factor × this. iOS 18 says; before, a camera with an
-    /// ultra wide starts there, and the main camera begins at its first switch-over.
+    /// Shown zoom = factor × this: a camera with an ultra wide starts below 1×.
     private static func multiplier(of device: AVCaptureDevice) -> CGFloat {
-        if #available(iOS 18, *) { return device.displayVideoZoomFactorMultiplier }
-        guard device.constituentDevices.contains(where: { $0.deviceType == .builtInUltraWideCamera }),
-              let first = device.virtualDeviceSwitchOverVideoZoomFactors.first?.doubleValue, first > 0 else { return 1 }
-        return 1 / CGFloat(first)
+        device.displayVideoZoomFactorMultiplier
     }
 
     private func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {

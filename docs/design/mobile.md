@@ -58,7 +58,7 @@ The app points at a server you choose: your own (`cargo run`, reached from the p
 - **Which address the app talks to:** decided (Nate, 2026-10-29). Release builds use `api.napsack.io`, a name only for the apps, so the site can move without breaking installed apps ([api-host.md](../implementation/api-host.md)). When to apply the infrastructure change is still open.
 - **Export compliance.** App Store Connect asks whether the app uses encryption. It does (end-to-end, with standard algorithms), which usually qualifies for an exemption but has to be declared. Answer it at the first upload, then set `ITSAppUsesNonExemptEncryption` in the app's `Info.plist` so it isn't asked on every build. This is a legal declaration, so it's yours to make; Apple's export compliance help in App Store Connect walks through it.
 - **A reviewer account for external TestFlight** (see TestFlight): one production account for Apple's reviewer, or wait on external testing.
-- **The oldest iOS supported.** Newer versions mean fewer workarounds; a recent iOS (17 or later) covers nearly every iPhone in use.
+- **The oldest iOS supported.** Decided (Nate, 2026-11-02): iOS 18. Newer versions mean fewer workarounds, and 18 covers nearly every iPhone in use.
 
 ## Versions, builds, and releases
 
