@@ -135,12 +135,19 @@ What the web app does quietly that the app must do too, before more features lea
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
-| The Apple Developer Program | Nate | Waiting | Applied; needed for TestFlight, the App Store, and notifications |
+| The Apple Developer Program | Nate | Done | 2026-11-02: approved |
 | Release builds talk to `https://api.napsack.io` | – | Waiting | Decided (Nate, 2026-10-29): a name only for the apps, so the site can move freely ([api-host.md](../design/api-host.md)). Waits on the DNS and Caddy change, which replaces the instance (Nate's to apply; plan.md [I10](plan.md#i10-apinapsackio-a-stable-address-for-the-apps)) |
 | The oldest iOS supported (17 today, in `Config/Base.xcconfig`) | Nate | Needs decision | |
 | Export compliance: the encryption declaration at the first upload | Nate | Needs decision | A legal declaration; Nate's to make |
 | Development-only pieces out of release builds: the development screens, and the vectors copied into the app (today the whole `tests/vectors/` folder, its Python scripts included) | Nate | Done | 2026-10-30: Release builds leave out `tests/vectors` (`EXCLUDED_SOURCE_FILE_NAMES`, App.xcconfig) and the checks screen; Developer stays, Admins only, read-only. `make ios` and the iOS CI build Release and fail if the vectors are in it |
-| TestFlight: internal first, then friends by public link (needs a reviewer account on production) | – | Planned | [mobile.md](../design/mobile.md), TestFlight. Release docs get written with it |
+| Signing with the Program team: the real bundle id (`com.getattr.napsack`, dropping the `.dev` variant in `Local.xcconfig`), the app's record in App Store Connect, build numbers that go up with every upload | Nate | Up next | 2026-11-02. A `make` target to archive and upload (with an App Store Connect API key, kept out of the repository) |
+| Release builds talk to production | Nate | Needs decision | `Base.xcconfig` defaults to staging. TestFlight builds for friends must use production, either `https://napsack.io` now or `api.napsack.io` first (the row above) |
+| TestFlight, internal: Nate (and up to 100 people added to the team in App Store Connect) | – | Planned | No review: a build is installable once Apple has processed it (minutes). Builds expire after 90 days |
+| TestFlight, external: friends by email or a public link (up to 10,000) | – | Planned | The first build of each version goes through Beta App Review (usually within a day or two); needs a test description, a feedback email, and a reviewer account on production (sign-up is invite-only) |
+| Notifications on iPhones (APNs, section 11) | – | Planned | Not needed for TestFlight, but friends will expect them |
+| Deleting an account from inside the app | Nate | Needs decision | The App Store requires apps that make accounts to let people delete them in the app (Guideline 5.1.1(v)). Rule 1 never deletes user data: an Admin can only turn an account off. A decision before the App Store, not TestFlight |
+| Report and block | Nate | Needs decision | The App Store expects apps with content from other people to let them report it and block people (Guideline 1.2). Friends-only helps, but a block and a report button are likely needed |
+| A privacy policy and a support page (URLs), the privacy "nutrition labels", screenshots, the age rating | Nate | Planned | For the App Store listing; the privacy policy is asked for in TestFlight's external test information too |
 | The App Store | – | Planned | |
 | Retire `mobile/` (the Expo prototype) | Nate | Done | 2026-10-30: removed; every vector passes in `ios/`. It's in the git history if ever wanted |
 | Turn on the iOS CI (`.github/workflows/ios.yml`) | Nate | Done | 2026-10-29 (#16): the crypto package's tests and the app's on a Simulator, on GitHub's macOS runners (Xcode 26.6 there), for changes to `ios/`, the vectors, or the shared crypto |
