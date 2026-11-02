@@ -5,8 +5,8 @@
 SDKROOT = iphoneos
 SUPPORTED_PLATFORMS = iphoneos iphonesimulator
 TARGETED_DEVICE_FAMILY = 1
-// The oldest iOS supported is still an open decision (docs/design/mobile.md).
-IPHONEOS_DEPLOYMENT_TARGET = 17.0
+// The oldest iOS supported: 18 (Nate, 2026-11-02; plan-ios.md, section 12).
+IPHONEOS_DEPLOYMENT_TARGET = 18.0
 SWIFT_VERSION = 6.0
 CODE_SIGN_STYLE = Automatic
 ALWAYS_SEARCH_USER_PATHS = NO
