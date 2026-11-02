@@ -5,7 +5,7 @@
 # the iOS app docs/ios-onboarding.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging test-staging
+.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging ios-archive test-staging
 
 PORT ?= 8080
 ADMIN ?= nate
@@ -55,6 +55,9 @@ ios-quick: ## The same without a server, as the iOS CI runs it
 
 ios-staging: ## The iOS app's tests live against staging (makes test accounts there; never production)
 	bash scripts/test-ios.sh --staging
+
+ios-archive: ## The iOS app as it would go to TestFlight (Release, App Store signing), kept here: nothing is uploaded (scripts/ios-testflight.sh uploads)
+	bash scripts/ios-testflight.sh --archive-only
 
 ios-crypto: ## The iOS crypto package against the pinned vectors (swift test), seconds
 	swift test --package-path ios/NapsackCrypto

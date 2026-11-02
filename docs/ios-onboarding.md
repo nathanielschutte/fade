@@ -141,7 +141,37 @@ A check that disagrees with a vector means the Swift is wrong. The vectors are n
 - **The app's CI** (`.github/workflows/ios.yml`) runs the same two steps on GitHub's Macs (free for this public repository) for every change to `ios/`, the vectors, or the shared crypto: the crypto package's tests, then the app's tests on a Simulator (the live ones skip there). Keep its commands matching the ones above. Its Simulator build is signed to run locally (no team): unsigned, the app gets no Keychain.
 - **Versions:** the app's version is `MARKETING_VERSION` and its build number `CURRENT_PROJECT_VERSION` (`Config/Base.xcconfig`). Releasing it (TestFlight, the App Store, `ios-v*` tags) comes later, with the paid Developer Program ([mobile.md](design/mobile.md)).
 
-## When it doesn't work
+## TestFlight
+
+TestFlight is how builds reach phones before the App Store: yours and up to 100 people on the App Store Connect team (**internal** testers, no review), then friends by email or a public link (**external**, up to 10,000; the first build of each version goes through Apple's Beta App Review, usually within a day or two). A build expires after 90 days. The plan for the App Store itself is in [plan-ios.md](management/plan-ios.md), section 12.
+
+### Once (the owner, with the Developer Program)
+
+1. **The bundle id.** It's the app's permanent identity: once the app is in App Store Connect it can't change. The code uses `NAPSACK_BUNDLE_ID` in `Config/Base.xcconfig`. Register it at [developer.apple.com](https://developer.apple.com/account) → Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs → App:
+   - **Description:** napsack. **Bundle ID:** Explicit, exactly what `Base.xcconfig` says.
+   - **Capabilities:** only **Push Notifications** (for notifications later; it does nothing until the server sends them). Associated Domains (opening `napsack.io` links in the app) can be added later.
+   - **App Services:** none. **Capability Requests:** none (special permissions Apple grants one by one; napsack needs none).
+2. **The app in App Store Connect.** [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → Apps → **+** → New App:
+   - **Platforms:** iOS. **Name:** napsack (the App Store name: unique across the store; it can change later). **Primary language:** English (U.S.).
+   - **Bundle ID:** the one from step 1. **SKU:** your own label for it, never shown to anyone, e.g. `napsack-ios`. **User access:** Full Access.
+3. **This Mac's settings**, `Config/Local.xcconfig`: `DEVELOPMENT_TEAM` = the Program team's id (developer.apple.com → Membership; it may differ from the free account's), and **delete the `NAPSACK_BUNDLE_ID` line** (the `.dev` id was for the free account). Development builds then use the real id too.
+4. **An App Store Connect API key**, so the upload can sign and send without Xcode's windows: App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, name `napsack upload`, access **App Manager**. Download the `.p8` (only once!) to `~/.appstoreconnect/private_keys/`, and make `ios/Config/AppStoreConnect.env` (git-ignored; never commit it):
+   ```
+   ASC_KEY_ID=ABC123DEFG
+   ASC_ISSUER_ID=12345678-aaaa-bbbb-cccc-1234567890ab
+   ASC_KEY_FILE=~/.appstoreconnect/private_keys/AuthKey_ABC123DEFG.p8
+   ```
+   (The Key ID is in the keys list; the Issuer ID is above it.)
+
+### Each build
+
+1. `make ios` passes, and `ios/` is committed (the build number is the commit count, so it goes up with every commit; App Store Connect refuses a number it has seen).
+2. `scripts/ios-testflight.sh`: it checks the settings (the real bundle id, the team, the server: release builds always use `https://api.napsack.io`), runs the crypto checks, builds the Release archive signed for the App Store, checks no test data is in it, and uploads it. `make ios-archive` does everything but the upload.
+3. In App Store Connect → the app → TestFlight, the build appears after processing (minutes). The first time, and for each build until it's decided in the app's settings, it asks about **export compliance** (encryption): the owner's legal answer (plan-ios.md, section 12).
+4. **Internal testing:** make a group, add yourself (and anyone on the team); TestFlight on the phone offers the build.
+5. **External testing:** make a group with a public link or emails, fill in the test information (what to test, a feedback email, a privacy policy URL, and a sign-in for Apple's reviewer: sign-up is invite-only, so make the reviewer an account on production), and submit the build for Beta App Review.
+
+
 
 - **"Signing for Napsack requires a development team":** `Config/Local.xcconfig` is missing or has no `DEVELOPMENT_TEAM` (First time, step 3).
 - **"No such module 'NapsackCrypto'":** File › Packages › Reset Package Caches, then build again.
