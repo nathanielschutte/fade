@@ -16,6 +16,10 @@ INFOPLIST_KEY_NSPhotoLibraryUsageDescription = napsack sends photos you choose.
 // Export compliance (Nate, 2026-11-02): all of the app's encryption is Apple's
 // own (CryptoKit, CommonCrypto, HTTPS), so uploads don't ask again.
 INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
+// Notifications (Notifications.swift): the aps-environment entitlement,
+// development in Xcode builds and production in Release (Release.xcconfig).
+// A free Apple ID's team can't have it: Local.xcconfig empties this line.
+CODE_SIGN_ENTITLEMENTS = Config/Napsack.entitlements
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
 ENABLE_PREVIEWS = YES

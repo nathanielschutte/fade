@@ -7,6 +7,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NapsackAPNsEnvironment</key>
+	<string>$(NAPSACK_APS_ENVIRONMENT)</string>
 	<key>NapsackServerURL</key>
 	<string>$(NAPSACK_SERVER_URL)</string>
 </dict>

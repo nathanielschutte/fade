@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct NapsackApp: App {
+    /// For notifications: the device token, and a tapped one (Notifications.swift).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var session = Session()
     @Environment(\.scenePhase) private var scenePhase
 

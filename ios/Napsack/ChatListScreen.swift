@@ -27,6 +27,9 @@ struct ChatListScreen: View {
     enum HomeTab: Hashable { case chats, camera, profile }
     @State private var tab = HomeTab.chats
     @State private var path: [ChatRow.Kind] = []
+    @State private var showingFriends = false
+    /// Notifications on this phone: a tapped one opens its chat here (Notifications.swift).
+    @State private var notifications = Notifications.shared
     @State private var makingGroup = false
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
@@ -80,7 +83,14 @@ struct ChatListScreen: View {
         }
         .environment(pictures)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { live.start() } else if phase == .background { live.stop() }
+            if phase == .active { live.start(); notifications.clearDelivered() } else if phase == .background { live.stop() }
+        }
+        .task { await notifications.start(for: account) }
+        .onChange(of: notifications.opened, initial: true) { _, destination in
+            if destination != nil { Task { await openNotification() } }
+        }
+        .onChange(of: unreadChats, initial: true) { _, count in
+            if list.loaded { notifications.setBadge(count) }
         }
         .onDisappear { live.stop() }  // signed out
     }
@@ -182,6 +192,9 @@ struct ChatListScreen: View {
                 PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
             }
             .navigationTitle("Chats")
+            .navigationDestination(isPresented: $showingFriends) {
+                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
+            }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
@@ -191,7 +204,7 @@ struct ChatListScreen: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink { FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name))) } label: {
+                    Button { showingFriends = true } label: {
                         Image(systemName: "person.2")
                             .overlay(alignment: .topTrailing) {
                                 if list.incoming > 0 {
@@ -355,6 +368,26 @@ struct ChatListScreen: View {
             list.reloadSoon(account)
         case .pong, .other:
             break
+        }
+    }
+
+    /// A notification was tapped: its chat (or Friends), on the Chats tab.
+    /// At a cold launch the list may not be in yet, and a chat that just began
+    /// (a friend accepted) may not be in it: load first, then open.
+    private func openNotification() async {
+        guard let destination = notifications.opened else { return }
+        notifications.opened = nil
+        tab = .chats
+        switch destination {
+        case .friends:
+            path = []
+            showingFriends = true
+        case .chat(let kind):
+            if conversation(kind) == nil { await load() }
+            if conversation(kind) != nil {
+                showingFriends = false
+                path = [kind]
+            }
         }
     }
 

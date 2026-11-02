@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Notifications: development (Xcode builds) or production (Release), from
+	     NAPSACK_APS_ENVIRONMENT (Config/Base.xcconfig, Release.xcconfig). -->
+	<key>aps-environment</key>
+	<string>$(NAPSACK_APS_ENVIRONMENT)</string>
+</dict>
+</plist>

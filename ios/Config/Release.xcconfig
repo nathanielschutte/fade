@@ -10,3 +10,5 @@ VALIDATE_PRODUCT = YES
 // for development (it can override NAPSACK_RELEASE_SERVER_URL to try a release
 // build elsewhere).
 NAPSACK_SERVER_URL = $(NAPSACK_RELEASE_SERVER_URL)
+// TestFlight and the App Store: production's push server (Notifications.swift).
+NAPSACK_APS_ENVIRONMENT = production
