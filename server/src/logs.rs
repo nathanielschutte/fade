@@ -316,7 +316,7 @@ pub async fn ingest(
         )));
     }
     let user = match auth::bearer_token(&headers) {
-        Some(token) => auth::user_for_token(&state.db, token).await?,
+        Some(token) => auth::user_for_token(&state.db, token, state.config.session_days).await?,
         None => None,
     };
     let client = headers

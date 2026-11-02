@@ -61,10 +61,10 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_VIDEO_MAX_KB` | `6144` | Hard cap per encrypted video. The apps work their bitrate out from it (at most 3 Mbit/s of 720p H.264, [video-quality.md](../design/video-quality.md)), so 10 seconds is about 4 MB |
 | `FADE_VIDEO_MAX_SECONDS` | `10` | The longest video a client records (1 to 60) |
 | `FADE_SNAP_DISK_MB` · `FADE_GROUP_PIC_DISK_MB` | `256` · `200` | Disk ceilings for all unopened direct, and group, pics and videos. Production sets 2048 · 1536 for its 5 GB data volume (`snap_disk_mb`, `group_pic_disk_mb`) |
-| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `4` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
+| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
-| `FADE_SESSION_DAYS` | `90` | |
+| `FADE_SESSION_DAYS` | `365` | How long a session lasts after it was last used: each use (noted at most hourly) pushes its end out again |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](../implementation/roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
 | `FADE_ENVIRONMENT` | unset (production) | A non-production copy's name, like `staging`: every page then says "napsack (staging)", shows an amber band and the build in the corner, and notifications start with `[staging]`. Letters, digits, and hyphens; empty, `production` or `prod` mean production |

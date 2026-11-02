@@ -1233,16 +1233,17 @@ def check_guard(tag):
         assert requests.get(BASE + "/", headers=prober).status_code == 403
         assert requests.get(BASE + "/api/config", headers=bystander).status_code == 200, "others unaffected"
 
-    # Sessions per person: a fifth sign-in quietly ends the oldest.
+    # Sessions per person: an eleventh sign-in quietly ends the one used least
+    # recently (here the first, never used; the order by use is the unit test's).
     rs = ok(register(f"sess_{tag}")).json()
     name, tokens = rs["user"]["username"], [rs["token"]]
-    for _ in range(4):
+    for _ in range(10):
         tokens.append(ok(call("POST", "/auth/login", json={"username": name, "auth_key": AUTH_KEY})).json()["token"])
     ok(call("GET", "/me", tokens[0]), 401)
     for t in tokens[1:]:
         ok(call("GET", "/me", t))
-    assert ok(call("GET", "/me/security", tokens[-1])).json()["active_sessions"] == 4
-    print(f"  guard: robots, scanners refused, {'probers banned (local only)' if REMOTE else 'probers banned'}, 4 sessions per person")
+    assert ok(call("GET", "/me/security", tokens[-1])).json()["active_sessions"] == 10
+    print(f"  guard: robots, scanners refused, {'probers banned (local only)' if REMOTE else 'probers banned'}, 10 sessions per person")
 
 
 def check_edits(tag):

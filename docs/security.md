@@ -21,7 +21,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 ### Accounts and sign-in
 - Sign-in attempts are limited per address and per username (a wrong password 10 times locks that username for 15 minutes, for everyone, without revealing whether it exists).
 - Sign-up needs the invite code or a friend's add-a-friend link, and stops entirely once there are **100 accounts**. Each person has one link, which doesn't change or expire (X39); it's stored only as a hash, and lookups are rate-limited like sign-in.
-- Each person can be signed in on **4 devices**; a fifth sign-in quietly signs out the oldest.
+- Each person can be signed in on **10 devices**; an eleventh sign-in quietly signs out the one used least recently (a session whose browser forgot it is never used again, so it goes first). A session lasts a year and renews while it's used.
 - Changing your password, using your recovery key, or an admin reset signs out every other device, and their live connections close at once.
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
 
@@ -52,7 +52,7 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | What | Limit | Setting |
 |---|---|---|
 | Accounts in total | 100 | `FADE_MAX_ACCOUNTS` |
-| Signed-in devices per person | 4 (a new one ends the oldest) | `FADE_MAX_SESSIONS` |
+| Signed-in devices per person | 10 (a new one ends the one used least recently) | `FADE_MAX_SESSIONS` |
 | Requests per address | 3,000 per 10 minutes | `FADE_REQUESTS_PER_ADDRESS` |
 | Requests being handled at once | 200 (more get "busy, try again") | `FADE_MAX_IN_FLIGHT` |
 | Live connections, whole server | 500 | `FADE_MAX_SOCKETS` |
