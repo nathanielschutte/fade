@@ -407,7 +407,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### D15. People signed out long before their sessions end
 - Nate (2026-11-02): people keep getting signed out, far sooner than the 90 days sessions last; he'd rather sessions last about a year. Does a restart end them? (No: sessions are in the database.)
 - Found (production, read-only): no session expired in the 14 days before; of 55 that ended, 23 were cut by the 4-device cap at someone's new sign-in, including sessions 2 to 10 days old on devices in use (users 7, 10, 11, 16, and Nate's often). The cap ended the oldest *sign-in*, and sessions a browser had forgotten (Safari clears a site's storage after 7 days without a visit; the home-screen app counts separately; reinstalls) stayed live and filled the slots, so the next sign-in pushed out a phone in daily use.
-- **Built:** the cap now ends the session used least recently (`sessions.last_used_at`, migration 0024, noted at most hourly); sessions last 365 days (`FADE_SESSION_DAYS`) and renew while they're used, so a device that's opened never gets signed out. Unit: `the_cap_ends_the_least_recently_used`, `a_session_in_use_renews`.
+- **Built:** the cap now ends the session used least recently (`sessions.last_used_at`, migration 0024, noted at most hourly); sessions last 365 days (`FADE_SESSION_DAYS`) and renew while they're used, so a device that's opened never gets signed out. Nate (2026-11-02): and 10 devices per person instead of 4 (`FADE_MAX_SESSIONS`). Unit: `the_cap_ends_the_least_recently_used`, `a_session_in_use_renews`.
 
 ### Experience/visual
 

@@ -101,7 +101,7 @@ The app talks to one server, set by the build: `NAPSACK_SERVER_URL`. `Config/Bas
   cd server && FADE_BIND=0.0.0.0:8080 FADE_ADMINS=nate cargo run
   ```
   Set `NAPSACK_SERVER_URL = http:/$()/<that name>.local:8080` in your `Local.xcconfig`. iOS asks once to allow napsack on the local network; if you said no, turn it on in Settings › Privacy & Security › Local Network. Plain `http` is allowed only for the local network (`NSAllowsLocalNetworking` in `App-Info.plist`); anything else has to be `https`.
-- **An account to sign in with:** make one on that server in a browser (`http://127.0.0.1:8080`, the invite code is `FADE_INVITE_CODE`; `cargo run` sets none, so no code is asked), then sign in with it in the app. Staging works the same way. On production, your real account works too, but a phone counts as one of your 4 signed-in devices, and the one used least recently is signed out to make room.
+- **An account to sign in with:** make one on that server in a browser (`http://127.0.0.1:8080`, the invite code is `FADE_INVITE_CODE`; `cargo run` sets none, so no code is asked), then sign in with it in the app. Staging works the same way. On production, your real account works too, but a phone counts as one of your 10 signed-in devices, and the one used least recently is signed out to make room.
 - Set it in your `Local.xcconfig`, never in `Base.xcconfig` (that one's shared). The `$()` in `https:/$()/` keeps an xcconfig from reading `//` as a comment.
 
 ## How it works

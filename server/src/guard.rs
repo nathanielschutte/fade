@@ -40,7 +40,7 @@ use crate::{error::AppError, ratelimit::ClientInfo, SharedState};
 pub struct Limits {
     /// Accounts that can exist in total. Sign-up stops at this many.
     pub max_accounts: i64,
-    /// Signed-in devices per person; a new sign-in ends the oldest.
+    /// Signed-in devices per person; a new sign-in past it ends the one used least recently.
     pub max_sessions: i64,
     /// Requests per address per 10 minutes, anything at all.
     pub requests_per_address: u32,
@@ -54,7 +54,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_accounts: 100,
-            max_sessions: 4,
+            max_sessions: 10,
             requests_per_address: 3000,
             max_sockets: 500,
             max_in_flight: 200,

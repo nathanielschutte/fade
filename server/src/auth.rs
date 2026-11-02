@@ -142,7 +142,7 @@ pub async fn create_session(state: &SharedState, user_id: i64) -> AppResult<Stri
     .bind(created + state.config.session_days * 86_400)
     .execute(&state.db)
     .await?;
-    // A handful of devices per person; a new sign-in ends the oldest (guard.rs).
+    // Up to 10 devices per person; a new sign-in past that ends the one used least recently (guard.rs).
     crate::guard::trim_sessions(state, user_id, state.config.limits.max_sessions).await?;
     Ok(token)
 }
