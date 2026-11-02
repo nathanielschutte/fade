@@ -23,14 +23,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [People signed out long before their sessions end](#d15-people-signed-out-long-before-their-sessions-end) | Debug | Nate | In progress | Nate (2026-11-02) |
-| 3 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 4 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 5 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | In progress | Nate (2026-11-02): do it, for TestFlight |
-| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 3 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 4 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 5 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -110,6 +108,8 @@ Oldest first; newly shipped rows go at the bottom.
 | [Better video quality](#f20-better-video-quality) | 0.44.0 | Nate |
 | [One add-a-friend QR and link; invite links gone](#x39-one-add-a-friend-qr-and-link-invite-links-gone) | 0.45.0 | Nate |
 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | 0.45.0 | Nate |
+| [People signed out long before their sessions end](#d15-people-signed-out-long-before-their-sessions-end) | 0.46.0 | Nate |
+| [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | 0.47.0, infra | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -704,7 +704,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 #### I10. api.napsack.io: a stable address for the apps
 - Nate (2026-10-29): "api.napsack.io is a good idea for mobile clients (not same origin as desktop), that way we can route through that and version and update real hostnames accordingly."
 - Design: [api-host.md](../implementation/api-host.md). An `api.` name that serves only `/api/*` (the socket too), from the same server; release builds of the apps use it, so the site can move without breaking installed apps. Staging gets `api.staging.napsack.io`.
-- Nate (2026-11-02): "let's definitely point the app to api.napsack.io and get that change in." Built (0.47.0): the `api.` DNS records (production and staging), the boot script's Caddy site (`/api/*` only), `site_url` in `/api/config` for shared links, and release builds use `https://api.napsack.io`. Applying it replaces the instances: staging first, then production with the Rule 1 checklist.
+- Nate (2026-11-02): "let's definitely point the app to api.napsack.io and get that change in." Built (0.47.0): the `api.` DNS records (production and staging), the boot script's Caddy site (`/api/*` only), `site_url` in `/api/config` for shared links, and release builds use `https://api.napsack.io`. Applied 2026-11-02: staging first (all staging tests, including the api name), then production after snapshot `snap-0268d68b1df1a4136`; the volume mounted, row counts the same (28 users, 50 friendships, 745 messages, 106 sessions), both names serving, a clean start.
 
 #### I11. The data volume to 5 GB
 - Nate (2026-10-30): grow the data volume from 1 GB to 5 GB, with the video cap going to 6 MB ([F20](#f20-better-video-quality)); about $0.32 a month more.

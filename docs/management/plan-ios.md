@@ -136,7 +136,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The Apple Developer Program | Nate | Done | 2026-11-02: approved |
-| Release builds talk to `https://api.napsack.io` | Nate | In progress | Decided (Nate, 2026-10-29): a name only for the apps, so the site can move freely ([api-host.md](../implementation/api-host.md)). Waits on the DNS and Caddy change, which replaces the instance (Nate's to apply; plan.md [I10](plan.md#i10-apinapsackio-a-stable-address-for-the-apps)) |
+| Release builds talk to `https://api.napsack.io` | Nate | Done | 2026-11-02 (0.47.0): live on production and staging. Before: Decided (Nate, 2026-10-29): a name only for the apps, so the site can move freely ([api-host.md](../implementation/api-host.md)). Waits on the DNS and Caddy change, which replaces the instance (Nate's to apply; plan.md [I10](plan.md#i10-apinapsackio-a-stable-address-for-the-apps)) |
 | The oldest iOS supported (17 today, in `Config/Base.xcconfig`) | Nate | Needs decision | |
 | Export compliance: the encryption declaration at the first upload | Nate | Needs decision | A legal declaration; Nate's to make |
 | Development-only pieces out of release builds: the development screens, and the vectors copied into the app (today the whole `tests/vectors/` folder, its Python scripts included) | Nate | Done | 2026-10-30: Release builds leave out `tests/vectors` (`EXCLUDED_SOURCE_FILE_NAMES`, App.xcconfig) and the checks screen; Developer stays, Admins only, read-only. `make ios` and the iOS CI build Release and fail if the vectors are in it |
