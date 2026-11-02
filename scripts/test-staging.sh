@@ -32,6 +32,12 @@ echo "==> $URL is running build $(curl -sf "$URL/api/config" | sed -n 's/.*"buil
 echo "==> API smoke test"
 "$PY" tests/smoke_test.py
 
+# The apps' own name for the API (docs/implementation/api-host.md): the API, and nothing else.
+API_URL="https://api.${URL#https://}"
+echo "==> $API_URL serves the API only"
+curl -sf "$API_URL/api/config" | grep -q '"api_version"' || { echo "no API at $API_URL"; exit 1; }
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$API_URL/")" = 404 ] || { echo "$API_URL/ should be a 404"; exit 1; }
+
 [ "${1:-}" = "--no-browser" ] && exit 0
 failed=()
 for t in tests/e2e/test_*.py; do

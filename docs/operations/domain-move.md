@@ -9,7 +9,7 @@ Status: **done (2026-10-23).** Requested by Nate (I7 in [plan.md](../management/
 | The app | https://napsack.getattr.com | **https://napsack.io** |
 | https://napsack.getattr.com/... | the app | 301 → https://napsack.io/... (same path; `#invite=` links keep working) |
 | https://www.napsack.io, https://fade.getattr.com | –, 301 | 301 → https://napsack.io |
-| DNS | hand-made records | `napsack.io` and `www.napsack.io` A records in Terraform (`infra/dns.tf`); the getattr.com records stay as they are, pointing at the same Elastic IP |
+| DNS | hand-made records | `napsack.io` and `www.napsack.io` A records in Terraform (`infra/dns.tf`); the getattr.com records stay as they are, pointing at the same Elastic IP. Since 0.47.0 also `api.napsack.io`, the apps' name for the API ([api-host.md](../implementation/api-host.md)): a future move keeps it pointing at the server, so installed apps never notice |
 
 Nothing in the code names the domain. Scripts and the health monitor read it from `terraform output url`. `FADE_PUBLIC_URL` (the contact in push requests) follows from Terraform. The GitHub release workflow's `APP_URL` repository variable needs updating by hand: see "After", below.
 

@@ -1356,6 +1356,9 @@ def check_videos(tag):
     befriend(a_tok, b, b_tok, a["id"])
     config = ok(call("GET", "/config")).json()
     assert config["video_max_seconds"] == 10 and config["video_max_bytes"] >= 6 * 1024 * 1024, config
+    assert "site_url" in config, "the site's address for shared links (null where FADE_PUBLIC_URL is unset)"
+    if REMOTE:
+        assert config["site_url"] == BASE.rstrip("/"), config["site_url"]
     ok(call("POST", f"/chats/{b['id']}/snaps?format=2", a_tok, data=os.urandom(600 * 1024)), 413)   # too big for a pic
     clip = os.urandom(600 * 1024)
     video = ok(call("POST", f"/chats/{b['id']}/snaps?format=4", a_tok, data=clip)).json()

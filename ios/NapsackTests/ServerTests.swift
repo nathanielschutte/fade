@@ -17,6 +17,10 @@ import Testing
         #expect(config.messageFormats == [1, 2, 4, 6])
         #expect(config.groupMessageFormats == [0, 3, 5, 7])
         #expect(config.minimumIOS == nil)
+        #expect(config.siteUrl == nil)  // servers before 0.47.0 don't say
+        // Since 0.47.0: the site's address, for links people share (api-host.md).
+        let newer = try ServerConfig.decode(Data(Self.staging.replacingOccurrences(of: "\"build\"", with: "\"site_url\":\"https://staging.napsack.io\",\"build\"").utf8))
+        #expect(newer.siteUrl == "https://staging.napsack.io")
     }
 
     @Test func readsAnOlderServerAndProduction() throws {

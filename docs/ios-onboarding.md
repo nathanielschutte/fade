@@ -93,7 +93,7 @@ A free team's builds stop opening after **7 days**; run it from Xcode again. Pus
 
 ### Pointing the app at your own server
 
-The app talks to one server, set by the build: `NAPSACK_SERVER_URL`. `Config/Base.xcconfig` has staging (what published code builds against until release builds move to `api.napsack.io`, [api-host.md](design/api-host.md)); your `Local.xcconfig` overrides it for your builds. Nothing in the app changes it (Nate, 2026-10-30): to use another server, change the setting and build again. Outside production the app says which server it's on (on sign-in and in Settings); in production it says nothing. (Admins are `FADE_ADMINS` on a local server; run it with `FADE_ADMINS=nate` to see Developer in Settings.)
+The app talks to one server, set by the build: `NAPSACK_SERVER_URL`. `Config/Base.xcconfig` has staging (what published code builds against until release builds move to `api.napsack.io`, [api-host.md](implementation/api-host.md)); your `Local.xcconfig` overrides it for your builds. Nothing in the app changes it (Nate, 2026-10-30): to use another server, change the setting and build again. Outside production the app says which server it's on (on sign-in and in Settings); in production it says nothing. (Admins are `FADE_ADMINS` on a local server; run it with `FADE_ADMINS=nate` to see Developer in Settings.)
 
 - **Simulator:** run the server (`cd server && FADE_ADMINS=nate cargo run`), then set `NAPSACK_SERVER_URL = http:/$()/127.0.0.1:8080` in your `Local.xcconfig`. The simulator shares the Mac's network.
 - **iPhone:** the server has to listen beyond the Mac itself, and the phone has to be on the same network. Find the Mac's name with `scutil --get LocalHostName`, then:

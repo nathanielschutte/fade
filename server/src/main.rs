@@ -82,6 +82,10 @@ pub struct Config {
     /// The site's address, e.g. https://napsack.io: the contact in
     /// push requests (VAPID `sub`). Set by Terraform; never hardcoded.
     pub public_url: String,
+    /// The same, only when it's set (in a deployment): the apps put it in
+    /// front of links people share (`/i/<token>`), since they talk to the
+    /// API on its own name (api.napsack.io) and the links must open the site.
+    pub site_url: Option<String>,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
     pub push_allow_local: bool,
     /// Which non-production copy this is ("staging"), or None for production
@@ -159,6 +163,9 @@ impl Config {
             ),
             group_pic_disk_bytes: env_or::<usize>("FADE_GROUP_PIC_DISK_MB", 200)? * 1024 * 1024,
             public_url: env_or("FADE_PUBLIC_URL", "https://localhost".to_string())?,
+            site_url: std::env::var("FADE_PUBLIC_URL")
+                .ok()
+                .filter(|u| !u.is_empty()),
             push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
             environment: environment(&std::env::var("FADE_ENVIRONMENT").unwrap_or_default())?,
             limits: {

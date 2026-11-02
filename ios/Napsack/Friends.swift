@@ -41,17 +41,24 @@ import UIKit
         get throws { try Server(account.server, transport: transport) }
     }
 
-    /// A path the server gives (`/i/<token>`) as a link people can open.
+    /// The site's address, when the server says it (links must open the
+    /// site, not the API's own name).
+    private(set) var site: String?
+
+    /// A path the server gives (`/i/<token>`) as a link people can open: on
+    /// the site, or the server's own address in development.
     func address(_ path: String) -> String {
-        account.server.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path
+        (site ?? account.server).trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path
     }
 
     func load() async throws {
         let server = try server
         async let requests = server.send("friends/requests", token: account.token)
         async let link = server.send("friend-link", token: account.token)
+        async let config = server.config()
         self.requests = try Server.decoder.decode(Requests.self, from: await requests)
         self.link = try Server.decoder.decode(Link.self, from: await link)
+        site = (try? await config)?.siteUrl
     }
 
     func loadRequests() async throws {

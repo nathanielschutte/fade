@@ -5,3 +5,8 @@ ENABLE_NS_ASSERTIONS = NO
 SWIFT_COMPILATION_MODE = wholemodule
 SWIFT_OPTIMIZATION_LEVEL = -O
 VALIDATE_PRODUCT = YES
+
+// Shipped builds talk to production's API name, whatever Local.xcconfig sets
+// for development (it can override NAPSACK_RELEASE_SERVER_URL to try a release
+// build elsewhere).
+NAPSACK_SERVER_URL = $(NAPSACK_RELEASE_SERVER_URL)

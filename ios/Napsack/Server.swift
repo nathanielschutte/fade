@@ -36,6 +36,9 @@ struct ServerConfig: Decodable, Equatable {
     let snapMaxBytes: Int?
     let videoMaxBytes: Int?
     let videoMaxSeconds: Int?
+    /// The site's address, for links people share (the app talks to the API
+    /// on its own name, api.napsack.io). Null in development; servers before 0.47.0 don't say.
+    let siteUrl: String?
 
     static func decode(_ data: Data) throws -> ServerConfig {
         try Server.decoder.decode(ServerConfig.self, from: data)

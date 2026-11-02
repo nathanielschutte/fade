@@ -1,5 +1,6 @@
 # DNS for the app's address (docs/operations/domain-move.md), when its Route 53 zone is
-# in this account: the domain itself and www point at the Elastic IP. (Old
+# in this account: the domain itself, www, and api (the apps' own name for the
+# API, docs/implementation/api-host.md) point at the Elastic IP. (Old
 # addresses that redirect keep their own records, made by hand.)
 
 variable "dns_zone" {
@@ -17,6 +18,15 @@ resource "aws_route53_record" "app" {
   count   = var.dns_zone != "" ? 1 : 0
   zone_id = data.aws_route53_zone.app[0].zone_id
   name    = var.dns_zone
+  type    = "A"
+  ttl     = 300
+  records = [aws_eip.app.public_ip]
+}
+
+resource "aws_route53_record" "api" {
+  count   = var.dns_zone != "" ? 1 : 0
+  zone_id = data.aws_route53_zone.app[0].zone_id
+  name    = "api.${var.dns_zone}"
   type    = "A"
   ttl     = 300
   records = [aws_eip.app.public_ip]

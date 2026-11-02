@@ -25,8 +25,11 @@ CURRENT_PROJECT_VERSION = 1
 // builds a .dev variant instead (Local.xcconfig), so it doesn't take this one.
 NAPSACK_BUNDLE_ID = com.getattr.napsack
 
-// The server a new install starts on (it can be changed in the app). Which
-// address shipped apps use is still an open decision (docs/design/mobile.md).
+// The one server this build talks to. Development: staging, or whatever
+// Local.xcconfig says. Release builds (TestFlight, the App Store) use
+// NAPSACK_RELEASE_SERVER_URL instead (Release.xcconfig): the API's own name,
+// so the website can move without breaking installed apps (api-host.md).
 NAPSACK_SERVER_URL = https:/$()/staging.napsack.io
+NAPSACK_RELEASE_SERVER_URL = https:/$()/api.napsack.io
 
 #include? "Local.xcconfig"
