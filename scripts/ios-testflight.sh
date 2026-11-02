@@ -84,7 +84,14 @@ PLIST
 echo "==> $([ "$UPLOAD" = 1 ] && echo "upload to App Store Connect" || echo "export the .ipa (no upload)")"
 xcodebuild -exportArchive -archivePath "$OUT/Napsack.xcarchive" -exportPath "$OUT" \
   -exportOptionsPlist "$OUT/ExportOptions.plist" -allowProvisioningUpdates ${AUTH[@]+"${AUTH[@]}"} \
-  >"$OUT/export.log" 2>&1 || { grep -E "error|Error" "$OUT/export.log" | head -20; tail -5 "$OUT/export.log"; exit 1; }
+  >"$OUT/export.log" 2>&1 || {
+    grep -E "error|Error" "$OUT/export.log" | head -20
+    tail -5 "$OUT/export.log"
+    if grep -q "Cloud signing permission" "$OUT/export.log"; then
+      echo "==> the API key needs Admin access: only Admin keys may use cloud signing (docs/ios-onboarding.md, TestFlight)"
+    fi
+    exit 1
+  }
 
 if [ "$UPLOAD" = 1 ]; then
   echo "==> uploaded napsack $VERSION ($BUILD). App Store Connect processes it (minutes), then it's in TestFlight."

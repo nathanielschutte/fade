@@ -155,7 +155,7 @@ TestFlight is how builds reach phones before the App Store: yours and up to 100 
    - **Platforms:** iOS. **Name:** napsack (the App Store name: unique across the store; it can change later). **Primary language:** English (U.S.).
    - **Bundle ID:** the one from step 1. **SKU:** your own label for it, never shown to anyone, e.g. `napsack-ios`. **User access:** Full Access.
 3. **This Mac's settings**, `Config/Local.xcconfig`: `DEVELOPMENT_TEAM` = the Program team's id (developer.apple.com → Membership; it may differ from the free account's), and **delete the `NAPSACK_BUNDLE_ID` line** (the `.dev` id was for the free account). Development builds then use the real id too.
-4. **An App Store Connect API key**, so the upload can sign and send without Xcode's windows: App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, name `napsack upload`, access **App Manager**. Download the `.p8` (only once!) to `~/.appstoreconnect/private_keys/`, and make `ios/Config/AppStoreConnect.env` (git-ignored; never commit it):
+4. **An App Store Connect API key**, so the upload can sign and send without Xcode's windows: App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, name `napsack upload`, access **Admin**. (Only an Admin key may use cloud signing, where Apple keeps the distribution certificate and signs the upload; with App Manager the upload fails with "Cloud signing permission error" and "No profiles for ...".) Download the `.p8` (only once!) to `~/.appstoreconnect/private_keys/`, and make `ios/Config/AppStoreConnect.env` (git-ignored; never commit it):
    ```
    ASC_KEY_ID=ABC123DEFG
    ASC_ISSUER_ID=12345678-aaaa-bbbb-cccc-1234567890ab
