@@ -23,12 +23,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 3 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 4 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 5 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 6 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 7 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 3 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 4 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 5 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -408,6 +409,9 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-11-02): people keep getting signed out, far sooner than the 90 days sessions last; he'd rather sessions last about a year. Does a restart end them? (No: sessions are in the database.)
 - Found (production, read-only): no session expired in the 14 days before; of 55 that ended, 23 were cut by the 4-device cap at someone's new sign-in, including sessions 2 to 10 days old on devices in use (users 7, 10, 11, 16, and Nate's often). The cap ended the oldest *sign-in*, and sessions a browser had forgotten (Safari clears a site's storage after 7 days without a visit; the home-screen app counts separately; reinstalls) stayed live and filled the slots, so the next sign-in pushed out a phone in daily use.
 - **Built:** the cap now ends the session used least recently (`sessions.last_used_at`, migration 0024, noted at most hourly); sessions last 365 days (`FADE_SESSION_DAYS`) and renew while they're used, so a device that's opened never gets signed out. Nate (2026-11-02): and 10 devices per person instead of 4 (`FADE_MAX_SESSIONS`). Unit: `the_cap_ends_the_least_recently_used`, `a_session_in_use_renews`.
+
+#### D16. A photo can come out just over its size target
+- Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
 
 ### Experience/visual
 
