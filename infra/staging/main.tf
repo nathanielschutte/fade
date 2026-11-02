@@ -78,7 +78,7 @@ locals {
     # Marks every page and notification as staging (server/static/env.js).
     "FADE_ENVIRONMENT=staging",
     # Room to load test: well past production's safety caps. (Sessions per
-    # person stay at production's 4, which the smoke test checks.)
+    # person stay at production's 10, which the smoke test checks.)
     "FADE_MAX_ACCOUNTS=100000",
     "FADE_REQUESTS_PER_ADDRESS=1000000",
     "FADE_MAX_SOCKETS=20000",
@@ -87,6 +87,10 @@ locals {
     "FADE_EXEMPT_ADDRESSES=${join(",", var.exempt_addresses)}",
     # Staging's own incident records (never production's health/), for trying the Metrics tab's incidents.
     "FADE_HEALTH_PREFIX=staging/health/",
+    # iPhone notifications (apns.rs) for Xcode builds: the Sandbox key, never production's.
+    "FADE_APNS_KEY=${base64encode(var.apns_key)}",
+    "FADE_APNS_KEY_ID=${var.apns_key_id}",
+    "FADE_APNS_TEAM_ID=${var.apple_team_id}",
     "",
   ])
   # The newest build of main (docs/operations/releasing.md), which CI keeps here.

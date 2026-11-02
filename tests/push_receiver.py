@@ -2,6 +2,8 @@
 lets it send to http://127.0.0.1). It records every push, checks the VAPID
 signature, and decrypts the payload with the browser's key, so the tests check
 RFC 8291 and RFC 8292 independently of the Rust code (server/src/push.rs).
+It stands in for Apple's push service too (server/src/apns.rs): requests to
+/3/device/<token>, with a JWT signed by the test key (scripts/test-env.sh).
 """
 import base64, http.server, json, os, threading, time
 
@@ -69,6 +71,20 @@ def check_vapid(header, origin):
     pub.verify(encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
                f"{head}.{claims}".encode(), ec.ECDSA(hashes.SHA256()))
     return key
+
+
+def check_apns_jwt(header, key_path, key_id, team_id):
+    """`bearer <JWT>`: ES256, signed by the APNs key at `key_path`, naming its key and team."""
+    assert header.startswith("bearer "), header
+    head, claims, sig = header[len("bearer "):].split(".")
+    assert json.loads(unb64url(head)) == {"alg": "ES256", "kid": key_id}
+    c = json.loads(unb64url(claims))
+    assert c["iss"] == team_id and abs(c["iat"] - time.time()) < 3600, c
+    with open(key_path, "rb") as f:
+        pub = serialization.load_pem_private_key(f.read(), None).public_key()
+    raw = unb64url(sig)
+    pub.verify(encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
+               f"{head}.{claims}".encode(), ec.ECDSA(hashes.SHA256()))
 
 
 class Receiver:

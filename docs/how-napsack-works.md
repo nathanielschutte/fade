@@ -230,6 +230,8 @@ napsack can be installed as an app (on iPhone: Share, then Add to Home Screen) a
 
 A notification says **who, never what**: "Ana: New message", "Sent you a pic", "Ben wants to be friends". The server couldn't say more about a direct message if it wanted to; group notifications follow the same rule. There's no notification while napsack is on your screen, and signing out stops that device's notifications.
 
+The iPhone app gets its notifications from Apple's push service (APNs) instead. For now Apple relays the note as written, so Apple can see who it's from (the display name, as "Ana" above) and the number on the app's icon, though never what anyone said; which chat it's about goes as an id only that phone's notifications share. Encrypting them as Web Push does, with the phone opening each one before it's shown, is planned ([plan-ios.md](management/plan-ios.md), section 11).
+
 ## Typing and "active now"
 
 While you type, your friend sees "Ana is typing…"; it travels over the live connection and is never stored. A green dot means a friend has napsack open, and "Active 5m ago" says when they last did. It's mutual and friends-only: turn off "Show friends when I'm active or typing" in your profile and nobody sees yours, and you stop seeing theirs.

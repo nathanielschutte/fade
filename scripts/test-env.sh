@@ -42,6 +42,15 @@ export NAPSACK_DB="$TMP/test.db"
 export NAPSACK_SHOTS="${NAPSACK_SHOTS:-$TMP/shots}"
 
 start_server() {
+  # A throwaway APNs key, so the smoke test can check iPhone notifications
+  # against a stand-in for Apple (tests/push_receiver.py). Without Python's
+  # cryptography package, the server just runs without one.
+  export NAPSACK_APNS_KEY="$TMP/apns.p8"
+  "$PY" -c 'from cryptography.hazmat.primitives import serialization as s; from cryptography.hazmat.primitives.asymmetric import ec
+print(ec.generate_private_key(ec.SECP256R1()).private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption()).decode(), end="")' \
+    > "$NAPSACK_APNS_KEY" 2>/dev/null || rm -f "$NAPSACK_APNS_KEY"
+  local apns_key=""
+  [ -s "$NAPSACK_APNS_KEY" ] && apns_key="$(base64 < "$NAPSACK_APNS_KEY" | tr -d '\n')"
   # Two runs on one port would quietly test each other's server (and read the
   # wrong database), so refuse instead.
   if curl -sf "$NAPSACK_URL/api/config" >/dev/null 2>&1; then
@@ -54,6 +63,9 @@ start_server() {
   FADE_ADMINS="$NAPSACK_ADMIN,smoke_admin" \
   FADE_MIN_CLIENT_VERSIONS="${NAPSACK_MIN_CLIENTS-ios=1.2.0}" \
   FADE_PUSH_ALLOW_LOCAL=true \
+  FADE_APNS_KEY="$apns_key" \
+  FADE_APNS_KEY_ID=TESTKEY001 \
+  FADE_APNS_TEAM_ID=TESTTEAM01 \
   FADE_MAX_ACCOUNTS=1000 \
   RUST_LOG="${RUST_LOG:-fade_server=warn}" \
     "$BIN" >> "$TMP/server.log" 2>&1 &

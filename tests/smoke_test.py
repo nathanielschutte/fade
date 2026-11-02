@@ -441,7 +441,7 @@ async def no_event(ws, kind, wait=0.8):
 async def check_live(tag):
     """Typing and "active now" (presence.rs), push notifications (push.rs),
     reactions and replies (reactions.rs, groups.rs)."""
-    from push_receiver import Receiver, check_vapid
+    from push_receiver import Receiver, check_vapid, check_apns_jwt
     ra, rb, rc = (ok(register(f"{n}_{tag}")).json() for n in ("liva", "livb", "livc"))
     (a, a_tok), (b, b_tok), (c, c_tok) = ((r["user"], r["token"]) for r in (ra, rb, rc))
     befriend(a_tok, b, b_tok, a["id"])
@@ -548,6 +548,48 @@ async def check_live(tag):
             "SELECT endpoint, end_reason FROM push_subscriptions WHERE user_id = ?", (b["id"],)).fetchall())
         assert reasons == {phone.endpoint: "signed_out", laptop.endpoint: "gone"}, reasons
 
+    # iPhones (apns.rs): Apple's two servers only (a local stand-in here), hex tokens,
+    # a JWT signed with the team's key, and who, never what.
+    apns_key = os.environ.get("NAPSACK_APNS_KEY")
+    assert apns_key and os.path.exists(apns_key), "the test server needs its APNs key (scripts/test-env.sh)"
+    token = os.urandom(32).hex()
+    dev = {"token": token, "environment": rx.origin}
+    for bad in ({**dev, "environment": "https://evil.example"}, {**dev, "environment": "staging"},
+                {**dev, "environment": "http://169.254.169.254"}, {**dev, "token": "XYZ"},
+                {**dev, "token": token.upper()}):
+        ok(call("POST", "/push/apns", b_tok, json=bad), 400)
+    ok(call("POST", "/push/apns", json=dev), 401)
+    ok(call("POST", "/push/apns", b_tok, json=dev))
+    ok(call("POST", "/push/apns", b_tok, json=dev))                       # the app sends it on every launch
+    if DB:
+        rows = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM apns_devices WHERE token = ?", (token,)).fetchone()[0]
+        assert rows == 1, f"an unchanged device made {rows} rows"
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    _, headers, body = rx.wait_for(token)[0]
+    check_apns_jwt(headers["authorization"], apns_key, "TESTKEY001", "TESTTEAM01")
+    assert headers["apns-topic"] == "com.getattr.napsack" and headers["apns-push-type"] == "alert"
+    assert headers["apns-priority"] == "10" and int(headers["apns-expiration"]) > time.time()
+    note = json.loads(body)
+    assert note["aps"]["alert"] == {"title": "Ana Live", "body": "New message"}, note
+    assert note["aps"]["badge"] == 1, note                                 # one chat waiting: ana's
+    assert note["url"] == f"/#chat={a['id']}", note
+    # The chat goes as an id only this device's notifications share.
+    assert headers["apns-collapse-id"] == note["aps"]["thread-id"] and len(note["aps"]["thread-id"]) == 24
+    assert note["aps"]["thread-id"] != f"dm-{a['id']}"
+    # Apple saying the app is gone ends it; signing out ends the session's.
+    rx.status[token] = 410
+    ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    rx.wait_for(token, 2)
+    other = os.urandom(32).hex()
+    ok(call("POST", "/push/apns", b_tok, json={"token": other, "environment": rx.origin}))
+    ok(call("POST", "/auth/logout", b_tok))
+    b_tok = ok(call("POST", "/auth/login", json={"username": b["username"], "auth_key": AUTH_KEY})).json()["token"]
+    if DB:
+        await asyncio.sleep(0.5)
+        reasons = dict(sqlite3.connect(DB).execute(
+            "SELECT token, end_reason FROM apns_devices WHERE user_id = ?", (b["id"],)).fetchall())
+        assert reasons == {token: "gone", other: "signed_out"}, reasons
+
     # Reactions: encrypted, one per person, the newest wins, and taking one back keeps the rows.
     m = ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2})).json()
     url = f"/chats/{a['id']}/messages/{m['id']}/reaction"
@@ -585,7 +627,7 @@ async def check_live(tag):
         await ws.close()
         assert ws.close_code == 1000, f"the server answers a close cleanly, not {ws.close_code}"
     rx.server.shutdown()
-    print("  live: presence, typing, push (encrypted, signed, who-not-what), reactions, replies")
+    print("  live: presence, typing, push (encrypted, signed, who-not-what), iPhone push (signed, who-not-what), reactions, replies")
 
 
 def check_group_e2e(tag, a, a_tok, b, b_tok):

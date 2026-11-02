@@ -115,3 +115,24 @@ variable "caddy_version" {
   type        = string
   default     = "2.10.0"
 }
+
+# iPhone notifications (server/src/apns.rs; docs/operations/operations.md, iPhone notifications).
+# All three empty (the default): iPhones get no notifications.
+variable "apns_key" {
+  description = "The APNs key's .p8 file, pasted whole (a heredoc). Production's is the Production environment's key, never the Sandbox one staging uses."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "apns_key_id" {
+  description = "The APNs key's Key ID (10 characters, from developer.apple.com)."
+  type        = string
+  default     = ""
+}
+
+variable "apple_team_id" {
+  description = "The Apple Developer team's id (10 characters, Membership details)."
+  type        = string
+  default     = ""
+}

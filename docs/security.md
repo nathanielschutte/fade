@@ -35,7 +35,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - `robots.txt` asks every crawler to stay away, and every response says `noindex`, so napsack never shows up in search.
 - Known scanning tools (sqlmap, Nuclei, masscan, and the like) are refused outright.
 - An address that probes for things napsack doesn't have (`/.env`, `/wp-login.php`, `/.git`, `.php` pages, ...) is **banned for an hour** after three probes, or after 30 missing pages in 10 minutes. Real people never do either.
-- Push notifications only ever go to the browser companies' push services; the server won't call any other address, whatever a request says.
+- Push notifications only ever go to the browser companies' push services, and iPhone notifications to Apple's two push servers (`apns.rs`, fixed in the code; a request only says which); the server won't call any other address, whatever a request says.
 - The only other calls the server makes are to AWS, for the admin Metrics tab (`aws.rs`): the instance metadata service, CloudWatch, and Cost Explorer, at addresses fixed in the code. Its permissions there are read-only (CPU credit numbers, the bill), and the instance credentials it uses are never logged.
 
 ### The server itself
