@@ -141,7 +141,7 @@ impl Config {
             video_max_bytes: env_or::<usize>("FADE_VIDEO_MAX_KB", 6144)? * 1024,
             video_max_seconds: env_or::<u64>("FADE_VIDEO_MAX_SECONDS", 10)?.clamp(1, 60),
             snap_disk_bytes: env_or::<usize>("FADE_SNAP_DISK_MB", 256)? * 1024 * 1024,
-            session_days: env_or("FADE_SESSION_DAYS", 90)?,
+            session_days: env_or("FADE_SESSION_DAYS", 365)?,
             admins: roles::parse_list(&std::env::var("FADE_ADMINS").unwrap_or_default()),
             admins_param: std::env::var("FADE_ADMINS_PARAM")
                 .ok()

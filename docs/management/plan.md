@@ -23,13 +23,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 3 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 4 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 5 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 6 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [People signed out long before their sessions end](#d15-people-signed-out-long-before-their-sessions-end) | Debug | Nate | In progress | Nate (2026-11-02) |
+| 3 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 4 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 5 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 7 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | Infrastructure | Nate | Needs decision | Nate (2026-10-29); designed in api-host.md. Applying it replaces the instance: when |
+| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 
 **Done**
 
@@ -402,6 +403,11 @@ Oldest first; newly shipped rows go at the bottom.
 #### D14. After an admin reset code, old messages stay unread and notify
 - Nate (2026-10-30): after someone signs in with an admin reset code (F2: a new key, history lost), they still get notifications for messages they can no longer decrypt, and their past messages show as unread forever, since they can never be opened.
 - **Built:** nothing sent before the reset counts as unread (`people::SINCE_MY_KEY`, in the chat list and group counts), without marking it read, so friends see no false "Seen"; pics waiting for them expire at the reset (both people hear), as they would at 30 days. A recovery key keeps the key, so it changes nothing (checked). Notifications: ending sessions already stops their devices' notifications (only live sessions' subscriptions get them), so the lasting unread counts were the part that remained. Smoke: the reset section.
+
+#### D15. People signed out long before their sessions end
+- Nate (2026-11-02): people keep getting signed out, far sooner than the 90 days sessions last; he'd rather sessions last about a year. Does a restart end them? (No: sessions are in the database.)
+- Found (production, read-only): no session expired in the 14 days before; of 55 that ended, 23 were cut by the 4-device cap at someone's new sign-in, including sessions 2 to 10 days old on devices in use (users 7, 10, 11, 16, and Nate's often). The cap ended the oldest *sign-in*, and sessions a browser had forgotten (Safari clears a site's storage after 7 days without a visit; the home-screen app counts separately; reinstalls) stayed live and filled the slots, so the next sign-in pushed out a phone in daily use.
+- **Built:** the cap now ends the session used least recently (`sessions.last_used_at`, migration 0024, noted at most hourly); sessions last 365 days (`FADE_SESSION_DAYS`) and renew while they're used, so a device that's opened never gets signed out. Unit: `the_cap_ends_the_least_recently_used`, `a_session_in_use_renews`.
 
 ### Experience/visual
 

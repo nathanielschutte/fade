@@ -264,7 +264,9 @@ async fn authenticate(socket: &mut WebSocket, state: &SharedState) -> Option<(Us
                 if frame.kind != "auth" {
                     return None;
                 }
-                let user = auth::user_for_token(&state.db, &frame.token).await.ok()??;
+                let user = auth::user_for_token(&state.db, &frame.token, state.config.session_days)
+                    .await
+                    .ok()??;
                 return Some((user, auth::hash_token(&frame.token)));
             }
             WsMessage::Ping(_) | WsMessage::Pong(_) => continue,

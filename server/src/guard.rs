@@ -336,18 +336,11 @@ pub async fn accounts_full(db: &sqlx::SqlitePool, max: i64) -> sqlx::Result<bool
 }
 
 /// After a new sign-in: if `user` now has more than `max` live sessions, the
-/// oldest end (and their sockets close). Returns the token hashes ended.
+/// ones used least recently end (and their sockets close). Returns the token
+/// hashes ended.
 pub async fn trim_sessions(state: &SharedState, user: i64, max: i64) -> sqlx::Result<Vec<String>> {
     let at = crate::db::now();
-    let extra: Vec<String> = sqlx::query_scalar(
-        "SELECT token_hash FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
-         ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?",
-    )
-    .bind(user)
-    .bind(at)
-    .bind(max)
-    .fetch_all(&state.db)
-    .await?;
+    let extra = sessions_over(&state.db, user, max, at).await?;
     for hash in &extra {
         sqlx::query(
             "UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
@@ -362,15 +355,56 @@ pub async fn trim_sessions(state: &SharedState, user: i64, max: i64) -> sqlx::Re
         tracing::info!(
             user_id = user,
             ended = extra.len(),
-            "oldest sessions ended: too many devices"
+            "least recently used sessions ended: too many devices"
         );
     }
     Ok(extra)
 }
 
+/// The live sessions beyond the `max` used most recently.
+async fn sessions_over(
+    db: &sqlx::SqlitePool,
+    user: i64,
+    max: i64,
+    at: i64,
+) -> sqlx::Result<Vec<String>> {
+    // Keep the ones used most recently: a session its browser forgot is
+    // never used again, so it goes before a phone in daily use.
+    sqlx::query_scalar(
+        "SELECT token_hash FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+         ORDER BY COALESCE(last_used_at, created_at) DESC, created_at DESC, rowid DESC LIMIT -1 OFFSET ?",
+    )
+    .bind(user)
+    .bind(at)
+    .bind(max)
+    .fetch_all(db)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Over the cap, a session its browser forgot (never used again) goes
+    /// before an older sign-in that's in daily use.
+    #[tokio::test]
+    async fn the_cap_ends_the_least_recently_used() {
+        let db = crate::db::tests::temp_db().await;
+        sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (1, 'ana', 'h', 'k', 'w', 0)")
+            .execute(&db).await.unwrap();
+        // The phone: signed in first, used an hour ago. Then four sign-ins never used after.
+        for (hash, created, used) in [
+            ("phone", 100, Some(9_000)),
+            ("b", 200, None),
+            ("c", 300, None),
+            ("d", 400, None),
+            ("e", 500, None),
+        ] {
+            sqlx::query("INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_used_at) VALUES (?, 1, ?, 99999999999, ?)")
+                .bind(hash).bind(created).bind(used).execute(&db).await.unwrap();
+        }
+        assert_eq!(sessions_over(&db, 1, 4, 10_000).await.unwrap(), ["b"]);
+    }
 
     #[test]
     fn scanners_and_probes_are_recognized() {

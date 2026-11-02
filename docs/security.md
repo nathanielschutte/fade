@@ -21,7 +21,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 ### Accounts and sign-in
 - Sign-in attempts are limited per address and per username (a wrong password 10 times locks that username for 15 minutes, for everyone, without revealing whether it exists).
 - Sign-up needs the invite code or a friend's add-a-friend link, and stops entirely once there are **100 accounts**. Each person has one link, which doesn't change or expire (X39); it's stored only as a hash, and lookups are rate-limited like sign-in.
-- Each person can be signed in on **4 devices**; a fifth sign-in quietly signs out the oldest.
+- Each person can be signed in on **4 devices**; a fifth sign-in quietly signs out the one used least recently (a session whose browser forgot it is never used again, so it goes first). A session lasts a year and renews while it's used.
 - Changing your password, using your recovery key, or an admin reset signs out every other device, and their live connections close at once.
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
 

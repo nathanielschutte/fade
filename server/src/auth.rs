@@ -32,7 +32,7 @@ impl FromRequestParts<SharedState> for AuthUser {
         state: &SharedState,
     ) -> Result<Self, Self::Rejection> {
         let token = bearer_token(&parts.headers).ok_or(AppError::Unauthorized)?;
-        user_for_token(&state.db, token)
+        user_for_token(&state.db, token, state.config.session_days)
             .await?
             .map(AuthUser)
             .ok_or(AppError::Unauthorized)
@@ -58,7 +58,14 @@ pub fn hash_token(token: &str) -> String {
 pub const TURNED_OFF: &str =
     "This account has been turned off. Ask whoever runs napsack to turn it back on.";
 
-pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option<UserPublic>> {
+/// Who a session token belongs to, if it's live. A session in use renews:
+/// at most once an hour it notes the use and pushes its end out to
+/// `session_days` from now, so a device that's used never gets signed out.
+pub async fn user_for_token(
+    db: &SqlitePool,
+    token: &str,
+    session_days: i64,
+) -> sqlx::Result<Option<UserPublic>> {
     let at = now();
     let user = sqlx::query_as::<_, UserPublic>(
         "SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
@@ -69,6 +76,17 @@ pub async fn user_for_token(db: &SqlitePool, token: &str) -> sqlx::Result<Option
     .bind(at)
     .fetch_optional(db)
     .await?;
+    if user.is_some() {
+        sqlx::query(
+            "UPDATE sessions SET last_used_at = ?1, expires_at = MAX(expires_at, ?1 + ?2)
+             WHERE token_hash = ?3 AND (last_used_at IS NULL OR last_used_at < ?1 - 3600)",
+        )
+        .bind(at)
+        .bind(session_days * 86_400)
+        .bind(hash_token(token))
+        .execute(db)
+        .await?;
+    }
     if let Some(u) = &user {
         // Coarse on purpose: one write a minute per user at most.
         sqlx::query(
@@ -425,6 +443,47 @@ pub async fn me(State(state): State<SharedState>, AuthUser(user): AuthUser) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session in use renews: its end moves out to a year from now (at most
+    /// once an hour); one that isn't used keeps its end.
+    #[tokio::test]
+    async fn a_session_in_use_renews() {
+        let db = crate::db::tests::temp_db().await;
+        sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (1, 'ana', 'h', 'k', 'w', 0)")
+            .execute(&db).await.unwrap();
+        let soon = now() + 86_400;
+        for token in ["used", "idle"] {
+            sqlx::query("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, 1, 0, ?)")
+                .bind(hash_token(token)).bind(soon).execute(&db).await.unwrap();
+        }
+        assert_eq!(
+            user_for_token(&db, "used", 365).await.unwrap().unwrap().id,
+            1
+        );
+        let ends = |t: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query_as::<_, (i64, Option<i64>)>(
+                    "SELECT expires_at, last_used_at FROM sessions WHERE token_hash = ?",
+                )
+                .bind(hash_token(t))
+                .fetch_one(&db)
+                .await
+                .unwrap()
+            }
+        };
+        let (until, used) = ends("used").await;
+        assert!(until >= now() + 364 * 86_400 && used.is_some());
+        assert_eq!(ends("idle").await, (soon, None));
+        // Within the hour: no second write.
+        sqlx::query("UPDATE sessions SET expires_at = 5 + expires_at WHERE token_hash = ?")
+            .bind(hash_token("used"))
+            .execute(&db)
+            .await
+            .unwrap();
+        user_for_token(&db, "used", 365).await.unwrap();
+        assert_eq!(ends("used").await.0, until + 5);
+    }
 
     #[test]
     fn usernames() {
