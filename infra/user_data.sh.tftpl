@@ -94,6 +94,25 @@ $DOMAIN {
 	}
 	reverse_proxy 127.0.0.1:8080
 }
+
+# The apps' own name for the API (docs/implementation/api-host.md): /api/*
+# only, so the website can move without breaking installed apps.
+api.$DOMAIN {
+	encode zstd gzip
+	request_body {
+		max_size 8MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		respond 404
+	}
+}
 %{ for old in redirects ~}
 
 # Old address: keep links working.

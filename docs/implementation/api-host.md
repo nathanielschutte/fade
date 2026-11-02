@@ -1,10 +1,10 @@
 # A stable address for the apps: api.napsack.io
 
-Status: proposed (Nate, 2026-10-29: "api.napsack.io is a good idea for mobile clients"). Not built. The infrastructure part is the owner's to apply.
+Status: **built (server 0.47.0)**; Nate (2026-10-29: "api.napsack.io is a good idea for mobile clients"; 2026-11-02: "let's definitely point the app to api.napsack.io"). Applying it replaces the instance (staging first, then production with the Rule 1 checklist).
 
 ## Why
 
-An installed app keeps the server address it was built with, and old versions stay on phones for months ([mobile.md](mobile.md), Decisions still open). The web client is easy: it's served from the domain it talks to, so a domain move ([domain-move.md](../operations/domain-move.md)) takes it along. The apps aren't. If they talk to `napsack.io` and the site moves again, every installed app breaks unless `napsack.io` keeps working forever.
+An installed app keeps the server address it was built with, and old versions stay on phones for months ([mobile.md](../design/mobile.md), Decisions still open). The web client is easy: it's served from the domain it talks to, so a domain move ([domain-move.md](../operations/domain-move.md)) takes it along. The apps aren't. If they talk to `napsack.io` and the site moves again, every installed app breaks unless `napsack.io` keeps working forever.
 
 A name only for the apps fixes that. Wherever the web app lives, `api.napsack.io` keeps answering the API, so the website can move freely and the apps never notice. It's also a natural place for API versioning later.
 
@@ -23,7 +23,7 @@ A name only for the apps fixes that. Wherever the web app lives, `api.napsack.io
    - This is the boot script, so applying it **replaces the instance**: production's and staging's (CLAUDE.md, Rule 1). That means the full checklist: snapshot, row counts, then checks after.
    - Do staging first. Better still, bundle it with the next change that replaces the instance anyway.
 3. **The server**: nothing needed. It doesn't check `Host`, uses bearer tokens (no cookies, so nothing is tied to an origin), and logs `host` per request already, so the apps' traffic is visible on its own in the log viewer.
-4. **The apps**: release builds default to `https://api.napsack.io`.
+4. **The apps**: release builds use `https://api.napsack.io` (`NAPSACK_RELEASE_SERVER_URL` in `Base.xcconfig`, applied by `Release.xcconfig` whatever `Local.xcconfig` says for development).
 5. **Docs**: `operations.md` (the extra name), `domain-move.md` (a move keeps `api.` pointed at the server), `staging.md`, and this file moves to `docs/implementation/` once built.
 
 ## How it's checked
@@ -32,8 +32,8 @@ A name only for the apps fixes that. Wherever the web app lives, `api.napsack.io
 - The smoke test runs against the `api.` name too (a `SMOKE_API_URL`, or run it twice in `scripts/test-staging.sh` against staging).
 - The iOS app's live tests pass against `https://api.staging.napsack.io`.
 
-## Open
+## Notes
 
-- **Links people share** (your add-me link, invite links) must use the site's address, not `api.`: the server returns a path (`/i/<token>`), and the apps put the server's address in front today. Before release builds switch, `/api/config` should say the site's address (it knows it: `FADE_PUBLIC_URL`) and the apps use that.
+- **Links people share** (your add-a-friend link) use the site's address, not `api.`: the server returns a path (`/i/<token>`), and `/api/config` says the site's address (`site_url`, from `FADE_PUBLIC_URL`; null in development), which the apps put in front.
 
-- **When to apply it:** Nate's call, since it replaces production's instance. It isn't urgent until the first TestFlight build, which is also waiting on the Developer Program.
+- Built: `infra/dns.tf` and `infra/staging/main.tf` (`api.` records), the boot script's Caddy site (`/api/*` only, 404 for the rest), `site_url` in `/api/config`, release builds' `NAPSACK_RELEASE_SERVER_URL` (Release.xcconfig), and `scripts/test-staging.sh` checks the name serves the API and nothing else.

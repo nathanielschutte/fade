@@ -294,6 +294,9 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
         "min_client_versions": min_versions,
         // Non-production copies only ("staging"); null in production.
         "environment": state.config.environment,
+        // The site's address, for links people share; null in development
+        // (the apps then use the server's own address).
+        "site_url": state.config.site_url,
         // When this server started (unix seconds), for the build line on non-production copies.
         "started_at": crate::db::now() - state.started_at.elapsed().as_secs() as i64,
         // The browser's applicationServerKey for push subscriptions (push.rs).

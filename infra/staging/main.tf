@@ -168,6 +168,15 @@ resource "aws_route53_record" "app" {
   records = [aws_eip.app.public_ip]
 }
 
+# The apps' name for the API (docs/implementation/api-host.md).
+resource "aws_route53_record" "api" {
+  zone_id = data.aws_route53_zone.zone.zone_id
+  name    = "api.${local.domain}"
+  type    = "A"
+  ttl     = 300
+  records = [aws_eip.app.public_ip]
+}
+
 # ---------- the server ----------
 
 resource "aws_iam_role" "instance" {
