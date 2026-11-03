@@ -270,6 +270,10 @@ pub mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
+            // The one exception: a person deleting their own account (F22).
+            if path.file_name().is_some_and(|n| n == "deletion.rs") {
+                continue;
+            }
             let src = std::fs::read_to_string(&path).unwrap().to_uppercase();
             for (n, line) in src.lines().enumerate() {
                 assert!(

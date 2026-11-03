@@ -294,6 +294,8 @@ pub async fn register(
     if crate::usernames::past_holder(&state.db, &username)
         .await?
         .is_some()
+        // A deleted account's, held for 30 days (deletion.rs).
+        || crate::deletion::held(&state.db, &username).await?
     {
         return Err(AppError::bad("That username is taken."));
     }

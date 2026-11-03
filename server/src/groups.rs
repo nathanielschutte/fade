@@ -115,7 +115,9 @@ pub struct GroupMessage {
     pub edit_key: Option<String>,
 }
 
-const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id, u.username AS sender_name,
+const GM_SELECT: &str = "SELECT gm.id, gm.group_id, gm.sender_id,
+        CASE WHEN EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)
+             THEN 'Deleted account' ELSE u.username END AS sender_name,
         gm.kind, gm.body, gm.format, gm.created_at, gm.pic_id, gm.reply_to,
         gm.client_id, gm.recipients, CASE WHEN gm.format IN (3, 5, 7) THEN u.public_key END AS sender_public_key,
         (SELECT e.id FROM group_message_edits e WHERE e.message_id = gm.id ORDER BY e.id DESC LIMIT 1) AS edit_id,

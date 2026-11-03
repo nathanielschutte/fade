@@ -979,6 +979,52 @@ def check_roles(tag):
         assert n == 2, f"PowerXtreme grants are marked ended, never deleted: {n}"
     print("  roles: Users see nothing; PowerUsers (and PowerXtremes, the same) no names, cost, logs, or resets; Admins everything")
 
+def check_deletion(tag):
+    """Deleting your own account (deletion.rs, F22): the password and the
+    username typed again; then everything of theirs goes, friends lose the
+    chat, groups lose their messages, and the username is held."""
+    (ana, a_tok), (ben, b_tok), (cat, c_tok) = (
+        (r["user"], r["token"]) for r in (ok(register(f"{n}_{tag}")).json() for n in ("dela", "delb", "delc")))
+    befriend(a_tok, ben, b_tok, ana["id"])
+    befriend(c_tok, ana, a_tok, cat["id"])
+    befriend(b_tok, cat, c_tok, ben["id"])
+    ok(call("POST", f"/chats/{ben['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    ok(call("POST", f"/chats/{cat['id']}/messages", b_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
+    g = ok(call("POST", "/groups", a_tok, json={"name": "going away", "member_ids": [ben["id"], cat["id"]]})).json()
+    gid = g["id"]
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "from ana"}))
+    ok(call("POST", f"/groups/{gid}/messages", c_tok, json={"text": "from cat"}))
+
+    # Refused without the password, or with the username wrong; nobody else can do it.
+    ok(call("POST", "/me/delete", a_tok, json={"auth_key": b64(os.urandom(32)), "username": ana["username"]}), 400)
+    ok(call("POST", "/me/delete", a_tok, json={"auth_key": AUTH_KEY, "username": ben["username"]}), 400)
+    ok(call("POST", "/me/delete", json={"auth_key": AUTH_KEY, "username": ana["username"]}), 401)
+    assert ok(call("GET", "/me", a_tok)).json()["username"] == ana["username"], "still there"
+
+    ok(call("POST", "/me/delete", a_tok, json={"auth_key": AUTH_KEY, "username": ana["username"].upper()}))
+    ok(call("GET", "/me", a_tok), 401)                                         # every session ended
+    ok(call("POST", "/auth/login", json={"username": ana["username"], "auth_key": AUTH_KEY}), 400)
+    assert ana["id"] not in [f["id"] for f in ok(call("GET", "/friends", b_tok)).json()], "ben lost the chat"
+    ok(call("GET", f"/chats/{ana['id']}/messages", b_tok), 404)
+    assert [f["id"] for f in ok(call("GET", "/friends", b_tok)).json()] == [cat["id"]], "ben and cat keep theirs"
+    assert len(ok(call("GET", f"/chats/{cat['id']}/messages", b_tok)).json()) == 1
+    # The group: her messages gone, Ben owns it now, and a member left.
+    texts = ok(call("GET", f"/groups/{gid}/messages", b_tok)).json()
+    bodies = [m["body"] for m in texts if m["kind"] == "text"]
+    assert bodies == ["from cat"], bodies
+    left = [m for m in texts if m["kind"] == "event" and '"left"' in m["body"]]
+    assert left and left[-1]["sender_name"] == "Deleted account", left
+    assert ana["username"] not in json.dumps(texts), "no trace of her name"
+    members = ok(call("GET", f"/groups/{gid}", b_tok)).json()["members"]
+    assert {m["id"]: m["role"] for m in members} == {ben["id"]: "owner", cat["id"]: "member"}, members
+    # Not found by anyone, not listed for Admins, and the username held.
+    ok(call("POST", "/friends/requests", b_tok, json={"username": ana["username"]}), 404)
+    adm = admin_token()
+    assert ana["id"] not in [u["id"] for u in ok(call("GET", "/admin/users", adm)).json()["users"]]
+    ok(call("GET", f"/admin/users/{ana['id']}", adm), 404)
+    ok(register(ana["username"]), 400)
+    print("  deletion: password and username typed again; everything of hers gone, friends and groups keep theirs, name held")
+
 def check_admin_users(tag):
     """System → Users (admin_users.rs): turning an account off keeps all of it,
     but it can't sign in or be sent to, until it's turned back on; signing out
@@ -1711,6 +1757,7 @@ async def main():
     check_graph(tag)
     check_roles(tag)
     check_admin_users(tag)
+    check_deletion(tag)
     check_team(tag)
     check_health()
     # Late, so the server's first reading (every 10 seconds) is already there.

@@ -83,11 +83,15 @@ pub async fn record(
 }
 
 async fn target(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
-    sqlx::query_as::<_, UserPublic>("SELECT id, username FROM users WHERE id = ?")
-        .bind(id)
-        .fetch_optional(db)
-        .await?
-        .ok_or_else(|| AppError::not_found("No such account."))
+    // A deleted account is gone: nothing about it, nothing to turn back on (deletion.rs).
+    sqlx::query_as::<_, UserPublic>(
+        "SELECT id, username FROM users u WHERE id = ?
+           AND NOT EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found("No such account."))
 }
 
 /// An account a person uses: not one the server speaks for (Team Napsack),
@@ -136,7 +140,9 @@ pub async fn list(
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'text') AS texts_sent,
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'snap') AS snaps_sent,
             EXISTS(SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL) AS deactivated
-         FROM users u ORDER BY u.created_at DESC",
+         FROM users u
+         WHERE NOT EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)
+         ORDER BY u.created_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
