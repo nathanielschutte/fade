@@ -35,3 +35,6 @@ dist/
 # The iOS app's App Store Connect API key settings (scripts/ios-testflight.sh), and its builds.
 ios/Config/AppStoreConnect.env
 /build/
+
+# Keys kept on this machine (APNs .p8 files and the like); never committed.
+/keys/
