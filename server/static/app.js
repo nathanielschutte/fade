@@ -806,7 +806,7 @@ const passkeysKnown = (async () => {
     passkeySupport.make = Boolean(await P.isUserVerifyingPlatformAuthenticatorAvailable?.());
   } catch { /* none on the device itself, then */ }
 })();
-passkeysKnown.then(renderPasskeySignIn);
+passkeysKnown.then(() => { renderPasskeySignIn(); renderPasskeys(); });
 
 /** Passkeys work on this page: the browser can, the server names its site
  * (`passkey_rp_id`), and this page is on it. A passkey belongs to a name,
@@ -1078,16 +1078,28 @@ async function loadPasskeys() {
     res = await getJSON("/me/passkeys");
   } catch (err) {
     report("warn", "loading passkeys failed", errorFields(err));
+    // Shown only when there's no list at all: an empty one would look like none are set up.
+    if (asked === passkeyList.loads && !passkeyList.items) $("#passkey-note").textContent = PASSKEYS_UNLOADED;
     return;
   }
   if (asked !== passkeyList.loads) return; // a newer answer is on its way
+  if ($("#passkey-note").textContent === PASSKEYS_UNLOADED) $("#passkey-note").textContent = "";
   passkeyList.items = res.passkeys;
   passkeyList.rp = res.rp_id;
   renderPasskeys();
 }
 
+const PASSKEYS_UNLOADED = "Couldn't load your passkeys. Check your connection and open this again.";
+
 function renderPasskeys() {
-  $("#passkey-add").hidden = !passkeysHere();
+  // Where none can be made, say why; the list stays, so any can still be removed.
+  const here = passkeysHere();
+  const rp = state.config?.passkey_rp_id;
+  $("#passkey-add-row").hidden = !here;
+  $("#passkey-unavailable").hidden = here;
+  $("#passkey-unavailable").textContent = here ? ""
+    : passkeySupport.use && rp ? `Passkeys for napsack work only at ${rp}. Your password works everywhere.`
+    : "This browser can't use passkeys for napsack. Your password works everywhere.";
   const list = $("#passkey-list");
   const items = passkeyList.items;
   if (!items) {

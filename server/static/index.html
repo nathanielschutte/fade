@@ -403,9 +403,10 @@
     <h3>Passkeys</h3>
     <p class="field-hint">Sign in with Face ID or your fingerprint instead of your password. A passkey unlocks your messages too.</p>
     <ul class="people passkey-list" id="passkey-list"></ul>
-    <div class="picture-row">
-      <button type="button" class="button" id="passkey-add" hidden>Add a passkey</button>
+    <div class="picture-row" id="passkey-add-row" hidden>
+      <button type="button" class="button" id="passkey-add">Add a passkey</button>
     </div>
+    <p class="field-hint" id="passkey-unavailable" hidden></p>
     <p class="form-note" id="passkey-note" role="status"></p>
     <h3>Notifications</h3>
     <p class="field-hint" id="push-status"></p>

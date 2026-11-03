@@ -1,12 +1,15 @@
 """Passkeys on the web (F26, docs/design/passkeys.md):
-- Sign-up recommends one right after the recovery key, made with the keys
-  already in hand; signing in with it needs no password and opens every message.
+- Sign-up recommends one right after the recovery key (closed with Done or
+  Escape), made with the keys already in hand, and only on a device with Face
+  ID or a fingerprint of its own; signing in with it needs no password and
+  opens every message.
 - Security lists them (from any device), adds one with the password (not the
   same device twice), and removes them (two taps): a removed passkey is
   refused in the server's words, and its password manager is told to drop it.
+  Where none can be made, it says why; a list that didn't load says so.
 - A passkey that gives its PRF answer only when used is asked once more, and
   the copy made from that answer opens.
-- Closing the system's passkey sheet isn't an error.
+- Closing the system's passkey sheet isn't an error, at sign-in or in the offer.
 - A passkey that can't give napsack its secret (no PRF) is never used: napsack
   says so plainly, registers nothing, and doesn't ask the server.
 
@@ -17,11 +20,11 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import (PASSKEY_BASE, PASSWORD, PHONE, SIGN_IN_WAIT, befriend, fill_sign_up, launch,
+from common import (BASE, PASSKEY_BASE, PASSWORD, PHONE, SIGN_IN_WAIT, befriend, fill_sign_up, launch,
                     no_placeholders, open_page, row, save_recovery_key, shot, sign_in, sign_up)
 
 tag = uuid.uuid4().hex[:5]
-ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
+ANA, BEN, CAL, DEE = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}", f"dee_{tag}"
 DESKTOP = {"viewport": {"width": 1200, "height": 800}}
 errors = []
 
@@ -30,6 +33,14 @@ NO_PRF_ADD = "This device's passkeys can't unlock your messages, so napsack can'
 NO_PRF_SIGN_IN = "This passkey can't unlock napsack here. Sign in with your password."
 SAME_DEVICE = "This device already has a passkey for napsack."
 REMOVED = "That passkey isn't set up for napsack any more. Sign in with your password."
+UNLOADED = "Couldn't load your passkeys. Check your connection and open this again."
+ONLY_AT = "Passkeys for napsack work only at localhost. Your password works everywhere."
+
+# A device with no Face ID or fingerprint of its own (a computer without one):
+# passkeys can still be used (a phone's, a security key), but none made here.
+NO_PLATFORM_AUTHENTICATOR = """
+PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = async () => false;
+"""
 
 
 async def device(browser, prf=True, **ctx):
@@ -42,14 +53,19 @@ async def device(browser, prf=True, **ctx):
     async def attach(page):
         cdp = await page.context.new_cdp_session(page)
         await cdp.send("WebAuthn.enable", {"enableUI": False})
-        made = await cdp.send("WebAuthn.addVirtualAuthenticator", {"options": {
-            "protocol": "ctap2", "ctap2Version": "ctap2_1", "transport": "internal",
-            "hasResidentKey": True, "hasUserVerification": True, "isUserVerified": True,
-            "hasPrf": prf, "automaticPresenceSimulation": True}})
-        held.update(cdp=cdp, id=made["authenticatorId"])
+        held.update(cdp=cdp, id=await authenticator(cdp, prf))
 
     page = await open_page(browser, errors=errors, base=PASSKEY_BASE, prepare=attach, **ctx)
     return page, held["cdp"], held["id"]
+
+
+async def authenticator(cdp, prf=True):
+    """A new authenticator on the device (Face ID, say); returns its id."""
+    made = await cdp.send("WebAuthn.addVirtualAuthenticator", {"options": {
+        "protocol": "ctap2", "ctap2Version": "ctap2_1", "transport": "internal",
+        "hasResidentKey": True, "hasUserVerification": True, "isUserVerified": True,
+        "hasPrf": prf, "automaticPresenceSimulation": True}})
+    return made["authenticatorId"]
 
 
 def next_event(cdp, name):
@@ -109,6 +125,18 @@ async def main():
         await expect(offer).to_be_visible()
         await expect(ana.locator("#passkey-offer-text")).to_contain_text("Face ID or your fingerprint")
         await shot(ana, "passkey-offer-phone", full_page=False)
+        # The system's sheet closed (Face ID not recognized): the offer stays, saying nothing.
+        await ana_cdp.send("WebAuthn.setUserVerified", {"authenticatorId": ana_key, "isUserVerified": False})
+        await ana.click("#passkey-offer-add")
+        await expect(ana.locator("#passkey-offer-add")).to_have_text("Add a passkey", timeout=10000)
+        await expect(ana.locator("#passkey-offer-add")).to_be_enabled()
+        await expect(ana.locator("#passkey-offer-error")).to_have_text("")
+        await expect(offer).to_be_visible()
+        assert await kept(ana_cdp, ana_key) == []
+        # A failed check locks the virtual authenticator (as too many would a real
+        # one), so a fresh one stands in for Face ID working the next time.
+        await ana_cdp.send("WebAuthn.removeVirtualAuthenticator", {"authenticatorId": ana_key})
+        ana_key = await authenticator(ana_cdp)
         await ana.click("#passkey-offer-add")
         await expect(ana.locator("#passkey-offer-text")).to_contain_text("Passkey added", timeout=SIGN_IN_WAIT)
         await expect(ana.locator("#passkey-offer-error")).to_have_text("")
@@ -125,10 +153,28 @@ async def main():
         await ben.fill("#composer-input", "for ana only")
         await ben.press("#composer-input", "Enter")
         await expect(row(ana, BEN)).to_contain_text("for ana only", timeout=10000)
-        # Ben's page is at an address (127.0.0.1), where passkeys can't work: none offered.
+        # His passkeys don't load: Security says so, rather than showing none.
+        async def refused(route):
+            if route.request.method == "GET":
+                await route.fulfill(status=500, json={"error": "Something went wrong."})
+            else:
+                await route.fallback()
+        await ben.route("**/api/me/passkeys", refused)
+        await open_security(ben, phone=False)
+        await expect(ben.locator("#passkey-note")).to_have_text(UNLOADED, timeout=10000)
+        await expect(ben.locator("#passkey-list")).to_have_text("")
+        await ben.unroute("**/api/me/passkeys", refused)
+        await ben.click("#profile-dialog [data-close]")
         await open_security(ben, phone=False)
         await expect(ben.locator("#passkey-list")).to_have_text("No passkeys yet.", timeout=10000)
-        await expect(ben.locator("#passkey-add")).to_be_hidden()
+        await expect(ben.locator("#passkey-note")).to_have_text("")
+        if BASE != PASSKEY_BASE:
+            # Ben's page is at an address (127.0.0.1), where passkeys can't work:
+            # none offered, and it says where they do.
+            await expect(ben.locator("#passkey-add")).to_be_hidden()
+            await expect(ben.locator("#passkey-unavailable")).to_have_text(ONLY_AT)
+            await ben.locator("#passkey-unavailable").scroll_into_view_if_needed()
+            await shot(ben, "passkeys-unavailable-desktop", full_page=False)
         await ben.click("#profile-dialog [data-close]")
 
         # She signs out, and back in with the passkey alone: the text opens.
@@ -240,7 +286,11 @@ async def main():
         # Cal's computer has passkeys that can't give napsack a secret (no PRF).
         cal, cal_cdp, cal_key = await device(browser, prf=False, **DESKTOP)
         await fill_sign_up(cal, CAL, save_key=False)
-        await save_recovery_key(cal, keep_offer=True)
+        # The recovery key closed with Escape once saved: the offer follows all the same.
+        await expect(cal.locator("#recovery-dialog")).to_be_visible(timeout=SIGN_IN_WAIT)
+        await cal.check("#recovery-saved")
+        await cal.keyboard.press("Escape")
+        await expect(cal.locator("#recovery-dialog")).to_be_hidden()
         await expect(cal.locator("#passkey-offer")).to_be_visible()
         await shot(cal, "passkey-offer-desktop", full_page=False)
         orphan = next_event(cal_cdp, "WebAuthn.credentialDeleted")
@@ -266,6 +316,18 @@ async def main():
         await expect(cal.locator("#auth-error")).to_have_text(NO_PRF_SIGN_IN, timeout=SIGN_IN_WAIT)
         assert asked == [], asked
         print("no PRF: said plainly, nothing registered, the server never asked")
+
+        # Dee's computer has no Face ID or fingerprint: a passkey can sign in
+        # there, but sign-up doesn't recommend making one.
+        dee = await open_page(browser, errors=errors, base=PASSKEY_BASE, init=NO_PLATFORM_AUTHENTICATOR, **DESKTOP)
+        await expect(dee.locator("#passkey-sign-in")).to_be_visible()
+        await fill_sign_up(dee, DEE, save_key=False)
+        await save_recovery_key(dee, keep_offer=True)
+        await expect(dee.locator("#passkey-offer")).to_be_hidden()   # settled once the key's dialog is gone
+        await open_security(dee, phone=False)
+        await expect(dee.locator("#passkey-list")).to_have_text("No passkeys yet.", timeout=10000)
+        await expect(dee.locator("#passkey-add")).to_be_visible()   # one from a phone or a security key
+        print("no Face ID or fingerprint: sign-up doesn't recommend a passkey")
 
         assert not errors, errors
         print("PASSKEYS TEST PASSED")
