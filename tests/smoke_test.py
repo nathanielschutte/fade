@@ -558,13 +558,18 @@ async def socket(tok):
 
 
 async def next_event(ws, kind, timeout=3.0):
+    return await first_of(ws, (kind,), timeout)
+
+
+async def first_of(ws, kinds, timeout=3.0):
+    """The first event of any of `kinds`, whichever comes first."""
     end = time.time() + timeout
     while True:
         left = end - time.time()
         if left <= 0:
-            raise AssertionError(f"no {kind} event")
+            raise AssertionError(f"no {' or '.join(kinds)} event")
         ev = json.loads(await asyncio.wait_for(ws.recv(), left))
-        if ev["type"] == kind:
+        if ev["type"] in kinds:
             return ev
 
 
@@ -1414,8 +1419,13 @@ async def check_group_reads(tag):
     seen = await next_event(ana, "group_read")
     assert (seen["group_id"], seen["user_id"]) == (gid, ben_id), seen
     ok(call("POST", f"/groups/{gid}/read", b_tok))                                   # nothing new since
-    await asyncio.gather(no_event(ben_phone, "groups_changed"), no_event(ana, "group_read"))
     assert [g for g in ok(call("GET", "/groups", b_tok)).json() if g["id"] == gid][0]["unread"] == 0
+    # Then something sure to arrive: on both sockets the next group event is
+    # Ana's next message, so the second read sent nothing ahead of it.
+    after = ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "after"})).json()
+    for ws in (ben_phone, ana):
+        ev = await first_of(ws, ("groups_changed", "group_read", "group_message"))
+        assert ev["type"] == "group_message" and ev["message"]["id"] == after["id"], ev
     await ana.close()
     await ben_phone.close()
     print("  groups: reading tells the others once; a group already read sends nothing")
