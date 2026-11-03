@@ -53,6 +53,12 @@ struct ChatScreen: View {
     @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
 
+    /// The content's height and how far its end is below what's shown.
+    struct BottomGap: Equatable {
+        let height: CGFloat
+        let gap: CGFloat
+    }
+
     /// How close to the bottom still counts as at it: a finger's slack, less than a line of text.
     static let nearBottom: CGFloat = 24
     /// How far from the oldest message shown the next page starts loading, so it's there before you are.
@@ -107,11 +113,20 @@ struct ChatScreen: View {
         .defaultScrollAnchor(.bottom)
         .scrollPosition($position)
         .modifier(ShowFound(conversation: conversation, position: $position))  // a search result's message (Search.swift)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.visibleRect.maxY >= geometry.contentSize.height - Self.nearBottom
-        } action: { _, now in
-            atBottom = now
-            if now { newBelow = false }
+        .onScrollGeometryChange(for: BottomGap.self) { geometry in
+            // The visible rect reaches under the composer (the bottom inset), so the end counts from there.
+            BottomGap(height: geometry.contentSize.height,
+                      gap: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY)
+        } action: { before, now in
+            // What came below while you were at the bottom (a message, the typing line) keeps the
+            // newest in sight. iOS 27's anchor does that itself; iOS 26 and older leave it below
+            // the screen (ChatScrollTests). Older pages grow above and leave the gap as it was.
+            if now.height > before.height, before.gap <= Self.nearBottom, now.gap > Self.nearBottom {
+                position.scrollTo(edge: .bottom)
+                return
+            }
+            atBottom = now.gap <= Self.nearBottom
+            if atBottom { newBelow = false }
         }
         .onChange(of: conversation.bubbles.last?.id) { before, after in
             // Newer than what was there (older pages change the first, not the last), and you're reading further up.

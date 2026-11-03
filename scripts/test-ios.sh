@@ -11,6 +11,7 @@
 #   ONLY=NapsackTests/SendingTests bash scripts/test-ios.sh     one suite (or a test: .../SendingTests/name())
 #   ONLY=NapsackUITests bash scripts/test-ios.sh                 the UI tests: the app driven through its screens
 #   SIMULATOR="iPhone 17 Pro" bash scripts/test-ios.sh
+#   SIMULATOR="iPhone 17,OS=26.4" bash scripts/test-ios.sh   an older iOS (install its runtime first; a name alone means the newest)
 #
 # Needs a Mac with Xcode (docs/ios-onboarding.md). The full xcodebuild output
 # goes to a log; this prints each failure and where the log is.
