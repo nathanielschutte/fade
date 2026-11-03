@@ -806,7 +806,7 @@ struct OpenedPic: Sendable {
             // Already on screen (the kept copy): change only what changed. Replacing
             // the whole list moved the scroll view back to the bottom, stopping a
             // scroll under way for a second or two as the chat opened (D17).
-            merge(page)
+            join(page)
         } else {
             bubbles = page
             reachedStart = page.count < Self.page
@@ -819,7 +819,14 @@ struct OpenedPic: Sendable {
     /// shown. If more came than a page holds, it starts again from the newest.
     func catchUp() async throws {
         guard loaded else { return try await loadNewest() }
-        let page = try await fetch(before: nil)
+        join(try await fetch(before: nil))
+    }
+
+    /// The newest page, joined to what's shown: merged, unless a whole page came
+    /// since the newest shown (a kept copy from long ago, or a long time
+    /// offline). Then what's missing in between would never load (older pages
+    /// come from before the oldest shown), so it starts again from the newest.
+    private func join(_ page: [Bubble]) {
         if page.count == Self.page, let oldest = page.first?.id, let newest = bubbles.last?.id, oldest > newest {
             bubbles = page
             reachedStart = false
@@ -1084,19 +1091,20 @@ struct OpenedPic: Sendable {
                 try Server.decoder.decode([DirectMessage].self, from: data).map { reader.bubble($0, with: friend, ring: ring) }
             }.value
         case .group:
-            // Read with the newest pins; senders seen here for the first time are
-            // read with the server's key, which is then pinned (as it would be first).
-            if let pinBook { reader.pins = pinBook.pins }
-            let reader = self.reader
-            let (messages, page) = try await Task.detached(priority: .userInitiated) {
-                let messages = try Server.decoder.decode([GroupMessage].self, from: data)
-                return (messages, messages.map { reader.bubble($0, ring: ring) })
+            // Senders seen here for the first time are pinned before anything is
+            // read (on the main actor, where the pins live), so the page is read
+            // with the same keys on every open: a message sealed with another key
+            // than the first one seen reads as it will next time, not by the
+            // server's say-so this once.
+            let messages = try await Task.detached(priority: .userInitiated) {
+                try Server.decoder.decode([GroupMessage].self, from: data)
             }.value
             if let pinBook {
                 pinBook.see(senders: messages.compactMap { m in m.senderPublicKey.map { (m.senderId, $0) } })
-                self.reader.pins = pinBook.pins
+                reader.pins = pinBook.pins
             }
-            return page
+            let reader = self.reader
+            return await Task.detached(priority: .userInitiated) { messages.map { reader.bubble($0, ring: ring) } }.value
         }
     }
 }

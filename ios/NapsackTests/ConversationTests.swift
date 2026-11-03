@@ -181,6 +181,82 @@ import Testing
         json(ids.map { list.message(from: 7, to: 3, kind: "snap", snap: "opened", id: $0) })
     }
 
+    /// A group member seen for the first time is pinned before their messages
+    /// are read: one sent with another key (the server's say-so, message by
+    /// message) can't be read, the first open and every open after the same.
+    @Test func newMembersArePinnedBeforeTheirMessagesAreRead() async throws {
+        let first = P256.KeyAgreement.PrivateKey(), second = P256.KeyAgreement.PrivateKey()
+        let groupId = list.vg["group_id"] as! Int64
+        func sealed(_ id: Int64, by key: P256.KeyAgreement.PrivateKey) throws -> [String: Any] {
+            let spki = E2E.toB64(key.publicKey.derRepresentation)
+            let wraps: [Int64: SymmetricKey] = [3: try E2E.groupWrapKey(mine: key, theirs: list.bob["spki"] as! String, myId: 9, theirId: 3),
+                                                9: try E2E.groupWrapKey(mine: key, theirs: spki, myId: 9, theirId: 9)]
+            let m = try E2E.encryptGroupText("number \(id)", replyTo: nil, groupId: groupId, senderId: 9, wrapKeys: wraps)
+            var json = list.groupMessage(format: 3, sender: 9, extra: [
+                "client_id": m.clientId, "recipients": m.recipients, "content": E2E.toB64(m.content), "key": m.wraps[3]!,
+                "sender_public_key": spki])
+            json["id"] = id
+            return json
+        }
+        let page = json([try sealed(1, by: first), try sealed(2, by: second)])
+        let summary = try ChatListTests.decode(GroupSummary.self, [
+            "id": groupId, "name": "Road trip", "role": "member", "member_count": 2, "last_message": NSNull(), "unread": 0,
+            "favorite": false, "muted": false, "muted_until": NSNull(), "avatar_id": NSNull(), "encrypted": true])
+        let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
+        let book = PinBook(account: 3, store: MemoryPinStore())
+        for open in ["first", "again"] {
+            let chat = Conversation(.group(summary), account: account, reader: reader, pinBook: book,
+                                    transport: StubServer { _ in (200, page) })
+            try await chat.loadNewest()
+            #expect(chat.bubbles.map(\.content) == [.text("number 1", edited: false), .unreadable(Reader.cantOpen)], "\(open)")
+        }
+    }
+
+    /// The newest page coming back as you sign out (or as the server ends the
+    /// session) isn't kept: signing out has wiped the kept chats, and a write
+    /// that started before the wipe doesn't put one back. Signed in again, the
+    /// chat is kept as before.
+    @Test func aPageThatComesBackAfterSigningOutIsntKept() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "napsack-cache-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
+        let page = pics([1, 2, 3])
+        let gate = Gate(holds: { _ in true }) { _, _ in page }
+        let chat = Conversation(.friend(alice), account: account, reader: reader, cache: ResponseCache(account: 3, root: root), transport: gate)
+        let loading = Task { try await chat.loadNewest() }
+        await gate.someoneWaiting()
+        ResponseCache.wipeAll(root: root)  // signed out meanwhile
+        await gate.open()
+        try await loading.value
+        let left = (try? FileManager.default.subpathsOfDirectory(atPath: root.path())) ?? []
+        #expect(left.isEmpty, "nothing of the account came back")
+
+        let again = Conversation(.friend(alice), account: account, reader: reader, cache: ResponseCache(account: 3, root: root),
+                                 transport: StubServer { _ in (200, page) })
+        try await again.loadNewest()
+        #expect(ResponseCache(account: 3, root: root).read("chat-d-7") != nil)
+    }
+
+    /// A chat kept on the phone long ago opens with that copy, then the
+    /// server's newest page is a whole page newer: the chat starts again from
+    /// the newest rather than showing the old page above it with everything in
+    /// between missing (older pages come from before the oldest shown, so the
+    /// gap would never fill), and there's more to load above.
+    @Test func aKeptPageFromLongAgoGivesWayToTheNewest() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "napsack-cache-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
+        for kept in [Array(Int64(1)...50), Array(Int64(1)...30)] {  // a full page kept, and the whole of a short chat
+            let cache = ResponseCache(account: 3, root: root)
+            cache.write(pics(kept), "chat-d-7")
+            let newest = pics(Array(200...249))
+            let chat = Conversation(.friend(alice), account: account, reader: reader, cache: cache,
+                                    transport: StubServer { _ in (200, newest) })
+            try await chat.loadNewest()
+            #expect(chat.bubbles.map(\.id) == Array(200...249) && !chat.reachedStart, "kept \(kept.count)")
+        }
+    }
+
 
     /// The page before the oldest comes back after the chat started again from
     /// the newest (catching up after a long time away): it no longer belongs
