@@ -1,3 +1,4 @@
+import AuthenticationServices
 import CryptoKit
 import Foundation
 import NapsackCrypto
@@ -65,6 +66,16 @@ import Testing
         }
         support.learn(try config(nil))  // before passkeys
         #expect(support.offered == false)
+    }
+
+    @Test func theSystemSheetsErrorsInNapsacksWords() {
+        #expect(PasskeyError(system: ASAuthorizationError(.canceled)) == .canceled)  // closed: not an error, nothing shown
+        #expect(PasskeyError(system: ASAuthorizationError(.matchedExcludedCredential)) == .alreadyAdded)
+        if #available(iOS 26.0, *) {  // nowhere to keep one (iOS 26 says so)
+            #expect(PasskeyError(system: ASAuthorizationError(.deviceNotConfiguredForPasskeyCreation)) == .notSetUp)
+        }
+        #expect(PasskeyError(system: ASAuthorizationError(.failed)) == .unavailable)
+        #expect(PasskeyError(system: URLError(.timedOut)) == .unavailable)
     }
 
     @Test func base64urlAsWebAuthnWritesIt() {

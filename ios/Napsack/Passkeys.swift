@@ -93,6 +93,8 @@ enum PasskeyError: LocalizedError, Equatable {
     case cantUnlock
     /// Their password manager already has a passkey for this account.
     case alreadyAdded
+    /// The phone has nowhere to keep one: no iCloud Keychain, no password manager (iOS 26 says so).
+    case notSetUp
     /// iOS wouldn't do it (why is in the log), or passkeys don't work with this server.
     case unavailable
 
@@ -101,6 +103,7 @@ enum PasskeyError: LocalizedError, Equatable {
         case .canceled: "Canceled."
         case .cantUnlock: "This passkey can't unlock napsack here. Use your password."
         case .alreadyAdded: "You already have a passkey for napsack here."
+        case .notSetUp: "This phone isn't set up to keep passkeys. Turn on iCloud Keychain or a password manager in Settings, then try again."
         case .unavailable: "Passkeys aren't working on this phone right now. Use your password."
         }
     }
@@ -175,7 +178,7 @@ enum PasskeyError: LocalizedError, Equatable {
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: any Error) {
-        waiting?.resume(throwing: Self.meaning(error))
+        waiting?.resume(throwing: PasskeyError(system: error))
         waiting = nil
     }
 
@@ -185,19 +188,27 @@ enum PasskeyError: LocalizedError, Equatable {
         if let window = windows.first(where: \.isKeyWindow) ?? windows.first { return window }
         return scenes.first.map { UIWindow(windowScene: $0) } ?? ASPresentationAnchor()
     }
+}
 
-    /// The sheet's errors, in napsack's words. Closing it isn't one.
-    static func meaning(_ error: any Error) -> PasskeyError {
-        switch (error as? ASAuthorizationError)?.code {
+extension PasskeyError {
+    /// The system sheet's errors, in napsack's words. Closing it isn't one.
+    @MainActor init(system error: any Error) {
+        let code = (error as? ASAuthorizationError)?.code
+        switch code {
         case .canceled:
             Reporter.shared.report(.debug, "passkey sheet closed")
-            return .canceled
+            self = .canceled
         case .matchedExcludedCredential:
-            return .alreadyAdded
+            self = .alreadyAdded
         default:
+            if #available(iOS 26.0, *), code == .deviceNotConfiguredForPasskeyCreation {
+                Reporter.shared.report(.info, "passkey sheet: nowhere to keep one")
+                self = .notSetUp
+                return
+            }
             // Most often the site association (webcredentials) isn't in place for this build.
             Reporter.shared.report(.warn, "passkey sheet failed", ["code": String((error as NSError).code)])
-            return .unavailable
+            self = .unavailable
         }
     }
 }
