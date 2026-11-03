@@ -26,7 +26,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it |
 | 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
 | 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | Up next | Nate (2026-11-03) |
-| 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | Up next | Nate (2026-11-03) |
+| 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
 | 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
 | 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
 | 8 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
@@ -369,6 +369,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F24. Lock napsack with Face ID (iOS)
 - Nate (2026-11-03): plan it and build it (was "not now", 2026-11-02). An optional lock when the app opens or comes back after a while: Face ID, falling back to the phone's passcode. Off by default; a switch in Settings. The app's screen blurs in the app switcher while it's locked.
+- Built (`AppLock.swift`): Settings › Security › Lock with Face ID (Touch ID, or the passcode, as the phone has), on only after one successful check; locks when the app opens and when it comes back after a minute away; asks at once, then a button (asking on every return would loop, since Face ID's prompt itself takes the app off the foreground); covered in the app switcher while the lock is on; signing out turns it off. Tested: the rules (a minute, on at launch, off never locks, sign-out). Needs the phone.
 
 #### F25. Sign in by scanning from a signed-in device
 - Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate).

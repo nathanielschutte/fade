@@ -88,6 +88,9 @@ struct SettingsScreen: View {
                 Button("Change password") { asking = .password }
                 Button("Sign out other devices") { confirmingEndOthers = true }
                     .disabled((security?.activeSessions ?? 2) <= 1)
+                // Lock napsack with Face ID (AppLock.swift): this phone only, off until turned on.
+                Toggle("Lock with \(AppLock.method)", isOn: Binding(get: { AppLock.shared.enabled },
+                                                                    set: { on in Task { await AppLock.shared.set(on) } }))
             } header: {
                 Text("Security")
             } footer: {
