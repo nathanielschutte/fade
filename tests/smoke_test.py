@@ -714,10 +714,34 @@ async def check_live(tag):
     # The chat goes as an id only this device's notifications share.
     assert headers["apns-collapse-id"] == note["aps"]["thread-id"] and len(note["aps"]["thread-id"]) == 24
     assert note["aps"]["thread-id"] != f"dm-{a['id']}"
+    # Read somewhere else (the web; the API here), the new number reaches his
+    # iPhones on its own: just the badge, no alert or sound, and now or never
+    # (Apple keeps one push for a phone that's off, and it mustn't be this).
+    ok(call("POST", f"/chats/{a['id']}/read", b_tok))
+    _, headers, body = rx.wait_for(token, 2)[1]
+    assert json.loads(body) == {"aps": {"badge": 0}}, body
+    assert headers["apns-push-type"] == "alert" and headers["apns-priority"] == "10", headers
+    assert headers["apns-expiration"] == "0" and "apns-collapse-id" not in headers, headers
+    check_apns_jwt(headers["authorization"], apns_key, "TESTKEY001", "TESTTEAM01")
+    # With napsack on his screen elsewhere, a message brings no notification but
+    # still counts on the badge; reading the group there takes it off again.
+    g0 = ok(call("POST", "/groups", a_tok, json={"name": f"badge {tag}", "member_ids": [b["id"]]})).json()
+    await wb.send(json.dumps({"type": "visibility", "visible": True}))
+    await asyncio.sleep(0.2)
+    ok(call("POST", f"/groups/{g0['id']}/messages", a_tok, json={"text": "hi"}))
+    assert json.loads(rx.wait_for(token, 3)[2][2]) == {"aps": {"badge": 1}}
+    ok(call("POST", f"/groups/{g0['id']}/read", b_tok))
+    assert json.loads(rx.wait_for(token, 4)[3][2]) == {"aps": {"badge": 0}}
+    # The same number again isn't sent: muting a chat with nothing waiting.
+    ok(call("PUT", f"/groups/{g0['id']}/mute", b_tok, json={"on": True}))
+    await asyncio.sleep(1.5)
+    assert rx.count(token) == 4, "an unchanged badge went again"
+    await wb.send(json.dumps({"type": "visibility", "visible": False}))
+    await asyncio.sleep(0.2)
     # Apple saying the app is gone ends it; signing out ends the session's.
     rx.status[token] = 410
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
-    rx.wait_for(token, 2)
+    rx.wait_for(token, 5)
     other = os.urandom(32).hex()
     ok(call("POST", "/push/apns", b_tok, json={"token": other, "environment": rx.origin}))
     ok(call("POST", "/auth/logout", b_tok))
@@ -765,7 +789,7 @@ async def check_live(tag):
         await ws.close()
         assert ws.close_code == 1000, f"the server answers a close cleanly, not {ws.close_code}"
     rx.server.shutdown()
-    print("  live: presence, typing, push (encrypted, signed, who-not-what), iPhone push (signed, who-not-what), reactions, replies")
+    print("  live: presence, typing, push (encrypted, signed, who-not-what), iPhone push (signed, who-not-what, badge on its own when read elsewhere), reactions, replies")
 
 
 def check_group_e2e(tag, a, a_tok, b, b_tok):

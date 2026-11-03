@@ -1067,9 +1067,10 @@ pub async fn mark_read(
     state
         .hub
         .send(me.id, &Event::GroupsChanged { group_id: group });
-    // Everyone else updates "Seen by". Only when it moved, so reading an
-    // already-read chat sends nothing.
+    // Everyone else updates "Seen by", and my iPhones their badge. Only when
+    // it moved, so reading an already-read chat sends nothing.
     if let Some(last_read_id) = moved {
+        crate::apns::badge_changed(&state, me.id);
         let others: Vec<i64> = member_ids(&state.db, group)
             .await?
             .into_iter()

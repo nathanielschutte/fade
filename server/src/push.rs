@@ -346,6 +346,9 @@ pub struct Note {
 /// in the background.
 pub fn notify(state: &SharedState, user: i64, mut note: Note) {
     if state.hub.is_visible(user) {
+        // On another screen, say the web's: no notification, but their
+        // iPhones' badge still counts it, until it's read there.
+        crate::apns::badge_changed(state, user);
         return;
     }
     // A notification from staging says so, like its pages do.

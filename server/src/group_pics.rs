@@ -572,6 +572,7 @@ async fn mark_viewed(state: &SharedState, group: i64, pic: i64, user: i64) -> Ap
         );
         discard_if_everyone_opened(state, pic).await?;
         rebroadcast(state, pic).await?;
+        crate::apns::badge_changed(state, user);
     }
     Ok(())
 }
