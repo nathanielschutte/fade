@@ -152,6 +152,54 @@ struct ChatListScreen: View {
 
     private var chats: some View {
         NavigationStack(path: $path) {
+            chatList
+            .sheet(isPresented: $makingGroup) {
+                let friends = (list.reader?.friends.values.map { $0 } ?? [])
+                    .filter { $0.system != true && $0.deactivated != true }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                NewGroupScreen(account: account, friends: friends) { id in
+                    Task {
+                        await load()
+                        path = [.group(id)]  // straight into it, as on the web
+                    }
+                }
+            }
+            .sheet(isPresented: $settingUpRecovery) {
+                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+            }
+            .navigationTitle("Chats")
+            .navigationDestination(isPresented: $showingFriends) {
+                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
+            }
+            .navigationDestination(for: ChatRow.Kind.self) { kind in
+                if let conversation = conversation(kind) {
+                    // No reload on the way back: what came while it was open came live, and
+                    // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
+                    ChatScreen(conversation: conversation)
+                        // Its own screen per chat: one chat swapped for another in place (a notification
+                        // or link opened while a chat is open) starts fresh, loading and reading it.
+                        .id(kind)
+                        .environment(live)
+                        .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
+                }
+            }
+            .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
+            .fullScreenCover(item: $viewing, onDismiss: {
+                if let kind = openAfterViewing {
+                    openAfterViewing = nil
+                    path = [kind]
+                }
+            }) { item in
+                PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
+            }
+            .toolbar { chatsToolbar }
+        }
+    }
+
+    /// The list itself, with what it does on its own (search, loading, the
+    /// row menus); split from `chats` so the compiler checks it in parts.
+    private var chatList: some View {
+        listMenus(
             List {
                 if !account.user.hasRecoveryKey {
                     // As the web app's nudge: until there's one, a forgotten password costs every message.
@@ -210,6 +258,13 @@ struct ChatListScreen: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: toast?.id)
+        )
+    }
+
+    /// The rows' mute and leave questions, refreshing, loading, and the
+    /// reconnecting note, around the list.
+    private func listMenus(_ content: some View) -> some View {
+        content
             .confirmationDialog(muting.map { "Mute \($0.name)" } ?? "", isPresented: .init(get: { muting != nil }, set: { if !$0 { muting = nil } }),
                                 titleVisibility: .visible, presenting: muting) { row in
                 Button("For 8 hours") { mute(row, hours: 8) }
@@ -232,67 +287,28 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
-            .sheet(isPresented: $makingGroup) {
-                let friends = (list.reader?.friends.values.map { $0 } ?? [])
-                    .filter { $0.system != true && $0.deactivated != true }
-                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                NewGroupScreen(account: account, friends: friends) { id in
-                    Task {
-                        await load()
-                        path = [.group(id)]  // straight into it, as on the web
+    }
+
+    @ToolbarContentBuilder private var chatsToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button { showingFriends = true } label: {
+                Image(systemName: "person.2")
+                    .overlay(alignment: .topTrailing) {
+                        if list.incoming > 0 {
+                            Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
+                                .offset(x: 10, y: -8)
+                        }
                     }
-                }
+                    .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
             }
-            .sheet(isPresented: $settingUpRecovery) {
-                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            // A group of people, not "new message" (Nate, 2026-10-30; custom artwork later).
+            Button { makingGroup = true } label: {
+                Image(systemName: "person.3").accessibilityLabel("New group")
             }
-            .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showingFriends) {
-                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
-            }
-            .navigationDestination(for: ChatRow.Kind.self) { kind in
-                if let conversation = conversation(kind) {
-                    // No reload on the way back: what came while it was open came live, and
-                    // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
-                    ChatScreen(conversation: conversation)
-                        // Its own screen per chat: one chat swapped for another in place (a notification
-                        // or link opened while a chat is open) starts fresh, loading and reading it.
-                        .id(kind)
-                        .environment(live)
-                        .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
-                }
-            }
-            .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
-            .fullScreenCover(item: $viewing, onDismiss: {
-                if let kind = openAfterViewing {
-                    openAfterViewing = nil
-                    path = [kind]
-                }
-            }) { item in
-                PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showingFriends = true } label: {
-                        Image(systemName: "person.2")
-                            .overlay(alignment: .topTrailing) {
-                                if list.incoming > 0 {
-                                    Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
-                                        .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
-                                        .offset(x: 10, y: -8)
-                                }
-                            }
-                            .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    // A group of people, not "new message" (Nate, 2026-10-30; custom artwork later).
-                    Button { makingGroup = true } label: {
-                        Image(systemName: "person.3").accessibilityLabel("New group")
-                    }
-                    .disabled(list.reader == nil)
-                }
-            }
+            .disabled(list.reader == nil)
         }
     }
 
