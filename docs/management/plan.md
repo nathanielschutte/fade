@@ -35,7 +35,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 11 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 12 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 13 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 14 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
+| 14 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, and the iOS app built; the iOS side waits on a try on the phone (staging); the web next |
 
 **Done**
 
@@ -380,6 +380,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### F26. Passkeys
 - Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first: [passkeys.md](../design/passkeys.md) (proposed, 2026-11-03: a third wrap of the key, beside the password's and the recovery key's; two questions for Nate).
 - Nate (2026-11-03), decided: staging's passkeys working only on staging is fine. Sign-up starts with a password as now; right after it, as with the recovery key, napsack recommends adding a passkey; and Security offers it any time.
+- Built (iOS, `Passkeys.swift`; [plan-ios.md](plan-ios.md#4-your-account)): **Sign in with a passkey** on the sign-in screen; right after sign-up's recovery key, a screen recommending one (Add a passkey / Not now), made with the sign-up's keys still in memory; Settings › Security › Passkeys lists them (where each is kept, added, last used), adds one (the password first), and removes one (swipe, then confirm). Offered only when the server's `passkey_rp_id` is the app's `webcredentials` site (staging's for Xcode builds, `napsack.io` in Release), so never with a development server. A passkey that gives no PRF secret is never added and signs nobody in; one the server doesn't know any more is dropped from the phone (iOS 26.2's `reportUnknownPublicKeyCredential`). Tested: the Swift format against `passkey1.json`, and every flow against a stand-in authenticator, unit and live. Needs the phone (see plan-ios.md).
 
 ### Debug
 
