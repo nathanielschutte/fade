@@ -31,13 +31,13 @@ const state = {
   identity: null,              // { userId, privateKey (non-extractable), publicKey }
   pins: {},                    // friend id -> public key first seen (trust on first use)
   pastPins: {},                // friend id -> keys they had before, accepted by me; still read old messages
-  readKeys: new Map(),         // friend id -> chat keys for reading: pinned, then past
+  readKeys: new Map(),         // friend id -> (promised) chat keys for reading: pinned, then past
   reactionText: new Map(),     // reaction cache key -> decrypted emoji, or null
   actionFor: null,             // "d:<id>" or "g:<id>": the message whose reaction/reply row is open
   replyTo: null,               // { group, id, who, snippet } while composing a reply
   typing: new Map(),           // "d:<friend>" or "g:<group>:<user>" -> when the "typing" hint ends
   invite: null,                // { token, inviter, problem } from an /i/<token> link
-  pairKeys: new Map(),         // friend id -> AES key shared with them
+  pairKeys: new Map(),         // friend id -> (promised) AES key shared with them
   plaintext: new Map(),        // message id -> decrypted text, or null if it couldn't be
   editText: new Map(),         // "<message id>:<edit ciphertext>" -> the newest edit's text, or null (X29)
   editing: null,               // the text being edited in the composer: { group, id, m }
@@ -88,8 +88,8 @@ class ApiError extends Error {
 // Make an API call. Requests give up after a while rather than hang on a bad
 // connection, and reads (GETs) are tried again a couple of times on network
 // errors and the brief 502s of a deploy. Writes aren't retried here: the
-// outbox does that, with ids that make a resend safe. `as: "json"` or
-// `as: "bytes"` reads the body inside the same time limit.
+// outbox does that, with ids that make a resend safe. `as: "json"`,
+// `as: "text"`, or `as: "bytes"` reads the body inside the same time limit.
 async function api(path, { method = "GET", json, body, headers = {}, timeout, retries, as } = {}) {
   const HEADERS = { ...headers };
 
@@ -137,6 +137,7 @@ async function api(path, { method = "GET", json, body, headers = {}, timeout, re
 
       let out = res;
       if (as === "json") out = await res.json();
+      else if (as === "text") out = await res.text();
       else if (as === "bytes") out = new Uint8Array(await res.arrayBuffer());
       ok = true;
       return out;
@@ -366,23 +367,38 @@ async function acceptNewKey(chat, verified) {
   state.plaintext.clear();
 
   report("info", "friend key accepted", { friend_id: chat.id, verified });
-  
+
   await refreshChats();
-  
-  if (state.activeId === chat.id) openChat(chat.id);
+
+  if (state.activeId === chat.id) openChat(chat.id, { keepScroll: true });
 }
 
-/** Keys that can read this chat's messages: the pinned key, then any I accepted before it. */
+/**
+ * Keys that can read this chat's messages: the pinned key, then any I accepted
+ * before it. A page of messages asks for them all at once, so what's kept is
+ * the derivation itself: it runs once, and everyone waits on the same one. (A
+ * friend not met yet is looked up first, outside it: a chat list loading its
+ * own last messages must never wait on itself.)
+ */
 async function readKeysFor(friendId) {
-  const cached = state.readKeys.get(friendId);
-  if (cached) return cached;
-  if (!chatById(friendId)) await refreshChats();
-  const pinned = state.pins[friendId] || chatById(friendId)?.public_key;
-  if (!pinned) throw new Error("Not a friend.");
-  const publics = [pinned, ...[...(state.pastPins[friendId] || [])].reverse()];
-  const keys = await Promise.all(publics.map((pub) => e2e.pairKey(state.identity.privateKey, pub, state.me.id, friendId)));
-  state.readKeys.set(friendId, keys);
-  return keys;
+  if (!state.readKeys.has(friendId) && !state.pins[friendId] && !chatById(friendId)) await refreshChats();
+  return once(state.readKeys, friendId, async () => {
+    const pinned = state.pins[friendId] || chatById(friendId)?.public_key;
+    if (!pinned) throw new Error("Not a friend.");
+    const publics = [pinned, ...[...(state.pastPins[friendId] || [])].reverse()];
+    return Promise.all(publics.map((pub) => e2e.pairKey(state.identity.privateKey, pub, state.me.id, friendId)));
+  });
+}
+
+/** `make()` for `key`, started at most once while it's kept in `map`; a failure isn't kept. */
+function once(map, key, make) {
+  let pending = map.get(key);
+  if (!pending) {
+    pending = make();
+    map.set(key, pending);
+    pending.catch(() => { if (map.get(key) === pending) map.delete(key); });
+  }
+  return pending;
 }
 
 /** Tries each reading key in turn. */
@@ -399,15 +415,12 @@ async function withReadKey(friendId, fn) {
 }
 
 async function keyFor(friendId) {
-  const cached = state.pairKeys.get(friendId);
-  if (cached) return cached;
+  if (state.pairKeys.has(friendId)) return state.pairKeys.get(friendId);
   if (!chatById(friendId)) await refreshChats();
   const chat = chatById(friendId);
   if (!chat) throw new Error("Not a friend.");
   if (chat.keyChanged) throw new Error(`${chat.username}'s safety code changed. Messages are blocked.`);
-  const key = await e2e.pairKey(state.identity.privateKey, chat.public_key, state.me.id, friendId);
-  state.pairKeys.set(friendId, key);
-  return key;
+  return once(state.pairKeys, friendId, () => e2e.pairKey(state.identity.privateKey, chat.public_key, state.me.id, friendId));
 }
 
 /**
@@ -1081,7 +1094,11 @@ function renderAccountBar() {
 }
 
 /** My display name or picture may have changed in another tab. */
-async function refreshMe() {
+function refreshMe() {
+  return reload(loads.me, loadMe);
+}
+
+async function loadMe() {
   try {
     state.me = await getJSON("/me");
   } catch (err) {
@@ -1091,32 +1108,327 @@ async function refreshMe() {
   renderAccountBar();
 }
 
-async function refreshChats() {
+// ---------- loading the lists ----------
+// The chat list and groups load at start, on reconnecting (anything could
+// have happened meanwhile), and when the server says they changed
+// (friends_changed, groups_changed). Messages, reads, and presence don't
+// load them again: each changes one row, in place ("the lists, live").
+
+const loads = {
+  chats: { running: null, again: null },
+  groups: { running: null, again: null },
+  requests: { running: null, again: null },
+  me: { running: null, again: null },
+};
+
+/**
+ * Runs `load`, or, while one is on its way (which may have been sent before
+ * whatever the caller wants to see), once more right after it, for everyone
+ * who asks meanwhile. Never two at once, so an older answer can't land on a
+ * newer one, and every caller's promise settles after a load that started
+ * after it asked.
+ */
+function reload(slot, load) {
+  if (!slot.running) {
+    slot.running = load().finally(() => { slot.running = null; });
+    return slot.running;
+  }
+  const next = () => {
+    slot.again = null;
+    return reload(slot, load);
+  };
+  slot.again ??= slot.running.then(next, next);
+  return slot.again;
+}
+
+function refreshChats() {
+  return reload(loads.chats, loadChats);
+}
+
+let refreshTimer = null;
+function refreshChatsSoon() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(refreshChats, 150);
+}
+
+// While a list is on its way, what the socket says about it is applied at
+// once, and again on top of the answer, which the server may have put
+// together before it. Each change is safe to apply twice: last messages only
+// move forward by id, and the counts move with them.
+const sinceSent = { chats: [], groups: [] };
+
+function listEvent(which, apply) {
+  apply();
+  if (loads[which].running) sinceSent[which].push(apply);
+}
+
+async function loadChats() {
   if (!state.loaded.chats && !state.chats.length) await showKeptChats();
+  const me = state.me?.id; // (refreshMe replaces the object, so it's the id that says who)
+  sinceSent.chats = []; // whatever came before this was sent, the answer has
+  let text, chats;
   try {
-    const chats = await getJSON(`/friends?tz=${tzOffset()}`);
-    cache.put(`${state.me.id}:friends`, structuredClone(chats)); // as sent: still encrypted
+    text = await api(`/friends?tz=${tzOffset()}`, { as: "text" });
+    chats = JSON.parse(text);
     await checkPins(chats);
-    state.chats = chats;
+    // Read before it's shown, so a row never says "Encrypted message" on the
+    // way. (Every friend's key is pinned by now, which is all decrypting needs.)
     await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
-    state.loaded.chats = true;
-    state.loaded.error = null;
   } catch (err) {
     report("warn", "loading chats failed", errorFields(err));
     state.loaded.error = err.message;
     renderChatList();
     return;
   }
-  if (!state.me) return; // signed out while it loaded (an ended session, an account turned off)
+  // Signed out while it loaded (an ended session, an account turned off).
+  if (!state.me || state.me.id !== me) return;
+  state.chats = chats;
+  kept.chats = JSON.parse(text); // as sent: still encrypted
+  newInChats.clear(); // counted from this answer's last messages on
+  const meanwhile = sinceSent.chats;
+  sinceSent.chats = [];
+  for (const apply of meanwhile) apply();
+  if (meanwhile.length) keepListSoon("chats");
+  else keepAnswer("friends", text, kept.chats);
+  state.loaded.chats = true;
+  state.loaded.error = null;
   renderChatList();
   renderChatHeader();
   if (state.activeId && !chatById(state.activeId)) closeChat(); // unfriended
   else if (state.activeId) renderMessages(); // sender names follow renames
 }
 
+// ---------- the lists, live ----------
+// What the socket says changes one row, in place: its last message, whether
+// it's hidden, and its unread count, which follow from the messages
+// themselves. Pics also change streaks: for those the list asks the server.
+// An event in a group (a join, a rename, a picture) changes the group, and
+// the server says so itself (groups_changed), so it isn't asked twice.
+
+// Messages counted into a row since its list loaded, so each counts once, in
+// whatever order the socket brings them (events are handled side by side,
+// and decrypting can finish out of order).
+const newInChats = new Map();  // friend id -> { base: the last message id loaded, ids }
+const newInGroups = new Map(); // group id -> the same
+
+/** Whether `m` is new to `row` since its list loaded, and not counted yet; it's counted now. */
+function isNewTo(seen, id, row, m) {
+  if (!seen.has(id)) seen.set(id, { base: row.last_message?.id ?? 0, ids: new Set() });
+  const s = seen.get(id);
+  if (m.id <= s.base || s.ids.has(m.id)) return false;
+  s.ids.add(m.id);
+  return true;
+}
+
+/** A message, new or changed, in a direct chat. `raw` is it as sent, still encrypted, for the kept copy. */
+function chatGotMessage(m, raw) {
+  const fid = friendOf(m);
+  const chat = chatById(fid);
+  // Someone not in my list yet: the server knows who. A list on its way
+  // (friends_changed comes first) has them, and this is applied again on it.
+  if (!chat) return loads.chats.running ? undefined : refreshChatsSoon();
+  if (m.kind === "snap") refreshChatsSoon(); // streaks, and pics still waiting, are the server's to count
+  const fresh = isNewTo(newInChats, fid, chat, m);
+  if (fresh) {
+    // Theirs is unread, and anything new brings a hidden chat back (marks.rs).
+    chat.hidden = false;
+    if (m.sender_id === fid) chat.unread += 1;
+  }
+  const latest = m.id >= (chat.last_message?.id ?? 0);
+  if (latest) chat.last_message = m;
+  if (!fresh && !latest) return; // an older message changed (a reaction, an edit): the row doesn't show it
+  const row = keptChat(fid);
+  if (row) {
+    if (latest) row.last_message = raw;
+    row.hidden = chat.hidden;
+    row.unread = chat.unread;
+  }
+  keepListSoon("chats");
+  renderChatList();
+}
+
+/** They read my texts, up to `at`. */
+function friendRead(friendId, at) {
+  for (const row of [chatById(friendId), keptChat(friendId)]) {
+    const lm = row?.last_message;
+    if (lm && lm.sender_id === state.me.id && lm.kind === "text" && !lm.read_at && lm.created_at <= at) lm.read_at = at;
+  }
+  keepListSoon("chats");
+}
+
+/**
+ * This device read their texts, and the server says it marked some. It surely
+ * marked the ones here when the read went out (`sentIds`). Pics waiting to be
+ * opened stay unread: when every unread message is one loaded here, what's
+ * left is exactly those; otherwise (or if newer texts came meanwhile, which
+ * it may not have marked) the server counts.
+ */
+function readByMe(friendId, sentIds) {
+  const at = Math.floor(Date.now() / 1000);
+  let marked = 0, late = 0, waiting = 0;
+  for (const m of state.messages.get(friendId) || []) {
+    if (m.sender_id !== friendId) continue;
+    if (m.kind === "text" && !m.read_at && sentIds.has(m.id)) {
+      m.read_at = at;
+      if (!beforeMyReset(m)) marked++;
+    } else if (beforeMyReset(m)) {
+      continue; // sealed to the key I had before a reset: never counted (D14)
+    } else if (m.kind === "text" && !m.read_at) {
+      late++;
+    } else if (m.kind === "snap" && m.snap_state === "pending") {
+      waiting++;
+    }
+  }
+  const chat = chatById(friendId);
+  const exact = Boolean(chat) && !late && marked + waiting === chat.unread;
+  if (!exact) refreshChatsSoon();
+  // A count, not a change: it holds for a list that knows of nothing newer than this read did.
+  const upTo = chat?.last_message?.id ?? 0;
+  listEvent("chats", () => {
+    for (const row of [chatById(friendId), keptChat(friendId)]) {
+      if (!row) continue;
+      const lm = row.last_message;
+      if (lm && sentIds.has(lm.id) && !lm.read_at) lm.read_at = at;
+      if (!exact) continue;
+      if ((lm?.id ?? 0) === upTo) row.unread = waiting;
+      else refreshChatsSoon();
+    }
+    keepListSoon("chats");
+    renderChatList();
+  });
+}
+
+/** A message, new or changed, in a group. `raw` is it as sent, still sealed, for the kept copy. */
+function groupGotMessage(m, raw) {
+  const g = groupById(m.group_id);
+  // A group I was just added to: as for a friend not in the list yet (groups_changed comes first).
+  if (!g) return loads.groups.running ? undefined : refreshGroupsSoon();
+  // New texts and pics from the others are unread (groups.rs counts the same).
+  const fresh = isNewTo(newInGroups, g.id, g, m);
+  if (fresh && m.sender_id !== state.me.id && m.kind === "text") g.unread += 1;
+  const latest = m.id >= (g.last_message?.id ?? 0);
+  if (latest) g.last_message = m;
+  if (!fresh && !latest) return; // an older message changed: a reaction, who opened a pic
+  const row = keptGroup(m.group_id);
+  if (row) {
+    if (latest) row.last_message = raw;
+    row.unread = g.unread;
+  }
+  keepListSoon("groups");
+  renderChatList();
+}
+
+/** This device read the group, up to the message that was newest when the read went out (`upTo`). */
+function groupReadByMe(groupId, upTo) {
+  listEvent("groups", () => {
+    for (const g of [groupById(groupId), keptGroup(groupId)]) {
+      if (!g) continue;
+      // Anything newer may have come after the server's read: it counts those.
+      if ((g.last_message?.id ?? 0) === upTo) g.unread = 0;
+      else refreshGroupsSoon();
+    }
+    keepListSoon("groups");
+    renderChatList();
+  });
+}
+
+// ---------- my own reads, echoed ----------
+// A read this device sends comes back over the socket (`read` by me, or
+// `groups_changed` for a group) to every device of mine, without saying which
+// one sent it. This one has already applied it when the server answered, so
+// each answer accounts for one echo, in whichever order the two arrive. An
+// echo no answer accounts for is another device's, and the list asks the server.
+const echoes = new Map(); // "d" (direct chats) or "g:<id>" -> { sending, answered, early }
+let socketTurn = 0;       // bumped on every new connection: an old one's echoes don't come
+
+/**
+ * Sends one of my reads. `send` resolves to whether the server will echo it;
+ * `answered()` applies it; `foreign()` deals with an echo that wasn't ours.
+ */
+async function sendRead(key, send, answered, foreign) {
+  if (!echoes.has(key)) echoes.set(key, { sending: 0, answered: 0, early: 0 });
+  const slot = echoes.get(key);
+  const turn = socketTurn;
+  slot.sending++;
+  let echoed = false;
+  try {
+    echoed = await send();
+  } finally {
+    slot.sending--;
+  }
+  if (echoed && turn === socketTurn) {
+    if (slot.early) slot.early--;
+    else slot.answered++;
+  }
+  if (echoed) answered();
+  // Echoes that came while reads were on their way, and that no answer
+  // accounted for, were another device's.
+  if (!slot.sending && slot.early) {
+    slot.early = 0;
+    foreign();
+  }
+}
+
+/** The socket echoed a read of mine: true if it's this device's own (already applied, or about to be). */
+function ownEcho(key) {
+  const slot = echoes.get(key);
+  if (slot?.answered) {
+    slot.answered--;
+    return true;
+  }
+  if (slot?.sending) {
+    slot.early++;
+    return true;
+  }
+  return false;
+}
+
 // ---------- what was kept on this device (cache.js, X31) ----------
 // The chat list, groups, and each chat's newest page show from the device at
 // once, decrypted as they're shown, while the server's answer is on its way.
+// What's kept is written only when it changed. The two lists also follow
+// what the socket says, through copies of its messages taken before they're
+// decrypted, so the device's copy stays current without asking the server.
+const kept = { chats: null, groups: null, tags: new Map(), dirty: new Set(), timer: null };
+const KEPT_LISTS = { chats: "friends", groups: "groups" };
+const keptChat = (id) => kept.chats?.find((c) => c.id === id);
+const keptGroup = (id) => kept.groups?.find((g) => g.id === id);
+
+/** A short fingerprint of an answer, to tell whether it's what was kept last. */
+function fingerprint(text) {
+  let h = 0x811c9dc5; // FNV-1a
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return `${text.length}:${h >>> 0}`;
+}
+
+/** Keeps a server answer (`value`: it parsed, not yet decrypted) under `key`, unless that's what's kept already. */
+function keepAnswer(key, text, value = JSON.parse(text)) {
+  const tag = fingerprint(text);
+  if (signingOut || !state.me || kept.tags.get(key) === tag) return;
+  kept.tags.set(key, tag);
+  cache.put(`${state.me.id}:${key}`, value);
+}
+
+/** The kept chat list or groups changed here: written shortly, with whatever else changes meanwhile. */
+function keepListSoon(which) {
+  kept.dirty.add(which);
+  clearTimeout(kept.timer);
+  kept.timer = setTimeout(writeKeptLists, 250);
+}
+
+function writeKeptLists() {
+  clearTimeout(kept.timer);
+  if (!state.me || signingOut) return;
+  for (const which of kept.dirty) {
+    if (!kept[which]) continue;
+    kept.tags.delete(KEPT_LISTS[which]); // no longer exactly what the server last sent
+    cache.put(`${state.me.id}:${KEPT_LISTS[which]}`, kept[which]);
+  }
+  kept.dirty.clear();
+}
+// Not left unwritten when napsack goes to the background or the page closes.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") writeKeptLists(); });
+window.addEventListener("pagehide", writeKeptLists);
 
 async function showKeptChats() {
   const me = state.me;
@@ -1126,6 +1438,7 @@ async function showKeptChats() {
   for (const c of chats) c.active_now = null; // who's around now isn't something to keep
   // In place first: decrypting looks up each friend's key in the chat list.
   state.chats = chats;
+  newInChats.clear();
   await Promise.all(chats.map((c) => c.last_message && decrypt(c.last_message)));
   if (state.loaded.chats || state.me !== me) return; // the server answered first
   state.loaded.chats = true;
@@ -1139,6 +1452,7 @@ async function showKeptGroups() {
   await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
   if (state.loaded.groups || state.me !== me) return;
   state.groups = groups;
+  newInGroups.clear();
   state.loaded.groups = true;
   renderChatList();
 }
@@ -1151,12 +1465,6 @@ async function showKeptPage(key, decryptOne, isOpen, set) {
   if (!isOpen()) return;
   set(page);
   renderMessages();
-}
-
-let refreshTimer = null;
-function refreshChatsSoon() {
-  clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refreshChats, 150);
 }
 
 // Pull to refresh: dragging the chat list down past its top refetches chats,
@@ -1368,17 +1676,12 @@ function disarmCameraTap() {
   cameraTap.up = cameraTap.click = null;
 }
 
-function chatRow({ name, status, time, current, onclick, group, avatar, actions = [], muted = false }) {
-  const cls = ["chat-item"];
-  // Muted: no unread dot or bold, and a 🔕 by the name.
-  if (muted) {
-    status = { ...status, marker: null };
-    name = `${name} 🔕`;
-    cls.push("is-muted");
-  }
-  if (status.marker === "snap") cls.push("has-unread", "has-snap");
-  else if (status.marker === "text") cls.push("has-unread");
-  if (group) cls.push("is-group");
+/** A row's frame: who it is, the picture, the actions. What changes as messages
+ * come and go (the latest, the time, unread, the open one) is paintRow's. */
+function chatRow(p) {
+  const { onclick, group, avatar, actions = [], muted = false } = p;
+  // Muted: no unread dot or bold (paintRow), and a 🔕 by the name.
+  const name = muted ? `${p.name} 🔕` : p.name;
   // While a row is swiped open, a tap anywhere on the list just closes it.
   const open = (e) => {
     if (rowSwipe.open) return closeSwipedRow();
@@ -1386,19 +1689,37 @@ function chatRow({ name, status, time, current, onclick, group, avatar, actions 
     const opening = onclick();
     if (e.detail > 0) armCameraTap(opening, e); // a tap or click, not the keyboard
   };
-  return el("li", { class: "chat-row" },
-    el("button", { type: "button", class: cls.join(" "), "aria-current": current ? "true" : null, onclick: open },
-      el("span", { class: `marker ${status.marker || ""}`, "aria-hidden": "true" }),
-      avatar,
+  const li = el("li", { class: "chat-row" },
+    el("button", { type: "button", class: "chat-item", onclick: open },
+      el("span", { class: "marker", "aria-hidden": "true" }),
+      avatar(),
       el("span", { class: "chat-text" },
         group ? el("span", { class: "visually-hidden", text: "Group: " }) : null,
         el("span", { class: "chat-name", text: name }),
-        el("span", { class: "chat-status", text: preview(status.text) })),
-      el("span", { class: "chat-time", text: time ? relTime(time) : "" }),
+        el("span", { class: "chat-status" })),
+      el("span", { class: "chat-time" }),
     ),
     actions.length ? el("div", { class: "row-actions" }, ...actions.map((a) =>
       el("button", { type: "button", class: `row-action ${a.cls ?? ""}`, "aria-label": a.aria, title: a.aria, onclick: a.run },
         rowIcon(a.icon), el("span", { class: "row-action-label", text: a.label })))) : null);
+  paintRow(li, p);
+  return li;
+}
+
+/** Brings a row up to date in place: its latest message, time, unread marker, and whether it's the open chat. */
+function paintRow(li, { status, time, current, group, muted = false }) {
+  const marker = muted ? null : status.marker;
+  const button = li.firstElementChild;
+  button.classList.toggle("is-muted", Boolean(muted));
+  button.classList.toggle("has-unread", marker === "snap" || marker === "text");
+  button.classList.toggle("has-snap", marker === "snap");
+  button.classList.toggle("is-group", Boolean(group));
+  if (current) button.setAttribute("aria-current", "true");
+  else button.removeAttribute("aria-current");
+  const set = (node, prop, value) => { if (node[prop] !== value) node[prop] = value; };
+  set(button.querySelector(".marker"), "className", `marker ${marker || ""}`);
+  set(button.querySelector(".chat-status"), "textContent", preview(status.text));
+  set(button.querySelector(".chat-time"), "textContent", time ? relTime(time) : "");
 }
 
 // Row action icons. A computer shows just these (small, over the time); a
@@ -1419,92 +1740,165 @@ function rowIcon(name) {
   return svg;
 }
 
-/** Favorites first, then everything else, each newest first. Hidden direct
- * chats sit out of the list behind a "Hidden chats" link. */
+// ---------- drawing the chat list ----------
+// Asked for often (every message, presence change, typing hint, and search
+// keystroke): drawn at most once a frame, and only rows whose content changed
+// are built again. The rest stay as they are, a swiped-open or hovered row
+// included. The tab's title (the unread count) follows at once, even while
+// napsack is in the background and nothing is drawn.
+let chatListFrame = 0;
+let listNodes = new Map(); // key -> { sig, node }: what the list shows now
+
 function renderChatList() {
   if (!state.me) return;
+  renderTitle();
+  chatListFrame ||= requestAnimationFrame(drawChatList);
+}
+
+function renderTitle() {
+  const unread = state.chats.reduce((n, c) => n + (c.hidden || c.muted ? 0 : c.unread), 0)
+    + state.groups.reduce((n, g) => n + (g.muted ? 0 : g.unread), 0);
+  document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
+}
+
+/** Makes `parent` hold exactly `nodes`, in order, moving as few as it can. */
+function placeChildren(parent, nodes) {
+  const wanted = new Set(nodes);
+  for (const child of [...parent.childNodes]) if (!wanted.has(child)) child.remove();
+  let at = parent.firstChild;
+  for (const node of nodes) {
+    if (node === at) at = at.nextSibling;
+    else parent.insertBefore(node, at);
+  }
+}
+
+/** What a row's frame shows (chatRow), to tell when it has to be built again. */
+function rowSig(p) {
+  return JSON.stringify([p.name, Boolean(p.group), Boolean(p.muted), p.avatarSig,
+    p.actions.map((a) => [a.label, a.aria, a.cls ?? ""])]);
+}
+
+function chatRowProps(chat) {
+  const name = chatName(chat);
+  const id = chat.id;
+  return {
+    name: chatRowName(chat),
+    status: isTyping(`d:${id}`) ? { text: "typing…" } : chatStatus(chat),
+    time: chat.last_message?.created_at,
+    current: id === state.activeId,
+    onclick: () => openChat(id),
+    avatar: () => el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
+      paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
+    avatarSig: [Boolean(chat.active_now), name, chat.avatar_id ?? null],
+    muted: chat.muted,
+    actions: chat.hidden
+      ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${name} again`, run: () => unhideChat(id) }]
+      : [favoriteAction(chat, name, () => { const c = chatById(id); if (c) setFavorite("chats", id, !c.favorite); }),
+        muteAction("chats", chat, name),
+        { label: "Hide", icon: "archive", aria: `Hide your chat with ${name}`, run: () => hideChat(id) }],
+  };
+}
+
+function groupRowProps(g) {
+  const id = g.id;
+  return {
+    name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
+    current: id === state.activeGroupId,
+    onclick: () => openGroup(id),
+    avatar: () => el("span", { class: "avatar-wrap" },
+      paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g)),
+    avatarSig: [g.name, g.avatar_id ?? null],
+    muted: g.muted,
+    actions: [favoriteAction(g, g.name, () => { const x = groupById(id); if (x) setFavorite("groups", id, !x.favorite); }),
+      muteAction("groups", g, g.name),
+      { label: "Leave", icon: "leave", cls: "danger", aria: `Leave ${g.name}`, run: (e) => leaveFromList(e.currentTarget, g) }],
+  };
+}
+
+/** Favorites first, then everything else, each newest first. Hidden direct
+ * chats sit out of the list behind a "Hidden chats" link. */
+function drawChatList() {
+  chatListFrame = 0;
+  if (!state.me) return;
+  const list = $("#chat-list");
+  const next = new Map();
+  /** What `key` shows: its node as it is if it still shows the same (`sig`), else a new one. */
+  const keep = (key, sig, make) => {
+    const had = listNodes.get(key);
+    const node = had?.sig === sig ? had.node : make();
+    next.set(key, { sig, node });
+    return node;
+  };
+  const row = (e) => {
+    const node = keep(e.key, rowSig(e.props), () => chatRow(e.props));
+    paintRow(node, e.props);
+    return node;
+  };
+  const heading = (key, text) => keep(`h:${key}`, text, () => el("li", { class: "list-heading", text }));
   const entries = [
     ...state.chats.map((chat) => ({
+      key: `d:${chat.id}`,
       at: chat.last_message?.created_at ?? 0,
       name: chatName(chat),
       favorite: chat.favorite,
       hidden: chat.hidden,
-      row: chatRow({
-        name: chatRowName(chat),
-        status: isTyping(`d:${chat.id}`) ? { text: "typing…" } : chatStatus(chat),
-        time: chat.last_message?.created_at,
-        current: chat.id === state.activeId, onclick: () => openChat(chat.id),
-        avatar: el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
-          paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
-        muted: chat.muted,
-        actions: chat.hidden
-          ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${chatName(chat)} again`, run: () => unhideChat(chat.id) }]
-          : [favoriteAction(chat, chatName(chat), () => setFavorite("chats", chat.id, !chat.favorite)),
-            muteAction("chats", chat, chatName(chat)),
-            { label: "Hide", icon: "archive", aria: `Hide your chat with ${chatName(chat)}`, run: () => hideChat(chat.id) }],
-      }),
+      props: chatRowProps(chat),
       search: `${chatName(chat)} ${chat.username}`.toLowerCase(),
     })),
     ...state.groups.map((g) => ({
+      key: `g:${g.id}`,
       at: g.last_message?.created_at ?? 0,
       name: g.name,
       favorite: g.favorite,
       hidden: false,
-      row: chatRow({
-        name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
-        current: g.id === state.activeGroupId, onclick: () => openGroup(g.id),
-        avatar: el("span", { class: "avatar-wrap" },
-          paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g)),
-        muted: g.muted,
-        actions: [favoriteAction(g, g.name, () => setFavorite("groups", g.id, !g.favorite)),
-          muteAction("groups", g, g.name),
-          { label: "Leave", icon: "leave", cls: "danger", aria: `Leave ${g.name}`, run: (e) => leaveFromList(e.currentTarget, g) }],
-      }),
+      props: groupRowProps(g),
       search: g.name.toLowerCase(),
     })),
   ].sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
 
-  const heading = (text) => el("li", { class: "list-heading", text });
-  const items = [];
-  const q = state.search.q.trim().toLowerCase();
-  if (q) {
-    // Searching: chats whose name matches (hidden ones too), then messages that do.
-    const named = entries.filter((e) => e.search.includes(q));
-    items.push(heading("Chats"), ...(named.length ? named.map((e) => e.row) : [el("li", { class: "search-note", text: "No chats by that name." })]));
-    if (q.length >= 2) items.push(heading("Messages"), ...searchResults(q));
-  }
-  const shown = q ? [] : entries.filter((e) => !e.hidden);
-  const favorites = shown.filter((e) => e.favorite);
-  const rest = shown.filter((e) => !e.favorite);
-  const hidden = q ? [] : entries.filter((e) => e.hidden);
-  if (favorites.length) items.push(heading("Favorites"), ...favorites.map((e) => e.row), heading("Chats"));
-  items.push(...rest.map((e) => e.row));
-  if (hidden.length) {
-    items.push(el("li", { class: "hidden-toggle" }, el("button", {
-      type: "button", class: "link", "aria-expanded": state.showHidden ? "true" : "false",
-      onclick: () => { state.showHidden = !state.showHidden; renderChatList(); },
-    }, state.showHidden ? "Hide hidden chats" : `Hidden chats (${hidden.length})`)));
-    if (state.showHidden) items.push(...hidden.map((e) => e.row));
-  }
-  rowSwipe.open = null;
-  $("#chat-list").replaceChildren(...items);
   // Until both lists have answered, an empty list means "not here yet", not "no friends".
   const loaded = state.loaded.chats && state.loaded.groups;
   $("#chat-empty").hidden = entries.length > 0 || !loaded;
+  const items = [];
   if (!loaded && !entries.length) {
-    $("#chat-list").replaceChildren(...(state.loaded.error
-      ? [el("li", { class: "list-problem" },
-        el("p", { text: `Couldn't load your chats. ${state.loaded.error}` }),
-        el("button", { type: "button", class: "button", onclick: () => { state.loaded.error = null; renderChatList(); refreshChats(); refreshGroups(); } }, "Try again"))]
-      : Array.from({ length: 5 }, () => el("li", { class: "skeleton-row", "aria-hidden": "true" },
-        el("span", { class: "skeleton-dot" }), el("span", { class: "skeleton-lines" }, el("span"), el("span"))))));
-    $("#chat-list").setAttribute("aria-busy", state.loaded.error ? "false" : "true");
-    return;
+    const failed = state.loaded.error;
+    if (failed) {
+      items.push(keep("problem", failed, () => el("li", { class: "list-problem" },
+        el("p", { text: `Couldn't load your chats. ${failed}` }),
+        el("button", { type: "button", class: "button", onclick: () => { state.loaded.error = null; renderChatList(); refreshChats(); refreshGroups(); } }, "Try again"))));
+    } else {
+      for (let i = 0; i < 5; i++) {
+        items.push(keep(`skeleton:${i}`, "", () => el("li", { class: "skeleton-row", "aria-hidden": "true" },
+          el("span", { class: "skeleton-dot" }), el("span", { class: "skeleton-lines" }, el("span"), el("span")))));
+      }
+    }
+  } else {
+    const q = state.search.q.trim().toLowerCase();
+    if (q) {
+      // Searching: chats whose name matches (hidden ones too), then messages that do.
+      const named = entries.filter((e) => e.search.includes(q));
+      items.push(heading("chats", "Chats"), ...(named.length ? named.map(row)
+        : [keep("note:no-chats", "", () => el("li", { class: "search-note", text: "No chats by that name." }))]));
+      if (q.length >= 2) items.push(heading("messages", "Messages"), ...searchResults(q, keep));
+    } else {
+      const shown = entries.filter((e) => !e.hidden);
+      const favorites = shown.filter((e) => e.favorite);
+      const hidden = entries.filter((e) => e.hidden);
+      if (favorites.length) items.push(heading("favorites", "Favorites"), ...favorites.map(row), heading("chats", "Chats"));
+      items.push(...shown.filter((e) => !e.favorite).map(row));
+      if (hidden.length) {
+        items.push(keep("hidden-toggle", JSON.stringify([state.showHidden, hidden.length]), () => el("li", { class: "hidden-toggle" }, el("button", {
+          type: "button", class: "link", "aria-expanded": state.showHidden ? "true" : "false",
+          onclick: () => { state.showHidden = !state.showHidden; renderChatList(); },
+        }, state.showHidden ? "Hide hidden chats" : `Hidden chats (${hidden.length})`))));
+        if (state.showHidden) items.push(...hidden.map(row));
+      }
+    }
   }
-  $("#chat-list").setAttribute("aria-busy", "false");
-  const unread = state.chats.reduce((n, c) => n + (c.hidden || c.muted ? 0 : c.unread), 0)
-    + state.groups.reduce((n, g) => n + (g.muted ? 0 : g.unread), 0);
-  document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
+  placeChildren(list, items);
+  listNodes = next;
+  if (rowSwipe.open && !rowSwipe.open.isConnected) rowSwipe.open = null; // its row was drawn again
+  list.setAttribute("aria-busy", !loaded && !entries.length && !state.loaded.error ? "true" : "false");
 }
 
 function favoriteAction(chat, name, run) {
@@ -1568,6 +1962,7 @@ async function unhideChat(friendId) {
  * so a changed safety code is still caught if the chat comes back). */
 function forgetChat(friendId) {
   for (const m of state.messages.get(friendId) || []) state.plaintext.delete(m.id);
+  searchCache.delete(`d:${friendId}`);
   state.messages.delete(friendId);
   state.history.delete(friendId);
   state.typing.delete(`d:${friendId}`);
@@ -1635,7 +2030,8 @@ async function setMute(kind, id, name, on, hours = null) {
 // chat's latest messages, fetched and decrypted at most once a minute. Chat
 // names match as you type.
 const SEARCH_DEPTH = 200;
-const searchCache = new Map(); // "d:<id>" or "g:<id>" -> { at, msgs }
+const SEARCH_FRESH_MS = 60_000;
+const searchCache = new Map(); // "d:<id>" or "g:<id>" -> { at, msgs }; emptied when searching ends
 let searchTimer = null;
 
 $("#chat-search").addEventListener("input", (e) => {
@@ -1644,6 +2040,7 @@ $("#chat-search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
   if (q.length >= 2) searchTimer = setTimeout(() => runSearch(q), 250);
+  else if (!q) searchCache.clear(); // done searching: the decrypted copies go
 });
 $("#chat-search").addEventListener("keydown", (e) => {
   if (e.key === "Escape") clearSearch();
@@ -1652,27 +2049,45 @@ $("#chat-search").addEventListener("keydown", (e) => {
 function clearSearch() {
   $("#chat-search").value = "";
   state.search = { q: "", hits: null };
+  searchCache.clear();
   renderChatList();
 }
 
+/** A chat's newest messages, decrypted: what's loaded here if it reaches back
+ * as far as a search looks, else fetched (and kept for a minute). */
 async function searchHistory(src) {
+  const here = src.loaded();
+  if (here) return here;
   const cached = searchCache.get(src.key);
-  if (cached && Date.now() - cached.at < 60_000) return cached.msgs;
+  if (cached && Date.now() - cached.at < SEARCH_FRESH_MS) return cached.msgs;
   const msgs = await getJSON(src.url);
   await Promise.all(msgs.map(src.decrypt));
   searchCache.set(src.key, { at: Date.now(), msgs });
   return msgs;
 }
 
+/** The newest SEARCH_DEPTH of a chat's loaded messages, if they're that many
+ * (or the whole chat) and nothing newer than them is missing. */
+function loadedForSearch(msgs, history, last) {
+  if (!msgs?.length || !history) return null;
+  if (last && msgs[msgs.length - 1].id < last.id) return null;
+  if (msgs.length < SEARCH_DEPTH && history.hasMore) return null;
+  return msgs.slice(-SEARCH_DEPTH);
+}
+
 async function runSearch(q) {
   const needle = q.toLowerCase();
+  for (const [key, found] of searchCache) if (Date.now() - found.at >= SEARCH_FRESH_MS) searchCache.delete(key);
+  // A chat without a single message has nothing to look through.
   const sources = [
-    ...state.chats.map((c) => ({
+    ...state.chats.filter((c) => c.last_message).map((c) => ({
       key: `d:${c.id}`, name: chatName(c), open: () => openChat(c.id),
+      loaded: () => loadedForSearch(state.messages.get(c.id), state.history.get(c.id), c.last_message),
       url: `/chats/${c.id}/messages?limit=${SEARCH_DEPTH}`, decrypt, text: (m) => (m.kind === "text" ? m.text : null),
     })),
-    ...state.groups.map((g) => ({
+    ...state.groups.filter((g) => g.last_message).map((g) => ({
       key: `g:${g.id}`, name: g.name, open: () => openGroup(g.id),
+      loaded: () => loadedForSearch(state.groupMessages.get(g.id), state.groupHistory.get(g.id), g.last_message),
       url: `/groups/${g.id}/messages?limit=${SEARCH_DEPTH}`, decrypt: openGroupMessage,
       text: (m) => (m.kind === "text" && !m.pic && !m.undecryptable ? m.body : null),
     })),
@@ -1697,12 +2112,13 @@ async function runSearch(q) {
   renderChatList();
 }
 
-/** The "Messages" part of the list while searching. */
-function searchResults(q) {
+/** The "Messages" part of the list while searching; `keep` is drawChatList's. */
+function searchResults(q, keep) {
   const hits = state.search.hits;
-  if (!hits) return [el("li", { class: "search-note", text: "Looking through your messages…" })];
-  if (!hits.length) return [el("li", { class: "search-note", text: "No messages with that in the last 200 of each chat." })];
-  return hits.map((h) => {
+  const note = (key, text) => keep(`note:${key}`, "", () => el("li", { class: "search-note", text }));
+  if (!hits) return [note("looking", "Looking through your messages…")];
+  if (!hits.length) return [note("no-messages", "No messages with that in the last 200 of each chat.")];
+  return hits.map((h) => keep(`hit:${h.src.key}:${h.m.id}`, JSON.stringify([q, h.src.name, relTime(h.m.created_at), h.t]), () => {
     const i = h.t.toLowerCase().indexOf(q);
     const start = Math.max(0, i - 30);
     const end = i + q.length;
@@ -1714,7 +2130,7 @@ function searchResults(q) {
         `${start > 0 ? "…" : ""}${h.t.slice(start, i)}`,
         el("mark", { text: h.t.slice(i, end) }),
         `${h.t.slice(end, end + 70)}${h.t.length > end + 70 ? "…" : ""}`)));
-  });
+  }));
 }
 
 /** Opens the chat and, if the message is in what's loaded, brings it into view. */
@@ -1722,7 +2138,7 @@ async function openHit(h) {
   await h.src.open();
   const li = $(`#messages [data-key="${h.src.key[0]}:${h.m.id}"]`);
   if (!li) return;
-  li.scrollIntoView({ block: "center" });
+  showInChat(li);
   li.classList.add("flash");
   setTimeout(() => li.classList.remove("flash"), 1700);
 }
@@ -1755,9 +2171,157 @@ function closeSwipedRow() {
   rowSwipe.open = null;
 }
 
+// ---------- where the chat is scrolled ----------
+// Few rules, all about the newest message (Nate, 2026-11-02). Opening a chat
+// shows it, at the bottom, and so does sending. While you're at (or very
+// near) the bottom, anything that adds to the chat or squeezes it (a new
+// message, the typing line, the composer growing, the phone keyboard) keeps
+// it fully in view. Once you've scrolled up, nothing moves what you're
+// reading: older pages load above it and new messages arrive below it.
+// Nothing else scrolls the chat but you. (The browser's own scroll anchoring
+// is off for the chat, in style.css, so these are the rules in every browser.)
+const NEAR_BOTTOM_PX = 40;
+// `pinned`: at the bottom, keeping the newest message in view. `anchor`:
+// otherwise, what's at the top of the view (topInView), to keep where it is.
+const scroller = { pinned: true, anchor: null };
+
+const atBottom = (list) => list.scrollHeight - list.scrollTop - list.clientHeight <= NEAR_BOTTOM_PX;
+
+/** Opening a chat, or sending: the newest message, at the bottom, from now on. */
+function toNewest() {
+  scroller.pinned = true;
+  scroller.anchor = null;
+}
+
+/**
+ * The first message in view (else the first thing), and how far below the
+ * chat's top edge it starts. A message's own bubble, because the lines
+ * around messages come and go: a sender's name moves up to the first of
+ * theirs when older messages from them load above.
+ */
+function topInView(list) {
+  const items = list.children;
+  if (!items.length || !list.clientHeight) return null;
+  const box = list.getBoundingClientRect();
+  let lo = 0;
+  let hi = items.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].getBoundingClientRect().bottom > box.top) hi = mid;
+    else lo = mid + 1;
+  }
+  for (let i = lo; i < items.length; i++) {
+    const r = items[i].getBoundingClientRect();
+    if (r.top >= box.bottom) break;
+    const key = chatDrawn.keys.get(items[i]);
+    if (key?.startsWith("m:")) return { node: items[i], key, from: r.top - box.top };
+  }
+  const node = items[lo];
+  return { node, key: chatDrawn.keys.get(node), from: node.getBoundingClientRect().top - box.top };
+}
+
+/** Scrolls so `anchor` (from topInView) is back where it was, whatever changed around it. */
+function keepInView(list, anchor) {
+  if (!anchor || !list.clientHeight) return;
+  const node = anchor.node.isConnected ? anchor.node : chatDrawn.nodes.get(anchor.key)?.node;
+  if (!node?.isConnected) return;
+  const moved = node.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.from;
+  if (Math.abs(moved) >= 0.5) list.scrollTop += moved;
+}
+
+/** After the chat changed: the rules. `before` is topInView from just before the change. */
+function settleScroll(list, before) {
+  if (scroller.pinned) {
+    list.scrollTop = list.scrollHeight;
+    return;
+  }
+  keepInView(list, before ?? scroller.anchor);
+  if (!list.clientHeight) return; // not on screen: nothing to measure, and the anchor stays
+  // What was below may have gone (a "Sending…" line): at the bottom now is at the bottom.
+  if (atBottom(list)) toNewest();
+  else scroller.anchor = topInView(list);
+}
+
+/** Scrolls to put `node` in the middle of the chat: a search hit, or the message a reply quotes. Asked for. */
+function showInChat(node, smooth = false) {
+  const list = $("#messages");
+  const r = node.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  const max = list.scrollHeight - list.clientHeight;
+  const top = Math.max(0, Math.min(max, list.scrollTop + r.top - box.top - (box.height - r.height) / 2));
+  scroller.pinned = max - top <= NEAR_BOTTOM_PX; // where it ends up; the scroll events follow it there
+  list.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+  if (!smooth) scroller.anchor = scroller.pinned ? null : topInView(list);
+}
+
+/** Scrolls just enough to show all of `node`: the row a tap on a message just opened. */
+function revealInChat(node) {
+  if (!node) return;
+  const list = $("#messages");
+  const r = node.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  if (r.bottom > box.bottom) list.scrollTop += Math.min(r.bottom - box.bottom, r.top - box.top);
+  else if (r.top < box.top) list.scrollTop -= box.top - r.top;
+}
+
+$("#messages").addEventListener("scroll", () => {
+  const list = $("#messages");
+  if (!list.clientHeight) return; // not on screen
+  scroller.pinned = atBottom(list);
+  scroller.anchor = scroller.pinned ? null : topInView(list);
+  if (list.scrollTop >= 200) return;
+  if (state.activeId) loadOlder(state.activeId);
+  else if (state.activeGroupId) loadOlderGroup(state.activeGroupId);
+}, { passive: true });
+
+// The chat's own size changed (the composer grew, the typing line or a reply
+// came, the keyboard or the window): the same rules.
+new ResizeObserver(() => {
+  const list = $("#messages");
+  if (!list.clientHeight) return;
+  if (scroller.pinned) list.scrollTop = list.scrollHeight;
+  else keepInView(list, scroller.anchor);
+}).observe($("#messages"));
+
+// ---------- drawing the conversation ----------
+// Each thing in a chat (a sender line, a bubble, its reactions, "Seen", ...)
+// has a key and a signature of what it shows. Drawing again builds only what
+// changed and leaves the rest in place, so a new message is a new row or two,
+// and what you're reading isn't rebuilt under you.
+const chatDrawn = { owner: null, nodes: new Map(), keys: new WeakMap() };
+
+/** Shows `items` ({ key, sig, make }) as the conversation `owner` ("d:<friend>" or "g:<group>"). */
+function drawConversation(owner, items) {
+  const list = $("#messages");
+  if (chatDrawn.owner !== owner) {
+    chatDrawn.owner = owner;
+    chatDrawn.nodes = new Map();
+    list.replaceChildren();
+  }
+  const before = scroller.pinned ? null : topInView(list);
+  const next = new Map();
+  const nodes = items.map((item) => {
+    const had = chatDrawn.nodes.get(item.key);
+    const node = had?.sig === item.sig ? had.node : item.make();
+    next.set(item.key, { sig: item.sig, node });
+    chatDrawn.keys.set(node, item.key);
+    return node;
+  });
+  placeChildren(list, nodes);
+  chatDrawn.nodes = next;
+  settleScroll(list, before);
+}
+
+/** A plain line in a chat: who's talking, a note, a group event. */
+const chatLine = (key, cls, text) => ({ key, sig: `${cls}|${text}`, make: () => el("li", { class: cls, text }) });
+
 // ---------- conversation ----------
 
-async function openChat(friendId) {
+/**
+ * Opens a chat, at its newest message. `keepScroll`: it's already open and
+ * this only catches up (after reconnecting), so wherever it's scrolled stays.
+ */
+async function openChat(friendId, { keepScroll = false } = {}) {
   const chat = chatById(friendId);
   if (!chat) return;
   if (chat.hidden) unhideChat(friendId); // opening a hidden chat brings it back
@@ -1765,6 +2329,7 @@ async function openChat(friendId) {
     setReply(null);
     state.actionFor = null;
   }
+  if (!keepScroll || state.activeId !== friendId) toNewest();
   state.activeId = friendId;
   state.activeGroupId = null;
   setConversationMode("direct");
@@ -1772,11 +2337,6 @@ async function openChat(friendId) {
   closeProfileTab();
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
-  const switching = $("#messages").dataset.friend !== String(friendId);
-  if (switching) {
-    $("#messages").dataset.friend = String(friendId);
-    delete $("#messages").dataset.scrolled; // a newly opened chat starts at the bottom
-  }
   renderChatHeader();
   renderChatList();
   renderMessages();
@@ -1789,8 +2349,9 @@ async function openChat(friendId) {
   }
   try {
     const size = pageSize();
-    const page = await getJSON(`/chats/${friendId}/messages?limit=${size}`);
-    cache.put(`${state.me.id}:chat:${friendId}`, structuredClone(page)); // as sent: still encrypted
+    const text = await api(`/chats/${friendId}/messages?limit=${size}`, { as: "text" });
+    const page = JSON.parse(text);
+    keepAnswer(`chat:${friendId}`, text); // as sent: still encrypted
     await Promise.all(page.map(decrypt));
     if (state.activeId !== friendId) return;
     const loaded = state.messages.get(friendId);
@@ -1813,7 +2374,8 @@ async function openChat(friendId) {
       if (state.activeId === friendId) renderMessages();
     }
   }
-  if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
+  // Catching up never moves the cursor (someone may be typing in the search box).
+  if (!keepScroll && matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
 }
 
 function closeChat() {
@@ -1898,7 +2460,7 @@ $("#safety-button").addEventListener("click", async () => {
   $("#safety-code").textContent = code.replace(/^((?:\d+ ){2}\d+) /, "$1\n"); // two rows of three
 });
 
-/** Loads the page before the oldest loaded message, keeping the view in place. */
+/** Loads the page before the oldest loaded message, above what's in view (drawConversation keeps it in place). */
 async function loadOlder(friendId) {
   const msgs = state.messages.get(friendId);
   const h = state.history.get(friendId);
@@ -1918,10 +2480,7 @@ async function loadOlder(friendId) {
     h.loading = false;
   }
   if (state.activeId !== friendId) return;
-  const list = $("#messages");
-  const fromBottom = list.scrollHeight - list.scrollTop;
   renderMessages();
-  list.scrollTop = list.scrollHeight - fromBottom;
   fillViewport(friendId);
 }
 
@@ -1931,22 +2490,21 @@ function fillViewport(friendId) {
   if (state.activeId === friendId && list.scrollHeight <= list.clientHeight + 40) loadOlder(friendId);
 }
 
-$("#messages").addEventListener("scroll", () => {
-  if ($("#messages").scrollTop >= 200) return;
-  if (state.activeId) loadOlder(state.activeId);
-  else if (state.activeGroupId) loadOlderGroup(state.activeGroupId);
-});
-
 async function markRead(friendId) {
   const chat = chatById(friendId);
-  const hasUnreadText = (state.messages.get(friendId) || [])
-    .some((m) => m.sender_id === friendId && m.kind === "text" && !m.read_at);
-  if (!hasUnreadText && !(chat && chat.unread)) return;
-  try {
-    await api(`/chats/${friendId}/read`, { method: "POST" });
-  } catch (err) {
-    report("warn", "marking read failed", { friend_id: friendId, ...errorFields(err) });
-  }
+  // The texts here now: the server marks at least these.
+  const sent = new Set((state.messages.get(friendId) || [])
+    .filter((m) => m.sender_id === friendId && m.kind === "text" && !m.read_at).map((m) => m.id));
+  if (!sent.size && !(chat && chat.unread)) return;
+  await sendRead("d", async () => {
+    try {
+      const { updated } = await getJSON(`/chats/${friendId}/read`, { method: "POST" });
+      return updated > 0; // only then does the server tell my devices
+    } catch (err) {
+      report("warn", "marking read failed", { friend_id: friendId, ...errorFields(err) });
+      return false;
+    }
+  }, () => readByMe(friendId, sent), refreshChatsSoon);
 }
 
 function snapLabel(m, mine) {
@@ -1963,25 +2521,26 @@ const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function renderMessages() {
   if (state.activeGroupId) return renderGroupMessages();
-  const list = $("#messages");
-  const msgs = state.messages.get(state.activeId) || [];
-  const chat = chatById(state.activeId);
-  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const id = state.activeId;
+  if (id == null) return;
+  const msgs = state.messages.get(id) || [];
+  const chat = chatById(id);
+  const byId = new Map(msgs.map((m) => [m.id, m]));
 
   // "Seen" goes under my latest text if they've read it.
   let lastMineTextId = null;
   for (const m of msgs) if (m.sender_id === state.me.id && m.kind === "text") lastMineTextId = m.id;
 
   const items = [];
-  const h = state.history.get(state.activeId);
+  const h = state.history.get(id);
   if (msgs.length && h) {
-    if (h.loading) items.push(el("li", { class: "msg-meta history-edge", text: "Loading earlier messages…" }));
-    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of your chat with ${chat ? chatName(chat) : "them"}.` }));
+    if (h.loading) items.push(chatLine("edge", "msg-meta history-edge", "Loading earlier messages…"));
+    else if (!h.hasMore) items.push(chatLine("edge", "msg-meta history-edge", `This is the beginning of your chat with ${chat ? chatName(chat) : "them"}.`));
   }
   let prevSender = null;
   // A friend's new username (X30): said where it happened in the chat.
   let renameNote = chat?.was && chat.renamed_at
-    ? el("li", { class: "msg-meta rename-note", text: `${chat.was} is now @${chat.username}` }) : null;
+    ? chatLine("rename", "msg-meta rename-note", `${chat.was} is now @${chat.username}`) : null;
   for (const m of msgs) {
     if (renameNote && m.created_at > chat.renamed_at) {
       items.push(renameNote);
@@ -1990,61 +2549,62 @@ function renderMessages() {
     }
     const mine = m.sender_id === state.me.id;
     if (m.sender_id !== prevSender) {
-      items.push(el("li", {
-        class: `sender ${mine ? "mine" : ""}`,
-        text: `${mine ? "Me" : chat ? chatName(chat) : ""}  ${clockTime(m.created_at)}`,
-      }));
+      items.push(chatLine(`s:${msgKey(m)}`, `sender ${mine ? "mine" : ""}`, `${mine ? "Me" : chat ? chatName(chat) : ""}  ${clockTime(m.created_at)}`));
       prevSender = m.sender_id;
     }
     if (m.kind === "text") {
       if (m.text == null) {
-        items.push(el("li", {
-          class: `msg undecryptable ${mine ? "mine" : ""}`,
-          text: m.unsupported ? "Sent from a newer version of napsack. Reload to read it."
+        items.push(chatLine(`m:${msgKey(m)}`, `msg undecryptable ${mine ? "mine" : ""}`,
+          m.unsupported ? "Sent from a newer version of napsack. Reload to read it."
             : m.beforeReset ? "Sent before your account was reset, so it can't be read."
-            : "Couldn't decrypt this message.",
-        }));
+            : "Couldn't decrypt this message."));
       } else {
-        items.push(...bubble(m, mine, [el("span", { class: "msg-body", text: m.text })]));
+        items.push(...bubbleItems(m, mine, bodyContent(m.text), byId));
       }
-      if (m.id === lastMineTextId && m.read_at) {
-        items.push(el("li", { class: "msg-meta", text: "Seen" }));
-      }
+      if (m.id === lastMineTextId && m.read_at) items.push(chatLine("seen", "msg-meta", "Seen"));
     } else {
-      const canOpen = !mine && m.snap_state === "pending";
-      const chip = canOpen
-        ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
-            el("span", { class: "marker snap", "aria-hidden": "true" }), `Tap to view ${mediaWord(m)}`)
-        : el("span", { class: "snap-chip done" },
-            el("span", { class: "marker", "aria-hidden": "true" }), snapLabel(m, mine));
-      items.push(...bubble(m, mine, [chip]));
+      items.push(...bubbleItems(m, mine, snapContent(m, mine), byId));
     }
   }
   if (renameNote && msgs.length) items.push(renameNote);
-  const sending = outboxItems(`d:${state.activeId}`, prevSender);
+  const sending = outboxItems(`d:${id}`, prevSender);
   items.push(...sending);
-  if (!msgs.length && !sending.length) items.push(...emptyChat(state.messages.has(state.activeId), `d:${state.activeId}`));
-  list.replaceChildren(...items);
-  if (nearBottom || !list.dataset.scrolled) {
-    list.scrollTop = list.scrollHeight;
-    list.dataset.scrolled = "1";
-  }
+  if (!msgs.length && !sending.length) items.push(...emptyChat(state.messages.has(id), `d:${id}`));
+  drawConversation(`d:${id}`, items);
+}
+
+/** A text's words, for bubbleItems. */
+const bodyContent = (text) => ({ sig: `body|${text}`, make: () => [el("span", { class: "msg-body", text })] });
+
+/** A direct pic or video: tap to view it, or what became of it. */
+function snapContent(m, mine) {
+  const canOpen = !mine && m.snap_state === "pending";
+  const label = canOpen ? `Tap to view ${mediaWord(m)}` : snapLabel(m, mine);
+  return {
+    sig: JSON.stringify(["snap", canOpen, label ?? null]),
+    make: () => [canOpen
+      ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(liveMessage(m)) },
+        el("span", { class: "marker snap", "aria-hidden": "true" }), label)
+      : el("span", { class: "snap-chip done" },
+        el("span", { class: "marker", "aria-hidden": "true" }), label)],
+  };
 }
 
 /** What an empty chat shows: placeholders while its first page loads, a way
  * to try again if it couldn't, and "No messages yet." only once it's known. */
 function emptyChat(loaded, key) {
-  if (loaded) return [el("li", { class: "msg-meta", text: "No messages yet." })];
+  if (loaded) return [chatLine("empty", "msg-meta", "No messages yet.")];
   const failed = state.loadFailed.get(key);
   if (failed) {
-    return [el("li", { class: "msg-meta list-problem" },
+    return [{ key: "empty-failed", sig: failed, make: () => el("li", { class: "msg-meta list-problem" },
       el("p", { text: `Couldn't load this chat. ${failed}` }),
       el("button", { type: "button", class: "button", onclick: () => {
         state.loadFailed.delete(key);
         if (key.startsWith("g:")) openGroup(Number(key.slice(2))); else openChat(Number(key.slice(2)));
-      } }, "Try again"))];
+      } }, "Try again")) }];
   }
-  return [0, 1, 2, 3].map((i) => el("li", { class: `msg-skeleton ${i % 2 ? "mine" : ""}`, "aria-hidden": "true" }));
+  return [0, 1, 2, 3].map((i) => ({ key: `skeleton:${i}`, sig: "",
+    make: () => el("li", { class: `msg-skeleton ${i % 2 ? "mine" : ""}`, "aria-hidden": "true" }) }));
 }
 
 async function upsertMessage(m) {
@@ -2057,10 +2617,27 @@ async function upsertMessage(m) {
   if (m.sender_id === state.me.id && m.kind === "text" && !m.read_at && m.created_at <= (state.readUpTo.get(fid) ?? -1)) {
     m.read_at = state.readUpTo.get(fid);
   }
-  const i = msgs.findIndex((x) => x.id === m.id);
-  if (i >= 0) msgs[i] = m;
-  else msgs.push(m);
-  msgs.sort((a, b) => a.id - b.id);
+  placeById(msgs, m);
+}
+
+/** Puts `m` into `msgs` (oldest first): over the one with its id, or where its id goes, which is nearly always the end. */
+function placeById(msgs, m) {
+  let lo = 0;
+  let hi = msgs.length;
+  if (hi && msgs[hi - 1].id < m.id) lo = hi;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (msgs[mid].id < m.id) lo = mid + 1;
+    else hi = mid;
+  }
+  if (msgs[lo]?.id === m.id) msgs[lo] = m;
+  else msgs.splice(lo, 0, m);
+}
+
+/** The copy of `m` the chat holds now (a later update may have replaced it), for what a tap does. */
+function liveMessage(m) {
+  const msgs = m.group_id ? state.groupMessages.get(m.group_id) : state.messages.get(friendOf(m));
+  return msgs?.find((x) => x.id === m.id) ?? m;
 }
 
 $("#composer").addEventListener("submit", async (e) => {
@@ -2068,6 +2645,7 @@ $("#composer").addEventListener("submit", async (e) => {
   const input = $("#composer-input");
   if (state.editing) return sendEdit(input);
   const text = input.value.trim();
+  if (text) toNewest(); // sending brings you back to the newest message: yours
   if (text && state.activeGroupId) return sendGroupText(state.activeGroupId, input, text);
   const friendId = state.activeId;
   if (!text || !friendId) return;
@@ -2100,9 +2678,11 @@ $("#composer").addEventListener("submit", async (e) => {
 // go, it waits as "Not sent" with Try again, and goes by itself as soon as
 // napsack is back online. (Unsent texts live only in this page: they're
 // never written to the device unencrypted.)
-const outbox = []; // { key: "d:<friend>" | "g:<group>", clientId, text, replyTo, status, error, send, done }
+const outbox = []; // { key: "d:<friend>" | "g:<group>", n, clientId, text, replyTo, status, error, send, done }
+let outboxCount = 0; // each item's `n`, which names its rows on screen
 
 function queueSend(item) {
+  item.n = ++outboxCount;
   outbox.push(item);
   attemptSend(item);
 }
@@ -2155,22 +2735,24 @@ function flushOutbox() {
   for (const item of outbox) if (item.status === "failed" && retryable(item.error)) attemptSend(item);
 }
 
-/** Texts still on their way, at the bottom of a chat. */
+/** Texts still on their way, at the bottom of a chat (as drawConversation items). */
 function outboxItems(key, prevSender) {
-  const items = outbox.filter((x) => x.key === key);
+  const waiting = outbox.filter((x) => x.key === key);
   const out = [];
-  if (items.length && prevSender !== state.me.id) out.push(el("li", { class: "sender mine", text: "Me" }));
-  for (const item of items) {
-    out.push(el("li", { class: "msg mine pending" }, el("span", { class: "msg-body", text: item.text })));
+  if (waiting.length && prevSender !== state.me.id) out.push(chatLine("sending-me", "sender mine", "Me"));
+  for (const item of waiting) {
+    out.push({ key: `sending:${item.n}`, sig: item.text,
+      make: () => el("li", { class: "msg mine pending" }, el("span", { class: "msg-body", text: item.text })) });
     if (item.status === "sending") {
-      out.push(el("li", { class: "msg-meta", text: "Sending…" }));
+      out.push(chatLine(`sending:${item.n}:status`, "msg-meta", "Sending…"));
       continue;
     }
     const why = retryable(item.error) || !item.error?.message ? "Not sent: no connection." : `Not sent: ${item.error.message}`;
-    out.push(el("li", { class: "msg-meta send-failed" }, `${why} `,
-      el("button", { type: "button", class: "link", onclick: () => attemptSend(item) }, "Try again"),
-      " · ",
-      el("button", { type: "button", class: "link", onclick: () => discardSend(item) }, "Remove")));
+    out.push({ key: `sending:${item.n}:status`, sig: `failed|${why}`,
+      make: () => el("li", { class: "msg-meta send-failed" }, `${why} `,
+        el("button", { type: "button", class: "link", onclick: () => attemptSend(item) }, "Try again"),
+        " · ",
+        el("button", { type: "button", class: "link", onclick: () => discardSend(item) }, "Remove")) });
   }
   return out;
 }
@@ -2186,11 +2768,17 @@ function discardSend(item) {
 }
 
 // The message box grows with what's typed; style.css caps it at four lines,
-// past which it scrolls inside.
+// past which it scrolls inside. It's measured at its natural height while the
+// composer holds its own: letting the composer shrink for that moment let the
+// chat above grow and lose its place, a few lines at a time, on every
+// keystroke of a long message.
 function fitComposer() {
   const input = $("#composer-input");
+  const form = $("#composer");
+  form.style.minHeight = `${form.offsetHeight}px`;
   input.style.height = "auto";
   input.style.height = `${input.scrollHeight + 2}px`; // + the borders (border-box)
+  form.style.minHeight = "";
 }
 $("#composer-input").addEventListener("input", fitComposer);
 
@@ -2242,52 +2830,73 @@ const reactionsOf = (m) => (m.group_id ? (m.reactions || []).map((r) => ({ user:
 const myReaction = (m) => reactionsOf(m).find((r) => r.user === state.me.id)?.emoji ?? null;
 
 /**
- * A message's list items: the bubble (with the message it replies to, if
- * any), its reactions, and, when tapped, a row to react or reply.
+ * A message's items for drawConversation: the bubble (with the message it
+ * replies to, if any), its reactions, and, when tapped, a row to react or
+ * reply. `content` ({ sig, make }) is what's inside the bubble; `byId` finds
+ * the message a reply quotes. Taps act on the message as the chat holds it
+ * then (liveMessage), since a row is kept as long as it looks the same.
  */
-function bubble(m, mine, content) {
+function bubbleItems(m, mine, content, byId) {
   const key = msgKey(m);
-  const parts = [];
-  const target = replyTarget(m);
-  if (target != null) parts.push(quoteFor(m, target));
-  parts.push(...content);
-  if (m.edited) {
-    parts.push(el("button", { type: "button", class: "edited-mark", "aria-label": "Edited. See every version", onclick: () => showEdits(m) }, "Edited"));
-  }
   const open = state.actionFor === key;
-  const items = [el("li", {
-    class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""}`,
-    "data-key": key,
-    onclick: (e) => {
-      if (e.target.closest("button, a")) return;
-      state.actionFor = open ? null : key;
-      renderMessages();
+  const target = replyTarget(m);
+  const quote = target != null ? quoteText(byId.get(target)) : null;
+  const items = [{
+    key: `m:${key}`,
+    sig: JSON.stringify([mine, open, quote, content.sig, Boolean(m.edited)]),
+    make: () => {
+      const parts = [];
+      if (target != null) parts.push(quoteButton(m, target, quote));
+      parts.push(...content.make());
+      if (m.edited) {
+        parts.push(el("button", { type: "button", class: "edited-mark", "aria-label": "Edited. See every version", onclick: () => showEdits(liveMessage(m)) }, "Edited"));
+      }
+      return el("li", {
+        class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""}`,
+        "data-key": key,
+        onclick: (e) => {
+          if (e.target.closest("button, a")) return;
+          state.actionFor = state.actionFor === key ? null : key;
+          renderMessages();
+          if (state.actionFor === key) revealInChat(chatDrawn.nodes.get(`a:${key}`)?.node);
+        },
+      }, ...parts);
     },
-  }, ...parts)];
+  }];
 
   const reactions = reactionsOf(m);
   if (reactions.length) {
     const counts = new Map();
     for (const r of reactions) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
     const me = myReaction(m);
-    items.push(el("li", { class: `reactions ${mine ? "mine" : ""}` },
-      ...[...counts].map(([emoji, n]) => el("button", {
-        type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`,
-        "aria-label": `${emoji} ${n}${me === emoji ? ", including you. Tap to take yours back" : ". Tap to react"}`,
-        onclick: () => react(m, emoji),
-      }, emoji, n > 1 ? String(n) : ""))));
+    items.push({
+      key: `r:${key}`,
+      sig: JSON.stringify([mine, me, [...counts]]),
+      make: () => el("li", { class: `reactions ${mine ? "mine" : ""}` },
+        ...[...counts].map(([emoji, n]) => el("button", {
+          type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`,
+          "aria-label": `${emoji} ${n}${me === emoji ? ", including you. Tap to take yours back" : ". Tap to react"}`,
+          onclick: () => react(liveMessage(m), emoji),
+        }, emoji, n > 1 ? String(n) : ""))),
+    });
   }
 
   if (open) {
     const me = myReaction(m);
-    items.push(el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
-      ...e2e.REACTIONS.map((emoji) => el("button", {
-        type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
-        onclick: () => react(m, emoji),
-      }, emoji)),
-      el("button", { type: "button", class: "reply-button", onclick: () => startReply(m) }, "Reply"),
-      textOf(m) != null ? el("button", { type: "button", class: "text-action", onclick: () => copyText(m) }, "Copy") : null,
-      canEdit(m) ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(m) }, "Edit") : null));
+    const copy = textOf(m) != null;
+    const edit = canEdit(m);
+    items.push({
+      key: `a:${key}`,
+      sig: JSON.stringify([mine, me, copy, edit]),
+      make: () => el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
+        ...e2e.REACTIONS.map((emoji) => el("button", {
+          type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
+          onclick: () => react(liveMessage(m), emoji),
+        }, emoji)),
+        el("button", { type: "button", class: "reply-button", onclick: () => startReply(liveMessage(m)) }, "Reply"),
+        copy ? el("button", { type: "button", class: "text-action", onclick: () => copyText(liveMessage(m)) }, "Copy") : null,
+        edit ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(liveMessage(m)) }, "Edit") : null),
+    });
   }
   return items;
 }
@@ -2428,15 +3037,16 @@ async function showEdits(m) {
   }
 }
 
-function quoteFor(m, targetId) {
-  const msgs = m.group_id ? state.groupMessages.get(m.group_id) : state.messages.get(friendOf(m));
-  const target = msgs?.find((x) => x.id === targetId);
-  const text = target ? `${whoSent(target)}: ${snippetOf(target)}` : "Replying to an earlier message";
+/** What a reply shows of the message it answers (`target`, if it's loaded). */
+const quoteText = (target) => (target ? `${whoSent(target)}: ${snippetOf(target)}` : "Replying to an earlier message");
+
+/** Tapping the quote goes to the message it answers, if it's loaded. */
+function quoteButton(m, targetId, text) {
   return el("button", {
     type: "button", class: "quote",
     onclick: () => {
-      const key = m.group_id ? `g:${targetId}` : `d:${targetId}`;
-      $(`#messages [data-key="${key}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      const li = $(`#messages [data-key="${m.group_id ? "g" : "d"}:${targetId}"]`);
+      if (li) showInChat(li, true);
     },
   }, text);
 }
@@ -2821,18 +3431,22 @@ async function handleEvent(ev) {
   switch (ev.type) {
     case "ready":
       state.wsRetry = 0;
+      socketTurn++;
+      echoes.clear(); // the last connection's echoes aren't coming
       setConnBanner(null);
       startHeartbeat();
       flushOutbox();
       sendVisibility();
       checkForUpdate();
-      // Anything could have happened while disconnected.
+      // Anything could have happened while disconnected (at the start too:
+      // whatever happened between the first load and the socket joining).
+      // An answer that hasn't changed costs a request and nothing else.
       refreshChats();
       loadAnnouncement();
       refreshGroups();
       refreshRequests();
-      if (state.activeId) openChat(state.activeId);
-      else if (state.activeGroupId) openGroup(state.activeGroupId);
+      if (state.activeId) openChat(state.activeId, { keepScroll: true });
+      else if (state.activeGroupId) openGroup(state.activeGroupId, { keepScroll: true });
       break;
     case "auth_failed":
       signOutLocally("Your session ended. Sign in again.");
@@ -2843,56 +3457,53 @@ async function handleEvent(ev) {
     case "message":
     case "message_updated": {
       const m = ev.message;
+      const raw = structuredClone(m); // as sent, for the kept chat list (decrypting fills in `m`)
       // Their message arrived, so they're done typing (don't wait out the timer).
       if (ev.type === "message" && m.sender_id !== state.me.id) stopTyping(`d:${m.sender_id}`);
       if (ev.type === "message") arrivedFromMe(m, state.plaintext);
       await upsertMessage(m);
       const fid = friendOf(m);
+      listEvent("chats", () => chatGotMessage(m, raw));
       if (fid === state.activeId) {
         renderMessages();
         if (ev.type === "message" && m.sender_id === fid && m.kind === "text" && document.visibilityState === "visible") {
           markRead(fid);
         }
       }
-      refreshChatsSoon();
       break;
     }
     case "read": {
       if (ev.by === state.me.id) {
-        refreshChatsSoon();
-      } else {
-        state.readUpTo.set(ev.by, Math.max(ev.at, state.readUpTo.get(ev.by) ?? 0));
-        const msgs = state.messages.get(ev.by) || [];
-        for (const m of msgs) {
-          if (m.sender_id === state.me.id && m.kind === "text" && !m.read_at && m.created_at <= ev.at) m.read_at = ev.at;
-        }
-        if (ev.by === state.activeId) renderMessages();
-        refreshChatsSoon();
+        // Mine: this device's own, applied already, or another device's, which doesn't say what it read.
+        if (!ownEcho("d")) refreshChatsSoon();
+        break;
       }
+      state.readUpTo.set(ev.by, Math.max(ev.at, state.readUpTo.get(ev.by) ?? 0));
+      for (const m of state.messages.get(ev.by) || []) {
+        if (m.sender_id === state.me.id && m.kind === "text" && !m.read_at && m.created_at <= ev.at) m.read_at = ev.at;
+      }
+      listEvent("chats", () => friendRead(ev.by, ev.at));
+      if (ev.by === state.activeId) renderMessages();
       break;
     }
     case "announcement":
       showAnnouncement(ev.announcement);
       break;
     case "friends_changed":
-      await refreshChats();
-      await refreshRequests();
-      if ($("#group-dialog").open && state.groupDetail) openGroupInfo(state.groupDetail.id);
-      refreshMe();
-      refreshGroups(); // names in group lists come from the friends list
-      if (state.activeGroupId) renderMessages();
+      friendsChanged();
       break;
     case "group_message": {
       const m = ev.message;
+      const raw = structuredClone(m); // as sent, for the kept groups (opening fills in `m`)
       stopTyping(`g:${m.group_id}:${m.sender_id}`);
       arrivedFromMe(m, groupPlain);
       await openGroupMessage(m);
       upsertGroupMessage(m);
+      listEvent("groups", () => groupGotMessage(m, raw));
       if (m.group_id === state.activeGroupId) {
         renderMessages();
         if (m.sender_id !== state.me.id && document.visibilityState === "visible") markGroupRead(m.group_id);
       }
-      refreshGroupsSoon();
       break;
     }
     case "typing": {
@@ -2903,14 +3514,16 @@ async function handleEvent(ev) {
       break;
     }
     case "presence": {
-      const chat = chatById(ev.user_id);
-      if (chat) {
+      if (!chatById(ev.user_id)) break;
+      listEvent("chats", () => {
+        const chat = chatById(ev.user_id);
+        if (!chat) return;
         chat.active_now = ev.active;
         chat.last_seen_at = ev.last_seen_at;
-        if (ev.active === false) state.typing.delete(`d:${ev.user_id}`);
-        renderChatList();
-        if (state.activeId === chat.id) renderChatHeader();
-      }
+      });
+      if (ev.active === false) state.typing.delete(`d:${ev.user_id}`);
+      renderChatList();
+      if (state.activeId === ev.user_id) renderChatHeader();
       break;
     }
     case "group_read": {
@@ -2924,17 +3537,21 @@ async function handleEvent(ev) {
       }
       break;
     }
-    case "groups_changed": {
-      groupMemberKeys.delete(ev.group_id);
-      const members = groupById(ev.group_id)?.member_count;
-      await refreshGroups();
-      // Someone joined or left: "Seen by" needs the new member list.
-      if (ev.group_id === state.activeGroupId && groupById(ev.group_id)?.member_count !== members) loadGroupReads(ev.group_id);
-      if (ev.group_id === state.activeGroupId) renderGroupHeader();
-      if ($("#group-dialog").open && state.groupDetail?.id === ev.group_id) openGroupInfo(ev.group_id);
+    case "groups_changed":
+      // This device's own read of the group comes back this way too: applied already.
+      if (ownEcho(`g:${ev.group_id}`)) break;
+      groupsChanged(ev.group_id);
       break;
-    }
   }
+}
+
+// The server says friendships, requests, names, or pictures changed: all of
+// it at once rather than in turn. (A burst of these loads at most twice: reload.)
+async function friendsChanged() {
+  groupMemberKeys.clear(); // a friend's key may have changed (an admin reset): groups ask again before sending
+  await Promise.all([refreshChats(), refreshRequests(), refreshMe()]);
+  if ($("#group-dialog").open && state.groupDetail) drawGroupInfo();
+  if (state.activeGroupId) renderMessages(); // names in group chats come from the friends list
 }
 
 // ---------- groups ----------
@@ -2948,17 +3565,16 @@ const groupById = (id) => state.groups.find((g) => g.id === id);
 
 // ---------- group encryption ----------
 
-const groupWrapKeys = new Map();   // "<user id>:<public key>" -> wrap key with them
+const groupWrapKeys = new Map();   // "<user id>:<public key>" -> (promised) wrap key with them
 const groupPlain = new Map();      // message id -> { text, replyTo }, or null if it couldn't be opened
 const groupEdits = new Map();      // "<message id>:<edit id>" -> the newest edit's text, or null (X29)
 const groupMemberKeys = new Map(); // group id -> [{ id, username, public_key }] from the server
 
 class KeyChangedError extends Error {}
 
-async function groupWrapKeyFor(userId, pub) {
-  const k = `${userId}:${pub}`;
-  if (!groupWrapKeys.has(k)) groupWrapKeys.set(k, await e2e.groupWrapKey(state.identity.privateKey, pub, state.me.id, userId));
-  return groupWrapKeys.get(k);
+/** Derived once per person and key, however many messages ask at the same moment. */
+function groupWrapKeyFor(userId, pub) {
+  return once(groupWrapKeys, `${userId}:${pub}`, () => e2e.groupWrapKey(state.identity.privateKey, pub, state.me.id, userId));
 }
 
 /**
@@ -3078,29 +3694,59 @@ function groupSender(groupId, seal, post) {
 
 const keysHeader = (s) => JSON.stringify({ client_id: s.clientId, recipients: s.recipients, wraps: s.wraps });
 
-async function refreshGroups() {
+function refreshGroups() {
+  return reload(loads.groups, loadGroups);
+}
+
+async function loadGroups() {
   if (!state.loaded.groups && !state.groups.length) await showKeptGroups();
+  const me = state.me?.id;
+  sinceSent.groups = [];
+  let text, groups;
   try {
-    const groups = await getJSON("/groups");
-    cache.put(`${state.me.id}:groups`, structuredClone(groups)); // as sent: still encrypted
+    text = await api("/groups", { as: "text" });
+    groups = JSON.parse(text);
     await Promise.all(groups.map((g) => g.last_message && openGroupMessage(g.last_message)));
-    state.groups = groups;
-    state.loaded.groups = true;
   } catch (err) {
     report("warn", "loading groups failed", errorFields(err));
     state.loaded.error = err.message;
     renderChatList();
     return;
   }
-  if (!state.me) return;
+  if (!state.me || state.me.id !== me) return;
+  const before = new Map(state.groups.map((g) => [g.id, g.member_count]));
+  state.groups = groups;
+  kept.groups = JSON.parse(text); // as sent: still sealed
+  newInGroups.clear();
+  const meanwhile = sinceSent.groups;
+  sinceSent.groups = [];
+  for (const apply of meanwhile) apply();
+  if (meanwhile.length) keepListSoon("groups");
+  else keepAnswer("groups", text, kept.groups);
+  state.loaded.groups = true;
+  // Someone joined or left: the members' keys come again before the next
+  // send, and the open group's "Seen by" needs the new member list.
+  for (const g of groups) {
+    if (!before.has(g.id) || before.get(g.id) === g.member_count) continue;
+    groupMemberKeys.delete(g.id);
+    if (g.id === state.activeGroupId) loadGroupReads(g.id);
+  }
   renderChatList();
   if (state.activeGroupId && !groupById(state.activeGroupId)) closeChat(); // removed or left
+  else if (state.activeGroupId) renderGroupHeader();
 }
 
 let groupRefreshTimer = null;
 function refreshGroupsSoon() {
   clearTimeout(groupRefreshTimer);
   groupRefreshTimer = setTimeout(refreshGroups, 150);
+}
+
+// The server says a group changed (its name, members, picture, a favorite,
+// or my place in it, from another device). A burst loads at most twice (reload).
+async function groupsChanged(groupId) {
+  await refreshGroups();
+  if ($("#group-dialog").open && state.groupDetail?.id === groupId) openGroupInfo(groupId);
 }
 
 /** "You added ben", "cal left", ... for membership and name changes. */
@@ -3162,12 +3808,15 @@ function renderGroupHeader() {
   paintGroupAvatar($("#chat-avatar"), g);
 }
 
-async function openGroup(groupId) {
+/** Opens a group, at its newest message (`keepScroll`: as openChat's). */
+async function openGroup(groupId, { keepScroll = false } = {}) {
   if (!groupById(groupId)) return;
   if (state.activeGroupId !== groupId) {
     setReply(null);
     state.actionFor = null;
+    groupMemberKeys.delete(groupId); // who's in it, with their keys, asked again before sending here
   }
+  if (!keepScroll || state.activeGroupId !== groupId) toNewest();
   state.activeId = null;
   state.activeGroupId = groupId;
   setConversationMode("group");
@@ -3176,11 +3825,6 @@ async function openGroup(groupId) {
   $("#chat-placeholder").hidden = true;
   $("#chat").hidden = false;
   renderGroupHeader();
-  const key = `g${groupId}`;
-  if ($("#messages").dataset.friend !== key) {
-    $("#messages").dataset.friend = key;
-    delete $("#messages").dataset.scrolled;
-  }
   renderChatList();
   renderMessages();
   if (!state.groupMessages.has(groupId)) {
@@ -3191,8 +3835,9 @@ async function openGroup(groupId) {
   }
   try {
     const size = pageSize();
-    const page = await getJSON(`/groups/${groupId}/messages?limit=${size}`);
-    cache.put(`${state.me.id}:group:${groupId}`, structuredClone(page)); // as sent: still encrypted
+    const text = await api(`/groups/${groupId}/messages?limit=${size}`, { as: "text" });
+    const page = JSON.parse(text);
+    keepAnswer(`group:${groupId}`, text); // as sent: still encrypted
     await Promise.all(page.map(openGroupMessage));
     if (state.activeGroupId !== groupId) return;
     const loaded = state.groupMessages.get(groupId);
@@ -3213,7 +3858,7 @@ async function openGroup(groupId) {
       if (state.activeGroupId === groupId) renderGroupMessages();
     }
   }
-  if (matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
+  if (!keepScroll && matchMedia("(min-width: 760px)").matches) $("#composer-input").focus();
 }
 
 function upsertGroupMessage(m) {
@@ -3235,10 +3880,7 @@ function upsertGroupMessage(m) {
       openGroupMessage(m).then(() => { if (state.activeGroupId === m.group_id) renderMessages(); });
     }
   }
-  const i = msgs.findIndex((x) => x.id === m.id);
-  if (i >= 0) msgs[i] = m;
-  else msgs.push(m);
-  msgs.sort((a, b) => a.id - b.id);
+  placeById(msgs, m);
 }
 
 async function loadOlderGroup(groupId) {
@@ -3260,10 +3902,7 @@ async function loadOlderGroup(groupId) {
     h.loading = false;
   }
   if (state.activeGroupId !== groupId) return;
-  const list = $("#messages");
-  const fromBottom = list.scrollHeight - list.scrollTop;
-  renderMessages();
-  list.scrollTop = list.scrollHeight - fromBottom;
+  renderMessages(); // above what's in view, which stays where it is (drawConversation)
   fillGroupViewport(groupId);
 }
 
@@ -3298,72 +3937,83 @@ function seenByText(groupId, last) {
 }
 
 async function markGroupRead(groupId) {
-  if (!groupById(groupId)?.unread) return;
-  try {
-    await api(`/groups/${groupId}/read`, { method: "POST" });
-  } catch (err) {
-    report("warn", "marking group read failed", { group_id: groupId, ...errorFields(err) });
-  }
+  const g = groupById(groupId);
+  if (!g?.unread) return;
+  const upTo = g.last_message?.id ?? 0; // the newest when the read goes out: the server reads at least that far
+  await sendRead(`g:${groupId}`, async () => {
+    try {
+      await api(`/groups/${groupId}/read`, { method: "POST" });
+      return true; // the server always tells my devices (groups_changed)
+    } catch (err) {
+      report("warn", "marking group read failed", { group_id: groupId, ...errorFields(err) });
+      return false;
+    }
+  }, () => groupReadByMe(groupId, upTo), () => groupsChanged(groupId));
 }
 
 function renderGroupMessages() {
-  const list = $("#messages");
-  const msgs = state.groupMessages.get(state.activeGroupId) || [];
-  const g = groupById(state.activeGroupId);
-  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const groupId = state.activeGroupId;
+  const msgs = state.groupMessages.get(groupId) || [];
+  const g = groupById(groupId);
+  const byId = new Map(msgs.map((m) => [m.id, m]));
   const items = [];
-  const h = state.groupHistory.get(state.activeGroupId);
+  const h = state.groupHistory.get(groupId);
   if (msgs.length && h) {
-    if (h.loading) items.push(el("li", { class: "msg-meta history-edge", text: "Loading earlier messages…" }));
-    else if (!h.hasMore) items.push(el("li", { class: "msg-meta history-edge", text: `This is the beginning of ${g?.name ?? "the group"}, from when you joined.` }));
+    if (h.loading) items.push(chatLine("edge", "msg-meta history-edge", "Loading earlier messages…"));
+    else if (!h.hasMore) items.push(chatLine("edge", "msg-meta history-edge", `This is the beginning of ${g?.name ?? "the group"}, from when you joined.`));
   }
   let prevSender = null;
   for (const m of msgs) {
     if (m.kind === "event") {
-      items.push(el("li", { class: "msg-meta group-event", text: groupEventText(m) }));
+      items.push(chatLine(`e:${msgKey(m)}`, "msg-meta group-event", groupEventText(m)));
       prevSender = null;
       continue;
     }
     const mine = m.sender_id === state.me.id;
     if (m.sender_id !== prevSender) {
-      items.push(el("li", { class: `sender ${mine ? "mine" : ""}`, text: `${mine ? "Me" : personName(m.sender_id, m.sender_name)}  ${clockTime(m.created_at)}` }));
+      items.push(chatLine(`s:${msgKey(m)}`, `sender ${mine ? "mine" : ""}`, `${mine ? "Me" : personName(m.sender_id, m.sender_name)}  ${clockTime(m.created_at)}`));
       prevSender = m.sender_id;
     }
     if (m.undecryptable) {
-      items.push(el("li", { class: `msg undecryptable ${mine ? "mine" : ""}`, text: "Couldn't decrypt this message." }));
+      items.push(chatLine(`m:${msgKey(m)}`, `msg undecryptable ${mine ? "mine" : ""}`, "Couldn't decrypt this message."));
       continue;
     }
-    const content = [];
-    if (m.pic) content.push(groupPicChip(m, mine));
-    if (m.body) content.push(el("span", { class: "msg-body", text: m.body }));
-    items.push(...bubble(m, mine, content));
+    items.push(...bubbleItems(m, mine, groupContent(m, mine), byId));
   }
-  const seen = seenByText(state.activeGroupId, msgs[msgs.length - 1]);
-  if (seen) items.push(el("li", { class: "msg-meta seen-by", text: seen }));
-  const sending = outboxItems(`g:${state.activeGroupId}`, prevSender);
+  const seen = seenByText(groupId, msgs[msgs.length - 1]);
+  if (seen) items.push(chatLine("seen-by", "msg-meta seen-by", seen));
+  const sending = outboxItems(`g:${groupId}`, prevSender);
   items.push(...sending);
-  if (!msgs.length && !sending.length) items.push(...emptyChat(state.groupMessages.has(state.activeGroupId), `g:${state.activeGroupId}`));
-  list.replaceChildren(...items);
-  if (nearBottom || !list.dataset.scrolled) {
-    list.scrollTop = list.scrollHeight;
-    list.dataset.scrolled = "1";
-  }
+  if (!msgs.length && !sending.length) items.push(...emptyChat(state.groupMessages.has(groupId), `g:${groupId}`));
+  drawConversation(`g:${groupId}`, items);
+}
+
+/** What's in a group bubble: a pic or video, its words, or both. */
+function groupContent(m, mine) {
+  const chip = m.pic ? groupPicLabel(m, mine) : null;
+  return {
+    sig: JSON.stringify(["group", chip, m.body ?? ""]),
+    make: () => [
+      chip && (chip.canOpen
+        ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(liveMessage(m)) },
+          el("span", { class: "marker snap", "aria-hidden": "true" }), chip.label)
+        : el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), chip.label)),
+      m.body ? el("span", { class: "msg-body", text: m.body }) : null,
+    ].filter(Boolean),
+  };
 }
 
 /** View-once per member. The sender sees how many have opened it. */
-function groupPicChip(m, mine) {
+function groupPicLabel(m, mine) {
   const p = m.pic;
   const seen = p.viewers.includes(state.me.id);
-  if (!mine && !seen && !p.discard_reason) {
-    return el("button", { type: "button", class: "snap-chip", onclick: () => openPics(m) },
-      el("span", { class: "marker snap", "aria-hidden": "true" }), `Tap to view ${mediaWord(m)}`);
-  }
+  if (!mine && !seen && !p.discard_reason) return { canOpen: true, label: `Tap to view ${mediaWord(m)}` };
   const label = mine
     ? p.discard_reason === "opened" ? "Opened by everyone"
       : p.discard_reason === "expired" ? "Expired"
       : p.viewers.length ? `Opened by ${p.viewers.length}` : `${capitalize(mediaWord(m))} sent`
     : seen ? "Viewed" : "Expired";
-  return el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), label);
+  return { canOpen: false, label };
 }
 
 /** Fetches (and for formats 3 and 5, decrypts) one group pic or video: { blob, video, caption, from }. */
@@ -3510,6 +4160,7 @@ $("#new-group-form").addEventListener("submit", async (e) => {
 
 // Group info: rename, members, add, remove (owner), leave.
 
+/** Opens the info sheet (or brings it up to date) with the group as the server has it now. */
 async function openGroupInfo(groupId) {
   let g;
   try {
@@ -3519,6 +4170,28 @@ async function openGroupInfo(groupId) {
     return;
   }
   state.groupDetail = g;
+  groupMemberKeys.set(groupId, g.members); // the same members, with keys, that sending seals for
+  drawGroupInfo();
+}
+
+// What the open sheet shows, so an update that changes none of it leaves it
+// as it is (a "Tap again to leave" on its way included).
+let groupInfoShown = null;
+
+/** The info sheet, from the group as last fetched and my friends and requests as they are now. */
+function drawGroupInfo() {
+  const g = state.groupDetail;
+  if (!g) return;
+  const opening = !$("#group-dialog").open;
+  const inGroup = new Set(g.members.map((m) => m.id));
+  const addable = state.chats.filter((f) => !f.system && !inGroup.has(f.id)).sort((a, b) => chatName(a).localeCompare(chatName(b)));
+  const asked = (id) => (state.requests.outgoing.some((r) => r.id === id) ? "out" : state.requests.incoming.some((r) => r.id === id) ? "in" : "");
+  const pictureOf = (m) => ((m.id === state.me.id ? state.me : chatById(m.id)) ?? m).avatar_id ?? null;
+  const shows = JSON.stringify([g.id, g.name, g.role, g.avatar_id ?? null,
+    g.members.map((m) => [m.id, m.role, m.username, personName(m.id, m.username), Boolean(chatById(m.id)), pictureOf(m), asked(m.id)]),
+    addable.map((f) => [f.id, chatName(f), f.avatar_id ?? null])]);
+  if (!opening && shows === groupInfoShown) return;
+  groupInfoShown = shows;
   paintGroupAvatar($("#group-avatar"), g);
   $("#group-title").textContent = g.name;
   $("#group-sub").textContent = `${g.members.length} ${g.members.length === 1 ? "person" : "people"} · you're ${g.role === "owner" ? "the owner" : "a member"}`;
@@ -3547,8 +4220,6 @@ async function openGroupInfo(groupId) {
           onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
         : null);
   }));
-  const inGroup = new Set(g.members.map((m) => m.id));
-  const addable = state.chats.filter((f) => !f.system && !inGroup.has(f.id)).sort((a, b) => chatName(a).localeCompare(chatName(b)));
   $("#group-add-section").hidden = addable.length === 0;
   $("#group-add").replaceChildren(...addable.map((f) => {
     const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
@@ -3560,7 +4231,7 @@ async function openGroupInfo(groupId) {
   const leave = $("#leave-group");
   leave.textContent = "Leave group";
   delete leave.dataset.confirm;
-  if (!$("#group-dialog").open) {
+  if (opening) {
     $("#group-note").textContent = "";
     $("#group-dialog").showModal();
   }
@@ -3609,7 +4280,8 @@ async function groupFriendAction(g, fn, done) {
     return;
   }
   await Promise.all([refreshRequests(), refreshChats()]);
-  if ($("#group-dialog").open && state.groupDetail?.id === g.id) openGroupInfo(g.id);
+  // Who's in the group didn't change: only my friends and requests did.
+  if ($("#group-dialog").open && state.groupDetail?.id === g.id) drawGroupInfo();
 }
 
 /** Removing someone takes two taps, like leaving. */
@@ -3658,6 +4330,7 @@ async function leaveGroup(groupId) {
   state.groupMessages.delete(groupId);
   state.groupHistory.delete(groupId);
   state.groupReads.delete(groupId);
+  searchCache.delete(`g:${groupId}`);
   await refreshGroups();
 }
 
@@ -3995,7 +4668,11 @@ $("#chat-title").addEventListener("click", () => {
 
 // ---------- friends ----------
 
-async function refreshRequests() {
+function refreshRequests() {
+  return reload(loads.requests, loadRequests);
+}
+
+async function loadRequests() {
   try {
     state.requests = await getJSON("/friends/requests");
   } catch (err) {
@@ -5191,7 +5868,10 @@ async function sendDirectPicTo(friendId, media, caption) {
     headers: { "Content-Type": "application/octet-stream" },
   }));
   await upsertMessage(m);
-  if (state.activeId === friendId) renderMessages();
+  if (state.activeId === friendId) {
+    toNewest(); // sent: the newest message, at the bottom
+    renderMessages();
+  }
 }
 
 async function sendGroupPicTo(groupId, media, caption) {
@@ -5209,7 +5889,10 @@ async function sendGroupPicTo(groupId, media, caption) {
   }
   const m = await withRetries(camera.sends.get(key));
   upsertGroupMessage(m);
-  if (state.activeGroupId === groupId) renderMessages();
+  if (state.activeGroupId === groupId) {
+    toNewest();
+    renderMessages();
+  }
 }
 
 // The picker: every chat a pic can go to, newest first. Not chats that can't

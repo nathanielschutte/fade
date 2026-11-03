@@ -250,6 +250,10 @@ a.button { display: inline-flex; align-items: center; justify-content: center; c
   flex: 1; overflow-y: auto;
   padding: 1rem var(--pad) 0.5rem;
   display: flex; flex-direction: column; gap: 0.15rem;
+  /* app.js keeps what you're reading in place (and the newest message in
+     view at the bottom); the browser's own anchoring, which only some
+     browsers have, would move it a second time. */
+  overflow-anchor: none;
 }
 .messages > :first-child { margin-top: auto; }
 
