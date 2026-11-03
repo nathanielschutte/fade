@@ -259,6 +259,7 @@ Several people (and their Claude sessions) can be working at once, so everyone w
 - The browser tests run four at a time, each file printing its output when it finishes. To follow one as it runs, use `scripts/test-one.sh`, or `E2E_JOBS=1 bash scripts/test.sh`.
 - On a Mac, the Metrics tab's CPU, memory, and network charts stay empty locally: those readings come from Linux's `/proc`, and every deployed server is Linux. The tests expect only what each system can measure.
 - Notifications need HTTPS and a real device (or the browser test's stand-in); `localhost` won't get real pushes.
+- Passkeys belong to a name, never an address: to try them locally, open `http://localhost:8080`, not `127.0.0.1` (the app doesn't offer them there). Ones you make are kept by your browser or password manager like any site's; delete them there when you start a fresh database. The browser test uses Chromium's stand-in authenticator (`test_passkeys.py`).
 - Terraform has two roots: `infra/` (production) and `infra/staging/`. Run plans in the one you mean (the owner's; contributors don't need Terraform).
 - A new script needs its executable bit recorded (`git update-index --chmod=+x scripts/<name>.sh`) if your system doesn't keep it, and CI calls scripts through `bash` anyway.
 - Everything is LF line endings (`.gitattributes`). A CRLF boot script would stop the server from starting, so don't override it.
