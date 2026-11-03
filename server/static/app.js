@@ -543,6 +543,7 @@ function setAuthMode(mode) {
   $("#password-strength").hidden = true;
   $("#auth-form").password.autocomplete = register ? "new-password" : "current-password";
   $("#auth-error").textContent = "";
+  renderPasskeySignIn();
 }
 
 $("#auth-toggle").addEventListener("click", () =>
@@ -605,7 +606,13 @@ $("#auth-form").addEventListener("submit", async (e) => {
     const invitedBy = register ? state.invite?.inviter : null;
     if (invitedBy) state.invite = null; // used: we're friends now
     enterApp();
-    if (recoveryKey) await showRecoveryKey(recoveryKey);
+    // Then a passkey is recommended (F26), made with these same keys, so the
+    // password isn't asked again. Decided now, so it follows the recovery key at once.
+    const offer = register && await canOfferPasskey()
+      ? () => offerPasskey({ authKey, wrapKey, wrapped: res.wrapped_private_key })
+      : null;
+    if (recoveryKey) await showRecoveryKey(recoveryKey, offer);
+    else offer?.();
     if (invitedBy) {
       await refreshChats();
       openChat(invitedBy.id);
@@ -645,18 +652,29 @@ async function setUpRecovery(authKey, wrapKey, wrappedPrivateKey) {
   return recoveryKey;
 }
 
-/** Shows the key until the person says they saved it. */
-function showRecoveryKey(recoveryKey) {
+/** Shows the key until the person says they saved it; then `next`, if given (sign-up's passkey offer). */
+function showRecoveryKey(recoveryKey, next = null) {
   const dialog = $("#recovery-dialog");
   $("#recovery-key").textContent = recoveryKey;
   $("#recovery-saved").checked = false;
   $("#recovery-done").disabled = true;
   $("#recovery-copy").textContent = "Copy";
+  afterRecoveryKey = next;
   dialog.showModal();
   return new Promise((resolve) => dialog.addEventListener("close", () => {
     $("#recovery-key").textContent = ""; // don't leave it in the page
+    runAfterRecoveryKey(); // closed with Escape: Done runs it itself
     resolve();
   }, { once: true }));
+}
+
+// What follows the recovery key, run as its dialog closes. Done runs it in the
+// same moment, so one sheet replaces the other with nothing in between.
+let afterRecoveryKey = null;
+function runAfterRecoveryKey() {
+  const next = afterRecoveryKey;
+  afterRecoveryKey = null;
+  next?.();
 }
 
 $("#recovery-saved").addEventListener("change", (e) => { $("#recovery-done").disabled = !e.target.checked; });
@@ -670,7 +688,10 @@ $("#recovery-download").addEventListener("click", () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
-$("#recovery-done").addEventListener("click", () => $("#recovery-dialog").close());
+$("#recovery-done").addEventListener("click", () => {
+  $("#recovery-dialog").close();
+  runAfterRecoveryKey();
+});
 // Escape doesn't dismiss it before it's saved.
 $("#recovery-dialog").addEventListener("cancel", (e) => { if (!$("#recovery-saved").checked) e.preventDefault(); });
 $("#recovery-copy").addEventListener("click", async () => {
@@ -694,18 +715,21 @@ let passwordMode = "recovery";
 function openPasswordDialog(mode) {
   passwordMode = mode;
   const change = mode === "change";
+  const passkey = mode === "passkey";
   $("#password-form").reset();
   $("#change-strength").hidden = true;
   $("#password-error").textContent = "";
-  $("#password-title").textContent = change ? "Change password" : "Recovery key";
+  $("#password-title").textContent = change ? "Change password" : passkey ? "Add a passkey" : "Recovery key";
   $("#password-text").textContent = change
     ? "Your messages stay readable: your key is locked again under the new password. Other devices will be signed out."
-    : state.me.has_recovery_key
-      ? "Making a new recovery key replaces your old one, which stops working. Enter your password to continue."
-      : "Enter your password to make a recovery key.";
+    : passkey
+      ? "Enter your password, then let your device make the passkey. Next time, sign in with it instead of your password."
+      : state.me.has_recovery_key
+        ? "Making a new recovery key replaces your old one, which stops working. Enter your password to continue."
+        : "Enter your password to make a recovery key.";
   $("#password-new-field").hidden = !change;
   $("#password-confirm-field").hidden = !change;
-  $("#password-submit").textContent = change ? "Change password" : "Make a recovery key";
+  $("#password-submit").textContent = change ? "Change password" : passkey ? "Add a passkey" : "Make a recovery key";
   $("#password-dialog").showModal();
 }
 
@@ -738,6 +762,12 @@ $("#password-form").addEventListener("submit", async (e) => {
       $("#password-dialog").close();
       report("info", "password changed");
       showSecurityNote(`Password changed.${res.sessions_ended ? ` Signed out ${res.sessions_ended} other ${res.sessions_ended === 1 ? "device" : "devices"}.` : ""}`);
+    } else if (passwordMode === "passkey") {
+      btn.textContent = "Waiting for your passkey…";
+      if (!await addPasskey(current)) return; // the system's sheet was closed: still here to try again
+      $("#password-dialog").close();
+      $("#passkey-note").textContent = "Passkey added.";
+      loadPasskeys();
     } else {
       const key = await setUpRecovery(current.authKey, current.wrapKey, current.wrapped);
       $("#password-dialog").close();
@@ -750,6 +780,381 @@ $("#password-form").addEventListener("submit", async (e) => {
     btn.disabled = false;
     btn.textContent = label;
   }
+});
+
+// ---------- passkeys (F26, docs/design/passkeys.md) ----------
+// Signing in with Face ID, a fingerprint, or a security key instead of the
+// password. A passkey has to unlock the private key too, so each one keeps its
+// own copy of it on the server, wrapped by a secret only that passkey gives
+// (WebAuthn's PRF extension; crypto.js), which the server never sees. Adding
+// one needs the password, as a recovery key does. A passkey that can't give
+// the secret is never used: napsack says so, and the password still works.
+
+/** What this browser can do, known moments after the page loads: `use`
+ * passkeys at all (WebAuthn, with PRF not ruled out), and `make` one on the
+ * device itself (Face ID, a fingerprint), which sign-up recommends. */
+const passkeySupport = { use: false, make: false };
+const passkeysKnown = (async () => {
+  const P = window.PublicKeyCredential;
+  if (!P || !navigator.credentials?.get) return;
+  try {
+    // Browsers that list what they can do say outright when PRF isn't there.
+    if ((await P.getClientCapabilities?.())?.["extension:prf"] === false) return;
+  } catch { /* not said: tried, and a passkey without it is caught then */ }
+  passkeySupport.use = true;
+  try {
+    passkeySupport.make = Boolean(await P.isUserVerifyingPlatformAuthenticatorAvailable?.());
+  } catch { /* none on the device itself, then */ }
+})();
+passkeysKnown.then(renderPasskeySignIn);
+
+/** Passkeys work on this page: the browser can, the server names its site
+ * (`passkey_rp_id`), and this page is on it. A passkey belongs to a name,
+ * never an address: in development, open http://localhost, not 127.0.0.1. */
+function passkeysHere() {
+  const rp = state.config?.passkey_rp_id;
+  return passkeySupport.use && Boolean(rp) && location.hostname === rp;
+}
+
+/** Sign-up's recommendation is for a device that makes passkeys itself. */
+async function canOfferPasskey() {
+  // Known long since (making the keys took longer); a browser that never says isn't waited on.
+  await Promise.race([passkeysKnown, sleep(1000)]);
+  return passkeySupport.make && passkeysHere();
+}
+
+function renderPasskeySignIn() {
+  $("#passkey-sign-in").hidden = !(authMode === "login" && passkeysHere());
+}
+
+// WebAuthn's bytes travel as base64url without padding (the key's copy as plain base64).
+function b64url(bytes) {
+  return e2e.toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromB64url(text) {
+  const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
+  return e2e.fromB64(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "="));
+}
+
+/** The same 32 bytes every time; each passkey turns them into its own secret. */
+let prfInput = null;
+const passkeyPrfInput = () => (prfInput ??= e2e.passkeyPrfInput());
+
+/** The person closed the system's passkey sheet (or it timed out): not a problem to show. */
+const passkeyCancelled = (err) => err?.name === "NotAllowedError" || err?.name === "AbortError";
+
+/** Anything else the browser refused: plain words for the person, the details for us. */
+function passkeyTrouble(err, at) {
+  report("warn", "passkey refused by the browser", { at, name: err?.name, ...errorFields(err) });
+  return new Error("Passkeys aren't working in this browser right now. Your password still works.");
+}
+
+/** An error that trying again on this device won't fix. */
+const finalError = (text) => Object.assign(new Error(text), { final: true });
+
+/** Tells the password manager a passkey doesn't work here any more, so it can
+ * drop it too (WebAuthn's signal API, where the browser has it). */
+function forgetPasskey(rpId, credentialId) {
+  const P = window.PublicKeyCredential;
+  if (!rpId || typeof P?.signalUnknownCredential !== "function") return;
+  P.signalUnknownCredential({ rpId, credentialId }).catch(() => {});
+}
+
+const NO_PRF_HERE = "This device's passkeys can't unlock your messages, so napsack can't use them here. Your password still works.";
+
+/**
+ * Makes a passkey for this account and gives it its own copy of the private
+ * key, with the password's keys in hand: `authKey`, `wrapKey`, and the
+ * password-wrapped key. Returns false if the person closed the system's
+ * sheet; throws, in plain words, when it can't be done (`final` when trying
+ * again on this device won't help).
+ */
+async function addPasskey({ authKey, wrapKey, wrapped }) {
+  const o = await getJSON("/me/passkeys/options", { method: "POST" });
+  const input = await passkeyPrfInput();
+  let cred;
+  try {
+    cred = await navigator.credentials.create({
+      publicKey: {
+        rp: { id: o.rp_id, name: o.rp_name },
+        user: { id: fromB64url(o.user_id), name: o.user_name, displayName: o.user_name },
+        challenge: fromB64url(o.challenge),
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256, what the server checks
+        authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
+        attestation: "none",
+        excludeCredentials: (o.exclude ?? []).map((id) => ({ type: "public-key", id: fromB64url(id) })),
+        extensions: { prf: { eval: { first: input } } },
+      },
+    });
+  } catch (err) {
+    if (passkeyCancelled(err)) return false;
+    if (err?.name === "InvalidStateError") throw finalError("This device already has a passkey for napsack.");
+    throw passkeyTrouble(err, "add");
+  }
+  if (!cred) return false;
+  // From here, stopping leaves a passkey napsack doesn't know: its manager is told to drop it.
+  const orphan = () => forgetPasskey(o.rp_id, cred.id);
+  let secret;
+  try {
+    const prf = cred.getClientExtensionResults().prf;
+    secret = prf?.results?.first;
+    // Some turn PRF on when made but answer only when used: ask this one, once.
+    if (!secret && prf?.enabled) secret = await evaluatePrf(o.rp_id, cred.rawId, input);
+  } catch (err) {
+    orphan();
+    if (passkeyCancelled(err)) return false;
+    throw passkeyTrouble(err, "add");
+  }
+  if (!secret) {
+    orphan();
+    report("info", "passkey without prf", { at: "add" });
+    throw finalError(NO_PRF_HERE);
+  }
+  let wrappedKey;
+  try {
+    wrappedKey = await e2e.wrapForPasskey(wrapKey, wrapped, await e2e.deriveFromPasskey(secret));
+  } catch (err) {
+    orphan();
+    report("warn", "passkey wrap failed", errorFields(err));
+    throw new Error("That passkey couldn't be added. Try again.");
+  } finally {
+    new Uint8Array(secret).fill(0); // the secret isn't kept, in memory either
+  }
+  try {
+    const res = await getJSON("/me/passkeys", {
+      method: "POST",
+      json: {
+        auth_key: authKey,
+        client_data_json: b64url(cred.response.clientDataJSON),
+        attestation_object: b64url(cred.response.attestationObject),
+        wrapped_key: wrappedKey,
+      },
+    });
+    report("info", "passkey added", { provider: res.provider ?? "unknown" });
+    return true;
+  } catch (err) {
+    // Refused. (Not a lost answer, which may have been stored, nor "already added".)
+    if (err.status >= 400 && err.status !== 409) orphan();
+    throw err;
+  }
+}
+
+/** Asks one passkey for its PRF answer alone. The challenge goes nowhere. */
+async function evaluatePrf(rpId, rawId, input) {
+  const got = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId,
+      allowCredentials: [{ type: "public-key", id: rawId }],
+      userVerification: "required",
+      extensions: { prf: { eval: { first: input } } },
+    },
+  });
+  return got?.getClientExtensionResults().prf?.results?.first ?? null;
+}
+
+/** Signing in with any passkey the device has for napsack, then opening the
+ * private key with that passkey's secret: the same session as the password's. */
+async function signInWithPasskey() {
+  const btn = $("#passkey-sign-in");
+  const submit = $("#auth-submit");
+  if (btn.disabled || submit.disabled) return;
+  $("#auth-error").textContent = "";
+  btn.disabled = submit.disabled = true;
+  btn.textContent = "Waiting for your passkey…";
+  let secret = null;
+  try {
+    const o = await getJSON("/auth/passkey/options", { method: "POST" });
+    let cred;
+    try {
+      cred = await navigator.credentials.get({
+        publicKey: {
+          challenge: fromB64url(o.challenge),
+          rpId: o.rp_id,
+          userVerification: "required",
+          // No list: the device offers whichever passkeys it has for napsack.
+          extensions: { prf: { eval: { first: await passkeyPrfInput() } } },
+        },
+      });
+    } catch (err) {
+      if (passkeyCancelled(err)) return;
+      throw passkeyTrouble(err, "sign-in");
+    }
+    if (!cred) return;
+    secret = cred.getClientExtensionResults().prf?.results?.first ?? null;
+    if (!secret) {
+      // Without its secret the key can't be opened, so the server isn't asked at all.
+      report("info", "passkey without prf", { at: "sign-in" });
+      throw new Error("This passkey can't unlock napsack here. Sign in with your password.");
+    }
+    btn.textContent = "Unlocking…";
+    const res = await getJSON("/auth/passkey", {
+      method: "POST",
+      json: {
+        credential_id: b64url(cred.rawId),
+        client_data_json: b64url(cred.response.clientDataJSON),
+        authenticator_data: b64url(cred.response.authenticatorData),
+        signature: b64url(cred.response.signature),
+      },
+    });
+    let privateKey;
+    try {
+      privateKey = await e2e.unwrapWithPasskey(await e2e.deriveFromPasskey(secret), res.passkey_wrapped_key);
+    } catch {
+      // A session that can't read anything is no use: it ends here.
+      api("/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${res.token}` } }).catch(() => {});
+      report("warn", "passkey couldn't unlock the key");
+      throw new Error("This passkey couldn't unlock your messages. Sign in with your password.");
+    }
+    await startSession(res, privateKey);
+    $("#auth-form").reset();
+    report("info", "signed in with a passkey");
+    enterApp();
+  } catch (err) {
+    report("info", "passkey sign-in failed", errorFields(err));
+    $("#auth-error").textContent = err.message;
+  } finally {
+    if (secret) new Uint8Array(secret).fill(0);
+    btn.disabled = submit.disabled = false;
+    btn.textContent = "Sign in with a passkey";
+  }
+}
+
+$("#passkey-sign-in").addEventListener("click", signInWithPasskey);
+
+// Right after sign-up: a passkey, recommended, with the sign-up's keys still in hand.
+const passkeyOffer = { keys: null };
+
+function offerPasskey(keys) {
+  passkeyOffer.keys = keys;
+  $("#passkey-offer-text").textContent = "Next time, sign in with Face ID or your fingerprint instead of your password. "
+    + "It unlocks your messages too, and your password keeps working.";
+  $("#passkey-offer-error").textContent = "";
+  $("#passkey-offer-add").hidden = false;
+  $("#passkey-offer-later").textContent = "Not now";
+  $("#passkey-offer").showModal();
+  report("info", "passkey offered");
+}
+
+$("#passkey-offer-add").addEventListener("click", async () => {
+  const btn = $("#passkey-offer-add");
+  const keys = passkeyOffer.keys;
+  if (!keys || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "Waiting for your passkey…";
+  $("#passkey-offer-error").textContent = "";
+  try {
+    if (!await addPasskey(keys)) return; // the system's sheet was closed: the offer stands
+    passkeyOffer.keys = null;
+    $("#passkey-offer-text").textContent = "Passkey added. Next time, choose “Sign in with a passkey”.";
+    btn.hidden = true;
+    $("#passkey-offer-later").textContent = "Done";
+  } catch (err) {
+    $("#passkey-offer-error").textContent = err.message;
+    if (err.final) {
+      passkeyOffer.keys = null;
+      btn.hidden = true;
+      $("#passkey-offer-later").textContent = "OK";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Add a passkey";
+  }
+});
+$("#passkey-offer-later").addEventListener("click", () => $("#passkey-offer").close());
+$("#passkey-offer").addEventListener("close", () => {
+  if (passkeyOffer.keys) report("info", "passkey offer declined");
+  passkeyOffer.keys = null; // the password's keys aren't kept past the offer
+});
+
+// Security › Passkeys: every one on the account, from any device. Only in
+// memory, and only the server's latest answer is shown.
+const passkeyList = { items: null, rp: null, loads: 0 };
+
+async function loadPasskeys() {
+  const asked = ++passkeyList.loads;
+  let res;
+  try {
+    res = await getJSON("/me/passkeys");
+  } catch (err) {
+    report("warn", "loading passkeys failed", errorFields(err));
+    return;
+  }
+  if (asked !== passkeyList.loads) return; // a newer answer is on its way
+  passkeyList.items = res.passkeys;
+  passkeyList.rp = res.rp_id;
+  renderPasskeys();
+}
+
+function renderPasskeys() {
+  $("#passkey-add").hidden = !passkeysHere();
+  const list = $("#passkey-list");
+  const items = passkeyList.items;
+  if (!items) {
+    list.replaceChildren(); // nothing claimed before the server answers
+    return;
+  }
+  if (!items.length) {
+    list.replaceChildren(el("li", { class: "passkey-none", text: "No passkeys yet." }));
+    return;
+  }
+  // Merged into what's shown, so a "Tap again" already showing stays.
+  const shown = new Map([...list.querySelectorAll("li[data-id]")].map((li) => [li.dataset.id, li]));
+  list.replaceChildren(...items.map((p) => {
+    const li = shown.get(String(p.id)) ?? passkeyRow(p);
+    $(".person-name", li).textContent = p.provider || "Passkey";
+    // Each part kept whole (no-break spaces), so a phone wraps between them.
+    $(".person-meta", li).textContent = [
+      `Added ${dayName(p.created_at)}`,
+      p.last_used_at ? `last used ${dayName(p.last_used_at)}` : "not used yet",
+    ].map((part) => part.replace(/ /g, "\u00a0")).join(" · ");
+    return li;
+  }));
+}
+
+/** "today", "yesterday", or the date. */
+function dayName(ts) {
+  const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const ago = Math.round((midnight(new Date()) - midnight(new Date(ts * 1000))) / 86_400_000);
+  return ago === 0 ? "today" : ago === 1 ? "yesterday" : longDate(ts);
+}
+
+function passkeyRow(p) {
+  const remove = el("button", { type: "button", class: "button", onclick: () => removePasskey(remove, p) }, "Remove");
+  return el("li", { class: "person passkey", "data-id": String(p.id) },
+    el("span", { class: "passkey-text" }, el("span", { class: "person-name" }), el("span", { class: "person-meta" })),
+    remove);
+}
+
+/** Two taps, like removing someone from a group. */
+async function removePasskey(btn, p) {
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again to remove";
+    btn.classList.add("danger");
+    return;
+  }
+  btn.disabled = true;
+  $("#passkey-note").textContent = "";
+  try {
+    await api(`/me/passkeys/${p.id}/remove`, { method: "POST" });
+  } catch (err) {
+    $("#passkey-note").textContent = err.message;
+    btn.disabled = false;
+    loadPasskeys(); // it may be gone already
+    return;
+  }
+  report("info", "passkey removed");
+  forgetPasskey(passkeyList.rp ?? state.config?.passkey_rp_id, p.credential_id);
+  passkeyList.items = passkeyList.items?.filter((x) => x.id !== p.id) ?? null;
+  renderPasskeys();
+  $("#passkey-note").textContent = "Passkey removed.";
+  loadPasskeys();
+}
+
+$("#passkey-add").addEventListener("click", () => {
+  $("#passkey-note").textContent = "";
+  openPasswordDialog("passkey");
 });
 
 // ---------- deleting your own account (F22) ----------
@@ -874,6 +1279,8 @@ $("#username-form").addEventListener("submit", async (e) => {
 async function renderSecurity() {
   $("#share-activity").checked = Boolean(state.me.share_activity);
   renderPushStatus();
+  renderPasskeys(); // what's known at once, then the server's answer
+  loadPasskeys();
   $("#security-status").textContent = state.me.has_recovery_key ? "Recovery key saved." : "No recovery key yet.";
   try {
     const s = await getJSON("/me/security");
@@ -995,6 +1402,7 @@ function signOutLocally(notice = null) {
 
 async function forgetEverything(notice) {
   $("#app").hidden = true; // nothing of theirs stays on screen while it goes
+  afterRecoveryKey = null; // closing the recovery key's dialog mustn't open the passkey offer
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   const ws = state.ws;
   state.ws = null;
@@ -3874,6 +4282,7 @@ function renderProfileEdit(p) {
   $("#profile-picture-row").hidden = !mine;
   $("#profile-security").hidden = !mine;
   $("#security-note").textContent = "";
+  $("#passkey-note").textContent = "";
   if (mine) renderSecurity();
   if (mine) renderUsername(p);
   $("#profile-picture-clear").hidden = !p.avatar_id;
@@ -5618,6 +6027,7 @@ async function loadIdentityFor(me) {
   const fresh = fetch("/api/config").then((r) => r.json()).then((c) => {
     cache.put("config", c);
     state.config = c; // the server's, whenever it arrives
+    renderPasskeySignIn(); // a kept copy may be from before passkeys
     return c;
   });
   fresh.catch(() => {});

@@ -805,6 +805,16 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .profile-security .picture-row { flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
 #safety-trust { width: 100%; }
 
+/* ---------- passkeys (F26) ---------- */
+.passkey-list { margin-top: 0.25rem; }
+.passkey-list .person { gap: 0.75rem; }
+/* The name over its dates, which wrap on a phone rather than push the button out. */
+.passkey-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
+.passkey-text .person-meta { white-space: normal; }
+.passkey-none { padding: 0.35rem 0; color: var(--fixer); font-size: var(--step--1); }
+/* Sign-up's offer: both choices the width of the sheet, the one recommended first. */
+.offer-actions { display: grid; gap: 0.5rem; }
+
 /* admin: reset codes */
 .reset-button {
   border: 1px solid var(--rule); border-radius: 999px; background: none; color: var(--fixer);

@@ -13,6 +13,10 @@ import os, re
 from playwright.async_api import expect
 
 BASE = os.environ.get("NAPSACK_URL", "http://127.0.0.1:8099").rstrip("/")
+# The same server by name: browsers make passkeys only for a name, never an
+# address, and a local server's passkeys are for "localhost" (webauthn.rs).
+# A page here is another origin, with storage of its own.
+PASSKEY_BASE = re.sub(r"^http://127\.0\.0\.1(?=[:/]|$)", "http://localhost", BASE)
 INVITE = os.environ.get("NAPSACK_INVITE", "letmein")
 ADMIN = os.environ.get("NAPSACK_ADMIN", "e2e_admin")
 DB = os.environ.get("NAPSACK_DB") or None
@@ -46,16 +50,17 @@ async def launch(pw, full=False, chrome=False, **kw):
 
 
 async def open_page(browser, errors=None, label=None, console=False, init=None,
-                    permissions=None, prepare=None, goto=True, **ctx):
+                    permissions=None, prepare=None, goto=True, base=BASE, **ctx):
     """A page in a new context (`ctx`: viewport, PHONE, ...), at the app unless
     `goto` is false. Page errors go to `errors`, as "label: error" when
     labelled; with `console`, so do console errors other than the 4xx a
     failed request logs. `init`: a script run before the app's own;
     `permissions`: granted for the app's origin; `prepare(page)`: anything
-    else needed before it loads (routes)."""
+    else needed before it loads (routes, a passkey authenticator); `base`:
+    where the app is (PASSKEY_BASE for passkeys)."""
     context = await browser.new_context(**ctx)
     if permissions:
-        await context.grant_permissions(permissions, origin=BASE)
+        await context.grant_permissions(permissions, origin=base)
     if init:
         await context.add_init_script(init)
     page = await context.new_page()
@@ -68,7 +73,7 @@ async def open_page(browser, errors=None, label=None, console=False, init=None,
     if prepare:
         await prepare(page)
     if goto:
-        await page.goto(BASE)
+        await page.goto(base)
     return page
 
 
@@ -138,14 +143,22 @@ def row(page, name):
     return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
-async def save_recovery_key(page):
+async def save_recovery_key(page, keep_offer=False):
     """A new account is shown its recovery key once, in a dialog that stays
-    until it's saved. Tests save it and go on. Returns the key."""
+    until it's saved. Tests save it and go on. Returns the key.
+
+    Where a passkey can be made, a passkey offer replaces the dialog in the
+    same moment (app.js, runAfterRecoveryKey), so once the dialog is gone
+    whether there's an offer is settled: it's answered "Not now", unless
+    `keep_offer` leaves it to the test."""
     await expect(page.locator("#recovery-dialog")).to_be_visible(timeout=SIGN_IN_WAIT)
     key = await page.locator("#recovery-key").text_content()
     await page.check("#recovery-saved")
     await page.click("#recovery-done")
     await expect(page.locator("#recovery-dialog")).to_be_hidden()
+    if not keep_offer and await page.locator("#passkey-offer").is_visible():
+        await page.click("#passkey-offer-later")
+        await expect(page.locator("#passkey-offer")).to_be_hidden()
     return key
 
 
