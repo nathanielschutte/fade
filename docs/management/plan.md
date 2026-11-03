@@ -371,10 +371,10 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-11-03): plan it and build it (was "not now", 2026-11-02). An optional lock when the app opens or comes back after a while: Face ID, falling back to the phone's passcode. Off by default; a switch in Settings. The app's screen blurs in the app switcher while it's locked.
 
 #### F25. Sign in by scanning from a signed-in device
-- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first.
+- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate).
 
 #### F26. Passkeys
-- Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first (how it sits beside the password and the recovery key).
+- Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first: [passkeys.md](../design/passkeys.md) (proposed, 2026-11-03: a third wrap of the key, beside the password's and the recovery key's; two questions for Nate).
 
 ### Debug
 
