@@ -15,6 +15,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 ### Your messages
 - **Direct texts, pics, captions, and reactions are end-to-end encrypted** in the sender's app and decrypted in the recipient's. The server stores ciphertext and can't read it. Neither could anyone who stole the database.
 - **Passwords never reach the server.** The app turns the password into a sign-in key and a separate key that unlocks your messages; the server only ever sees the first, and stores only a slow hash (Argon2) of it.
+- **Neither does a passkey's secret.** Signing in with a passkey (F26) also has to unlock your private key, so each passkey keeps a copy of it, wrapped by a secret only that passkey can produce (WebAuthn's PRF extension). The server stores the passkey's public key (to check its signatures), its id, a signature count, where it's kept ("iCloud Keychain", from its authenticator's well-known id) and when it was added and last used, and the wrapped copy, which it can't open. A passkey that can't produce the secret isn't used at all ([passkeys.md](design/passkeys.md)).
 - **Safety codes** let two friends check nobody is in the middle. A changed key blocks sending until you've decided, and old keys stay on your device so history stays readable.
 - **Not end-to-end encrypted yet:** group chats, profile names and pictures. The server can read those (they're friends-only, enforced by the server). The app says so in every group.
 
@@ -24,6 +25,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Each person can be signed in on **10 devices**; an eleventh sign-in quietly signs out the one used least recently (a session whose browser forgot it is never used again, so it goes first). A session lasts a year and renews while it's used.
 - Changing your password, using your recovery key, or an admin reset signs out every other device, and their live connections close at once.
 - Deleting an account takes the password (wrong tries count toward the sign-in lock above) and the username typed again, and only ever deletes your own; nobody else, Admins included, can delete an account. A deleted account's username is held for 30 days (as a keyed hash), so nobody can sign up as it and pose as the person ([account-deletion.md](design/account-deletion.md)).
+- **Passkeys** sign in without the password. Adding one needs the password (wrong tries count toward the sign-in lock above), so a stolen session can't plant a way in. The server checks every passkey itself (`webauthn.rs`): ES256 signatures only, the person verified by Face ID, a fingerprint, or a PIN, its own site and origin (staging's passkeys are staging's), each challenge answered once within 5 minutes, and a signature count that only goes up. Removing one marks it ended, at once; an admin's reset code ends all of an account's passkeys (their copies are of the old key); a turned-off account can't sign in with one either.
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
 
 ### Everything people type or upload
@@ -59,7 +61,9 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Live connections, whole server | 500 | `FADE_MAX_SOCKETS` |
 | Live connections per person | 10 (a new one closes the oldest) | |
 | Writes (sending, reacting, ...) | 600 per 10 minutes, per address and per session | |
-| Sign-in and sign-up attempts | 30 per address per 10 minutes | |
+| Sign-in and sign-up attempts | 30 per address per 10 minutes (signing in with a passkey too: asking for its challenge and answering it each count) | |
+| Passkeys | 10 per person | |
+| Passkey challenges waiting, whole server | 10,000 (each answered once, within 5 minutes; past that, "busy, try again") | |
 | Wrong passwords | 10 per username per 15 minutes | |
 | Image uploads | 60 per person per 10 minutes, decoded one at a time | |
 | Friend requests | 50 per person per day | |
@@ -97,4 +101,4 @@ Being honest about the gaps:
 
 The settings in the table are environment variables. Add the line to `local.env_file` in `infra/main.tf` (for example `"FADE_MAX_ACCOUNTS=150",`), run `terraform plan` and `apply` (it only updates the settings parameter), then restart: `scripts/ssh.sh "sudo systemctl restart fade"`. The rest are constants in `server/src/` (`guard.rs`, `main.rs`), changed with a release.
 
-Every limit has a test: `server/src/guard.rs` (unit tests) and `tests/smoke_test.py` (`check_guard`, `check_rate_limits`).
+Every limit has a test: `server/src/guard.rs` (unit tests) and `tests/smoke_test.py` (`check_guard`, `check_rate_limits`, and `check_passkeys` for passkeys per person).

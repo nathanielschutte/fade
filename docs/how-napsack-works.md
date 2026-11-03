@@ -9,6 +9,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [What happens to your password](#what-happens-to-your-password)
 - [Your keys, and where they live](#your-keys-and-where-they-live)
 - [Forgot your password?](#forgot-your-password)
+- [Passkeys](#passkeys)
 - [Sending a message](#sending-a-message)
 - [Pics](#pics)
 - [Group chats](#group-chats)
@@ -41,6 +42,7 @@ Every direct text and pic, and every group message and pic, is encrypted in the 
 | Roughly how long each message is | Your private key, unwrapped |
 | When texts were read and whether pics were opened | The key you share with each friend |
 | Each account's public key | The key that opens each group message |
+| Which passkeys you have, where they're kept, and when each was last used | A passkey's secret, or the key it makes |
 
 ## The parts
 
@@ -87,7 +89,7 @@ Signing in on a new device:
 3. **Unlock it locally.** The wrap key opens it. A wrong password simply fails here.
 4. **Keep it in the browser.** Stored in IndexedDB as a non-extractable key: page code can use it but can't read it out.
 
-That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it.
+That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. A passkey can do the same instead of the password: see [Passkeys](#passkeys). Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it.
 
 **What the app keeps between visits.** So napsack opens at once, even on a slow connection, the browser also keeps the server's last answers in a separate IndexedDB database (`napsack-cache`): your chat list, your groups, the newest page of each chat you've opened, and the settings. They're kept exactly as the server sent them, so message text stays encrypted there and is decrypted only when shown, the same as when it arrives. Pics and videos are never kept (they're view-once). The server's fresh answer replaces what was kept as soon as it arrives, and signing out deletes it all. Names, usernames, and group names are kept too; the server stores those in the clear anyway.
 
@@ -108,6 +110,29 @@ The password unlocks your private key, and nobody else has a copy. So "reset my 
 The server never sees the recovery key or the private key. Making a recovery key later, or a new one, needs your password. Otherwise someone with a stolen session could plant their own. The pinned test vectors are in `tests/vectors/recovery.json`.
 
 **A reset code from an admin (no history).** If you've lost both, an admin can give you a one-time reset code (16 characters, good for 24 hours, stored only as a hash). With it you choose a new password, and your browser makes a brand-new key pair. You keep your account, friends and groups, but messages from before can't be read by you or anyone else, so they don't count as unread, and pics still waiting for you expire. Your friends see a changed safety code (below). The old keys aren't thrown away: if you ever remember the old password, the history it protects could still be unlocked.
+
+## Passkeys
+
+A passkey signs you in with Face ID, a fingerprint, or your device's PIN instead of your password. It's kept by your device or password manager (iCloud Keychain, Google Password Manager, a security key, ...), which may sync it to your other devices. Most apps use a passkey only to prove who you are. napsack also needs your private key on the device, so each passkey unlocks a third copy of it, beside the password's and the recovery key's.
+
+That's possible because of WebAuthn's **PRF** extension: asked for the same input, a passkey always gives back the same 32-byte secret. Every passkey gives a different one, and nobody without the passkey can work it out.
+
+```
+input  = SHA-256("napsack/v1/passkey/prf")      the same for every napsack passkey
+secret = PRF(passkey, input)                    32 bytes; only this passkey gives them
+└─ HKDF · info "napsack/v1/passkey/wrap"  → passkey wrap key (AES-256-GCM), never leaves the device
+   └─ wraps a copy of your private key, associated string "napsack/v1/passkey"
+```
+
+| Step | What happens |
+|---|---|
+| Adding one | Right after you sign up, napsack recommends one, made with the keys it just made, so you don't type the password again. Any time later: your profile, Passkeys, Add a passkey, with your password (as for a recovery key, so a stolen session can't add one). Your device makes the passkey and gives its secret; your browser wraps a copy of your private key with it and sends that copy and the passkey's public key. |
+| Signing in | Sign in with a passkey: the server sends a challenge, and your device signs it with the passkey once you've used Face ID, and gives the secret again. The server checks the signature and answers with a session and that passkey's copy, which your browser opens. No password is typed. |
+| Removing one | It stops working at once, and your browser tells the password manager to drop it, where it can. |
+
+The server keeps each passkey's public key, its id, a signature count, where it's kept, when it was added and last used, and the wrapped copy. It never sees the secret, the wrap key, or your private key, so the copy is as useless to it as the password's. A passkey that can't give the secret (some browsers and devices don't support PRF yet) is never used: napsack says so, and the password works everywhere.
+
+Changing your password leaves passkeys working, since the private key is the same. An admin's reset code gives you a new key, so it ends every passkey. A passkey synced by iCloud Keychain or a password manager goes wherever that account goes: that's the platform's protection, as for saved passwords. A passkey belongs to a site's name, so staging's (`staging.napsack.io`) work only there. The pinned test vectors are in `tests/vectors/passkey1.json`; the design is in [passkeys.md](design/passkeys.md).
 
 ## Sending a message
 
@@ -267,7 +292,7 @@ Either way, your browser keeps the old key locally, so you can still read everyt
 
 ## Limits
 
-- **A forgotten password and a lost recovery key mean unreadable history.** The key can only be unlocked with one of them. An admin can give the account back, but nobody, including whoever runs the server, can recover the old messages.
+- **A forgotten password, a lost recovery key, and no passkey mean unreadable history.** The key can only be unlocked with one of them. An admin can give the account back, but nobody, including whoever runs the server, can recover the old messages.
 - **A weak password is the weakest link.** Someone who stole the database could try passwords offline against the wrapped key. The 600,000-round stretch makes each guess slow, but a short or common password will still fall. Use a long one.
 - **The server delivers the app.** The web app's JavaScript comes from the same server. A compromised server could ship code that leaks keys as you type. Every browser-based encrypted app shares this problem. A native app, whose code is signed and reviewed before install, closes it.
 - **No forward secrecy.** Each pair of friends uses one long-lived key. If a password and old ciphertext both leaked, past messages could be read. Signal-style ratcheting fixes this at real complexity.
@@ -308,3 +333,5 @@ Backups last 30 days, so 30 days after you delete your account it's in no copy a
 | Associated data | Context (sender, recipient, kind) checked during decryption but not encrypted. |
 | Wrapping | Encrypting a key with another key. Your private key is wrapped with your wrap key. |
 | Pinning | Remembering a friend's key the first time you see it, and warning if it changes. |
+| Passkey | A sign-in your device or password manager keeps, used with Face ID or a fingerprint: it signs a challenge instead of sending a secret. |
+| PRF | A passkey feature that turns a fixed input into a secret only that passkey can give. napsack wraps a copy of your private key with it. |
