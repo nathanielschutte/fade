@@ -39,3 +39,4 @@ The server's boot script contains the domain (Caddy's config), and changing it r
 
 - **GitHub:** set the repository variable `APP_URL` to `https://napsack.io` (`terraform -chdir=infra output github_variables` lists them). The release workflow uses it to check a deploy.
 - **The getattr.com records** (`napsack.getattr.com`, `fade.getattr.com`) stay pointing at the Elastic IP for as long as the redirects should work. Caddy needs them to renew those certificates.
+- **The iPhone app:** its links (Associated Domains) name the site: `NAPSACK_LINK_HOST` in `ios/Config/Release.xcconfig`. A new domain needs a new app build for links to open the app; until then they open the site. The app's API name (`api.napsack.io`) is meant to stay put ([api-host.md](../implementation/api-host.md)).

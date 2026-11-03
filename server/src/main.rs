@@ -87,6 +87,10 @@ pub struct Config {
     /// front of links people share (`/i/<token>`), since they talk to the
     /// API on its own name (api.napsack.io) and the links must open the site.
     pub site_url: Option<String>,
+    /// The iPhone app, `<team>.<bundle id>` (`FADE_APPLE_TEAM_ID`,
+    /// `FADE_IOS_BUNDLE_ID`): named in the site's app-site association
+    /// (web.rs), so its links open the app. None without a team.
+    pub apple_app_id: Option<String>,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
     pub push_allow_local: bool,
     /// Which non-production copy this is ("staging"), or None for production
@@ -119,6 +123,30 @@ fn environment(raw: &str) -> anyhow::Result<Option<String>> {
         "FADE_ENVIRONMENT must be a short name of letters, digits, and hyphens, like \"staging\""
     );
     Ok(Some(name))
+}
+
+/// `<team>.<bundle id>`, or None without a team. Apple's team ids are ten
+/// capital letters and digits; bundle ids letters, digits, dots, and hyphens.
+fn apple_app_id(team: &str, bundle: &str) -> anyhow::Result<Option<String>> {
+    let team = team.trim();
+    if team.is_empty() {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        team.len() == 10
+            && team
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
+        "FADE_APPLE_TEAM_ID must be the team's ten-character id"
+    );
+    anyhow::ensure!(
+        !bundle.is_empty()
+            && bundle
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'),
+        "FADE_IOS_BUNDLE_ID must be a bundle id, like com.getattr.napsack"
+    );
+    Ok(Some(format!("{team}.{bundle}")))
 }
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> {
@@ -167,6 +195,10 @@ impl Config {
             site_url: std::env::var("FADE_PUBLIC_URL")
                 .ok()
                 .filter(|u| !u.is_empty()),
+            apple_app_id: apple_app_id(
+                &std::env::var("FADE_APPLE_TEAM_ID").unwrap_or_default(),
+                &env_or("FADE_IOS_BUNDLE_ID", "com.getattr.napsack".to_string())?,
+            )?,
             push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
             environment: environment(&std::env::var("FADE_ENVIRONMENT").unwrap_or_default())?,
             limits: {
@@ -742,7 +774,26 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::environment;
+    use super::{apple_app_id, environment};
+
+    #[test]
+    fn apple_app_ids() {
+        assert_eq!(apple_app_id("", "com.x").unwrap(), None);
+        assert_eq!(
+            apple_app_id(" CW65RXN64U ", "com.getattr.napsack")
+                .unwrap()
+                .as_deref(),
+            Some("CW65RXN64U.com.getattr.napsack")
+        );
+        for (team, bundle) in [
+            ("short", "com.x"),
+            ("cw65rxn64u", "com.x"),
+            ("CW65RXN64U", ""),
+            ("CW65RXN64U", "com.x\"], \"y"),
+        ] {
+            assert!(apple_app_id(team, bundle).is_err(), "{team:?} {bundle:?}");
+        }
+    }
 
     #[test]
     fn environment_names() {

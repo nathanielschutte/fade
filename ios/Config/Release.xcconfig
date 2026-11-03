@@ -12,3 +12,5 @@ VALIDATE_PRODUCT = YES
 NAPSACK_SERVER_URL = $(NAPSACK_RELEASE_SERVER_URL)
 // TestFlight and the App Store: production's push server (Notifications.swift).
 NAPSACK_APS_ENVIRONMENT = production
+// Links on the real site open TestFlight and App Store builds.
+NAPSACK_LINK_HOST = napsack.io

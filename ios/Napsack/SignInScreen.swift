@@ -17,10 +17,25 @@ struct SignInScreen: View {
     @State private var working = false
     @State private var problem: String?
     @State private var recovering = false
+    /// A friend's link opened while signed out (Links.swift).
+    @State private var links = FriendLinks.shared
+
+    /// A link that works: sign up with it, no invite code needed.
+    private var inviter: FriendLinks.Inviter? { links.pending?.inviter }
 
     var body: some View {
         NavigationStack {
             Form {
+                if let invite = links.pending, invite.inviter != nil || invite.problem != nil {
+                    // As the web's banner (app.js, showInviteBanner).
+                    Section {
+                        if let inviter = invite.inviter {
+                            Text("\(inviter.username) invited you to napsack. Pick a username and password, and you'll be friends.")
+                        } else if let problem = invite.problem {
+                            Text(problem).foregroundStyle(.red)
+                        }
+                    }
+                }
                 Section {
                     TextField("Username", text: $username)
                         .textContentType(.username)
@@ -29,7 +44,7 @@ struct SignInScreen: View {
                     SecureField("Password", text: $password)
                         .textContentType(creating ? .newPassword : .password)
                         .onSubmit(submit)
-                    if creating && inviteRequired {
+                    if creating && inviteRequired && inviter == nil {
                         TextField("Invite code", text: $inviteCode)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -65,6 +80,7 @@ struct SignInScreen: View {
             }
             .navigationTitle("napsack")
             .sheet(isPresented: $recovering) { RecoverScreen(username: username) }
+            .onChange(of: inviter, initial: true) { _, inviter in if inviter != nil { creating = true } }
             // Whether to ask for an invite code depends on the server.
             .task(id: creating) {
                 let config = try? await Server(server).config()
@@ -82,7 +98,8 @@ struct SignInScreen: View {
             defer { working = false }
             do {
                 if creating {
-                    try await session.signUp(server: server, username: username, password: password, inviteCode: inviteRequired ? inviteCode : nil)
+                    try await session.signUp(server: server, username: username, password: password,
+                                             inviteCode: inviteRequired ? inviteCode : nil, inviteToken: inviter != nil ? links.pending?.token : nil)
                 } else {
                     try await session.signIn(server: server, username: username, password: password)
                 }
