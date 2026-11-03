@@ -41,10 +41,11 @@ struct SettingsScreen: View {
                                         .foregroundStyle(.white, Color(.systemGray))
                                         // A ring in the row's color, so it sits apart from the picture.
                                         .background(Circle().fill(Color(.secondarySystemGroupedBackground)).padding(-2))
-                                        .frame(width: 32, height: 32)
-                                        .contentShape(Circle())
+                                        // A finger's worth to tap (44 points), around the small x.
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
-                                .offset(x: 10, y: -10)
+                                .offset(x: 16, y: -16)
                                 .accessibilityLabel("Remove picture")
                             }
                         }
