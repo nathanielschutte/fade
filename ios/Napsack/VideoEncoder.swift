@@ -39,6 +39,13 @@ enum VideoEncoder {
     /// Encodes `source` to a new MP4 that fits `maxBytes` (once more, smaller,
     /// if the first try came out too big). The caller removes the file.
     static func mp4(_ source: URL, maxBytes: Int, seconds: Int) async throws -> URL {
+        try await mp4([source], maxBytes: maxBytes, seconds: seconds)
+    }
+
+    /// The same for a recording in parts, one after another (one part per
+    /// camera, when it was switched while recording).
+    static func mp4(_ parts: [URL], maxBytes: Int, seconds: Int) async throws -> URL {
+        let source = try await joined(parts)
         var bitrate = bitrate(maxBytes: maxBytes, seconds: seconds)
         for attempt in 0..<2 {
             let out = FileManager.default.temporaryDirectory.appending(path: "napsack-video-\(UUID().uuidString).mp4")
@@ -52,8 +59,52 @@ enum VideoEncoder {
         throw Problem.tooLarge
     }
 
-    static func encode(_ source: URL, to out: URL, videoBitrate: Int) async throws {
+    /// Parts as one asset, back to back. Each camera records at its own size;
+    /// the encoder scales every frame to one (`AVVideoScalingModeKey`).
+    static func joined(_ parts: [URL]) async throws -> AVAsset {
+        guard parts.count > 1 else {
+            guard let only = parts.first else { throw Problem.noVideo }
+            return AVURLAsset(url: only)
+        }
+        let joined = AVMutableComposition()
+        guard let video = joined.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let audio = joined.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw Problem.failed }
+        var at = CMTime.zero
+        for part in parts {
+            let asset = AVURLAsset(url: part)
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { continue }
+            let (range, transform) = try await track.load(.timeRange, .preferredTransform)
+            try video.insertTimeRange(range, of: track, at: at)
+            if at == .zero { video.preferredTransform = transform }  // the cameras' are the same: upright, as held
+            if let sound = try await asset.loadTracks(withMediaType: .audio).first {
+                let soundRange = try await sound.load(.timeRange).intersection(range)
+                if soundRange.duration > .zero { try audio.insertTimeRange(soundRange, of: sound, at: at) }
+            }
+            at = at + range.duration
+        }
+        guard at > .zero else { throw Problem.noVideo }
+        if audio.segments.isEmpty { joined.removeTrack(audio) }
+        return joined
+    }
+
+    /// The same video without its sound (the sound button, as on the web): its
+    /// picture copied as it is, nothing encoded again. The caller removes the file.
+    static func withoutSound(_ source: URL) async throws -> URL {
         let asset = AVURLAsset(url: source)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw Problem.noVideo }
+        let picture = AVMutableComposition()
+        guard let video = picture.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw Problem.failed }
+        let (range, transform) = try await track.load(.timeRange, .preferredTransform)
+        try video.insertTimeRange(range, of: track, at: .zero)
+        video.preferredTransform = transform
+        guard let export = AVAssetExportSession(asset: picture, presetName: AVAssetExportPresetPassthrough) else { throw Problem.failed }
+        export.shouldOptimizeForNetworkUse = true
+        let out = FileManager.default.temporaryDirectory.appending(path: "napsack-video-\(UUID().uuidString).mp4")
+        try await export.export(to: out, as: .mp4)
+        return out
+    }
+
+    static func encode(_ asset: AVAsset, to out: URL, videoBitrate: Int) async throws {
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else { throw Problem.noVideo }
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         let (natural, transform) = try await videoTrack.load(.naturalSize, .preferredTransform)
