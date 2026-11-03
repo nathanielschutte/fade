@@ -23,9 +23,9 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it |
+| 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side waits on a try on the phone |
 | 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
-| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03) |
+| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side waits on a try on the phone |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
 | 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
 | 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
@@ -118,6 +118,8 @@ Oldest first; newly shipped rows go at the bottom.
 | [People signed out long before their sessions end](#d15-people-signed-out-long-before-their-sessions-end) | 0.46.0 | Nate |
 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | 0.47.0, infra | Nate |
 | [iOS app](plan-ios.md): iPhone notifications through Apple (APNs) and add-a-friend links opening the app, the server side | 0.48.0 | Nate |
+| [Privacy policy and support pages](plan-ios.md#12-into-peoples-hands) | 0.48.1 | Nate |
+| [Delete your own account](#f22-delete-your-own-account) and [easier sign-in](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved), the server and web; backups for 30 days | 0.49.0, infra | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
