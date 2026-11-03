@@ -214,6 +214,12 @@ pub(crate) mod tests {
     use crate::db::tests::{assert_searches, plan, temp_db};
     use crate::testdata::{self, *};
 
+    /// Marking read as it was before migration 0028.
+    pub(crate) const OLD_MARK_READ: &str = "UPDATE messages SET read_at = ?
+         WHERE sender_id = ? AND recipient_id = ? AND kind = 'text' AND read_at IS NULL";
+
+    pub(crate) const NEW_MARK_READ: &str = MARK_READ;
+
     /// A page as the old query read it (both ways at once, sorted).
     pub(crate) async fn old_page_of(
         db: &sqlx::SqlitePool,
