@@ -11,6 +11,17 @@
 //! Apple takes a token for each request: an ES256 JWT signed with the team's
 //! APNs key (`FADE_APNS_*`, set by Terraform), made fresh every 40 minutes
 //! (Apple refuses one older than an hour, or new ones more often than every 20).
+//!
+//! The number on the app's icon is the chats waiting (`waiting_chats`). Every
+//! notification carries it, and when it changes without one (read on the
+//! web, a pic opened, a chat muted, a group left, a friend removed, turned
+//! off, or deleted) the person's iPhones get the new number on its own, with
+//! no alert and no sound (`badge_changed`). Two changes only time makes wait
+//! for the next notification or the app opening: a timed mute running out,
+//! and an old chat's unread texts coming back with a friendship resumed.
+
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use std::sync::LazyLock;
 
@@ -31,6 +42,7 @@ use crate::{
     auth::{bearer_token, hash_token, AuthUser},
     db::now,
     error::{AppError, AppResult},
+    marks::{HIDDEN_UPTO, MUTED_FRIEND, MUTED_GROUP},
     people::SINCE_MY_KEY,
     push::Note,
     SharedState,
@@ -47,6 +59,9 @@ const MAX_DEVICES: i64 = 10;
 const EXPIRES_IN: i64 = 86400;
 /// A fresh JWT this often.
 const TOKEN_LIFETIME: i64 = 40 * 60;
+/// A badge update waits this long, so a burst of changes (reading one chat
+/// after another) makes one update: at most one per person this often.
+const BADGE_DELAY: Duration = Duration::from_secs(1);
 
 pub struct Apns {
     key: SigningKey,
@@ -55,6 +70,12 @@ pub struct Apns {
     /// The app's bundle id, the `apns-topic` of every request.
     topic: String,
     token: std::sync::Mutex<Option<(i64, String)>>,
+    /// The badge each person's iPhones were last given, by a notification or
+    /// a badge update, so an update goes only when the number changes. In
+    /// memory: after a restart, the first change goes either way.
+    badges: std::sync::Mutex<HashMap<i64, i64>>,
+    /// People with a badge update waiting to go (one each at most).
+    updating: std::sync::Mutex<HashSet<i64>>,
 }
 
 impl Apns {
@@ -93,7 +114,26 @@ impl Apns {
             team_id,
             topic,
             token: std::sync::Mutex::new(None),
+            badges: Default::default(),
+            updating: Default::default(),
         })
+    }
+
+    /// Whether `badge` is news to `user`'s iPhones.
+    fn badge_differs(&self, user: i64, badge: i64) -> bool {
+        self.badges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&user)
+            != Some(&badge)
+    }
+
+    /// Apple took `badge` for `user`'s iPhones.
+    fn gave_badge(&self, user: i64, badge: i64) {
+        self.badges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(user, badge);
     }
 
     /// `bearer <JWT>`: the cached token while it's fresh, else a new one.
@@ -267,43 +307,55 @@ pub async fn end_for_session(db: &SqlitePool, session_hash: &str) -> sqlx::Resul
 
 // ---------- sending ----------
 
-/// The chats with something waiting for `?1`, as tags: the people with an
-/// unread text or unopened pic (read through messages_waiting, so the badge
-/// never reads a whole chat's history), then the groups with an unread text.
+/// The chats with a dot in the chat list for `?1`, each as its mute's raw
+/// value (`MUTED_FRIEND`, `MUTED_GROUP`), read by index and never a whole
+/// chat's history (`the_badge_reads_whats_waiting`).
 static WAITING: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT 'dm-' || m.sender_id FROM messages m
-              WHERE m.recipient_id = ?1
-                AND ((m.kind = 'text' AND m.read_at IS NULL) OR (m.kind = 'snap' AND m.snap_state = 'pending'))
-                AND m.created_at > {SINCE_MY_KEY}
-                AND (EXISTS (SELECT 1 FROM friendships f WHERE f.ended_at IS NULL
-                              AND ((f.user_lo = ?1 AND f.user_hi = m.sender_id) OR (f.user_hi = ?1 AND f.user_lo = m.sender_id)))
-                     OR EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = m.sender_id))
-              GROUP BY m.sender_id
-             UNION ALL
-             SELECT 'group-' || g.group_id FROM group_members g
-              WHERE g.user_id = ?1 AND g.left_at IS NULL
-                AND EXISTS (SELECT 1 FROM group_messages gm
-                             WHERE gm.group_id = g.group_id AND gm.id > g.last_read_id AND gm.kind = 'text'
-                               AND gm.sender_id != ?1 AND gm.id > g.visible_after_id
-                               AND gm.created_at > {SINCE_MY_KEY})"
+        "SELECT {MUTED_FRIEND} FROM users u
+          WHERE (u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+                            FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
+                 OR EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = u.id))
+            AND NOT EXISTS (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)
+            AND EXISTS (SELECT 1 FROM messages m
+                         WHERE m.id = (SELECT MAX(x.id) FROM messages x
+                                        WHERE (x.sender_id = ?1 AND x.recipient_id = u.id)
+                                           OR (x.sender_id = u.id AND x.recipient_id = ?1))
+                           AND m.sender_id = u.id
+                           AND ((m.kind = 'text' AND m.read_at IS NULL) OR (m.kind = 'snap' AND m.snap_state = 'pending'))
+                           AND m.created_at > {SINCE_MY_KEY}
+                           AND NOT COALESCE({HIDDEN_UPTO} >= m.id, 0))
+         UNION ALL
+         SELECT {MUTED_GROUP} FROM group_members mem JOIN groups g ON g.id = mem.group_id
+          WHERE mem.user_id = ?1 AND mem.left_at IS NULL
+            AND (EXISTS (SELECT 1 FROM group_messages x
+                          WHERE x.group_id = g.id AND x.id > mem.last_read_id AND x.kind = 'text'
+                            AND x.sender_id != ?1 AND x.id > mem.visible_after_id
+                            AND x.created_at > {SINCE_MY_KEY})
+                 OR EXISTS (SELECT 1 FROM group_messages x JOIN group_pics p ON p.id = x.pic_id
+                             WHERE x.id = (SELECT MAX(y.id) FROM group_messages y
+                                            WHERE y.group_id = g.id AND y.id > mem.visible_after_id)
+                               AND x.sender_id != ?1 AND p.discard_reason IS NULL
+                               AND NOT EXISTS (SELECT 1 FROM group_pic_views v WHERE v.pic_id = p.id AND v.user_id = ?1)))"
     )
 });
 
-/// What the app's icon shows: chats with something waiting, muted ones not
-/// counted, as the app's Chats tab counts them.
+/// What the app's icon shows: the chats with a dot in the chat list, muted
+/// and hidden ones not counted, decided as the apps decide the dot
+/// (Chats.swift, `Reader.status`; app.js, `chatStatus` and `groupStatus`). A
+/// direct chat waits when its newest message is theirs and an unread text or
+/// an unopened pic (a turned-off account's chat doesn't); a group waits with
+/// an unread text, or when its newest message is someone else's pic you
+/// haven't opened. Nothing from before an admin reset code counts (D14). One
+/// thing only the app knows, a friend's changed safety code, takes that
+/// chat's dot away there and not here.
 pub async fn waiting_chats(db: &SqlitePool, user: i64) -> sqlx::Result<i64> {
-    let tags: Vec<String> = sqlx::query_scalar(&WAITING)
-        .bind(user)
-        .fetch_all(db)
-        .await?;
-    let mut count = 0;
-    for tag in tags {
-        if !crate::marks::muted_for_tag(db, user, &tag).await? {
-            count += 1;
-        }
-    }
-    Ok(count)
+    let mutes: Vec<Option<i64>> = sqlx::query_scalar(&WAITING).bind(user).fetch_all(db).await?;
+    let at = now();
+    Ok(mutes
+        .into_iter()
+        .filter(|&raw| !crate::marks::muted(raw, at).0)
+        .count() as i64)
 }
 
 /// The notification as Apple delivers it: the alert, the badge, and where
@@ -322,16 +374,20 @@ fn payload(note: &Note, badge: i64, thread: &str) -> Value {
     })
 }
 
+/// A badge update: only the number. Nothing shows or sounds, and there's
+/// nothing to tap.
+fn badge_payload(badge: i64) -> Value {
+    json!({ "aps": { "badge": badge } })
+}
+
 fn collapse_id(tag: &str, token: &str) -> String {
     crate::push::topic(tag, token.as_bytes())
 }
 
-/// Sends `note` to every iPhone `user` turned notifications on in.
-pub async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<()> {
-    let Some(apns) = &state.apns else {
-        return Ok(());
-    };
-    let devices: Vec<(i64, String, String)> = sqlx::query_as(
+/// (id, token, environment) of each iPhone `user` turned notifications on
+/// in, for a session that's still signed in.
+async fn devices(state: &SharedState, user: i64) -> sqlx::Result<Vec<(i64, String, String)>> {
+    sqlx::query_as(
         "SELECT d.id, d.token, d.environment FROM apns_devices d
          JOIN sessions s ON s.token_hash = d.session_hash
          WHERE d.user_id = ? AND d.ended_at IS NULL AND s.revoked_at IS NULL AND s.expires_at > ?",
@@ -339,64 +395,178 @@ pub async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Res
     .bind(user)
     .bind(now())
     .fetch_all(&state.db)
-    .await?;
+    .await
+}
+
+/// One request to Apple, for one device.
+struct Push {
+    body: Value,
+    /// When Apple stops trying (Unix seconds); 0 is now or never.
+    expiration: i64,
+    collapse: Option<String>,
+}
+
+/// Sends `push` to one device; true if Apple took it. A device Apple says is
+/// gone ends here.
+async fn send(
+    state: &SharedState,
+    apns: &Apns,
+    user: i64,
+    (id, token, environment): &(i64, String, String),
+    push: Push,
+) -> anyhow::Result<bool> {
+    let Some(server) = server_for(environment, state.config.push_allow_local) else {
+        return Ok(false);
+    };
+    let mut request = state
+        .http
+        .post(format!("{server}/3/device/{token}"))
+        .header("authorization", apns.authorization(now()))
+        .header("apns-topic", &apns.topic)
+        // Notifications and badge updates alike: "alert" is Apple's type for
+        // anything that shows, sounds, or badges. Both go at once (10), so an
+        // older badge can't arrive after a newer notification and undo its number.
+        .header("apns-push-type", "alert")
+        .header("apns-priority", "10")
+        .header("apns-expiration", push.expiration.to_string());
+    if let Some(collapse) = push.collapse {
+        request = request.header("apns-collapse-id", collapse);
+    }
+    match request.json(&push.body).send().await {
+        Ok(r) if r.status().is_success() => Ok(true),
+        Ok(r) => {
+            let status = r.status().as_u16();
+            // Apple says why: {"reason":"BadDeviceToken"}. It names the problem, never the message.
+            let reason: String = r
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|v| v["reason"].as_str().map(|s| s.chars().take(60).collect()))
+                .unwrap_or_default();
+            if status == 410 || (status == 400 && reason == "BadDeviceToken") {
+                // The app was removed, or the token isn't for this server.
+                sqlx::query(
+                    "UPDATE apns_devices SET ended_at = ?, end_reason = 'gone'
+                     WHERE id = ? AND ended_at IS NULL",
+                )
+                .bind(now())
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+                tracing::info!(user_id = user, device_id = id, reason = ?reason, "apns device gone");
+                return Ok(false);
+            }
+            if status == 403 {
+                apns.forget_token();
+            }
+            tracing::warn!(user_id = user, device_id = id, status, reason = ?reason, "apns refused");
+            Ok(false)
+        }
+        Err(e) => {
+            tracing::warn!(user_id = user, device_id = id, error = %e, "apns send failed");
+            Ok(false)
+        }
+    }
+}
+
+/// Sends `note` to every iPhone `user` turned notifications on in.
+pub async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Result<()> {
+    let Some(apns) = &state.apns else {
+        return Ok(());
+    };
+    let devices = devices(state, user).await?;
     if devices.is_empty() {
         return Ok(());
     }
     let badge = waiting_chats(&state.db, user).await?;
-    for (id, token, environment) in devices {
-        let Some(server) = server_for(&environment, state.config.push_allow_local) else {
-            continue;
+    let mut took = false;
+    for device in &devices {
+        let collapse = collapse_id(&note.tag, &device.1);
+        let push = Push {
+            body: payload(note, badge, &collapse),
+            expiration: now() + EXPIRES_IN,
+            collapse: Some(collapse),
         };
-        let collapse = collapse_id(&note.tag, &token);
-        let body = payload(note, badge, &collapse);
-        let sent = state
-            .http
-            .post(format!("{server}/3/device/{token}"))
-            .header("authorization", apns.authorization(now()))
-            .header("apns-topic", &apns.topic)
-            .header("apns-push-type", "alert")
-            .header("apns-priority", "10")
-            .header("apns-expiration", (now() + EXPIRES_IN).to_string())
-            .header("apns-collapse-id", collapse)
-            .json(&body)
-            .send()
-            .await;
-        match sent {
-            Ok(r) if r.status().is_success() => {
-                tracing::debug!(user_id = user, device_id = id, "apns sent");
-            }
-            Ok(r) => {
-                let status = r.status().as_u16();
-                // Apple says why: {"reason":"BadDeviceToken"}. It names the problem, never the message.
-                let reason: String = r
-                    .json::<Value>()
-                    .await
-                    .ok()
-                    .and_then(|v| v["reason"].as_str().map(|s| s.chars().take(60).collect()))
-                    .unwrap_or_default();
-                if status == 410 || (status == 400 && reason == "BadDeviceToken") {
-                    // The app was removed, or the token isn't for this server.
-                    sqlx::query(
-                        "UPDATE apns_devices SET ended_at = ?, end_reason = 'gone'
-                         WHERE id = ? AND ended_at IS NULL",
-                    )
-                    .bind(now())
-                    .bind(id)
-                    .execute(&state.db)
-                    .await?;
-                    tracing::info!(user_id = user, device_id = id, reason = ?reason, "apns device gone");
-                    continue;
-                }
-                if status == 403 {
-                    apns.forget_token();
-                }
-                tracing::warn!(user_id = user, device_id = id, status, reason = ?reason, "apns refused");
-            }
-            Err(e) => {
-                tracing::warn!(user_id = user, device_id = id, error = %e, "apns send failed")
-            }
+        if send(state, apns, user, device, push).await? {
+            tracing::debug!(user_id = user, device_id = device.0, "apns sent");
+            took = true;
         }
+    }
+    if took {
+        apns.gave_badge(user, badge);
+    }
+    Ok(())
+}
+
+/// The number on `user`'s icon may have changed with no notification to carry
+/// it: they read a chat or opened a pic (on the web, say), muted or hid a
+/// chat, a message came while napsack was on their screen elsewhere, a group
+/// event came, they left or were removed from a group, or a friend was
+/// removed, turned off or on, or deleted their account. Their
+/// iPhones get the new number on its own, with no alert and no sound: a moment
+/// later (BADGE_DELAY), so a burst of changes makes one update, and only if it
+/// isn't the number they were last given. Returns at once.
+pub fn badge_changed(state: &SharedState, user: i64) {
+    let Some(apns) = &state.apns else {
+        return;
+    };
+    if !apns
+        .updating
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(user)
+    {
+        return; // one is on its way, and counts this change too
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(BADGE_DELAY).await;
+        if let Some(apns) = &state.apns {
+            // From here on, a new change waits for its own update.
+            apns.updating
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&user);
+        }
+        if let Err(e) = update_badge(&state, user).await {
+            tracing::warn!(user_id = user, error = %e, "apns badge update failed");
+        }
+    });
+}
+
+async fn update_badge(state: &SharedState, user: i64) -> anyhow::Result<()> {
+    let Some(apns) = &state.apns else {
+        return Ok(());
+    };
+    let devices = devices(state, user).await?;
+    if devices.is_empty() {
+        return Ok(());
+    }
+    let badge = waiting_chats(&state.db, user).await?;
+    if !apns.badge_differs(user, badge) {
+        return Ok(());
+    }
+    let mut took = false;
+    for device in &devices {
+        // Now or never: Apple keeps only one push per app for a phone that's
+        // off, and a kept badge could take the place of a notification.
+        let push = Push {
+            body: badge_payload(badge),
+            expiration: 0,
+            collapse: None,
+        };
+        if send(state, apns, user, device, push).await? {
+            tracing::debug!(
+                user_id = user,
+                device_id = device.0,
+                badge,
+                "apns badge sent"
+            );
+            took = true;
+        }
+    }
+    if took {
+        apns.gave_badge(user, badge);
     }
     Ok(())
 }
@@ -520,54 +690,119 @@ mod tests {
         assert_eq!(p["url"], "/#chat=7");
     }
 
-    #[tokio::test]
-    async fn waiting_chats_counts_chats_not_messages_and_skips_muted() {
-        let db = crate::db::tests::temp_db().await;
-        let t = now();
-        for (id, name) in [(1, "me"), (2, "ana"), (3, "ben"), (4, "cat")] {
-            sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (?, ?, 'h', 'k', 'w', ?)")
-                .bind(id).bind(name).bind(t).execute(&db).await.unwrap();
-        }
-        for friend in [2, 3] {
-            sqlx::query("INSERT INTO friendships (user_lo, user_hi, created_at) VALUES (1, ?, ?)")
-                .bind(friend)
-                .bind(t)
-                .execute(&db)
-                .await
-                .unwrap();
-        }
-        let text = |from: i64| {
-            sqlx::query("INSERT INTO messages (sender_id, recipient_id, kind, ciphertext, created_at) VALUES (?, 1, 'text', 'c', ?)")
-                .bind(from).bind(t)
-        };
-        for from in [2, 2, 2, 3, 4] {
-            text(from).execute(&db).await.unwrap();
-        }
-        assert_eq!(
-            waiting_chats(&db, 1).await.unwrap(),
-            2,
-            "ana and ben; cat isn't a friend"
-        );
-        sqlx::query(
-            "INSERT INTO chat_mutes (user_id, friend_id, value, created_at) VALUES (1, 3, 1, ?)",
-        )
-        .bind(t)
-        .execute(&db)
-        .await
-        .unwrap();
-        assert_eq!(waiting_chats(&db, 1).await.unwrap(), 1, "ben is muted");
+    #[test]
+    fn a_badge_update_is_only_the_number_and_goes_on_a_change() {
+        assert_eq!(badge_payload(0), json!({ "aps": { "badge": 0 } }));
+        assert_eq!(badge_payload(4), json!({ "aps": { "badge": 4 } }));
+        let (pem, _) = test_key();
+        let apns = Apns::new(&pem, "K".into(), "T".into(), "t".into()).unwrap();
+        assert!(apns.badge_differs(7, 0), "nothing given yet: it goes");
+        apns.gave_badge(7, 2);
+        assert!(!apns.badge_differs(7, 2), "the same number again doesn't");
+        assert!(apns.badge_differs(7, 1));
+        assert!(apns.badge_differs(8, 2), "each person's own");
     }
 
-    /// The badge reads what's waiting through messages_waiting, never a
-    /// whole chat's history or every message.
+    /// The icon counts the chats with a dot, as the apps draw them: one per
+    /// chat however many messages, the newest message deciding a direct chat.
+    #[tokio::test]
+    async fn waiting_chats_counts_the_chats_with_a_dot() {
+        let db = crate::db::tests::temp_db().await;
+        let run = |sql: &'static str| sqlx::raw_sql(sql).execute(&db);
+        // 1 is me; 2 ana, 3 ben, 5 dee (turned off), 6 eve: friends; 4 cat isn't; 7 is Team Napsack.
+        run("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES
+               (1, 'me', 'h', 'k', 'w', 1), (2, 'ana', 'h', 'k', 'w', 1), (3, 'ben', 'h', 'k', 'w', 1),
+               (4, 'cat', 'h', 'k', 'w', 1), (5, 'dee', 'h', 'k', 'w', 1), (6, 'eve', 'h', 'k', 'w', 1),
+               (7, 'team', 'h', 'k', 'w', 1);
+             INSERT INTO friendships (user_lo, user_hi, created_at) VALUES (1, 2, 1), (1, 3, 1), (1, 5, 1), (1, 6, 1);
+             INSERT INTO system_accounts (user_id, kind, created_at) VALUES (7, 'team', 1);
+             INSERT INTO deactivations (user_id, deactivated_by, deactivated_at) VALUES (5, 1, 1);
+             INSERT INTO messages (id, sender_id, recipient_id, kind, ciphertext, created_at) VALUES
+               (1, 2, 1, 'text', 'c', 1), (2, 2, 1, 'text', 'c', 1), (3, 2, 1, 'text', 'c', 1),
+               (4, 3, 1, 'text', 'c', 1), (5, 1, 3, 'text', 'c', 1),
+               (6, 4, 1, 'text', 'c', 1), (7, 5, 1, 'text', 'c', 1), (8, 7, 1, 'text', 'c', 1);
+             INSERT INTO messages (id, sender_id, recipient_id, kind, snap_state, created_at) VALUES (9, 6, 1, 'snap', 'pending', 1);
+             INSERT INTO messages (id, sender_id, recipient_id, kind, ciphertext, created_at, read_at) VALUES (10, 6, 1, 'text', 'c', 1, 2);")
+            .await
+            .unwrap();
+        let count = || waiting_chats(&db, 1);
+        // Ana's three texts are one chat; ben's newest is my answer; cat isn't a
+        // friend; dee's account is off; eve's newest is a read text (her pic
+        // before it doesn't show in the list); Team Napsack counts.
+        assert_eq!(count().await.unwrap(), 2, "ana and Team Napsack");
+
+        run("INSERT INTO chat_marks (user_id, friend_id, kind, value, upto_id, created_at) VALUES (1, 2, 'hidden', 1, 3, 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "a hidden chat isn't counted");
+        run("INSERT INTO messages (id, sender_id, recipient_id, kind, ciphertext, created_at) VALUES (11, 2, 1, 'text', 'c', 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 2, "a new message brings it back");
+        run("INSERT INTO chat_mutes (user_id, friend_id, value, created_at) VALUES (1, 7, 1, 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "a muted chat isn't counted");
+        run("INSERT INTO messages (id, sender_id, recipient_id, kind, snap_state, created_at) VALUES (12, 3, 1, 'snap', 'pending', 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 2, "an unopened pic from ben");
+        run("UPDATE messages SET snap_state = 'opened' WHERE id = 12")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "opened");
+
+        // A group: unread texts from others count, then its newest pic until I open it.
+        run("INSERT INTO groups (id, name, created_by, created_at) VALUES (20, 'g', 2, 1);
+             INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (20, 2, 'owner', 1), (20, 1, 'member', 1);
+             INSERT INTO group_messages (id, group_id, sender_id, kind, body, created_at) VALUES (30, 20, 1, 'text', 'mine', 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "my own message doesn't wait");
+        run("INSERT INTO group_messages (id, group_id, sender_id, kind, body, created_at) VALUES (31, 20, 2, 'text', 'hi', 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 2, "ana's group text");
+        run("INSERT INTO group_pics (id, group_id, sender_id, bytes, mime, created_at, expires_at) VALUES (40, 20, 2, 9, 'image/jpeg', 1, 9999999999);
+             INSERT INTO group_messages (id, group_id, sender_id, kind, body, created_at, pic_id) VALUES (32, 20, 2, 'text', '', 1, 40);
+             UPDATE group_members SET last_read_id = 32 WHERE group_id = 20 AND user_id = 1")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 2, "read, but her pic is unopened");
+        run("INSERT INTO group_pic_views (pic_id, user_id, viewed_at) VALUES (40, 1, 2)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "opened");
+        run("INSERT INTO group_messages (id, group_id, sender_id, kind, body, created_at) VALUES (33, 20, 2, 'text', 'more', 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 2);
+        run("INSERT INTO chat_mutes (user_id, group_id, value, created_at) VALUES (1, 20, 1, 1)")
+            .await
+            .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "a muted group isn't counted");
+        run(
+            "INSERT INTO chat_mutes (user_id, group_id, value, created_at) VALUES (1, 20, 0, 2);
+             UPDATE group_members SET left_at = 3 WHERE group_id = 20 AND user_id = 1",
+        )
+        .await
+        .unwrap();
+        assert_eq!(count().await.unwrap(), 1, "a group I left isn't counted");
+        run("UPDATE users SET key_reset_at = 1 WHERE id = 1")
+            .await
+            .unwrap();
+        assert_eq!(
+            count().await.unwrap(),
+            0,
+            "nothing from before an admin reset code (D14)"
+        );
+    }
+
+    /// The badge searches every table by key or index, and finds each chat's
+    /// newest message without sorting its history.
     #[tokio::test]
     async fn the_badge_reads_whats_waiting() {
         let db = temp_db().await;
-        assert_searches(&db, &WAITING, &[], &[]).await;
-        let steps = plan(&db, &WAITING).await;
-        assert!(
-            steps.iter().any(|s| s.contains("INDEX messages_waiting")),
-            "{steps:#?}"
-        );
+        assert_searches(&db, &WAITING, &[], &["x", "y"]).await;
     }
 }

@@ -135,6 +135,7 @@ pub async fn mute_chat(
         "chat muted"
     );
     state.hub.send(me.id, &Event::FriendsChanged);
+    crate::apns::badge_changed(&state, me.id); // muted chats aren't counted
     Ok(Json(json!({ "muted": req.on, "muted_until": until })))
 }
 
@@ -151,6 +152,7 @@ pub async fn mute_group(
     state
         .hub
         .send(me.id, &Event::GroupsChanged { group_id: group });
+    crate::apns::badge_changed(&state, me.id);
     Ok(Json(json!({ "muted": req.on, "muted_until": until })))
 }
 
@@ -328,6 +330,7 @@ pub async fn hide_chat(
         "chat hidden"
     );
     state.hub.send(me.id, &Event::FriendsChanged);
+    crate::apns::badge_changed(&state, me.id); // hidden chats aren't counted
     Ok(Json(json!({ "hidden": t.on })))
 }
 

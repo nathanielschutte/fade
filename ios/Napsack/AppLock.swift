@@ -19,10 +19,10 @@ import SwiftUI
     private var leftAt: Date?
     private var unlocking = false
 
-    /// `enabled` is the saved choice (tests give their own).
-    init(enabled: Bool = UserDefaults.standard.bool(forKey: AppLock.enabledKey)) {
+    /// `enabled` is the saved choice (tests give their own, and may start it unlocked).
+    init(enabled: Bool = UserDefaults.standard.bool(forKey: AppLock.enabledKey), locked: Bool? = nil) {
         self.enabled = enabled
-        locked = enabled  // when the app opens
+        self.locked = locked ?? enabled  // when the app opens
     }
 
     /// What this phone has: "Face ID", "Touch ID", or its passcode.

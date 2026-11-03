@@ -17,6 +17,7 @@ struct SettingsScreen: View {
     @State private var profile: ProfileModel?
     @State private var name = ""
     @State private var picked: PhotosPickerItem?
+    @State private var confirmingRemovePicture = false
     /// Nil until you set it (Nate, 2026-10-30: one field, unset by default, saved as it's set).
     @State private var birthday: Date?
     @State private var pickingBirthday = false
@@ -29,25 +30,49 @@ struct SettingsScreen: View {
         Form {
             Section {
                 HStack(spacing: 16) {
-                    // Tap it to see it big, as on the web.
+                    // Tap it to see it big, as on the web; the x on its corner takes it away.
                     Avatar(kind: .friend(account.user.id), avatarId: profile?.profile?.avatarId, name: account.user.username, size: 64, enlarges: true)
-                    VStack(alignment: .leading, spacing: 6) {
-                        PhotosPicker(profile?.profile?.avatarId == nil ? "Choose a picture" : "Change picture", selection: $picked, matching: .images)
-                        if profile?.profile?.avatarId != nil {
-                            Button("Remove picture", role: .destructive) { change { try await $0.removePicture() } }
+                        .overlay(alignment: .topTrailing) {
+                            if profile?.profile?.avatarId != nil {
+                                Button { confirmingRemovePicture = true } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 22))
+                                        .symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, Color(.systemGray))
+                                        // A ring in the row's color, so it sits apart from the picture.
+                                        .background(Circle().fill(Color(.secondarySystemGroupedBackground)).padding(-2))
+                                        // A finger's worth to tap (44 points), around the small x.
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .offset(x: 16, y: -16)
+                                .accessibilityLabel("Remove picture")
+                            }
                         }
-                    }
-                    .buttonStyle(.borderless)  // each its own tap, not the whole row's
+                    PhotosPicker(profile?.profile?.avatarId == nil ? "Choose a picture" : "Change picture", selection: $picked, matching: .images)
                 }
+                .buttonStyle(.borderless)  // each its own tap, not the whole row's
                 HStack {
                     TextField("Your name, for friends", text: $name).textContentType(.name).onSubmit(saveName)
                     Button("Save", action: saveName).disabled(name == (profile?.profile?.displayName ?? ""))
                 }
-                Button { withAnimation { pickingBirthday.toggle() } } label: {
-                    LabeledContent("Birthday", value: birthday.map { Self.words($0, withYear: withYear) } ?? "Not set")
+                HStack {
+                    Button { withAnimation { pickingBirthday.toggle() } } label: {
+                        LabeledContent("Birthday", value: birthday.map { Self.words($0, withYear: withYear) } ?? "Not set")
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityHint(pickingBirthday ? "Hides the date picker" : "Shows a date picker")
+                    if birthday != nil {
+                        // Clears it, as a text field's clear button does.
+                        Button(action: clearBirthday) {
+                            // Gray, as a text field's: the button's tint would make it pale green.
+                            Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(Color(.systemGray3))
+                        }
+                        .padding(.leading, 4)
+                        .accessibilityLabel("Clear birthday")
+                    }
                 }
-                .foregroundStyle(.primary)
-                .accessibilityHint(pickingBirthday ? "Hides the date picker" : "Shows a date picker")
+                .buttonStyle(.borderless)
                 if pickingBirthday {
                     // Starts somewhere neutral; nothing is saved until it's turned.
                     DatePicker("Birthday", selection: Binding(get: { birthday ?? Self.wheelStart }, set: { birthday = $0; saveBirthday() }),
@@ -56,10 +81,6 @@ struct SettingsScreen: View {
                 }
                 if birthday != nil {
                     Toggle("Show the year", isOn: Binding(get: { withYear }, set: { withYear = $0; saveBirthday() }))
-                    Button("Remove birthday", role: .destructive) {
-                        withAnimation { birthday = nil; pickingBirthday = false }
-                        saveBirthday()
-                    }
                 }
             } footer: {
                 Text(profileNote ?? "Your friends see your name, picture, and birthday. They aren't end-to-end encrypted.")
@@ -78,24 +99,23 @@ struct SettingsScreen: View {
             }
             Section("Account") {
                 LabeledContent("Username", value: "@\(account.user.username)")
-                if let name = account.user.displayName { LabeledContent("Name", value: name) }
                 if let serverLabel { LabeledContent("Server", value: serverLabel) }  // not in production
                 Button("Change username") { asking = .username }
             }
             Section {
-                Text(status).foregroundStyle(.secondary)
+                Button("Change password") { asking = .password }
                 Button(account.user.hasRecoveryKey ? "Make a new recovery key" : "Make a recovery key") { asking = .recovery }
                 PasskeysLink(account: account)  // Passkeys.swift: where this server takes them
-                Button("Change password") { asking = .password }
-                Button("Sign out other devices") { confirmingEndOthers = true }
-                    .disabled((security?.activeSessions ?? 2) <= 1)
                 // Lock napsack with Face ID (AppLock.swift): this phone only, off until turned on.
                 Toggle("Lock with \(AppLock.method)", isOn: Binding(get: { AppLock.shared.enabled },
                                                                     set: { on in Task { await AppLock.shared.set(on) } }))
+                Button("Sign out other devices", role: .destructive) { confirmingEndOthers = true }
+                    .disabled((security?.activeSessions ?? 2) <= 1)
             } header: {
                 Text("Security")
             } footer: {
-                if let note { Text(note) }
+                // Where things stand, under what changes them; what was just done, first.
+                Text([note, status].compactMap { $0 }.joined(separator: "\n"))
             }
             if account.user.isAdmin {  // debugging tools: Admins only, for now
                 Section {
@@ -139,6 +159,11 @@ struct SettingsScreen: View {
         } message: {
             Text("They'll need your password to sign in again. This phone stays signed in.")
         }
+        .confirmationDialog("Remove your picture?", isPresented: $confirmingRemovePicture, titleVisibility: .visible) {
+            Button("Remove picture", role: .destructive) { change { try await $0.removePicture() } }
+        } message: {
+            Text("Friends see your initial instead, until you choose another.")
+        }
     }
 
     /// "Recovery key saved October 29, 2026. Signed in on 1 other device."
@@ -181,6 +206,12 @@ struct SettingsScreen: View {
     }
 
     private func saveName() { change { [name] in try await $0.setName(name) } }
+
+    /// No birthday: friends see none, and the picker starts fresh next time.
+    private func clearBirthday() {
+        withAnimation { birthday = nil; pickingBirthday = false }
+        saveBirthday()
+    }
 
     /// Saves the birthday as it is now: a moment after the wheel stops, one
     /// save at a time and in order, so the last one set is the one kept.

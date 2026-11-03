@@ -256,7 +256,7 @@ napsack can be installed as an app (on iPhone: Share, then Add to Home Screen) a
 
 A notification says **who, never what**: "Ana: New message", "Sent you a pic", "Ben wants to be friends". The server couldn't say more about a direct message if it wanted to; group notifications follow the same rule. There's no notification while napsack is on your screen, and signing out stops that device's notifications.
 
-The iPhone app gets its notifications from Apple's push service (APNs) instead. For now Apple relays the note as written, so Apple can see who it's from (the display name, as "Ana" above) and the number on the app's icon, though never what anyone said; which chat it's about goes as an id only that phone's notifications share. Encrypting them as Web Push does, with the phone opening each one before it's shown, is planned ([plan-ios.md](management/plan-ios.md), section 11).
+The iPhone app gets its notifications from Apple's push service (APNs) instead. For now Apple relays the note as written, so Apple can see who it's from (the display name, as "Ana" above) and the number on the app's icon, though never what anyone said; which chat it's about goes as an id only that phone's notifications share. The number is the chats waiting, as the chat list's dots count them (muted and hidden chats not counted). When it changes with no notification to carry it (you read a chat on the web, open a pic, or mute one), your iPhones get just the new number, with nothing shown and no sound, so Apple also sees when your count changes. Encrypting them as Web Push does, with the phone opening each one before it's shown, is planned ([plan-ios.md](management/plan-ios.md), section 11).
 
 ## Typing and "active now"
 

@@ -106,10 +106,14 @@ async fn person(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
     Ok(user)
 }
 
-/// Friends see the account turned off or on in their chat list at once.
+/// Friends see the account turned off or on in their chat list at once, and
+/// on their iPhones' icon (a turned-off account's chat doesn't count).
 async fn tell_friends(state: &SharedState, user: i64) -> sqlx::Result<()> {
     let friends = crate::roles::friend_ids(&state.db, user).await?;
     state.hub.send_many(&friends, &Event::FriendsChanged);
+    for friend in &friends {
+        crate::apns::badge_changed(state, *friend);
+    }
     Ok(())
 }
 

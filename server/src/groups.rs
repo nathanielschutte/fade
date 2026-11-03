@@ -335,6 +335,12 @@ pub async fn audience(db: &SqlitePool, group: i64, message_id: i64) -> sqlx::Res
 /// includes it (`audience`). A format 3 message goes to each with their own key.
 pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
     let ids = audience(&state.db, message.group_id, message.id).await?;
+    if message.kind == "event" {
+        // Newest now, an event can take a pic's dot away (apns::waiting_chats).
+        for id in &ids {
+            crate::apns::badge_changed(state, *id);
+        }
+    }
     if !sealed(message.format) {
         state.hub.send_many(
             &ids,
@@ -979,6 +985,7 @@ pub async fn remove_member(
         leaving,
         "group member left or removed"
     );
+    crate::apns::badge_changed(&state, target); // the group no longer counts on their icon
     let mut notify = member_ids(&state.db, group).await?;
     notify.push(target); // so the removed person's list updates too
     state
@@ -1198,10 +1205,11 @@ pub async fn mark_read(
     // Only when it moved, so reading an already-read chat sends nothing:
     // every groups_changed has each of the caller's apps fetch its lists again.
     if let Some(last_read_id) = moved {
-        // The caller's other devices clear their badge.
+        // The caller's other devices clear their badge, and my iPhones theirs.
         state
             .hub
             .send(me.id, &Event::GroupsChanged { group_id: group });
+        crate::apns::badge_changed(&state, me.id);
         // Everyone else updates "Seen by".
         let others: Vec<i64> = member_ids(&state.db, group)
             .await?

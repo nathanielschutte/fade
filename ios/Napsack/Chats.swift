@@ -872,7 +872,7 @@ struct Reader: Sendable {
     private func place(_ rows: [ChatRow]) {
         if rows != self.rows { self.rows = rows }
         let favorites = rows.filter { $0.favorite && !$0.hidden }, others = rows.filter { !$0.favorite && !$0.hidden }
-        let hidden = rows.filter(\.hidden), waiting = rows.filter { $0.waiting != nil && !$0.muted && !$0.hidden }.count
+        let hidden = rows.filter(\.hidden), waiting = Notifications.badge(rows)
         if favorites != self.favorites { self.favorites = favorites }
         if others != self.others { self.others = others }
         if hidden != hiddenRows { hiddenRows = hidden }
