@@ -131,7 +131,7 @@ import UIKit
     /// Send to… goes to a few chats at once, never more; what failed is said
     /// for that chat, in the order they were picked.
     @Test(.timeLimit(.minutes(1))) func aFewChatsAtATimeEachSayingHowItWent() async throws {
-        let gate = Gate()
+        let gate = UploadGate()
         let all = Array(0..<7)
         let going = Task { @MainActor in
             await SendToScreen.each(all, atOnce: SendToScreen.atOnce) { i in
@@ -156,7 +156,7 @@ import UIKit
 }
 
 /// Holds each send until the test lets it go, counting how many are going at once.
-@MainActor final class Gate {
+@MainActor final class UploadGate {
     var waiting: [CheckedContinuation<Void, Never>] = []
     private(set) var started = 0
     private(set) var inFlight = 0

@@ -162,7 +162,7 @@ import Testing
         }
         let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
         try await list.load(account, transport: stub)
-        let gate = Gate()
+        let gate = HeldAnswers()
         let slow = Held(gate: gate, inner: stub) { $0.url!.path == "/api/friends" }
 
         // Asked, not yet answered, when the message comes: the answer (without it) doesn't take the row back.
@@ -284,7 +284,7 @@ import Testing
 }
 
 /// Holds requests until let through: a slow server, on purpose.
-actor Gate {
+actor HeldAnswers {
     private var opened = false
     private var held: [CheckedContinuation<Void, Never>] = []
     private var watching: [CheckedContinuation<Void, Never>] = []
@@ -313,7 +313,7 @@ actor Gate {
 
 /// A stand-in server whose answers to some requests wait at a gate.
 struct Held: Transport {
-    let gate: Gate
+    let gate: HeldAnswers
     let inner: StubServer
     let holds: @Sendable (URLRequest) -> Bool
 

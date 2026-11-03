@@ -221,7 +221,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
         let page = pics([1, 2, 3])
-        let gate = Gate(holds: { _ in true }) { _, _ in page }
+        let gate = PageGate(holds: { _ in true }) { _, _ in page }
         let chat = Conversation(.friend(alice), account: account, reader: reader, cache: ResponseCache(account: 3, root: root), transport: gate)
         let loading = Task { try await chat.loadNewest() }
         await gate.someoneWaiting()
@@ -264,8 +264,8 @@ import Testing
     @Test func anOlderPageThatNoLongerFitsIsDropped() async throws {
         func page(_ ids: ClosedRange<Int64>) -> Data { json(ids.map { list.message(from: 7, to: 3, kind: "snap", snap: "opened", id: $0) }) }
         let older = page(1...50), newest = page(51...100), muchNewer = page(200...249)
-        let gate = Gate(holds: Gate.older) { request, call in
-            if Gate.older(request) { return older }
+        let gate = PageGate(holds: PageGate.older) { request, call in
+            if PageGate.older(request) { return older }
             return call == 0 ? newest : muchNewer  // then a whole page newer than what's shown
         }
         let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
@@ -282,7 +282,7 @@ import Testing
 
 /// A server whose answers to some requests wait until the test lets them go,
 /// for settling which comes first on purpose.
-actor Gate: Transport {
+actor PageGate: Transport {
     typealias Answer = @Sendable (URLRequest, _ call: Int) -> Data
     private let holds: @Sendable (URLRequest) -> Bool
     private let answer: Answer

@@ -119,25 +119,39 @@ struct ChatListScreen: View {
     /// Chats with something unread or unopened, for the tab's badge and the icon's (muted and hidden ones don't count).
     private var unreadChats: Int { list.waitingCount }
 
-    /// The stack's path, with one change: tapping a row whose newest message
-    /// is a pic or video waiting from them (`ChatRow.opensPics`, decided by
-    /// the row's data) shows the chat's waiting pics over the list instead of
-    /// opening the chat, so you're still on the list when they're done.
-    private var rowTaps: Binding<[ChatRow.Kind]> {
-        Binding(get: { path }, set: { next in
-            if path.isEmpty, next.count == 1, let kind = next.first {
-                found = nil  // a row opens its chat at the newest
-                if let row = list.rows.first(where: { $0.kind == kind }), row.opensPics, let chat = conversation(kind) {
-                    viewing = PicsFromList(kind: kind, conversation: chat, unread: kind.groupId.flatMap { list.groups[$0]?.unread } ?? 0)
-                    return
+    /// Tapping a row whose newest message is a pic or video waiting from them
+    /// (`ChatRow.opensPics`, decided by the row's data) shows the chat's
+    /// waiting pics over the list instead of opening the chat, so you're still
+    /// on the list when they're done. Those rows are buttons, not links: a
+    /// binding that turned taps aside was made anew on every redraw, and the
+    /// stack then wrote over a chat opened from a notification.
+    private func openPics(_ row: ChatRow) {
+        guard let chat = conversation(row.kind) else { return path = [row.kind] }
+        found = nil
+        viewing = PicsFromList(kind: row.kind, conversation: chat, unread: row.kind.groupId.flatMap { list.groups[$0]?.unread } ?? 0)
+    }
+
+    @ViewBuilder private func rowLink(_ row: ChatRow) -> some View {
+        if row.opensPics {
+            Button { openPics(row) } label: {
+                HStack(spacing: 0) {
+                    ChatRowView(row: row)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")  // as the links' rows
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 2)
                 }
+                .contentShape(Rectangle())
             }
-            path = next
-        })
+            .foregroundStyle(.primary)
+        } else {
+            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+        }
     }
 
     private var chats: some View {
-        NavigationStack(path: rowTaps) {
+        NavigationStack(path: $path) {
             List {
                 if !account.user.hasRecoveryKey {
                     // As the web app's nudge: until there's one, a forgotten password costs every message.
@@ -248,6 +262,7 @@ struct ChatListScreen: View {
                         .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
                 }
             }
+            .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
             .fullScreenCover(item: $viewing, onDismiss: {
                 if let kind = openAfterViewing {
                     openAfterViewing = nil
@@ -298,7 +313,7 @@ struct ChatListScreen: View {
 
     private func rows(_ rows: [ChatRow]) -> some View {
         ForEach(rows) { row in
-            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+            rowLink(row)
                 .swipeActions(edge: .leading) {
                     Button(row.favorite ? "Unfavorite" : "Favorite", systemImage: row.favorite ? "star.slash" : "star") {
                         act(row) { try await list.setFavorite(row, !row.favorite, account: account) }
