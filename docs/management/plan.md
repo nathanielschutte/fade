@@ -735,6 +735,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Requested (2026-10-23), planning only: the simplest, cheapest way to have a real mailbox for nate@napsack.io on desktop and phone.
 - Options and a recommendation: [email.md](../design/email.md).
 
+- Nate (2026-11-03): when it's set up, the support address on `/support` (and TestFlight's feedback email) becomes `support@napsack.io`, and Nate's own contact `nate@napsack.io`. Until then, `/support` says natecodenew@gmail.com.
 #### I10. api.napsack.io: a stable address for the apps
 - Nate (2026-10-29): "api.napsack.io is a good idea for mobile clients (not same origin as desktop), that way we can route through that and version and update real hostnames accordingly."
 - Design: [api-host.md](../implementation/api-host.md). An `api.` name that serves only `/api/*` (the socket too), from the same server; release builds of the apps use it, so the site can move without breaking installed apps. Staging gets `api.staging.napsack.io`.

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b2822">
+  <title>Privacy · napsack</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="doc">
+  <p><a href="/" class="wordmark-small">napsack</a></p>
+  <h1>Privacy</h1>
+  <p class="doc-updated">Last updated November 2, 2026</p>
+
+  <p>napsack is a small messenger for close friends. This page says what napsack keeps, who can see it, and how long it stays. It covers the website (napsack.io) and the iPhone app.</p>
+
+  <h2>What only you and your friends can read</h2>
+  <p>Your texts, pics, and videos are end-to-end encrypted: they're locked on your device with keys only you and the people in that chat have. napsack's server stores them locked and can't open them, and neither can anyone who gets into the server.</p>
+  <p>Your password never leaves your device. The server gets a key made from it, which proves it's you, and a copy of your private key that only your password (or your recovery key) can unlock.</p>
+
+  <h2>What the server can see</h2>
+  <ul>
+    <li><strong>Your account:</strong> your username, past usernames, when you joined, and your public key.</li>
+    <li><strong>Your profile:</strong> your display name, profile picture, and birthday, if you add them. Only your friends get them. They aren't end-to-end encrypted. A nickname you give a friend is seen only by you.</li>
+    <li><strong>Who's friends with whom,</strong> and friend requests.</li>
+    <li><strong>Groups:</strong> each group's name, picture, members, and reactions. Messages and pics in groups are end-to-end encrypted. Some older group messages, from before groups were encrypted, are not.</li>
+    <li><strong>When things happen:</strong> when a message was sent, read, or edited, and when a pic was opened. Not what it said.</li>
+    <li><strong>Activity:</strong> when you were last active and when you're typing, shared with friends only if you leave "Share when I'm active" on.</li>
+    <li><strong>Devices:</strong> the devices you're signed in on, and, if you turn notifications on, an address to send them to.</li>
+    <li><strong>Requests:</strong> each request's internet address and app or browser name are logged, to keep napsack running and to stop abuse. The server keeps its most recent log entries in memory, and the system log keeps older ones until it runs out of room.</li>
+  </ul>
+
+  <h2>Notifications</h2>
+  <p>Notifications say who, never what: "Ana", "New message". In a browser they go through its push service (Apple, Google, Mozilla, or Microsoft), encrypted, so the push service only carries locked data. On the iPhone app they go through Apple's push service, which can see the sender's name and the number on the app's icon, though never what anyone wrote.</p>
+
+  <h2>How long it's kept</h2>
+  <ul>
+    <li><strong>Texts</strong> are kept for as long as napsack runs, so your history is always there.</li>
+    <li><strong>Pics and videos</strong> are view-once: each copy is deleted from the server when it's opened, or after 30 days if it isn't.</li>
+    <li><strong>Backups:</strong> the database is copied to encrypted storage every hour, and the copies are kept, so nothing is lost to a mistake or a failure. They hold the same locked messages the server does.</li>
+  </ul>
+
+  <h2>Closing your account</h2>
+  <p>An account can be turned off. Then no one can sign in to it, find it, or message it. What it sent stays in its friends' chats, as their history.</p>
+
+  <h2>What napsack doesn't do</h2>
+  <p>No ads, no trackers, no analytics from anyone else, and nothing sold or shared with advertisers. The site loads nothing from other companies. napsack runs on Amazon Web Services in the United States, which stores the server and its backups.</p>
+
+  <h2>Children</h2>
+  <p>napsack isn't meant for children under 13.</p>
+
+  <h2>Changes and questions</h2>
+  <p>If this page changes, the date at the top will too. Questions: see <a href="/support">Support</a>.</p>
+</main>
+</body>
+</html>
