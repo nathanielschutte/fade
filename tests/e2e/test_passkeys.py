@@ -4,6 +4,8 @@
 - Security lists them (from any device), adds one with the password (not the
   same device twice), and removes them (two taps): a removed passkey is
   refused in the server's words, and its password manager is told to drop it.
+- A passkey that gives its PRF answer only when used is asked once more, and
+  the copy made from that answer opens.
 - Closing the system's passkey sheet isn't an error.
 - A passkey that can't give napsack its secret (no PRF) is never used: napsack
   says so plainly, registers nothing, and doesn't ask the server.
@@ -50,11 +52,25 @@ async def device(browser, prf=True, **ctx):
     return page, held["cdp"], held["id"]
 
 
-def deleted(cdp):
-    """Resolves when the authenticator drops a passkey (signalUnknownCredential)."""
+def next_event(cdp, name):
+    """Resolves with the authenticator's next `name` event: WebAuthn.credentialDeleted
+    when it drops a passkey (signalUnknownCredential), WebAuthn.credentialAsserted when
+    a passkey is used."""
     done = asyncio.get_running_loop().create_future()
-    cdp.on("WebAuthn.credentialDeleted", lambda e: done.done() or done.set_result(e))
+    cdp.on(name, lambda e: done.done() or done.set_result(e))
     return done
+
+
+# As some passkeys do (Safari's, for one): PRF turned on when made, but its
+# answer given only when the passkey is used, so napsack asks it once more.
+PRF_ONLY_WHEN_USED = """{
+  const real = PublicKeyCredential.prototype.getClientExtensionResults;
+  PublicKeyCredential.prototype.getClientExtensionResults = function () {
+    const results = real.call(this);
+    return this.response instanceof AuthenticatorAttestationResponse && results.prf
+      ? { ...results, prf: { enabled: true } } : results;
+  };
+}"""
 
 
 async def kept(cdp, authenticator):
@@ -125,8 +141,9 @@ async def main():
         await ana.click("#back-button")
         print("signed in with the passkey, no password: the text decrypts")
 
-        # Her laptop: Security lists the phone's passkey; adding one there asks the password.
-        laptop, lap_cdp, lap_key = await device(browser, **DESKTOP)
+        # Her laptop, whose passkeys give their PRF answer only when used.
+        # Security lists the phone's passkey; adding one there asks the password.
+        laptop, lap_cdp, lap_key = await device(browser, init=PRF_ONLY_WHEN_USED, **DESKTOP)
         await expect(laptop.locator("#passkey-sign-in")).to_be_visible()
         await shot(laptop, "passkey-sign-in-desktop", full_page=False)
         await sign_in(laptop, ANA)
@@ -141,9 +158,11 @@ async def main():
         await laptop.click("#password-submit")
         await expect(laptop.locator("#password-error")).to_contain_text("current password isn't right", timeout=SIGN_IN_WAIT)
         assert await kept(lap_cdp, lap_key) == [], "nothing made before the password checked out"
+        used = next_event(lap_cdp, "WebAuthn.credentialAsserted")
         await laptop.fill("#password-form input[name=current_password]", PASSWORD)
         await laptop.click("#password-submit")
         await expect(laptop.locator("#passkey-note")).to_have_text("Passkey added.", timeout=SIGN_IN_WAIT)
+        await asyncio.wait_for(used, 10)                                  # asked once more, for its answer
         await expect(laptop.locator("#password-dialog")).to_be_hidden()
         await expect(listed).to_have_count(2)
         await expect(listed.nth(1)).to_contain_text("not used yet")
@@ -159,6 +178,17 @@ async def main():
         await listed.first.scroll_into_view_if_needed()
         await shot(laptop, "passkeys-security-desktop", full_page=False)
         print("Security: lists every passkey; adding one asks the password; not twice on one device")
+
+        # The copy made from that later answer opens: the laptop signs in with its passkey.
+        await laptop.click("#profile-dialog [data-close]")
+        await sign_out(laptop, phone=False)
+        await laptop.click("#passkey-sign-in")
+        await expect(laptop.locator("#app")).to_be_visible(timeout=SIGN_IN_WAIT)
+        await expect(row(laptop, BEN)).to_contain_text("for ana only", timeout=10000)
+        await open_security(laptop, phone=False)
+        await expect(listed).to_have_count(2, timeout=10000)
+        await expect(listed.nth(1)).to_contain_text("last used")
+        print("a passkey that answers PRF only when used: asked again, and it signs in")
 
         # The phone sees both.
         await open_security(ana, phone=True)
@@ -179,7 +209,7 @@ async def main():
         await remove.click()
         await expect(laptop.locator("#passkey-note")).to_have_text("Passkey removed.", timeout=10000)
         await expect(listed).to_have_count(1)
-        await expect(listed.first).to_contain_text("not used yet")
+        await expect(listed.first).to_contain_text("last used")
 
         # The phone still has it, but the server refuses it, and says so.
         await sign_out(ana, phone=True)
@@ -198,7 +228,7 @@ async def main():
         print("a closed passkey sheet says nothing")
 
         # The laptop removes its own: its authenticator is told to drop it too.
-        gone = deleted(lap_cdp)
+        gone = next_event(lap_cdp, "WebAuthn.credentialDeleted")
         remove = listed.first.locator("button")
         await remove.click()
         await remove.click()
@@ -213,7 +243,7 @@ async def main():
         await save_recovery_key(cal, keep_offer=True)
         await expect(cal.locator("#passkey-offer")).to_be_visible()
         await shot(cal, "passkey-offer-desktop", full_page=False)
-        orphan = deleted(cal_cdp)
+        orphan = next_event(cal_cdp, "WebAuthn.credentialDeleted")
         await cal.click("#passkey-offer-add")
         await expect(cal.locator("#passkey-offer-error")).to_have_text(NO_PRF_ADD, timeout=SIGN_IN_WAIT)
         await expect(cal.locator("#passkey-offer-add")).to_be_hidden()
