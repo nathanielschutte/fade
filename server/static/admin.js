@@ -256,7 +256,7 @@ function logSource(target) {
 
 function logRow(e) {
   const level = e.level.toLowerCase();
-  return el("tr", { class: `log-${level}` },
+  return el("tr", { class: `log-entry log-${level}` },
     el("td", { class: "log-time", text: logClock(e.ts) }),
     el("td", {}, el("span", { class: `log-level log-level-${level}`, text: e.level })),
     el("td", {},
@@ -270,11 +270,28 @@ function logRow(e) {
   );
 }
 
-function renderLogs(meta) {
-  if (logs.entries.length > LOG_DOM_CAP) logs.entries.length = LOG_DOM_CAP;
-  $("#log-rows").replaceChildren(...logs.entries.map(logRow));
-  if (!logs.entries.length) {
-    $("#log-rows").append(el("tr", {}, el("td", { colspan: "3", class: "muted", text: "No matching entries." })));
+/**
+ * Shows `logs.entries`. A live tail (`mode` "tail") or "Load older" adds only
+ * the rows that came (`added`), at the top or the bottom; up to LOG_DOM_CAP
+ * rows stay. Rows already there are left alone, so a tail every few seconds
+ * doesn't rebuild thousands of them, or move what someone is reading.
+ */
+function renderLogs(meta, mode = "reset", added = []) {
+  const rows = $("#log-rows");
+  const trimmed = Math.max(0, logs.entries.length - LOG_DOM_CAP);
+  if (trimmed) logs.entries.length = LOG_DOM_CAP;
+  const shown = rows.querySelectorAll("tr.log-entry").length;
+  if (mode === "reset" || shown + added.length - trimmed !== logs.entries.length) {
+    rows.replaceChildren(...logs.entries.map(logRow));
+  } else if (added.length) {
+    rows.querySelector(".log-none")?.remove();
+    if (mode === "tail") rows.prepend(...added.map(logRow));
+    else rows.append(...added.map(logRow));
+    // Past the cap, the oldest go (from the end, as logs.entries was trimmed).
+    for (let i = 0; i < trimmed; i++) rows.lastElementChild?.remove();
+  }
+  if (!logs.entries.length && !rows.querySelector(".log-none")) {
+    rows.append(el("tr", { class: "log-none" }, el("td", { colspan: "3", class: "muted", text: "No matching entries." })));
   }
   if (meta) {
     const since = new Date(meta.since_ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -318,11 +335,16 @@ async function loadLogs(mode = "reset") {
     if (mode === "older" && logs.entries.length) params.before = logs.entries.at(-1).seq;
     const data = await fetchLogs(params);
     if (!data) return;
+    // A live tail that brought nothing new: nothing to draw (the count may have said "Offline").
+    if (mode === "tail" && logs.loaded && !data.entries.length) {
+      $("#log-count").textContent = `${n(logs.entries.length)} shown`;
+      return;
+    }
     if (mode === "reset") logs.entries = data.entries;
     else if (mode === "older") logs.entries.push(...data.entries);
     else logs.entries.unshift(...data.entries);
     logs.loaded = true;
-    renderLogs(data);
+    renderLogs(data, mode, data.entries);
     $("#message").hidden = true;
     $("#admin").hidden = false;
   } finally {

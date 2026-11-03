@@ -143,6 +143,14 @@ def row(page, name):
     return page.locator("#chat-list .chat-row", has=page.locator(".chat-name", has_text=name))
 
 
+async def type_a_while(page, text="are you still there"):
+    """Types into the open chat's composer for a little over two seconds: the
+    app tells the other side "typing" at most every two (app.js), so one goes
+    out on the way, however recently the last did. The caller waits for it."""
+    await page.fill("#composer-input", "")
+    await page.locator("#composer-input").press_sequentially(text, delay=120)
+
+
 async def save_recovery_key(page, keep_offer=False):
     """A new account is shown its recovery key once, in a dialog that stays
     until it's saved. Tests save it and go on. Returns the key.

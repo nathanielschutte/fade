@@ -135,9 +135,16 @@ async def main():
         await row(ben, CAL).locator(".chat-item").tap()
         await expect(ben.locator("#chat")).to_be_hidden()
 
-        # Leaving a group from the list takes two taps.
+        # Leaving a group from the list takes two taps; closing the row in
+        # between disarms the first.
         await swipe(ben, row(ben, GROUP), -220)
         leave = row(ben, GROUP).locator(".row-action", has_text="Leave")
+        await leave.tap()
+        await expect(row(ben, GROUP).locator(".row-action.danger")).to_have_text("Tap to leave")
+        await row(ben, GROUP).locator(".chat-item").tap()  # closes the swiped row
+        await expect(row(ben, GROUP).locator(".chat-item")).to_have_css("transform", "none")
+        await expect(row(ben, GROUP).locator(".row-action.danger")).to_have_text("Leave")
+        await swipe(ben, row(ben, GROUP), -220)
         await leave.tap()
         await expect(row(ben, GROUP).locator(".row-action.danger")).to_have_text("Tap to leave")
         await row(ben, GROUP).locator(".row-action.danger").tap()
