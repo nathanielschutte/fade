@@ -2,10 +2,13 @@
 2026-11-02). A message changes its row, the unread marker, and the tab's
 count without the list being fetched again, and reading clears them; typing
 changes one row; the same for a group. Another device of mine reading a chat
-clears it there too. Rows and messages that didn't change stay the very same
+clears it there too. What arrives in the chat I'm reading never shows as
+unread, not even while the read is on its way. A mute for some hours ends by
+itself, without the list being fetched again. A two-tap Leave in the list
+disarms when the pointer moves away. Rows and messages that didn't change stay the very same
 elements: a new message is a new row, and a reaction doesn't rebuild the
 message it's on. Settings come from the environment; see common.py."""
-import asyncio, re, uuid
+import asyncio, datetime, re, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import BASE, launch, shot, befriend, row, sign_up, type_a_while
@@ -25,9 +28,32 @@ async def api(page, path, method="GET", body=None):
 
 
 async def say(page, text):
+    """Sends `text` and waits until it has gone, so the next one is stored after it."""
     await page.fill("#composer-input", text)
     await page.press("#composer-input", "Enter")
     await expect(page.locator("#messages .msg", has_text=text)).to_be_visible(timeout=10000)
+    await expect(page.locator("#messages .msg-meta", has_text="Sending…")).to_have_count(0, timeout=10000)
+
+
+# Records every moment the page shows something unread: a count in the tab's
+# title, or the open chat's row marked unread.
+WATCH_UNREAD = """() => {
+  window.shownUnread = [];
+  const look = () => {
+    if (/^\\(/.test(document.title)) window.shownUnread.push(document.title);
+    const open = document.querySelector('#chat-list .chat-item[aria-current]');
+    if (open && open.classList.contains('has-unread')) window.shownUnread.push('the open row');
+  };
+  new MutationObserver(look).observe(document, { subtree: true, childList: true, characterData: true,
+    attributes: true, attributeFilter: ['class', 'aria-current'] });
+}"""
+
+
+async def open_row(page, name):
+    """Opens a chat from the list with the keyboard. Two clicks on one spot in
+    quick succession are a double tap (straight to the camera), which clicks
+    on rows that just moved can be."""
+    await row(page, name).locator(".chat-item").press("Enter")
 
 
 def probe(locator):
@@ -61,7 +87,7 @@ async def main():
         await probe(row(ana, GROUP))
 
         # Ben writes three texts: Ana's row shows the last, unread, and the tab counts them.
-        await row(ben, ANA).locator(".chat-item").click()
+        await open_row(ben, ANA)
         for text in ("first", "second", "third"):
             await say(ben, text)
         status = row(ana, BEN).locator(".chat-status")
@@ -78,7 +104,7 @@ async def main():
         print("messages and typing change the row in place; the tab counts unread")
 
         # Ana opens the chat: read here, and on her other tab (which asks the server what she read).
-        await row(ana, BEN).locator(".chat-item").click()
+        await open_row(ana, BEN)
         await expect(ana.locator("#messages .msg", has_text="third")).to_be_visible(timeout=10000)
         await expect(ana).to_have_title(re.compile(r"^napsack"), timeout=10000)
         await expect(row(ana, BEN).locator(".chat-item")).not_to_have_class(re.compile(r"\bhas-unread\b"), timeout=10000)
@@ -99,18 +125,66 @@ async def main():
         print("the open chat adds what's new and keeps the rest")
 
         # A group message: the group's row and the count; opening the group reads it.
-        await row(ben, GROUP).locator(".chat-item").click()
+        await open_row(ben, GROUP)
         await say(ben, "group one")
         await expect(row(ana, GROUP).locator(".chat-status")).to_have_text(f"{BEN}: group one", timeout=10000)
         await expect(ana).to_have_title(re.compile(r"^\(1\) napsack"), timeout=10000)
         await expect(row(ana, GROUP)).to_have_attribute("data-probe", "kept", timeout=10000)
-        await row(ana, GROUP).locator(".chat-item").click()
+        await open_row(ana, GROUP)
         await expect(ana.locator("#messages .msg", has_text="group one")).to_be_visible(timeout=10000)
         await expect(ana).to_have_title(re.compile(r"^napsack"), timeout=10000)
         await expect(ana2).to_have_title(re.compile(r"^napsack"), timeout=10000)
         print("a group's messages and reads, the same")
 
+        # What comes into the chat Ana is reading is read as it comes: neither the
+        # tab nor the row shows it as unread, even while the read is on its way.
+        await ana.evaluate(WATCH_UNREAD)
+        await say(ben, "group two")
+        await expect(ana.locator("#messages .msg", has_text="group two")).to_be_visible(timeout=10000)
+        await expect(row(ana, GROUP).locator(".chat-status")).to_have_text(f"{BEN}: group two", timeout=10000)
+        await expect(row(ana2, GROUP).locator(".chat-status")).to_have_text(f"{BEN}: group two", timeout=10000)
+        await expect(ana2).to_have_title(re.compile(r"^napsack"), timeout=10000)  # the server has her read
+        await open_row(ana, BEN)
+        await expect(ana.locator("#chat-title")).to_have_text(BEN)
+        await expect(ana.locator("#messages .msg", has_text="fourth")).to_be_visible(timeout=10000)
+        await open_row(ben, ANA)
+        await say(ben, "fifth")
+        await expect(ana.locator("#messages .msg", has_text="fifth")).to_be_visible(timeout=10000)
+        await expect(row(ana, BEN).locator(".chat-status")).to_have_text("fifth", timeout=10000)
+        await expect(row(ana2, BEN).locator(".chat-status")).to_have_text("fifth", timeout=10000)
+        await expect(row(ana2, BEN).locator(".chat-item")).not_to_have_class(re.compile(r"\bhas-unread\b"), timeout=10000)
+        assert await ana.evaluate("window.shownUnread") == [], "the chat being read showed as unread"
+        print("what arrives in the open chat never shows as unread")
+
         assert not fetched, f"the list was fetched again: {fetched}"
+
+        # Leave, in the list, takes two taps; moving away disarms the first.
+        leave = row(ana, GROUP).locator(".row-action.danger")
+        await row(ana, GROUP).hover()
+        await leave.click()
+        await expect(leave).to_have_text("Tap to leave")
+        await row(ana, BEN).hover()
+        await row(ana, GROUP).hover()
+        await expect(leave).to_have_text("Leave")
+        await expect(leave).to_have_attribute("aria-label", f"Leave {GROUP}")
+        print("an armed Leave disarms when the pointer moves away")
+
+        # A mute for some hours ends by itself: once it's over, Ben's messages
+        # show as unread again, in a tab that never fetched the list again.
+        await open_row(ana, GROUP)
+        await expect(ana.locator("#chat-title")).to_have_text(GROUP)
+        await row(ana, BEN).hover()
+        await row(ana, BEN).locator(".row-action", has_text="Mute").click()
+        await ana.click("#mute-dialog [data-hours='8']")
+        await expect(row(ana, BEN).locator(".chat-name")).to_contain_text("🔕")
+        await ana.context.clock.set_system_time(datetime.datetime.now() + datetime.timedelta(hours=9))
+        await say(ben, "after the mute")
+        await expect(row(ana, BEN).locator(".chat-status")).to_have_text("after the mute", timeout=10000)
+        await expect(row(ana, BEN).locator(".chat-name")).not_to_contain_text("🔕")
+        await expect(row(ana, BEN).locator(".chat-item")).to_have_class(re.compile(r"\bhas-unread\b"))
+        await expect(ana).to_have_title(re.compile(r"^\(1\) napsack"))
+        print("a mute for some hours ends by itself")
+
         assert not errors, errors
         await browser.close()
     print("LIST LIVE TEST PASSED")

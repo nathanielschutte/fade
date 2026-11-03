@@ -1579,7 +1579,7 @@ function chatStatus(chat) {
     return { text: label[m.snap_state] || W };
   }
   const body = m.text ?? "Encrypted message";
-  if (!mine && !m.read_at) return { text: body, marker: "text" };
+  if (!mine && !m.read_at && !readingNow("d", chat.id)) return { text: body, marker: "text" };
   return { text: mine ? `You: ${body}` : body };
 }
 
@@ -1702,6 +1702,10 @@ function chatRow(p) {
     actions.length ? el("div", { class: "row-actions" }, ...actions.map((a) =>
       el("button", { type: "button", class: `row-action ${a.cls ?? ""}`, "aria-label": a.aria, title: a.aria, onclick: a.run },
         rowIcon(a.icon), el("span", { class: "row-action-label", text: a.label })))) : null);
+  // A computer's pointer leaving the row, or focus leaving it, disarms a
+  // two-tap action. A touch lifting off is no leaving: the swipe closing is.
+  li.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") disarmRow(li); });
+  li.addEventListener("focusout", (e) => { if (!li.contains(e.relatedTarget)) disarmRow(li); });
   paintRow(li, p);
   return li;
 }
@@ -1752,13 +1756,49 @@ let listNodes = new Map(); // key -> { sig, node }: what the list shows now
 function renderChatList() {
   if (!state.me) return;
   renderTitle();
+  watchMuteEnds();
   chatListFrame ||= requestAnimationFrame(drawChatList);
 }
 
 function renderTitle() {
-  const unread = state.chats.reduce((n, c) => n + (c.hidden || c.muted ? 0 : c.unread), 0)
-    + state.groups.reduce((n, g) => n + (g.muted ? 0 : g.unread), 0);
+  const unread = state.chats.reduce((n, c) => n + (c.hidden || isMuted(c) ? 0 : chatUnreadShown(c)), 0)
+    + state.groups.reduce((n, g) => n + (isMuted(g) || readingNow("g", g.id) ? 0 : g.unread), 0);
   document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
+}
+
+/**
+ * Whether I'm reading this chat (`kind` "d") or group ("g") now: it's open
+ * and napsack is on screen. What arrives in it is read as it comes (markRead,
+ * markGroupRead), so it doesn't show as unread while that read is on its way.
+ */
+function readingNow(kind, id) {
+  if (document.visibilityState !== "visible") return false;
+  return kind === "g" ? state.activeGroupId === id : state.activeId === id;
+}
+
+/** A chat's unread count as shown: in the one I'm reading, its texts here are being read already; pics wait to be opened. */
+function chatUnreadShown(c) {
+  if (!c.unread || !readingNow("d", c.id)) return c.unread;
+  const reading = (state.messages.get(c.id) || [])
+    .filter((m) => m.sender_id === c.id && m.kind === "text" && !m.read_at && !beforeMyReset(m)).length;
+  return Math.max(0, c.unread - reading);
+}
+
+/** Whether a chat or group is muted now: a mute for some hours ends by itself
+ * (marks.rs), whether or not the list has been fetched since. */
+function isMuted(x) {
+  return Boolean(x.muted) && (x.muted_until == null || x.muted_until > Date.now() / 1000);
+}
+
+// When the next mute for some hours ends, the list is drawn again, so its 🔕
+// goes and the tab counts it. At most a day ahead, then looked at again
+// (timers can't wait longer than about 24 days).
+let muteEndTimer = 0;
+function watchMuteEnds() {
+  clearTimeout(muteEndTimer);
+  const now = Date.now() / 1000;
+  const ends = [...state.chats, ...state.groups].filter((x) => x.muted && x.muted_until > now).map((x) => x.muted_until);
+  if (ends.length) muteEndTimer = setTimeout(renderChatList, (Math.min(Math.min(...ends) - now, 86400) + 1) * 1000);
 }
 
 /** Makes `parent` hold exactly `nodes`, in order, moving as few as it can. */
@@ -1790,7 +1830,7 @@ function chatRowProps(chat) {
     avatar: () => el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
       paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
     avatarSig: [Boolean(chat.active_now), name, chat.avatar_id ?? null],
-    muted: chat.muted,
+    muted: isMuted(chat),
     actions: chat.hidden
       ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${name} again`, run: () => unhideChat(id) }]
       : [favoriteAction(chat, name, () => { const c = chatById(id); if (c) setFavorite("chats", id, !c.favorite); }),
@@ -1808,7 +1848,7 @@ function groupRowProps(g) {
     avatar: () => el("span", { class: "avatar-wrap" },
       paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g)),
     avatarSig: [g.name, g.avatar_id ?? null],
-    muted: g.muted,
+    muted: isMuted(g),
     actions: [favoriteAction(g, g.name, () => { const x = groupById(id); if (x) setFavorite("groups", id, !x.favorite); }),
       muteAction("groups", g, g.name),
       { label: "Leave", icon: "leave", cls: "danger", aria: `Leave ${g.name}`, run: (e) => leaveFromList(e.currentTarget, g) }],
@@ -1968,11 +2008,31 @@ function forgetChat(friendId) {
   state.typing.delete(`d:${friendId}`);
 }
 
-/** Leaving from the list takes two taps, like the group's info sheet. */
+/** Puts a row's armed two-tap actions back as they were. */
+function disarmRow(li) {
+  for (const btn of li?.querySelectorAll(".row-action[data-confirm]") ?? []) {
+    armedLeaves.get(btn)?.();
+    armedLeaves.delete(btn);
+  }
+}
+
+/** Leaving from the list takes two taps, like the group's info sheet. The
+ * first lasts while the row stays where it was: swiping it shut, moving the
+ * pointer off it, or focus leaving it disarms it (disarmRow). */
+const armedLeaves = new WeakMap(); // an armed Leave button -> how to put it back
 async function leaveFromList(btn, g) {
   if (!btn.dataset.confirm) {
+    const label = btn.querySelector(".row-action-label");
+    const was = { text: label.textContent, aria: btn.getAttribute("aria-label"), title: btn.title };
+    armedLeaves.set(btn, () => {
+      delete btn.dataset.confirm;
+      label.textContent = was.text;
+      btn.setAttribute("aria-label", was.aria);
+      btn.title = was.title;
+      btn.classList.remove("confirm");
+    });
     btn.dataset.confirm = "1";
-    btn.querySelector(".row-action-label").textContent = "Tap to leave";
+    label.textContent = "Tap to leave";
     btn.setAttribute("aria-label", `Tap again to leave ${g.name}`);
     btn.title = "Click again to leave";
     btn.classList.add("confirm");
@@ -1990,7 +2050,7 @@ async function leaveFromList(btn, g) {
 // week, or until turned back on. Private, and on every device, like favorites.
 
 function muteAction(kind, item, name) {
-  return item.muted
+  return isMuted(item)
     ? { label: "Unmute", icon: "bell", aria: `Unmute ${name}`, run: () => setMute(kind, item.id, name, false) }
     : { label: "Mute", icon: "bell", aria: `Mute ${name}`, run: () => openMuteDialog(kind, item.id, name) };
 }
@@ -2013,6 +2073,7 @@ async function setMute(kind, id, name, on, hours = null) {
   if (!item) return;
   const was = { muted: item.muted, muted_until: item.muted_until };
   item.muted = on;
+  item.muted_until = on && hours ? Math.floor(Date.now() / 1000) + hours * 3600 : null; // until the server says
   renderChatList();
   try {
     const r = await getJSON(`/${kind}/${id}/mute`, { method: "PUT", json: hours ? { on, hours } : { on } });
@@ -2168,6 +2229,7 @@ function shiftRow(row, px, animate = true) {
 }
 function closeSwipedRow() {
   if (rowSwipe.open) shiftRow(rowSwipe.open, 0);
+  disarmRow(rowSwipe.open);
   rowSwipe.open = null;
 }
 
@@ -3414,6 +3476,17 @@ function sendFrame(frame) {
 const sendVisibility = () => sendFrame({ type: "visibility", visible: document.visibilityState === "visible" });
 document.addEventListener("visibilitychange", sendVisibility);
 
+// Coming back to napsack with a chat open reads what came into it meanwhile,
+// since it's on screen again (readingNow); going away, the tab counts what
+// comes next.
+document.addEventListener("visibilitychange", () => {
+  if (!state.me) return;
+  renderChatList();
+  if (document.visibilityState !== "visible") return;
+  if (state.activeId) markRead(state.activeId);
+  if (state.activeGroupId) markGroupRead(state.activeGroupId);
+});
+
 // Coming back to a backgrounded tab: catch up instead of trusting a stale socket.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !state.token) return;
@@ -3775,12 +3848,12 @@ function groupStatus(g) {
     const mine = m.sender_id === state.me.id;
     const waiting = !mine && !m.pic.discard_reason && !m.pic.viewers.includes(state.me.id);
     const what = `sent a ${mediaWord(m)}`;
-    return { text: mine ? `You ${what}` : `${personName(m.sender_id, m.sender_name)} ${what}`, marker: waiting ? "snap" : g.unread ? "text" : null };
+    return { text: mine ? `You ${what}` : `${personName(m.sender_id, m.sender_name)} ${what}`, marker: waiting ? "snap" : g.unread && !readingNow("g", g.id) ? "text" : null };
   }
   const text = m.kind === "event"
     ? groupEventText(m)
     : `${m.sender_id === state.me.id ? "You" : personName(m.sender_id, m.sender_name)}: ${m.undecryptable ? "Encrypted message" : m.body}`;
-  return { text, marker: g.unread ? "text" : null };
+  return { text, marker: g.unread && !readingNow("g", g.id) ? "text" : null };
 }
 
 /** Direct chats show the safety code and camera; groups show the notice instead. */
