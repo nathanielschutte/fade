@@ -329,8 +329,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
         session.addInput(new)
         input = new
-        facing = position
-        choice.used(position)  // the next camera screen opens on this one, until the app is quit
+        face(position)
         multiplier = Self.multiplier(of: device)
         let lenses = Lenses.of(multiplier: multiplier, switchOvers: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) },
                                minFactor: device.minAvailableVideoZoomFactor, maxFactor: device.maxAvailableVideoZoomFactor)
@@ -340,6 +339,18 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
         configured = lenses
         return lenses
+    }
+
+    /// Now on the camera facing `position`: the next camera screen opens on
+    /// it, until the app is quit. Only on `queue` (or in a test, alone).
+    func face(_ position: AVCaptureDevice.Position) {
+        facing = position
+        choice.used(position)
+    }
+
+    /// The camera this session opens on, or, once open, is using.
+    var opensOn: AVCaptureDevice.Position {
+        get async { (try? await run { [self] in facing }) ?? .front }
     }
 
     /// Shown zoom = factor × this: a camera with an ultra wide starts below 1×.
@@ -414,6 +425,24 @@ enum Captured: Identifiable {
             return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
         }.value
     }
+}
+
+/// Photos picked from the library, which can take a while to open (one in
+/// iCloud is downloaded first). Meanwhile the picker has closed, so the
+/// screen moves on: by the time a photo's ready, the camera may be open, a
+/// capture on screen, or another photo picked. Only the newest pick opens,
+/// and only onto nothing, so a late one never replaces what's there.
+struct PhotoPicks {
+    private var newest = 0
+
+    /// A photo's been picked: its number, to ask about once it's opened.
+    mutating func began() -> Int {
+        newest += 1
+        return newest
+    }
+
+    /// Whether pick `number` still opens, `busy` while something's on screen it would replace.
+    func stillWanted(_ number: Int, busy: Bool) -> Bool { number == newest && !busy }
 }
 
 /// The camera as a chat opens it: live, or on a photo picked from the library,
@@ -518,6 +547,7 @@ struct CameraScreen: View {
     @State private var zoom: CGFloat = 1
     @State private var pinchFrom: CGFloat = 1
     @State private var picked: PhotosPickerItem?
+    @State private var picks = PhotoPicks()
     // The press on the shutter: when it began, where, and the zoom then (for sliding up).
     @State private var pressAt: Date?
     @State private var pressY: CGFloat = 0
@@ -602,9 +632,12 @@ struct CameraScreen: View {
             .onDisappear { camera.stop() }  // also while choosing who to send to
             .onChange(of: picked) { _, item in
                 guard let item else { return }
+                let pick = picks.began()
                 Task {
                     defer { picked = nil }
-                    if let photo = await Captured.picked(item) { captured(photo) } else { problem = "Couldn't open that photo." }
+                    let photo = await Captured.picked(item)
+                    guard picks.stillWanted(pick, busy: shot != nil || recording) else { return }  // taken over meanwhile
+                    if let photo { captured(photo) } else { problem = "Couldn't open that photo." }
                 }
             }
             .navigationDestination(isPresented: $choosing) {

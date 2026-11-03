@@ -35,16 +35,34 @@ import UIKit
     }
 
     /// Nate (2026-11-03): the front camera first after a launch; then
-    /// whichever was used last, until the app is quit.
-    @Test func theFrontCameraFirstThenTheLastOneUsed() {
+    /// whichever was used last, until the app is quit. Each camera screen
+    /// has a new session, so this is what each new one opens on.
+    @Test func theFrontCameraFirstThenTheLastOneUsed() async {
         let launch = CameraChoice()  // what a fresh launch has
-        #expect(launch.current == .front)
-        launch.used(.back)  // switched to the back camera...
-        #expect(launch.current == .back)  // ...so the next camera screen opens on it
-        launch.used(.front)
-        #expect(launch.current == .front)
-        launch.used(.back)
-        #expect(CameraChoice().current == .front)  // quit and opened again: the front
+        let first = CameraSession(choice: launch)
+        #expect(await first.opensOn == .front)
+        first.face(.back)  // switched to the back camera (flip, or a double tap)...
+        #expect(await first.opensOn == .back)
+        #expect(await CameraSession(choice: launch).opensOn == .back)  // ...so the next camera screen opens on it
+        CameraSession(choice: launch).face(.front)
+        #expect(await CameraSession(choice: launch).opensOn == .front)
+        first.face(.back)
+        #expect(await CameraSession(choice: CameraChoice()).opensOn == .front)  // quit and opened again: the front
+        #expect(await CameraSession().opensOn == CameraChoice.shared.current)  // the app's screens share one choice
+    }
+
+    /// A photo picked from the library opens only if nothing's taken its
+    /// place while it loaded: the camera opened (in a chat), a capture taken
+    /// (in the camera), or another photo picked. Otherwise a slow iCloud
+    /// photo would replace a live camera, or a video being recorded.
+    @Test func aLatePickedPhotoNeverReplacesWhatsOnScreen() {
+        var picks = PhotoPicks()
+        let a = picks.began()
+        #expect(picks.stillWanted(a, busy: false))  // nothing happened meanwhile: it opens
+        #expect(!picks.stillWanted(a, busy: true))  // the camera opened, or a capture's on screen
+        let b = picks.began()  // picked again before the first loaded
+        #expect(!picks.stillWanted(a, busy: false))  // the first, late: dropped
+        #expect(picks.stillWanted(b, busy: false))
     }
 
     /// Nate (2026-11-03): writing a caption, a tap anywhere off it puts the

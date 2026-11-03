@@ -33,6 +33,7 @@ struct ChatScreen: View {
     @State private var versionsOf: Bubble?
     /// A photo from the library: it opens in the camera, ready for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
+    @State private var picks = PhotoPicks()
     /// The camera, while it's open: live, or on a picked photo.
     @State private var camera: CameraOpening?
     /// The server's limits for pics and videos (its /api/config).
@@ -367,9 +368,12 @@ struct ChatScreen: View {
         content
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
+            let pick = picks.began()
             Task {
                 defer { pickedPhoto = nil }
-                guard let photo = await Captured.picked(item) else {
+                let photo = await Captured.picked(item)
+                guard picks.stillWanted(pick, busy: camera != nil) else { return }  // the camera opened meanwhile, or a newer pick
+                guard let photo else {
                     failure = "Couldn't open that photo."
                     return
                 }
