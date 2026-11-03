@@ -84,7 +84,7 @@ enum SignInError: LocalizedError, Equatable {
             // The app's reports go as whoever's signed in.
             if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) }
             // A notification tapped while signed out was for whoever was here before.
-            if case .signedOut = oldValue, account != nil { Notifications.shared.opened = nil }
+            if case .signedOut = oldValue, account != nil { notifications.opened = nil }
         }
     }
     /// Where sign-in last went, for reports while signed out.
@@ -99,11 +99,15 @@ enum SignInError: LocalizedError, Equatable {
     private let transport: any Transport
     private let store: any AccountStore
     private let reporter: Reporter
+    /// This phone's notifications (tests give their own).
+    private let notifications: Notifications
 
-    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore(), reporter: Reporter? = nil) {
+    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore(), reporter: Reporter? = nil,
+         notifications: Notifications? = nil) {
         self.transport = transport
         self.store = store
         self.reporter = reporter ?? .shared
+        self.notifications = notifications ?? .shared
     }
 
     var account: Account? {
@@ -480,7 +484,7 @@ enum SignInError: LocalizedError, Equatable {
         try? store.delete()
         UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
         ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
-        Notifications.shared.signedOut()  // delivered ones and the badge; the server stops with the session
+        notifications.signedOut()  // delivered ones and the badge; the server stops with the session
         AppLock.shared.signedOut()  // the lock was this account's choice
         self.notice = notice
         state = .signedOut

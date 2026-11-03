@@ -396,12 +396,11 @@ struct ChatListScreen: View {
         switch destination {
         case .friends:
             if !path.isEmpty {
-                // Out of the open chat first: a push asked for while the stack is still
-                // popping is dropped, so the pop goes without animation and finishes first.
+                // Out of the open chat first, without animation: a push asked for while the
+                // stack is still animating its pop is dropped (LiveNotificationTapTests).
                 var instant = Transaction()
                 instant.disablesAnimations = true
                 withTransaction(instant) { path = [] }
-                try? await Task.sleep(for: .milliseconds(300))
             }
             showingFriends = true
         case .chat(let kind):

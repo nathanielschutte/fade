@@ -166,13 +166,15 @@ struct LiveNotificationsTests {
     /// A notification tapped while signed out was for whoever was here before:
     /// signing in fresh doesn't open it.
     @Test func aTapFromBeforeSigningInIsDropped() async throws {
-        let phone = Session(store: MemoryStore(), reporter: Reporter())
+        let notifications = Notifications(system: RecordedNotifications(), lock: AppLock(enabled: false))
+        let phone = Session(store: MemoryStore(), reporter: Reporter(), notifications: notifications)
         await phone.restore(server: live.address)
         #expect(phone.state == .signedOut)
-        Notifications.shared.tap(url: "/#chat=424242")
+        notifications.tap(url: "/#chat=424242")
+        #expect(notifications.opened == .chat(.friend(424242)), "waiting, until someone signs in")
         let name = "tap_\(UUID().uuidString.prefix(6).lowercased())"
         try await phone.signUp(server: live.address, username: name, password: "correct horse battery", inviteCode: live.invite)
-        #expect(Notifications.shared.opened == nil)
+        #expect(notifications.opened == nil)
     }
 }
 
@@ -222,6 +224,47 @@ struct LiveNotificationTapTests {
         // A friend request's (Cal's): out of the group, into Friends.
         notifications.tap(url: "/#friends")
         try await until("Friends is open") { Self.titles(window.rootViewController).contains("Friends") }
+
+        // A text's, while Friends is open (left there, then a new text): out of Friends, into the chat.
+        let again = try E2E.encryptText2(key, "and again", replyTo: nil, sender: ana.user.id, recipient: ben.user.id)
+        _ = try await server.send("chats/\(ben.user.id)/messages", method: "POST", token: ana.token, json: Text(ciphertext: again, format: 2))
+        try await until("Ana's new text is waiting") { try await !self.allReadByBen(ana: ana, ben: ben) }
+        notifications.tap(url: "/#chat=\(ana.user.id)")
+        try await until("Ana's new text is read") { try await self.allReadByBen(ana: ana, ben: ben) }
+        try await until("Friends is closed") { !Self.titles(window.rootViewController).contains("Friends") }
+    }
+
+    /// With napsack locked, a tapped chat waits for the lock to come off, then opens and is read.
+    @Test func aTapWhileLockedOpensOnUnlocking() async throws {
+        let ana = try await live.newAccount("ana"), ben = try await live.newAccount("ben")
+        try await LiveGroupsTests().befriend(ana, ben)
+        let server = try Server(live.address)
+        let key = try E2E.pairKey(mine: ana.identity(), theirs: ben.publicKey, myId: ana.user.id, theirId: ben.user.id)
+        let sealed = try E2E.encryptText2(key, "locked out", replyTo: nil, sender: ana.user.id, recipient: ben.user.id)
+        _ = try await server.send("chats/\(ben.user.id)/messages", method: "POST", token: ana.token, json: Text(ciphertext: sealed, format: 2))
+
+        try KeychainPinStore(server: ben.server).save(Pins(), account: ben.user.id)
+        let session = Session(store: MemoryStore(ben), reporter: Reporter())
+        await session.restore(server: live.address)
+        let lock = AppLock(enabled: true, locked: false)
+        let notifications = Notifications(system: RecordedNotifications(), lock: lock)
+        let window = try Self.show(ChatListScreen(account: ben, notifications: notifications).environment(session))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await until("the list is in") { Self.titles(window.rootViewController).contains("Chats") }
+
+        // Back after a while away: the tap locks napsack first, and the chat waits.
+        lock.left(at: .now.addingTimeInterval(-120))
+        notifications.tap(url: "/#chat=\(ana.user.id)")
+        #expect(lock.locked)
+        #expect(try await !readByBen(ana: ana, ben: ben))
+        lock.signedOut()  // the lock coming off (Face ID itself can't run in a test)
+        try await until("Ana's text is read") { try await self.readByBen(ana: ana, ben: ben) }
+    }
+
+    /// Whether Ben has read everything Ana sent him, as Ana sees it.
+    private func allReadByBen(ana: Account, ben: Account) async throws -> Bool {
+        let data = try await Server(live.address).send("chats/\(ben.user.id)/messages", token: ana.token)
+        return try Server.decoder.decode([DirectMessage].self, from: data).allSatisfy { $0.readAt != nil }
     }
 
     /// Whether Ben has read Ana's text, as Ana sees it.
