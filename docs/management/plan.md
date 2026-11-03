@@ -23,13 +23,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side waits on a try on the phone |
-| 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
-| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side waits on a try on the phone |
-| 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
-| 6 | [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | Infrastructure | Nate | In progress | Nate (2026-11-03): the chat list, groups, profiles, and the friend map read every message, and more queries per friend, as texts pile up forever |
-| 7 | [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) | Experience/visual | Nate | In progress | Nate (2026-11-02): a speed survey of the web client, and chats that jump while he scrolls |
-| 8 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests; needs a server release, then a try on the phone |
+| 2 | [Report and block](#f28-report-and-block) | Features | – | Up next | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03) |
+| 3 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | – | Needs decision | 2026-11-03: four of Nate's calls, each small |
+| 4 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 5 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone. Fixed in TestFlight build 175 (a chat opens from its kept page); waiting on a try on the phone |
+| 6 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 7 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
+| 8 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
 | 9 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
 | 10 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
 | 11 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
@@ -38,7 +38,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 14 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 15 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 16 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 17 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, the web, and the iOS app built; the iOS side waits on a try on the phone (staging) |
+| 17 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
 | 18 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
@@ -124,6 +124,9 @@ Oldest first; newly shipped rows go at the bottom.
 | [iOS app](plan-ios.md): iPhone notifications through Apple (APNs) and add-a-friend links opening the app, the server side | 0.48.0 | Nate |
 | [Privacy policy and support pages](plan-ios.md#12-into-peoples-hands) | 0.48.1 | Nate |
 | [Delete your own account](#f22-delete-your-own-account) and [easier sign-in](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved), the server and web; backups for 30 days | 0.49.0, infra | Nate |
+| [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | 0.50.0 | Nate |
+| [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) (and a group sheet closed while it refreshed no longer opens again) | 0.50.0 | Nate |
+| [Passkeys](#f26-passkeys) and [the iPhone's badge](#f27-the-iphones-badge-kept-right-by-the-server), the server and web; napsack.io's home page opens the iPhone app | 0.50.0 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -390,6 +393,12 @@ Oldest first; newly shipped rows go at the bottom.
 - Requested (Nate, 2026-11-03): "what's the status on notifications going to that chat and marking it read, and the app's badge? ... make sure these are done and have passing tests." The iOS side is [plan-ios.md](plan-ios.md) section 11.
 - Built: the number on the icon is the chats with a dot, counted by the server as the apps count them (`apns::waiting_chats`: hidden and muted chats left out, left groups, ended friendships, and turned-off accounts too). When it changes with no notification to carry it (read or a pic opened on the web, a chat muted or hidden, a message while napsack is on another screen, a group left or an event in it, a friend removed, turned off or on, or deleted), the person's iPhones get the number alone: no alert or sound, expiring at once so it never takes a waiting notification's place at Apple, batched to one a second per person, and only when it differs from what they were last given (`apns::badge_changed`). Smoke test: the APNs block, against the stand-in for Apple. Left to the next notification or launch: a timed mute running out, and a resumed friendship's old unread texts.
 
+#### F28. Report and block
+- Nate (2026-11-02), queued: the App Store expects apps where people send each other things to let them report it and block whoever sent it, and to act on reports in good time (App Review Guideline 1.2). It's the likeliest reason the first external TestFlight build would be refused ([ios-onboarding.md](../ios-onboarding.md#external-testing-the-checklist)); the external group is the next milestone (Nate, 2026-11-03).
+- Today only friends can message you, and unfriending stops them, but they can ask again, so it isn't a block.
+- To build, server first: a block that ends the friendship, refuses their requests and messages (and group adds by them), and is undone only by you; a report (a message, a pic, or a person) that reaches the Admins (System, with what the reporter chose to include: the server can't read messages, so a report carries the decrypted text only if the reporter sends it); then the web and the iOS app. Every client says what blocking does.
+- **For Nate:** whether a report includes the reported message's text (the reporter's phone can decrypt it; the server never can on its own), and how Admins hear of reports (the System page, an email, a push).
+
 ### Debug
 
 #### D13. "Database is locked" under load (fixed)
@@ -553,6 +562,13 @@ Oldest first; newly shipped rows go at the bottom.
 - **The web today:** a tap on a chat in the list always opens the chat (`openChat`); pics open only from a chat's "Tap to view pic" (`snap-chip`, `openPics`); a double tap opens the camera for that chat ([X12](#x12-double-tap-a-chat-to-send-a-pic)).
 - **For the web to match:** a single tap on such a row runs `openPics` for that chat's waiting pics without opening the chat, then returns to the list. The double tap must still be told apart (the phone's 150ms wait before a tap acts already does that). A text from them before the pics stays unread: the row keeps its marker, from the server's `unread` count (`chatStatus` looks only at the newest message today). A group is marked read after only if those pics were all that was unread. If they turn out opened elsewhere, the tap opens the chat.
 - iOS's own double tap (answer with a pic, as X12) is planned there, not built (Nate: "leave that as planned for now").
+
+#### X42. Choices left from the speed work
+- From the speed survey and the work after it (2026-11-03, [I13](#i13-the-server-stays-fast-as-history-grows), [X40](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling), plan-ios's faster chat list). Each is Nate's call, and none blocks anything:
+  1. **Profile pictures kept on the iPhone between launches.** Today they're fetched again each launch (cached for the session only). Keeping them makes the list draw at once; it's more of friends' pictures on the device, deleted at sign-out like the rest.
+  2. **What web search covers.** Today it reads up to 200 recent messages per chat, fetching them if needed. The iPhone searches only what's already on the phone (nothing fetched). Should the web match (faster, finds less) or keep fetching?
+  3. **The admin stats' users list.** System › Stats still loads the whole users list without showing it. Dropping it is safe; the users table has its own page.
+  4. **Texts sent within a moment of each other** go out side by side, so the server can store the second first. Sending one at a time per chat keeps the order, at the cost of a slow first send holding the next.
 
 ### Security
 

@@ -1,6 +1,10 @@
 # napsack
 
-A small private messenger for close friends: texts and view-once pics, end-to-end encrypted, plus group chats (not end-to-end encrypted yet, and the app says so). It runs as one Rust server that also serves the web app, on one small AWS instance, and installs on a phone's Home Screen with notifications. An iOS app is on the way.
+A small private messenger for close friends: texts and view-once pics and videos, end-to-end encrypted, in chats and in groups (a group's name and picture aren't encrypted, and the apps say so).
+
+**The iPhone app is the main way to use napsack** (mobile first: an Android app comes later). It's in testing on TestFlight now: to join the test group, ask Nate. Opening it to outside testers (TestFlight's external group) is the next milestone. The web app at the same address still works, on a computer or added to a phone's Home Screen.
+
+It all runs on one Rust server that serves the API and the web app, on one small AWS instance.
 
 `fade` is the internal name (binary, service, `FADE_*` settings, AWS resources); people only ever see napsack.
 
@@ -12,7 +16,7 @@ server/          Rust (axum + SQLite): the API, and the web app compiled into on
   static/        the web app: plain HTML, CSS, and JavaScript modules, no build step
   migrations/    the database schema, one numbered file per change
 shared/crypto/   the end-to-end encryption, shared by the web app and the iOS app
-ios/             the iOS app (Swift, Xcode)
+ios/             the iPhone app (Swift, SwiftUI, Xcode): the main client
 tests/           API smoke test, browser tests (Playwright), pinned crypto vectors
 infra/           Terraform for AWS
 scripts/         test, deploy, rollback, ssh
@@ -24,7 +28,10 @@ docs/            everything else (below)
 ```sh
 cd server && cargo run          # http://127.0.0.1:8080; saving a web app file updates the page live
 bash scripts/test.sh            # everything CI runs; --no-browser skips the browser tests
+make ios                        # on a Mac: the iPhone app's tests, live against a fresh server
 ```
+
+CI runs only after a merge to `main`, so every check runs locally before a pull request is merged ([CLAUDE.md](CLAUDE.md)).
 
 Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute through pull requests, and how releases work: [onboarding.md](docs/onboarding.md) and [releasing.md](docs/operations/releasing.md).
 
@@ -35,7 +42,7 @@ Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute t
 | [onboarding.md](docs/onboarding.md) | Start here if you're new to the code |
 | [CLAUDE.md](CLAUDE.md) | How we work: the rules (data is never deleted), testing, shipping, code standards |
 | [plan.md](docs/management/plan.md) | What's done, what's next |
-| [plan-ios.md](docs/management/plan-ios.md) | The iOS app's tasks |
+| [plan-ios.md](docs/management/plan-ios.md) | The iPhone app's tasks |
 | [how-napsack-works.md](docs/how-napsack-works.md) | The encryption, pics, notifications, and what the server can and can't see |
 | [api.md](docs/spec/api.md) | Every endpoint and socket event |
 | [security.md](docs/security.md) | Protections, limits, and what to do if something looks wrong |
@@ -46,7 +53,7 @@ Setting up a machine (macOS, Linux, or Windows through WSL), how to contribute t
 | [health-monitor.md](docs/implementation/health-monitor.md) | The outside monitor that checks and repairs the server |
 | [roles.md](docs/implementation/roles.md) | User, PowerUser, Admin, and the System page |
 | [admin-users.md](docs/implementation/admin-users.md) | Admin tools for accounts: turning one off (nothing deleted), sign-in locks, announcements |
-| [mobile.md](docs/design/mobile.md) | The iOS app: the plan |
-| [ios-onboarding.md](docs/ios-onboarding.md) | The iOS app: setting up Xcode and an iPhone, building, testing |
+| [ios-onboarding.md](docs/ios-onboarding.md) | The iPhone app: setting up Xcode and an iPhone, building, testing, TestFlight |
+| [mobile.md](docs/design/mobile.md) | The iPhone app: the plan it was built from |
 
 Docs are grouped by purpose: `docs/spec/` (the API), `docs/implementation/` (how built features work), `docs/operations/` (running it), `docs/design/` (proposals), `docs/management/` (the plan). Names are lowercase.
