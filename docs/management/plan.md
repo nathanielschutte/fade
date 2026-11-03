@@ -27,15 +27,16 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
 | 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side waits on a try on the phone |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
-| 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 8 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 9 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 10 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 11 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 12 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 13 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 14 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
+| 6 | [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | Infrastructure | Nate | In progress | Nate (2026-11-03): the chat list, groups, profiles, and the friend map read every message, and more queries per friend, as texts pile up forever |
+| 7 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 8 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 9 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 10 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 11 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 12 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 13 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 14 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 15 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
 
 **Done**
 
@@ -228,7 +229,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F3. Chat pagination
 - Text chat pagination. We DO want texts to live forever. Make sure the clients use pagination for when chat history grows extensively.
-- The server already pages (`?before=&limit=`). The web client loads the newest 100 and never asks for more. Add load-on-scroll-up, and keep the chat list query fast as tables grow (check indexes).
+- The server already pages (`?before=&limit=`). The web client loads the newest 100 and never asks for more. Add load-on-scroll-up, and keep the chat list query fast as tables grow (check indexes). (The queries: [I13](#i13-the-server-stays-fast-as-history-grows).)
 - Done (0.5.0): chats open on the newest 50; scrolling up loads 50 more at a time without jumping; short histories fill the screen; the top says where the chat began; reconnecting merges new messages without dropping loaded history. The iOS app should page the same way (`?before=<oldest id>&limit=50`).
 
 #### F4. Profile page
@@ -757,6 +758,12 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Nate (2026-10-30): a way to clear staging of load-test accounts and data for good, a general reset. Maybe a ready-made database for non-production copies, with the data we want already in it, kept in S3.
 - Staging has no user data, so a reset is safe there (never production: the same guards as `test-staging.sh`). Options: (a) stop the server, replace `fade.db` with a seed copy from S3, start; (b) a fresh empty database plus a seeding script (an Admin, a few friends, groups, messages) run against the API, so the seed always matches the current schema. (b) keeps working as migrations are added; (a) needs regenerating when they are.
 - **Needs decision:** what staging should start with (accounts, friends, groups, history), and whether the seed is a file or a script.
+
+#### I13. The server stays fast as history grows
+- Nate (2026-11-03): make the server's hot queries fast as data grows, without changing what any endpoint returns. Texts are kept forever, so every read of a whole history only gets slower. A survey of the code found: streaks and profile counts read the whole messages table; the chat list sorted each pair's whole history for its newest message and ran about 200 queries for 99 friends; the groups list and a group's page ran a few queries per group or message (up to ~600 a page); the friend map loaded every friendship in the database; and every read of a group sent `groups_changed`, so each of the reader's apps fetched its lists again.
+- Built (on `nate/server-speed`): migration 0028, four indexes and nothing else (messages by recipient; what's waiting for each person; pics by pair and time; unopened pics by time). The chat list is one query for its rows plus one for every newest message, with streaks from the last 62 days of pics (further back only for a run that reaches the window's start); a chat's page reads at most `limit` ids each way; the groups list and a group's page batch their lookups (`json_each`); profiles count from indexes alone; your own friend map reads only the friendships near you. Reading a group sends `groups_changed` and `group_read` only when the read position moved.
+- Tests: the old queries run beside the new on a mix of data and the answers are compared field by field; plan tests (`db::tests::assert_searches`) fail if the chat list, a chat, groups, profiles, streaks, the map, the iPhone badge, or the unopened-pic checks read every message or sort a whole history; `check_group_reads` in the smoke test. Timing on a seeded set (100 people, 60 friends each, ~200,000 messages), fastest of 15 runs before and after on Nate's Mac: the chat list 38 → 8 ms, the groups list 2.3 → 0.3 ms, your own profile 53 → 9 ms, a friend's 33 → 8 ms, a chat's newest 50 13 → 0.3 ms, the iPhone badge 14 → 0.5 ms, the pic disk check 20 → 0.05 ms, the friend map 3.7 → 3.0 ms (`cargo test --release timing -- --ignored --nocapture`).
+- Left for Nate: admin stats still load the whole users list without using it.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
