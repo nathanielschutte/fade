@@ -23,7 +23,8 @@ enum AppInfo {
 
     #if DEBUG
     /// A Debug build launched with `NAPSACK_FRESH_START` starts as if just
-    /// installed: no session, no pinned keys, no kept chats. The UI tests ask
+    /// installed: no session, no pinned keys, no kept chats, no settings (the
+    /// Face ID lock among them, which would cover the app). The UI tests ask
     /// for it, because their server is new each run and gives out the same
     /// account ids again, so keys pinned last run would read as changed ones.
     /// Release builds never read it (compiled out, and scripts/test-ios.sh checks).
@@ -31,6 +32,7 @@ enum AppInfo {
         guard ProcessInfo.processInfo.environment["NAPSACK_FRESH_START"] == "1" else { return }
         Keychain.deleteAll()
         ResponseCache.wipeAll()
+        if let app = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: app) }
     }
     #endif
 
