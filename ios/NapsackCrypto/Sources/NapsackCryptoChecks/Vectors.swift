@@ -4,7 +4,7 @@ import Foundation
 /// checks use. The files are never copied or regenerated: the tests read them
 /// from the repository, and the app from a copy Xcode puts in it when it builds.
 public struct Vectors: Sendable {
-    public static let files = ["format1", "format2", "recovery", "texts2", "group3", "media4", "edits2", "media6"]
+    public static let files = ["format1", "format2", "recovery", "texts2", "group3", "media4", "edits2", "media6", "passkey1"]
 
     let format1: Format1
     let format2: Format2
@@ -14,6 +14,7 @@ public struct Vectors: Sendable {
     let media4: Media4
     let edits2: Edits2
     let media6: Media6
+    let passkey1: Passkey1
 
     /// Reads every vector file from `directory`.
     public static func load(from directory: URL) throws -> Vectors {
@@ -25,7 +26,7 @@ public struct Vectors: Sendable {
         return Vectors(
             format1: try file("format1"), format2: try file("format2"), recovery: try file("recovery"),
             texts2: try file("texts2"), group3: try file("group3"), media4: try file("media4"),
-            edits2: try file("edits2"), media6: try file("media6"))
+            edits2: try file("edits2"), media6: try file("media6"), passkey1: try file("passkey1"))
     }
 }
 
@@ -89,6 +90,14 @@ struct Recovery: Decodable, Sendable {
     let recoveryKey: String
     let recoveryAuthKey: String
     let recoveryWrappedKey: String
+}
+
+/// A fixed PRF secret standing in for what a passkey answers, and Alice's
+/// private key (format1.json) wrapped by the key made from it.
+struct Passkey1: Decodable, Sendable {
+    let prfInputHex: String
+    let prfSecretHex: String
+    let passkeyWrappedKey: String
 }
 
 struct Texts2: Decodable, Sendable {

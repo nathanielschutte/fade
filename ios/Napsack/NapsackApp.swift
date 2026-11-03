@@ -30,8 +30,13 @@ struct NapsackApp: App {
                                     LockCover(lock: lock, active: scenePhase == .active)
                                 }
                             }
-                            .sheet(isPresented: .constant(session.recoveryKeyToShow != nil)) {
-                                RecoveryKeyScreen(key: session.recoveryKeyToShow ?? "") { session.recoveryKeyToShow = nil }
+                            .sheet(isPresented: .constant(session.recoveryKeyToShow != nil || session.passkeyOffer != nil)) {
+                                // A new account's recovery key, then the passkey napsack recommends (Passkeys.swift).
+                                if let key = session.recoveryKeyToShow {
+                                    RecoveryKeyScreen(key: key) { session.recoveryKeyToShow = nil }
+                                } else {
+                                    PasskeyOfferScreen()
+                                }
                             }
                     }
                 }

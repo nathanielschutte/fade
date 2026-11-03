@@ -9,8 +9,8 @@
 // AES-GCM key (ECDH + HKDF) that encrypts every text and pic between them.
 //
 // Every format so far is here, a file per area: this one (the password, the
-// identity, format 1), Recovery, Texts (format 2 texts, reactions, edits), Pics
-// (format 2), Groups (format 3), Media (formats 4 to 7), and SafetyCode.
+// identity, format 1), Recovery, Passkeys, Texts (format 2 texts, reactions,
+// edits), Pics (format 2), Groups (format 3), Media (formats 4 to 7), and SafetyCode.
 
 import CommonCrypto
 import CryptoKit
@@ -40,6 +40,7 @@ public enum E2E {
         case notARecoveryKey
         case notSentToMe
         case senderMustWrapForThemselves
+        case notAPasskeySecret
 
         // The ones a person can cause say what to do, in crypto.js's words.
         public var errorDescription: String? {
@@ -47,6 +48,7 @@ public enum E2E {
             case .captionTooLong: "That caption is too long."
             case .notSendable(let kind): "That isn't a \(kind) napsack can send."
             case .notARecoveryKey: "That doesn't look like a recovery key. It's 32 letters and numbers."
+            case .notAPasskeySecret: "This passkey didn't give napsack what it needs."
             default: "\(self)"
             }
         }

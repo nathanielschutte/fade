@@ -9,6 +9,8 @@
 	</dict>
 	<key>NapsackAPNsEnvironment</key>
 	<string>$(NAPSACK_APS_ENVIRONMENT)</string>
+	<key>NapsackLinkHost</key>
+	<string>$(NAPSACK_LINK_HOST)</string>
 	<key>NapsackServerURL</key>
 	<string>$(NAPSACK_SERVER_URL)</string>
 </dict>
