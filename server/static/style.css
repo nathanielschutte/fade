@@ -142,6 +142,20 @@ a.button { display: inline-flex; align-items: center; justify-content: center; c
 .auth-form .button { margin-top: 0.25rem; }
 .auth .link { align-self: flex-start; }
 
+/* ---------- plain pages: privacy, support ---------- */
+
+.doc { max-width: 40rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.doc h1 { font-size: var(--step-2); margin: 1rem 0 0.25rem; }
+.doc h2 { font-size: var(--step-1); margin: 2rem 0 0.5rem; }
+.doc h3 { font-size: var(--step-0); margin: 1.25rem 0 0.25rem; }
+.doc p, .doc li { color: var(--paper); }
+.doc p { margin: 0.6rem 0; }
+.doc ul { padding-left: 1.25rem; }
+.doc li { margin: 0.4rem 0; }
+.doc a { color: var(--sage); }
+.doc-updated { color: var(--fixer); font-size: var(--step--1); margin: 0; }
+.wordmark-small { font-weight: 700; text-decoration: none; letter-spacing: 0.01em; }
+
 /* ---------- app layout ---------- */
 
 /* Pinned to the screen, not sized from 100dvh: an installed iPhone app works

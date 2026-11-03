@@ -53,6 +53,9 @@ const KEYSTORE_JS: Asset = asset!("../static/keystore.js");
 const CACHE_JS: Asset = asset!("../static/cache.js");
 const FAVICON_SVG: Asset = asset!("../static/favicon.svg");
 const ADMIN_HTML: Asset = asset!("../static/admin.html");
+// For people and the App Store: what's kept, and how to get help.
+const PRIVACY_HTML: Asset = asset!("../static/privacy.html");
+const SUPPORT_HTML: Asset = asset!("../static/support.html");
 const ADMIN_JS: Asset = asset!("../static/admin.js");
 // Installing napsack as an app, and notifications (push.rs).
 const SW_JS: Asset = asset!("../static/sw.js");
@@ -92,6 +95,8 @@ pub fn routes() -> Router<SharedState> {
         .route("/cache.js", get(|| async { script(CACHE_JS.text()) }))
         .route("/style.css", get(style_css))
         .route("/admin", get(admin))
+        .route("/privacy", get(|| async { plain_page(&PRIVACY_HTML) }))
+        .route("/support", get(|| async { plain_page(&SUPPORT_HTML) }))
         .route("/favicon.svg", get(favicon))
         // Browsers ask for /favicon.ico on their own; point them at the SVG.
         .route(
@@ -160,6 +165,18 @@ async fn admin() -> impl IntoResponse {
             (header::HeaderName::from_static("x-robots-tag"), "noindex"),
         ],
         page(&ADMIN_HTML),
+    )
+}
+
+/// A page with no script: the privacy policy, support.
+fn plain_page(asset: &'static Asset) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CONTENT_SECURITY_POLICY, CSP),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        page(asset),
     )
 }
 
@@ -362,6 +379,8 @@ mod tests {
             &STYLE_CSS,
             &CRYPTO_JS,
             &ADMIN_HTML,
+            &PRIVACY_HTML,
+            &SUPPORT_HTML,
             &GRAPH_JS,
             &GRAPH_VIEW_JS,
             &ENV_JS,

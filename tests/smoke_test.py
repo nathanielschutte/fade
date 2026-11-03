@@ -1270,6 +1270,11 @@ def check_guard(tag):
         apps = details[0]["appIDs"]
         assert apps == ["TESTTEAM01.com.getattr.napsack"] if not REMOTE else len(apps) == 1 and apps[0].endswith(".com.getattr.napsack"), apps
 
+    # The privacy policy and support pages (for people and the App Store): plain pages, the strict CSP.
+    for page in ("/privacy", "/support"):
+        r = requests.get(BASE + page)
+        assert r.status_code == 200 and "script-src 'self'" in r.headers["Content-Security-Policy"], page
+
     # Scanning tools are refused outright, wherever they come from.
     assert requests.get(BASE + "/api/config", headers={"User-Agent": "sqlmap/1.8.4#stable"}).status_code == 403
     assert requests.get(BASE + "/", headers={"User-Agent": "Mozilla/5.0 Nuclei - Open-source project"}).status_code == 403
