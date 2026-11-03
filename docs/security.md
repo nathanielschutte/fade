@@ -23,6 +23,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Sign-up needs the invite code or a friend's add-a-friend link, and stops entirely once there are **100 accounts**. Each person has one link, which doesn't change or expire (X39); it's stored only as a hash, and lookups are rate-limited like sign-in.
 - Each person can be signed in on **10 devices**; an eleventh sign-in quietly signs out the one used least recently (a session whose browser forgot it is never used again, so it goes first). A session lasts a year and renews while it's used.
 - Changing your password, using your recovery key, or an admin reset signs out every other device, and their live connections close at once.
+- Deleting an account takes the password (wrong tries count toward the sign-in lock above) and the username typed again, and only ever deletes your own; nobody else, Admins included, can delete an account. A deleted account's username is held for 30 days (as a keyed hash), so nobody can sign up as it and pose as the person ([account-deletion.md](design/account-deletion.md)).
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
 
 ### Everything people type or upload

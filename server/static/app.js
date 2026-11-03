@@ -709,6 +709,43 @@ $("#password-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- deleting your own account (F22) ----------
+// What goes, then the password (checked by the server) and the username typed
+// again; the button only works once both are filled in and the name matches.
+
+function deleteReady() {
+  const form = $("#delete-form");
+  return form.delete_password.value.length > 0
+    && form.delete_username.value.trim().toLowerCase() === state.me.username.toLowerCase();
+}
+
+$("#delete-account").addEventListener("click", () => {
+  $("#delete-form").reset();
+  $("#delete-error").textContent = "";
+  $("#delete-username-label").textContent = `Type your username, ${state.me.username}`;
+  $("#delete-submit").disabled = true;
+  $("#delete-dialog").showModal();
+});
+$("#delete-form").addEventListener("input", () => { $("#delete-submit").disabled = !deleteReady(); });
+$("#delete-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!deleteReady()) return;
+  const form = e.currentTarget;
+  const btn = $("#delete-submit");
+  btn.disabled = true;
+  btn.textContent = "Deleting…";
+  $("#delete-error").textContent = "";
+  try {
+    const { authKey } = await e2e.deriveFromPassword(state.me.username, form.delete_password.value);
+    await getJSON("/me/delete", { method: "POST", json: { auth_key: authKey, username: form.delete_username.value.trim() } });
+    await signOutLocally("Your account was deleted. Everything of yours is gone from napsack.");
+  } catch (err) {
+    $("#delete-error").textContent = err.message;
+    btn.textContent = "Delete my account forever";
+    btn.disabled = !deleteReady();
+  }
+});
+
 $("#recovery-nudge-button").addEventListener("click", () => openPasswordDialog("recovery"));
 $("#security-recovery").addEventListener("click", () => openPasswordDialog("recovery"));
 $("#security-password").addEventListener("click", () => openPasswordDialog("change"));

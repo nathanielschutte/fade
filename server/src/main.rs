@@ -8,6 +8,7 @@ mod aws;
 mod birthdays;
 mod chats;
 mod db;
+mod deletion;
 mod edits;
 mod error;
 mod friends;
@@ -91,6 +92,9 @@ pub struct Config {
     /// `FADE_IOS_BUNDLE_ID`): named in the site's app-site association
     /// (web.rs), so its links open the app. None without a team.
     pub apple_app_id: Option<String>,
+    /// Production only (`FADE_DELETION_MARKERS`): each account deletion leaves a
+    /// marker in the backups bucket, re-applied at start (deletion.rs).
+    pub deletion_markers: bool,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
     pub push_allow_local: bool,
     /// Which non-production copy this is ("staging"), or None for production
@@ -199,6 +203,7 @@ impl Config {
                 &std::env::var("FADE_APPLE_TEAM_ID").unwrap_or_default(),
                 &env_or("FADE_IOS_BUNDLE_ID", "com.getattr.napsack".to_string())?,
             )?,
+            deletion_markers: env_or("FADE_DELETION_MARKERS", false)?,
             push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
             environment: environment(&std::env::var("FADE_ENVIRONMENT").unwrap_or_default())?,
             limits: {
@@ -354,6 +359,9 @@ async fn main() -> anyhow::Result<()> {
     occasions::spawn(state.clone());
     load_admins(state.clone()).await;
 
+    // A database restored from a backup loses no deletion (production).
+    deletion::reapply(&state).await;
+    deletion::spawn_sweeper(state.clone());
     snaps::spawn_sweeper(state.clone());
     group_pics::spawn_sweeper(state.clone());
 
@@ -396,6 +404,7 @@ fn router(state: SharedState) -> Router {
         .route("/me/recovery", axum::routing::put(account::set_recovery))
         .route("/me/security", get(account::security))
         .route("/me/sessions/end-others", post(account::end_other_sessions))
+        .route("/me/delete", post(deletion::delete))
         .route(
             "/admin/users/{user_id}/reset-code",
             post(account::issue_reset_code),

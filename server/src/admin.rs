@@ -106,7 +106,9 @@ pub async fn stats(
               WHERE (f.user_lo = u.id OR f.user_hi = u.id) AND f.ended_at IS NULL) AS friends,
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'text') AS texts_sent,
             (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'snap') AS snaps_sent
-         FROM users u ORDER BY u.created_at DESC LIMIT 500",
+         FROM users u
+         WHERE NOT EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)
+         ORDER BY u.created_at DESC LIMIT 500",
     )
     .fetch_all(db)
     .await?
@@ -124,7 +126,8 @@ pub async fn stats(
     Ok(Json(json!({
         "generated_at": at,
         "users": {
-            "total": count(db, "SELECT COUNT(*) FROM users", &[]).await?,
+            // A deleted account's hollow row isn't anyone (deletion.rs).
+            "total": count(db, "SELECT COUNT(*) FROM users u WHERE NOT EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)", &[]).await?,
             "new_24h": count(db, "SELECT COUNT(*) FROM users WHERE created_at >= ?", &[day_ago]).await?,
             "new_7d": count(db, "SELECT COUNT(*) FROM users WHERE created_at >= ?", &[week_ago]).await?,
             "active_24h": count(db, "SELECT COUNT(*) FROM users WHERE last_seen_at >= ?", &[day_ago]).await?,

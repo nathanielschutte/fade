@@ -50,6 +50,7 @@ enum SignInError: LocalizedError, Equatable {
     case badUsername
     case badSecret
     case mismatch
+    case notYourUsername
 
     var errorDescription: String? {
         switch self {
@@ -61,6 +62,7 @@ enum SignInError: LocalizedError, Equatable {
         case .badUsername: "Usernames are 3 to 20 characters: letters, numbers, dots, and underscores."
         case .badSecret: "Recovery keys are 32 letters and numbers; reset codes are 16."
         case .mismatch: "The new passwords don't match."
+        case .notYourUsername: "That isn't your username. Type it exactly to delete your account."
         }
     }
 }
@@ -392,6 +394,24 @@ enum SignInError: LocalizedError, Equatable {
         let answer = try Server.decoder.decode(Ended.self, from: await Server(account.server, transport: transport)
             .send("me/sessions/end-others", method: "POST", token: account.token))
         return answer.sessionsEnded ?? 0
+    }
+
+    /// Deletes the account for good (the server's deletion.rs): the password,
+    /// proven by its key, and the username typed again. Then nothing of it
+    /// stays on the phone either, and the sign-in screen says it's done.
+    func deleteAccount(password: String, typedUsername: String) async throws {
+        let account = try signedIn()
+        guard typedUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == account.user.username.lowercased() else {
+            throw SignInError.notYourUsername
+        }
+        let keys = try await deriveKeys(account.user.username, password)
+        struct Delete: Encodable { let authKey: String; let username: String }
+        _ = try await Server(account.server, transport: transport).send(
+            "me/delete", method: "POST", token: account.token,
+            json: Delete(authKey: keys.authKey, username: typedUsername.trimmingCharacters(in: .whitespacesAndNewlines)))
+        reporter.report(.info, "account deleted")
+        await reporter.flush()
+        endLocally(notice: "Your account was deleted. Everything of yours is gone from napsack.")
     }
 
     /// A new username: the keys are made from it (it's the salt), so the

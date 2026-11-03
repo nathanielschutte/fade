@@ -46,6 +46,8 @@ locals {
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
     # The contact in push notification requests (VAPID); never hardcoded in the server.
     "FADE_PUBLIC_URL=https://${local.domain}",
+    # Account deletions leave a marker in the backups bucket (deletion.rs); production only.
+    "FADE_DELETION_MARKERS=true",
     # iPhone notifications (apns.rs); empty without a key.
     "FADE_APNS_KEY=${base64encode(var.apns_key)}",
     "FADE_APNS_KEY_ID=${var.apns_key_id}",
@@ -224,6 +226,22 @@ resource "aws_iam_role_policy" "instance" {
         Effect   = "Allow"
         Action   = ["s3:PutObject"]
         Resource = "${aws_s3_bucket.backups.arn}/db/*"
+      },
+      {
+        # Account deletions (server/src/deletion.rs): add a marker (the id only),
+        # and list them at start, so a restored backup is wiped again. Never a
+        # read of a backup, never a delete.
+        Sid      = "MarkDeletions"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.backups.arn}/deletions/*"
+      },
+      {
+        Sid       = "ListDeletions"
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = aws_s3_bucket.backups.arn
+        Condition = { StringLike = { "s3:prefix" = ["deletions/*"] } }
       },
       {
         # The Metrics tab's incidents (server/src/incidents.rs, Admins only):

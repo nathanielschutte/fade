@@ -726,6 +726,11 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .sheet-text.small { font-size: 0.75rem; }
 .button.danger { border-color: var(--danger); color: var(--danger); }
 .button.danger:hover { background: rgba(232, 165, 152, 0.12); }
+/* The last step of something that can't be undone (deleting your account). */
+.button.danger-solid { background: var(--danger); border-color: var(--danger); color: var(--on-sage); font-weight: 600; }
+.button.danger-solid:disabled { opacity: 0.45; cursor: not-allowed; }
+.sheet-list { margin: 0 0 0.5rem; padding-left: 1.25rem; color: var(--paper); }
+.sheet-list li { margin: 0.25rem 0; }
 
 /* ---------- account bar (bottom of the chat list) ---------- */
 

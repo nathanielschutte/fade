@@ -92,7 +92,11 @@ fn check_wrapped(b64: &str) -> AppResult<()> {
 
 /// The caller's current password, proven by its auth key. Failures count
 /// toward the same per-username limit as sign-in.
-async fn require_password(state: &SharedState, me: &UserPublic, auth_key: &str) -> AppResult<()> {
+pub(crate) async fn require_password(
+    state: &SharedState,
+    me: &UserPublic,
+    auth_key: &str,
+) -> AppResult<()> {
     let account = me.username.to_lowercase();
     if state.login_fail_limit.exhausted(&account) {
         return Err(AppError::TooManyRequests(auth::TOO_MANY.into()));

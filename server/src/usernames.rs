@@ -50,7 +50,8 @@ pub async fn available_to(db: &SqlitePool, user: i64, name: &str) -> sqlx::Resul
     .bind(user)
     .fetch_one(db)
     .await?;
-    Ok(!taken)
+    // A deleted account's, for 30 days (deletion.rs).
+    Ok(!taken && !crate::deletion::held(db, name).await?)
 }
 
 /// Is `user` (now `username`) an Admin? Admins are listed by username in

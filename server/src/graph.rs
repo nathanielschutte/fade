@@ -355,7 +355,12 @@ pub async fn admin(
     let role = crate::roles::require(&state, &me, crate::roles::Role::Power).await?;
     let power = role.is_power();
     let people: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, username FROM users ORDER BY lower(username)")
+        // Not a deleted account's hollow row: nobody is there (deletion.rs).
+        sqlx::query_as(
+            "SELECT id, username FROM users u
+             WHERE NOT EXISTS (SELECT 1 FROM deleted_accounts d WHERE d.user_id = u.id)
+             ORDER BY lower(username)",
+        )
             .fetch_all(&state.db)
             .await?;
     let (known, secret) = if power {
