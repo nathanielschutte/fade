@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 import UIKit
 import NapsackCrypto
 
@@ -59,27 +60,60 @@ struct Bubble: Identifiable, Equatable, Sendable {
     }
 }
 
-extension Reader {
-    /// A group text's words as first sent (before its edits).
-    func groupOriginal(_ m: GroupMessage) -> String? {
-        guard let content = m.content, let wrap = m.key, let bytes = try? E2E.fromB64(content) else { return nil }
-        for senderKey in senderKeys(m.senderId, server: m.senderPublicKey) {
-            guard let wrapKey = try? E2E.groupWrapKey(mine: identity, theirs: senderKey, myId: me.id, theirId: m.senderId) else { continue }
-            let o = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: me.id, clientId: m.clientId ?? "",
-                                     recipients: m.recipients ?? [], wrapKey: wrapKey)
-            if let text = try? E2E.decryptGroupText(bytes, wrap: wrap, o) { return text.text }
-        }
-        return nil
+/// The keys a chat has worked out, kept while it's open: every message,
+/// reaction, and edit needs one, and each is an ECDH and an HKDF. A key is
+/// kept under the public key it came from, so a newly pinned or accepted key
+/// is a new entry, never a stale one. Shared with the work done off the main
+/// thread (opening a page), so it's locked.
+final class KeyRing: Sendable {
+    private let kept = Mutex<[String: SymmetricKey]>([:])
+
+    /// A direct chat's key with someone (E2E.pairKey).
+    func pair(mine: P256.KeyAgreement.PrivateKey, theirs: String, myId: Int64, theirId: Int64) throws -> SymmetricKey {
+        try key("pair:\(myId):\(theirId):\(theirs)") { try E2E.pairKey(mine: mine, theirs: theirs, myId: myId, theirId: theirId) }
     }
 
+    /// The key that wraps a group message's key between two people (E2E.groupWrapKey).
+    func groupWrap(mine: P256.KeyAgreement.PrivateKey, theirs: String, myId: Int64, theirId: Int64) throws -> SymmetricKey {
+        try key("wrap:\(myId):\(theirId):\(theirs)") { try E2E.groupWrapKey(mine: mine, theirs: theirs, myId: myId, theirId: theirId) }
+    }
+
+    /// How many it holds (ConversationTests checks each is worked out once).
+    var count: Int { kept.withLock { $0.count } }
+
+    private func key(_ name: String, _ make: () throws -> SymmetricKey) throws -> SymmetricKey {
+        if let known = kept.withLock({ $0[name] }) { return known }
+        let made = try make()
+        kept.withLock { $0[name] = made }
+        return made
+    }
+}
+
+extension Reader {
     static let tooNew = "Update napsack to read this"
     static let cantOpen = "This message couldn't be decrypted"
 
-    func bubble(_ m: DirectMessage, with friend: Friend) -> Bubble {
+    /// The chat keys that can read a friend's messages (as `readingKeys`), each worked out once per chat.
+    func readingKeys(_ friend: Friend, ring: KeyRing) -> [SymmetricKey] {
+        pins.readingKeys(friend.id, server: friend.publicKey).compactMap {
+            try? ring.pair(mine: identity, theirs: $0, myId: me.id, theirId: friend.id)
+        }
+    }
+
+    /// The wrap keys that can open someone's group message (from `senderKeys`), each worked out once per chat.
+    func wrapKeys(from sender: Int64, server: String?, ring: KeyRing) -> [SymmetricKey] {
+        senderKeys(sender, server: server).compactMap {
+            try? ring.groupWrap(mine: identity, theirs: $0, myId: me.id, theirId: sender)
+        }
+    }
+
+    func bubble(_ m: DirectMessage, with friend: Friend, ring: KeyRing = KeyRing()) -> Bubble {
         let mine = m.senderId == me.id
+        let keys = readingKeys(friend, ring: ring)
         let content: Bubble.Content
         var replyTo: Int64?
         var opening: PicToOpen?
+        var original: String?
         if m.kind == "snap" {
             let word = m.format == E2E.videoFormat ? "video" : "pic", Word = word.capitalized
             let words = mine
@@ -89,13 +123,13 @@ extension Reader {
             if !mine && m.snapState == "pending" { opening = .direct(m) }
         } else if ![1, 2].contains(m.format) {
             content = .unreadable(Self.tooNew)
-        } else if let opened = body(m, with: friend) {
-            content = .text(opened.text.text, edited: opened.edited)
+        } else if let opened = Self.open(m, keys: keys) {
+            content = .text(opened.text.text, edited: opened.original != nil)
             replyTo = opened.text.replyTo
+            original = opened.original
         } else {
             content = .unreadable(Self.cantOpen)
         }
-        let keys = readingKeys(friend)
         let reactions = (m.reactions ?? []).compactMap { r -> (Int64, String)? in
             let to = r.senderId == me.id ? friend.id : me.id
             return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
@@ -108,19 +142,32 @@ extension Reader {
         bubble.seen = mine && m.kind == "text" && m.readAt != nil
         bubble.opening = opening
         bubble.senderId = m.senderId
-        if case .text(_, true) = content, let ciphertext = m.ciphertext {
-            bubble.original = readingKeys(friend).lazy.compactMap {
-                try? E2E.decryptAnyText($0, ciphertext, format: m.format, sender: m.senderId, recipient: m.recipientId).text
-            }.first
-        }
+        bubble.original = original
         return bubble
     }
 
-    func bubble(_ m: GroupMessage) -> Bubble {
+    /// A direct text opened with the first key that can (as `body`, Chats.swift): what it
+    /// says now (its newest edit), and its words as first sent if it was edited.
+    static func open(_ m: DirectMessage, keys: [SymmetricKey]) -> (text: E2E.Text, original: String?)? {
+        guard let ciphertext = m.ciphertext else { return nil }
+        for key in keys {
+            guard let body = try? E2E.decryptAnyText(key, ciphertext, format: m.format, sender: m.senderId, recipient: m.recipientId)
+            else { continue }
+            if let edit = m.editCiphertext,
+               let edited = try? E2E.decryptEdit(key, edit, sender: m.senderId, recipient: m.recipientId, message: m.id) {
+                return (E2E.Text(text: edited, replyTo: body.replyTo), body.text)
+            }
+            return (body, nil)
+        }
+        return nil
+    }
+
+    func bubble(_ m: GroupMessage, ring: KeyRing = KeyRing()) -> Bubble {
         let mine = m.senderId == me.id
         let content: Bubble.Content
         var replyTo: Int64?
         var opening: PicToOpen?
+        var original: String?
         if m.kind == "event" {
             content = .event(eventText(m))
         } else if let pic = m.pic {
@@ -130,11 +177,15 @@ extension Reader {
                 : mine ? "Sent a \(word)"
                 : pic.viewers.contains(me.id) ? "\(Word) viewed" : "New \(word)")
             if !mine && pic.discardReason == nil && !pic.viewers.contains(me.id) { opening = .group(m) }
-        } else if ![0, E2E.groupFormat].contains(m.format) {
+        } else if m.format == 0 {
+            content = .text(m.body, edited: false)
+            replyTo = m.replyTo
+        } else if m.format != E2E.groupFormat {
             content = .unreadable(Self.tooNew)
-        } else if let opened = groupBody(m) {
-            content = .text(opened.text.text, edited: opened.edited)
+        } else if let opened = open(m, wrapKeys: wrapKeys(from: m.senderId, server: m.senderPublicKey, ring: ring)) {
+            content = .text(opened.text.text, edited: opened.original != nil)
             replyTo = opened.text.replyTo
+            original = opened.original
         } else {
             content = .unreadable(Self.cantOpen)
         }
@@ -146,8 +197,40 @@ extension Reader {
         bubble.recipients = m.recipients
         bubble.opening = opening
         bubble.senderId = m.senderId
-        if case .text(_, true) = content { bubble.original = groupOriginal(m) }
+        bubble.original = original
         return bubble
+    }
+
+    /// A format 3 group text opened with the first wrap key that can (as `groupBody`, Chats.swift):
+    /// what it says now (its newest edit), and its words as first sent if it was edited.
+    func open(_ m: GroupMessage, wrapKeys: [SymmetricKey]) -> (text: E2E.Text, original: String?)? {
+        guard let content = m.content, let wrap = m.key, let bytes = try? E2E.fromB64(content) else { return nil }
+        for wrapKey in wrapKeys {
+            let opening = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: me.id,
+                                           clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
+            guard let body = try? E2E.decryptGroupText(bytes, wrap: wrap, opening) else { continue }
+            if let editContent = m.editContent, let editKey = m.editKey, let editBytes = try? E2E.fromB64(editContent) {
+                var edit = opening
+                edit.clientId = m.editClientId ?? ""
+                if let edited = try? E2E.decryptGroupEdit(editBytes, wrap: editKey, message: m.id, edit) {
+                    return (E2E.Text(text: edited, replyTo: body.replyTo), body.text)
+                }
+            }
+            return (body, nil)
+        }
+        return nil
+    }
+}
+
+extension [Bubble] {
+    /// Where the message with this id is, or would go: a chat's bubbles are in id order.
+    func slot(of id: Int64) -> (index: Int, found: Bool) {
+        var low = 0, high = count
+        while low < high {
+            let middle = (low + high) / 2
+            if self[middle].id < id { low = middle + 1 } else { high = middle }
+        }
+        return (low, low < count && self[low].id == id)
     }
 }
 
@@ -229,8 +312,12 @@ struct OpenedPic: Sendable {
     private let pinBook: PinBook?
     /// The newest page, kept on the phone (still encrypted).
     private let cache: ResponseCache?
+    /// The keys this chat has worked out (KeyRing).
+    @ObservationIgnored private let ring = KeyRing()
+    /// The last write of the kept page, so writes land in order (off the main thread).
+    @ObservationIgnored private var keeping: Task<Void, Never>?
 
-    /// Oldest first.
+    /// Oldest first (in id order, which `slot(of:)` relies on).
     private(set) var bubbles: [Bubble] = []
     private(set) var loaded = false
     /// Nothing older to load: the chat's beginning (or, in a group, when you joined).
@@ -324,9 +411,11 @@ struct OpenedPic: Sendable {
         guard let friend, friend.id == user else { return }
         typingUntil[user] = nil  // they've read it; whatever they were typing will come as a message
         let upTo = Date(timeIntervalSince1970: TimeInterval(at))
-        for i in bubbles.indices where bubbles[i].mine && !bubbles[i].seen && bubbles[i].time <= upTo {
-            if case .text = bubbles[i].content { bubbles[i].seen = true }
+        var marked = bubbles, changed = false
+        for i in marked.indices where marked[i].mine && !marked[i].seen && marked[i].time <= upTo {
+            if case .text = marked[i].content { marked[i].seen = true; changed = true }
         }
+        if changed { bubbles = marked }  // one change on screen, not one per text
     }
 
     /// The newest of my texts they've seen, if it's my newest text ("Seen" goes under it).
@@ -388,8 +477,9 @@ struct OpenedPic: Sendable {
             struct Edit: Decodable { let ciphertext: String; let createdAt: Int64 }
             let edits = try Server.decoder.decode([Edit].self, from: await server.send("chats/\(friend.id)/messages/\(bubble.id)/edits", token: account.token))
             let (sender, recipient) = bubble.mine ? (account.user.id, friend.id) : (friend.id, account.user.id)
+            let keys = reader.readingKeys(friend, ring: ring)
             for (n, e) in edits.enumerated() {
-                let text = reader.readingKeys(friend).lazy.compactMap {
+                let text = keys.lazy.compactMap {
                     try? E2E.decryptEdit($0, e.ciphertext, sender: sender, recipient: recipient, message: bubble.id)
                 }.first
                 out.append(Version(id: n + 1, text: text, at: Date(timeIntervalSince1970: TimeInterval(e.createdAt)), label: "Edited"))
@@ -397,12 +487,11 @@ struct OpenedPic: Sendable {
         case .group(let group):
             struct Edit: Decodable { let content: String; let clientId: String; let createdAt: Int64; let key: String? }
             let edits = try Server.decoder.decode([Edit].self, from: await server.send("groups/\(group.id)/messages/\(bubble.id)/edits", token: account.token))
+            let wrapKeys = reader.wrapKeys(from: bubble.senderId, server: nil, ring: ring)
             for (n, e) in edits.enumerated() {
                 var text: String?
                 if let wrap = e.key, let bytes = try? E2E.fromB64(e.content) {
-                    for senderKey in reader.senderKeys(bubble.senderId, server: nil) {
-                        guard let wrapKey = try? E2E.groupWrapKey(mine: reader.identity, theirs: senderKey, myId: account.user.id, theirId: bubble.senderId)
-                        else { continue }
+                    for wrapKey in wrapKeys {
                         let o = E2E.GroupOpening(groupId: group.id, senderId: bubble.senderId, myId: account.user.id, clientId: e.clientId,
                                                  recipients: bubble.recipients ?? [], wrapKey: wrapKey)
                         if let t = try? E2E.decryptGroupEdit(bytes, wrap: wrap, message: bubble.id, o) { text = t; break }
@@ -439,7 +528,10 @@ struct OpenedPic: Sendable {
         }
     }
 
-    func bubble(_ id: Int64) -> Bubble? { bubbles.first { $0.id == id } }
+    func bubble(_ id: Int64) -> Bubble? {
+        let slot = bubbles.slot(of: id)
+        return slot.found ? bubbles[slot.index] : nil
+    }
 
     /// Friends by id, for names (a group's members, adding people).
     var friendsById: [Int64: Friend] { reader.friends }
@@ -549,7 +641,7 @@ struct OpenedPic: Sendable {
                 ?? E2E.encryptText2(sendingPairKey(friend), item.text, replyTo: item.replyTo, sender: account.user.id, recipient: friend.id)
             sealedTexts[item.id] = ciphertext
             let m = try await server.sendText(to: friend.id, ciphertext: ciphertext, clientId: item.id, token: account.token)
-            return reader.bubble(m, with: friend)
+            return reader.bubble(m, with: friend, ring: ring)
         case .group(let group):
             var sealed: E2E.GroupMessage
             if let kept = sealedGroupTexts[item.id] { sealed = kept } else { sealed = try await seal(item, for: group, server: server) }
@@ -563,7 +655,7 @@ struct OpenedPic: Sendable {
                 sealedGroupTexts[item.id] = sealed
                 m = try await server.sendGroupText(to: group.id, sealed, token: account.token)
             }
-            return reader.bubble(m)
+            return reader.bubble(m, ring: ring)
         }
     }
 
@@ -578,8 +670,8 @@ struct OpenedPic: Sendable {
         let members = try await server.group(group.id, token: account.token).members
         var wrapKeys: [Int64: SymmetricKey] = [:]
         for member in members {
-            wrapKeys[member.id] = try E2E.groupWrapKey(mine: reader.identity, theirs: sendingKey(member),
-                                                       myId: account.user.id, theirId: member.id)
+            wrapKeys[member.id] = try ring.groupWrap(mine: reader.identity, theirs: sendingKey(member),
+                                                     myId: account.user.id, theirId: member.id)
         }
         return wrapKeys
     }
@@ -616,7 +708,7 @@ struct OpenedPic: Sendable {
                 try await server.upload("chats/\(friend.id)/snaps", data: sealed, contentType: "application/octet-stream",
                                         token: self.account.token, query: query)
             }
-            upsert(reader.bubble(try Server.decoder.decode(DirectMessage.self, from: data), with: friend))
+            upsert(reader.bubble(try Server.decoder.decode(DirectMessage.self, from: data), with: friend, ring: ring))
         case .group(let group):
             func seal() async throws -> E2E.GroupMessage {
                 let keys = try await wrapKeys(for: group, server: server)
@@ -646,7 +738,7 @@ struct OpenedPic: Sendable {
                 sealed = try await seal()  // someone joined or left since
                 data = try await post(sealed)
             }
-            upsert(reader.bubble(try Server.decoder.decode(GroupMessage.self, from: data)))
+            upsert(reader.bubble(try Server.decoder.decode(GroupMessage.self, from: data), ring: ring))
         }
         Reporter.shared.report(.info, video == nil ? "pic sent" : "video sent", ["group": groupFlag, "bytes": String(jpeg.count)])
     }
@@ -698,11 +790,15 @@ struct OpenedPic: Sendable {
 
     /// The newest page, replacing what's shown.
     func loadNewest() async throws {
-        // What was kept, at once, while the server answers.
-        if !loaded, let kept = cache?.read(cacheKey), let page = try? await bubbles(from: kept), !page.isEmpty {
-            bubbles = page
-            reachedStart = page.count < Self.page
-            loaded = true
+        // What was kept, at once, while the server answers (read and opened off the main thread).
+        if !loaded, let cache {
+            let key = cacheKey
+            if let kept = await Task.detached(priority: .userInitiated, operation: { cache.read(key) }).value,
+               let page = try? await bubbles(from: kept), !page.isEmpty, !loaded {
+                bubbles = page
+                reachedStart = page.count < Self.page
+                loaded = true
+            }
         }
         let page = try await fetch(before: nil)
         noteUnreadable(page)
@@ -710,7 +806,7 @@ struct OpenedPic: Sendable {
             // Already on screen (the kept copy): change only what changed. Replacing
             // the whole list moved the scroll view back to the bottom, stopping a
             // scroll under way for a second or two as the chat opened (D17).
-            page.forEach(upsert)
+            join(page)
         } else {
             bubbles = page
             reachedStart = page.count < Self.page
@@ -723,13 +819,20 @@ struct OpenedPic: Sendable {
     /// shown. If more came than a page holds, it starts again from the newest.
     func catchUp() async throws {
         guard loaded else { return try await loadNewest() }
-        let page = try await fetch(before: nil)
+        join(try await fetch(before: nil))
+    }
+
+    /// The newest page, joined to what's shown: merged, unless a whole page came
+    /// since the newest shown (a kept copy from long ago, or a long time
+    /// offline). Then what's missing in between would never load (older pages
+    /// come from before the oldest shown), so it starts again from the newest.
+    private func join(_ page: [Bubble]) {
         if page.count == Self.page, let oldest = page.first?.id, let newest = bubbles.last?.id, oldest > newest {
             bubbles = page
             reachedStart = false
             return
         }
-        page.forEach(upsert)
+        merge(page)
     }
 
     /// A direct message, new or changed, from the socket. Returns whether it's
@@ -737,9 +840,9 @@ struct OpenedPic: Sendable {
     @discardableResult func arrived(_ m: DirectMessage) -> Bool {
         guard loaded, let friend, [m.senderId, m.recipientId].contains(friend.id) else { return false }
         if m.senderId == account.user.id, let clientId = m.clientId { _ = discard(clientId) }  // it went
-        let new = !bubbles.contains { $0.id == m.id }
+        let new = !bubbles.slot(of: m.id).found
         if new { typingUntil[m.senderId] = nil }  // their message is in: they're done typing
-        upsert(reader.bubble(m, with: friend))
+        upsert(reader.bubble(m, with: friend, ring: ring))
         return new && m.senderId == friend.id && m.kind == "text"
     }
 
@@ -754,9 +857,9 @@ struct OpenedPic: Sendable {
             pinBook.see(senders: [(m.senderId, key)])
             reader.pins = pinBook.pins
         }
-        let new = !bubbles.contains { $0.id == m.id }
+        let new = !bubbles.slot(of: m.id).found
         if new { typingUntil[m.senderId] = nil }
-        upsert(reader.bubble(m))
+        upsert(reader.bubble(m, ring: ring))
         return new && m.senderId != account.user.id
     }
 
@@ -769,9 +872,9 @@ struct OpenedPic: Sendable {
         case .friend(let friend):
             let key = try sendingPairKey(friend)
             let ciphertext = try next.map { try E2E.encryptReaction(key, $0, sender: account.user.id, recipient: friend.id, message: bubble.id) }
-            upsert(reader.bubble(try await server.react(to: bubble.id, friend: friend.id, ciphertext: ciphertext, token: account.token), with: friend))
+            upsert(reader.bubble(try await server.react(to: bubble.id, friend: friend.id, ciphertext: ciphertext, token: account.token), with: friend, ring: ring))
         case .group(let group):
-            upsert(reader.bubble(try await server.react(to: bubble.id, group: group.id, emoji: next, token: account.token)))
+            upsert(reader.bubble(try await server.react(to: bubble.id, group: group.id, emoji: next, token: account.token), ring: ring))
         }
     }
 
@@ -785,7 +888,7 @@ struct OpenedPic: Sendable {
         case .friend(let friend):
             let ciphertext = try E2E.encryptEdit(try sendingPairKey(friend), text, sender: account.user.id, recipient: friend.id, message: bubble.id)
             let m = try await retrying { try await server.editText(bubble.id, friend: friend.id, ciphertext: ciphertext, clientId: clientId, token: self.account.token) }
-            upsert(reader.bubble(m, with: friend))
+            upsert(reader.bubble(m, with: friend, ring: ring))
         case .group(let group):
             let members = try await server.group(group.id, token: account.token).members
             var wrapKeys: [Int64: SymmetricKey] = [:]
@@ -798,11 +901,11 @@ struct OpenedPic: Sendable {
                 } else {
                     throw SendError.cantEdit
                 }
-                wrapKeys[id] = try E2E.groupWrapKey(mine: reader.identity, theirs: key, myId: account.user.id, theirId: id)
+                wrapKeys[id] = try ring.groupWrap(mine: reader.identity, theirs: key, myId: account.user.id, theirId: id)
             }
             let sealed = try E2E.encryptGroupEdit(text, message: bubble.id, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
             let m = try await retrying { try await server.editGroupText(bubble.id, group: group.id, sealed, token: self.account.token) }
-            upsert(reader.bubble(m))
+            upsert(reader.bubble(m, ring: ring))
         }
     }
 
@@ -819,8 +922,8 @@ struct OpenedPic: Sendable {
     /// The chat key for sending to a friend: with the key I pinned, never one the server swapped in.
     private func sendingPairKey(_ friend: Friend) throws -> SymmetricKey {
         if keyChanged { throw SendError.keyChanged(friend.username) }
-        return try E2E.pairKey(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
-                               myId: account.user.id, theirId: friend.id)
+        return try ring.pair(mine: reader.identity, theirs: reader.pins.current[friend.id] ?? friend.publicKey,
+                             myId: account.user.id, theirId: friend.id)
     }
 
     // ---------- pics and videos, opened once ----------
@@ -833,7 +936,7 @@ struct OpenedPic: Sendable {
         case .direct(let m):
             guard let friend else { throw SendError.cantOpen }
             let sealed = try await server.send("snaps/\(m.id)", token: account.token)
-            for key in reader.readingKeys(friend) {
+            for key in reader.readingKeys(friend, ring: ring) {
                 if m.format == E2E.videoFormat, let v = try? E2E.decryptVideo(key, sealed, sender: m.senderId, recipient: m.recipientId) {
                     return try OpenedPic(image: nil, video: Self.temporaryVideo(v.media, type: v.type), caption: v.caption, y: v.y)
                 }
@@ -848,8 +951,7 @@ struct OpenedPic: Sendable {
         case .group(let m):
             guard let id = m.pic?.id, let wrap = m.key else { throw SendError.cantOpen }
             let sealed = try await server.send("groups/\(m.groupId)/pics/\(id)", token: account.token)
-            for senderKey in reader.senderKeys(m.senderId, server: m.senderPublicKey) {
-                guard let wrapKey = try? E2E.groupWrapKey(mine: reader.identity, theirs: senderKey, myId: account.user.id, theirId: m.senderId) else { continue }
+            for wrapKey in reader.wrapKeys(from: m.senderId, server: m.senderPublicKey, ring: ring) {
                 let o = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: account.user.id,
                                          clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
                 if m.format == E2E.groupVideoFormat, let v = try? E2E.decryptGroupVideo(sealed, wrap: wrap, o) {
@@ -891,12 +993,25 @@ struct OpenedPic: Sendable {
     }
 
     private func upsert(_ bubble: Bubble) {
-        if let i = bubbles.firstIndex(where: { $0.id == bubble.id }) {
-            if bubbles[i] != bubble { bubbles[i] = bubble }  // the same again changes nothing on screen
-        } else {
-            bubbles.append(bubble)
-            bubbles.sort { $0.id < $1.id }
+        merge([bubble])
+    }
+
+    /// Messages, new or changed, merged into what's shown in id order: each
+    /// found by halving, the list changed once, and only if something did (the
+    /// same again changes nothing on screen, D17).
+    private func merge(_ page: [Bubble]) {
+        var merged = bubbles, changed = false
+        for bubble in page {
+            let slot = merged.slot(of: bubble.id)
+            if !slot.found {
+                merged.insert(bubble, at: slot.index)
+                changed = true
+            } else if merged[slot.index] != bubble {
+                merged[slot.index] = bubble
+                changed = true
+            }
         }
+        if changed { bubbles = merged }
     }
 
     private var groupFlag: String {
@@ -915,8 +1030,8 @@ struct OpenedPic: Sendable {
         loadingOlder = true
         defer { loadingOlder = false }
         let page = try await fetch(before: oldest)
-        let shown = Set(bubbles.map(\.id))
-        bubbles = page.filter { !shown.contains($0.id) } + bubbles
+        guard bubbles.first?.id == oldest else { return }  // started again from the newest meanwhile (catchUp)
+        bubbles = page.filter { $0.id < oldest } + bubbles
         reachedStart = page.count < Self.page
     }
 
@@ -948,25 +1063,48 @@ struct OpenedPic: Sendable {
         case .group(let group): "groups/\(group.id)/messages"
         }
         let data = try await server.send(path, token: account.token, query: Server.page(before: before, limit: Self.page))
-        if before == nil { cache?.write(data, cacheKey) }  // as sent: still encrypted
-        return try await bubbles(from: data)
+        let kept = before == nil ? keep(data) : nil  // as sent: still encrypted (written while the page is opened)
+        let page = try await bubbles(from: data)
+        await kept?.value
+        return page
     }
 
-    /// A page of messages (from the server, or kept), each opened here.
+    /// Keeps the newest page on the phone, off the main thread, each write after the last.
+    private func keep(_ data: Data) -> Task<Void, Never>? {
+        guard let cache else { return nil }
+        let key = cacheKey, previous = keeping
+        let write = Task.detached(priority: .userInitiated) {
+            await previous?.value
+            cache.write(data, key)
+        }
+        keeping = write
+        return write
+    }
+
+    /// A page of messages (from the server, or kept): read and opened off the main thread.
     private func bubbles(from data: Data) async throws -> [Bubble] {
-        let reader = self.reader
+        let ring = self.ring
         switch chat {
         case .friend(let friend):
-            let messages = try Server.decoder.decode([DirectMessage].self, from: data)
-            return await Task.detached(priority: .userInitiated) { messages.map { reader.bubble($0, with: friend) } }.value
+            let reader = self.reader
+            return try await Task.detached(priority: .userInitiated) {
+                try Server.decoder.decode([DirectMessage].self, from: data).map { reader.bubble($0, with: friend, ring: ring) }
+            }.value
         case .group:
-            let messages = try Server.decoder.decode([GroupMessage].self, from: data)
+            // Senders seen here for the first time are pinned before anything is
+            // read (on the main actor, where the pins live), so the page is read
+            // with the same keys on every open: a message sealed with another key
+            // than the first one seen reads as it will next time, not by the
+            // server's say-so this once.
+            let messages = try await Task.detached(priority: .userInitiated) {
+                try Server.decoder.decode([GroupMessage].self, from: data)
+            }.value
             if let pinBook {
                 pinBook.see(senders: messages.compactMap { m in m.senderPublicKey.map { (m.senderId, $0) } })
-                self.reader.pins = pinBook.pins
+                reader.pins = pinBook.pins
             }
             let reader = self.reader
-            return await Task.detached(priority: .userInitiated) { messages.map(reader.bubble) }.value
+            return await Task.detached(priority: .userInitiated) { messages.map { reader.bubble($0, ring: ring) } }.value
         }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The server's answers, kept on this phone so napsack opens at once and keeps
 /// working on a bad connection (the web app's cache.js): the chat list, groups,
@@ -10,6 +11,15 @@ import Foundation
 /// if a file can't be read or written, napsack loads from the server as before.
 struct ResponseCache: Sendable {
     let directory: URL
+    private let root: String
+    /// How many times the root had been wiped when this was made. Writes stop
+    /// once it's wiped again: an answer that comes back as you sign out (a
+    /// page fetched just before) never puts any of the account back.
+    private let wipesBefore: Int
+
+    /// Each root's wipes so far. Writes and wipes take turns on it, so no
+    /// write lands between a wipe and its count.
+    private static let wipes = Mutex<[String: Int]>([:])
 
     /// Where every account's kept answers live.
     static var root: URL {
@@ -18,6 +28,9 @@ struct ResponseCache: Sendable {
 
     init(account: Int64, root: URL = ResponseCache.root) {
         directory = root.appending(path: String(account), directoryHint: .isDirectory)
+        let root = root.standardizedFileURL.path(percentEncoded: false)
+        self.root = root
+        wipesBefore = Self.wipes.withLock { $0[root, default: 0] }
     }
 
     private func file(_ key: String) -> URL {
@@ -29,6 +42,13 @@ struct ResponseCache: Sendable {
     }
 
     func write(_ data: Data, _ key: String) {
+        Self.wipes.withLock { wipes in
+            guard wipes[root, default: 0] == wipesBefore else { return }  // signed out since
+            save(data, key)
+        }
+    }
+
+    private func save(_ data: Data, _ key: String) {
         do {
             if !FileManager.default.fileExists(atPath: directory.path()) {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -46,6 +66,9 @@ struct ResponseCache: Sendable {
 
     /// Every account's kept answers, gone (signing out).
     static func wipeAll(root: URL = ResponseCache.root) {
-        try? FileManager.default.removeItem(at: root)
+        wipes.withLock { wipes in
+            wipes[root.standardizedFileURL.path(percentEncoded: false), default: 0] += 1
+            try? FileManager.default.removeItem(at: root)
+        }
     }
 }

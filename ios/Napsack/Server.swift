@@ -10,8 +10,32 @@ enum AppInfo {
     static var clientHeader: String { "ios/\(version)+\(build)" }
     /// The one server this build talks to: `NAPSACK_SERVER_URL` in the build
     /// settings (Config/Base.xcconfig, or your Local.xcconfig). Nothing in the
-    /// app changes it.
-    static let server = Bundle.main.object(forInfoDictionaryKey: "NapsackServerURL") as? String ?? ""
+    /// app changes it. A Debug build launched with `NAPSACK_UI_TEST_SERVER` in its
+    /// environment uses that instead: the UI tests (NapsackUITests) point it
+    /// at their own server that way. Release builds never read it (compiled
+    /// out, and scripts/test-ios.sh checks).
+    static let server: String = {
+        #if DEBUG
+        if let launched = ProcessInfo.processInfo.environment["NAPSACK_UI_TEST_SERVER"], !launched.isEmpty { return launched }
+        #endif
+        return Bundle.main.object(forInfoDictionaryKey: "NapsackServerURL") as? String ?? ""
+    }()
+
+    #if DEBUG
+    /// A Debug build launched with `NAPSACK_FRESH_START` starts as if just
+    /// installed: no session, no pinned keys, no kept chats, no settings (the
+    /// Face ID lock among them, which would cover the app). The UI tests ask
+    /// for it, because their server is new each run and gives out the same
+    /// account ids again, so keys pinned last run would read as changed ones.
+    /// Release builds never read it (compiled out, and scripts/test-ios.sh checks).
+    static func freshStartIfAsked() {
+        guard ProcessInfo.processInfo.environment["NAPSACK_FRESH_START"] == "1" else { return }
+        Keychain.deleteAll()
+        ResponseCache.wipeAll()
+        if let app = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: app) }
+    }
+    #endif
+
     /// Shown outside production (in production, nothing says where the app talks to).
     static func serverLabel(environment: String?, server: String = server) -> String? {
         guard let url = URL(string: server) else { return server }

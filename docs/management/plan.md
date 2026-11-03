@@ -449,6 +449,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### D17. The iOS chat is stuck for a second or two when it opens
 - Nate (2026-11-03): opening a chat, it won't scroll for one to two seconds. Likely work on the main thread as it opens (decrypting the page, laying out every bubble at once).
 - Found: not the main thread (the page is decrypted off it, and each bubble is cheap). A chat opens from the kept copy at once, then the server's page arrives a moment later and *replaced* the whole list, which put the scroll view back at the bottom, cancelling a scroll under way. Now a page already on screen is merged, changing only what changed: the same messages again change nothing (`thePageOnScreenIsMergedNotReplaced`). Needs Nate's phone to confirm.
+- Also (2026-11-03, [plan-ios.md](plan-ios.md#8-chats-native)): what the chat did on the main thread anyway is off it or smaller (keys worked out once per chat, pages read and decrypted off it, merging by halving), and the scrolling has fewer rules, so nothing pulls the chat back to the bottom while you scroll up.
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.

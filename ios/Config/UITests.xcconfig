@@ -1,0 +1,9 @@
+// The app's UI tests (NapsackUITests): they run in their own process and drive
+// the app as a person does, through its screens, against the local test server
+// (scripts/test-ios.sh). Without one they skip.
+
+PRODUCT_NAME = NapsackUITests
+PRODUCT_BUNDLE_IDENTIFIER = $(NAPSACK_BUNDLE_ID).uitests
+GENERATE_INFOPLIST_FILE = YES
+// The app they drive (a UI test bundle doesn't load into it, as the unit tests do).
+TEST_TARGET_NAME = Napsack

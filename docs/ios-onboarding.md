@@ -25,6 +25,7 @@ ios/
 │   ├── Server.swift           talking to a napsack server
 │   └── Assets.xcassets        the icon and accent color
 ├── NapsackTests/          the app's unit tests
+├── NapsackUITests/        UI tests: the real app driven through its screens
 ├── NapsackCrypto/         the encryption, and its checks, as a Swift package
 └── Config/                build settings, as text files
 ```
@@ -32,12 +33,12 @@ ios/
 The Xcode words, in the order you'll meet them:
 
 - **Project** (`Napsack.xcodeproj`): what Xcode opens. It lists the targets and where their files are. You rarely edit it by hand.
-- **Target**: one thing that gets built. There are two: **Napsack** (the app) and **NapsackTests** (its tests, which run inside the app).
+- **Target**: one thing that gets built. There are three: **Napsack** (the app), **NapsackTests** (its tests, which run inside the app), and **NapsackUITests** (UI tests, which run beside the app and drive it as a person would).
 - **Scheme**: what the Run (⌘R) and Test (⌘U) buttons do. Use the **Napsack** scheme. Xcode also shows a **NapsackCrypto** scheme for the package.
 - **Destination**: where it runs, picked next to the scheme at the top of the window: a Simulator ("iPhone 17") or your own iPhone.
 - **Swift package** (`NapsackCrypto/`): a library with its own `Package.swift`. The app uses it like any library (`import NapsackCrypto`). Keeping the encryption in a package means its tests run on the Mac in seconds (`swift test`), without a simulator.
-- **Synchronized folders**: `Napsack/` and `NapsackTests/` are linked to their targets as folders. A file you add there, in Xcode or any editor, is part of the build. You don't add files to the project.
-- **Build settings and `.xcconfig` files**: everything about how the app is built (its name, iOS version, bundle id, signing) is in `Config/*.xcconfig`, plain text that reads well in a diff. `Base.xcconfig` holds what's shared, `Debug` and `Release` the two **build configurations** (Run uses Debug, an App Store build Release), and `App` and `Tests` each target's own settings. `Local.xcconfig` holds your machine's settings and isn't in git.
+- **Synchronized folders**: `Napsack/`, `NapsackTests/`, and `NapsackUITests/` are linked to their targets as folders. A file you add there, in Xcode or any editor, is part of the build. You don't add files to the project.
+- **Build settings and `.xcconfig` files**: everything about how the app is built (its name, iOS version, bundle id, signing) is in `Config/*.xcconfig`, plain text that reads well in a diff. `Base.xcconfig` holds what's shared, `Debug` and `Release` the two **build configurations** (Run uses Debug, an App Store build Release), and `App`, `Tests`, and `UITests` each target's own settings. `Local.xcconfig` holds your machine's settings and isn't in git.
 - **Info.plist**: what the app tells iOS about itself (its name under the icon, permissions it asks for). Most of it is generated from `App.xcconfig` (the `INFOPLIST_KEY_...` lines); `Config/App-Info.plist` adds the rest.
 - **Bundle id**: the app's permanent identity with Apple, `com.getattr.napsack`.
 - **Signing and teams**: iOS runs only apps signed by a developer Apple knows. Your Apple ID is a **team**. A free Apple ID is a "Personal Team"; the paid Developer Program gives a team that can use TestFlight and the App Store.
@@ -90,6 +91,8 @@ A free team's builds stop opening after **7 days**; run it from Xcode again. Pus
     -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:NapsackTests/LiveSignInTests
   ```
   The easy way: **`make ios`** (`scripts/test-ios.sh`) runs the crypto package's tests, then the app's on a Simulator against a fresh server on a throwaway database, live tests included, and prints how long each part took; `make ios-quick` skips the server (as CI does), `make ios-staging` runs the live tests against staging (a real deployment, behind Caddy; it makes test accounts there, never on production), and `ONLY=NapsackTests/SendingTests make ios` runs one suite. By hand: `xcodebuild` hands the tests any variable that starts with `TEST_RUNNER_`, without the prefix. Otherwise they show as skipped. One live test reads the log viewer back, which needs an Admin: run the server with `FADE_ADMINS=nate` and add `TEST_RUNNER_NAPSACK_TEST_ADMIN=nate`.
+
+- **The UI tests** (`NapsackUITests`, XCUITest) launch the real app and drive it through its screens, against the same local server as the live tests: they make two friends through the API, sign in as one on the app's own sign-in screen, and send texts and typing as the other (HTTP and the socket). They check the open chat's scrolling with the frames of what's on screen (the newest stays in sight above the composer and the keyboard; scrolled up, nothing moves what you're reading) and that holding a message brings its menu while the finger is down. `ONLY=NapsackUITests make ios` runs just them (about two minutes). A Debug build reads two launch settings only they give it: `NAPSACK_UI_TEST_SERVER` (the server to use instead of `NAPSACK_SERVER_URL`) and `NAPSACK_FRESH_START` (start as if just installed: no account, pins, kept chats, or settings, because the throwaway server gives out the same account ids each run). Release builds never read them, and `scripts/test-ios.sh` and CI check. Like the live tests, they skip without a server (so they skip in CI). They run one at a time on the Simulator you name, not on parallel clones. Add `TEST_RUNNER_NAPSACK_SHOTS=<folder>` to keep their screenshots in a folder on the Mac; failures always attach one to the `.xcresult`. What a Simulator can't show (the haptic as a message's menu comes, how the press feels) needs the phone.
 
 ### Pointing the app at your own server
 

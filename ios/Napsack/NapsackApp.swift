@@ -4,10 +4,18 @@ import SwiftUI
 struct NapsackApp: App {
     /// For notifications: the device token, and a tapped one (Notifications.swift).
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var session = Session()
+    @State private var session: Session
     /// Lock napsack with Face ID, if it's on (AppLock.swift).
-    @State private var lock = AppLock.shared
+    @State private var lock: AppLock
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        #if DEBUG
+        AppInfo.freshStartIfAsked()  // before anything saved is read (UI tests): the lock reads its setting as it's made
+        #endif
+        _session = State(initialValue: Session())
+        _lock = State(initialValue: AppLock.shared)
+    }
 
     var body: some Scene {
         WindowGroup {

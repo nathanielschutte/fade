@@ -39,6 +39,17 @@
                ReferencedContainer = "container:Napsack.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "4E5A0000000000000000002D"
+               BuildableName = "NapsackUITests.xctest"
+               BlueprintName = "NapsackUITests"
+               ReferencedContainer = "container:Napsack.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
