@@ -321,8 +321,15 @@ async fn account(tx: &mut SqliteConnection, user: i64) -> sqlx::Result<()> {
 async fn after(state: &SharedState, user: i64, wiped: &Wiped) {
     state.hub.end_sessions(user, None);
     state.hub.send_many(&wiped.friends, &Event::FriendsChanged);
+    // Their chats and messages no longer count on anyone's icon.
+    for friend in &wiped.friends {
+        crate::apns::badge_changed(state, *friend);
+    }
     for group in &wiped.groups {
         if let Ok(members) = crate::groups::member_ids(&state.db, *group).await {
+            for member in &members {
+                crate::apns::badge_changed(state, *member);
+            }
             state
                 .hub
                 .send_many(&members, &Event::GroupsChanged { group_id: *group });

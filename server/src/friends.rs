@@ -440,6 +440,9 @@ pub async fn remove(
     if ended > 0 {
         record_event(&state.db, me.id, user_id, "unfriended").await?;
         tracing::info!(user_id = me.id, friend_id = user_id, "unfriended");
+        // The chat no longer counts on either one's icon.
+        crate::apns::badge_changed(&state, me.id);
+        crate::apns::badge_changed(&state, user_id);
     }
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "ok": true })))

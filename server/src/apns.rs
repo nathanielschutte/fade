@@ -14,8 +14,11 @@
 //!
 //! The number on the app's icon is the chats waiting (`waiting_chats`). Every
 //! notification carries it, and when it changes without one (read on the
-//! web, a pic opened, a chat muted) the person's iPhones get the new number
-//! on its own, with no alert and no sound (`badge_changed`).
+//! web, a pic opened, a chat muted, a group left, a friend removed, turned
+//! off, or deleted) the person's iPhones get the new number on its own, with
+//! no alert and no sound (`badge_changed`). Two changes only time makes wait
+//! for the next notification or the app opening: a timed mute running out,
+//! and an old chat's unread texts coming back with a friendship resumed.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -491,7 +494,9 @@ pub async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Res
 
 /// The number on `user`'s icon may have changed with no notification to carry
 /// it: they read a chat or opened a pic (on the web, say), muted or hid a
-/// chat, or a message came while napsack was on their screen elsewhere. Their
+/// chat, a message came while napsack was on their screen elsewhere, a group
+/// event came, they left or were removed from a group, or a friend was
+/// removed, turned off or on, or deleted their account. Their
 /// iPhones get the new number on its own, with no alert and no sound: a moment
 /// later (BADGE_DELAY), so a burst of changes makes one update, and only if it
 /// isn't the number they were last given. Returns at once.

@@ -314,6 +314,12 @@ pub async fn audience(db: &SqlitePool, group: i64, message_id: i64) -> sqlx::Res
 /// includes it (`audience`). A format 3 message goes to each with their own key.
 pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Result<()> {
     let ids = audience(&state.db, message.group_id, message.id).await?;
+    if message.kind == "event" {
+        // Newest now, an event can take a pic's dot away (apns::waiting_chats).
+        for id in &ids {
+            crate::apns::badge_changed(state, *id);
+        }
+    }
     if !sealed(message.format) {
         state.hub.send_many(
             &ids,
@@ -870,6 +876,7 @@ pub async fn remove_member(
         leaving,
         "group member left or removed"
     );
+    crate::apns::badge_changed(&state, target); // the group no longer counts on their icon
     let mut notify = member_ids(&state.db, group).await?;
     notify.push(target); // so the removed person's list updates too
     state
