@@ -21,11 +21,13 @@ import Testing
 /// Encoding, one test at a time: each makes its own movie and encodes it,
 /// and run side by side they can use up the Simulator's video encoders
 /// (they stalled together on GitHub's smaller Simulator).
+/// Two minutes each: GitHub's Simulator runs them several times slower than a
+/// Mac (one ran out of its 60 seconds there, 2026-11-03).
 @Suite(.serialized) struct VideoEncoding {
     /// A recording as the camera makes it (1080p turned upright by its transform,
     /// with sound and a location) comes out 720p upright, H.264 High, AAC, under
     /// the cap, and with nothing of the camera's metadata.
-    @Test(.timeLimit(.minutes(1))) func aRecordingBecomesWhatIsSent() async throws {
+    @Test(.timeLimit(.minutes(2))) func aRecordingBecomesWhatIsSent() async throws {
         let source = try await TestMovie.make(seconds: 2)
         defer { try? FileManager.default.removeItem(at: source) }
         // The Simulator's encoder (software) doesn't keep to a bitrate, so the cap
@@ -55,7 +57,7 @@ import Testing
     }
 
     /// Without sound (the microphone not allowed), it's still a video.
-    @Test(.timeLimit(.minutes(1))) func aSilentRecordingStillEncodes() async throws {
+    @Test(.timeLimit(.minutes(2))) func aSilentRecordingStillEncodes() async throws {
         let source = try await TestMovie.make(seconds: 1, sound: false)
         defer { try? FileManager.default.removeItem(at: source) }
         let out = try await VideoEncoder.mp4(source, maxBytes: 4 << 20, seconds: 10)
@@ -67,7 +69,7 @@ import Testing
 
     /// Sound recorded with more than two channels (newer iPhones record four
     /// microphones) still comes out as stereo AAC.
-    @Test(.timeLimit(.minutes(1))) func fourChannelSoundIsMixedToStereo() async throws {
+    @Test(.timeLimit(.minutes(2))) func fourChannelSoundIsMixedToStereo() async throws {
         let source = try await TestMovie.make(seconds: 1, channels: 4)
         defer { try? FileManager.default.removeItem(at: source) }
         let out = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
@@ -78,8 +80,41 @@ import Testing
         #expect(CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mChannelsPerFrame == 2)
     }
 
+    /// Switching cameras while recording makes two parts, each at its camera's
+    /// own size: they come out one video, both parts' length, at one size, with sound.
+    @Test(.timeLimit(.minutes(2))) func partsFromBothCamerasBecomeOneVideo() async throws {
+        let back = try await TestMovie.make(seconds: 1)
+        let front = try await TestMovie.make(seconds: 1, width: 1280, height: 720)
+        defer { [back, front].forEach { try? FileManager.default.removeItem(at: $0) } }
+        let out = try await VideoEncoder.mp4([back, front], maxBytes: 6 << 20, seconds: 10)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let asset = AVURLAsset(url: out)
+        #expect(abs(try await asset.load(.duration).seconds - 2) < 0.2)
+        let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let (natural, transform) = try await video.load(.naturalSize, .preferredTransform)
+        let shown = natural.applying(transform)
+        #expect(abs(shown.width) == 720 && abs(shown.height) == 1280)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
+    }
+
+    /// The sound button's copy: the same picture, no sound track at all.
+    @Test(.timeLimit(.minutes(2))) func theSilentCopyHasNoSound() async throws {
+        let source = try await TestMovie.make(seconds: 1)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let sent = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
+        defer { try? FileManager.default.removeItem(at: sent) }
+        let quiet = try await VideoEncoder.withoutSound(sent)
+        defer { try? FileManager.default.removeItem(at: quiet) }
+        let asset = AVURLAsset(url: quiet)
+        #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
+        #expect(try await asset.loadTracks(withMediaType: .video).count == 1)
+        #expect(abs(try await asset.load(.duration).seconds - 1) < 0.2)
+        let bytes = { (url: URL) in (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
+        #expect(bytes(quiet) < bytes(sent))
+    }
+
     /// A cap nothing can fit says so, rather than sending something the server refuses.
-    @Test(.timeLimit(.minutes(1))) func aCapTooSmallIsSaid() async throws {
+    @Test(.timeLimit(.minutes(2))) func aCapTooSmallIsSaid() async throws {
         let source = try await TestMovie.make(seconds: 1, sound: false)
         defer { try? FileManager.default.removeItem(at: source) }
         await #expect(throws: VideoEncoder.Problem.tooLarge) {
@@ -92,10 +127,10 @@ import Testing
 /// turned upright by the track's transform, 30 a second, moving detail, and
 /// optionally a tone and a location.
 enum TestMovie {
-    static func make(seconds: Int, sound: Bool = true, channels: UInt32 = 1) async throws -> URL {
+    static func make(seconds: Int, sound: Bool = true, channels: UInt32 = 1, width: Int = 1920, height: Int = 1080) async throws -> URL {
         let dir = FileManager.default.temporaryDirectory
         let video = dir.appending(path: "test-video-\(UUID().uuidString).mov")
-        try await writeFrames(to: video, seconds: seconds)
+        try await writeFrames(to: video, seconds: seconds, size: (width, height))
         guard sound else { return video }
         defer { try? FileManager.default.removeItem(at: video) }
         let tone = dir.appending(path: "test-tone-\(UUID().uuidString).m4a")
@@ -123,8 +158,8 @@ enum TestMovie {
         return out
     }
 
-    private static func writeFrames(to url: URL, seconds: Int) async throws {
-        let (w, h) = (1920, 1080)
+    private static func writeFrames(to url: URL, seconds: Int, size: (Int, Int)) async throws {
+        let (w, h) = size
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h,

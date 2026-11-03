@@ -30,7 +30,19 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     private let movie = AVCaptureMovieFileOutput()
     private var facing: AVCaptureDevice.Position = .back
     private var photoDone: CheckedContinuation<Data, any Error>?
-    private var movieDone: CheckedContinuation<URL, any Error>?
+    private var movieDone: CheckedContinuation<[URL], any Error>?
+    /// The recording so far, one part per camera: switching cameras ends a
+    /// part (AVFoundation stops a recording whose camera changes), and the
+    /// next starts on the other camera (as the web's does, X37). Joined
+    /// before it's sent (VideoEncoder). All of these only on `queue`.
+    private var parts: [URL] = []
+    /// Seconds allowed in all, and recorded in the parts done.
+    private var limit: Double = 10
+    private var recorded: Double = 0
+    /// A part ending to switch cameras: then this camera, and the next part.
+    private var switching: (to: AVCaptureDevice.Position, done: CheckedContinuation<Lenses, any Error>)?
+    /// Let go while a part was ending for a switch: that part is the last.
+    private var stopAfterSwitch = false
     /// Shown zoom = the device's zoom factor × this (0.5 on a camera whose
     /// factor 1 is the ultra wide). Only touched on `queue`.
     private var multiplier: CGFloat = 1
@@ -100,13 +112,27 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         queue.async { [self] in if session.isRunning { session.stopRunning() } }
     }
 
-    /// The other camera, front or back, at 1×.
+    /// The other camera, front or back, at 1×. While recording too: the part
+    /// on this camera ends, and the recording goes on with the other.
     func flip() async throws -> Lenses {
-        try await run { [self] in
-            session.beginConfiguration()
-            defer { session.commitConfiguration() }
-            return try use(facing == .back ? .front : .back)
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                let other: AVCaptureDevice.Position = facing == .back ? .front : .back
+                if movie.isRecording {
+                    guard switching == nil else { return continuation.resume(throwing: Problem.failed) }  // one at a time
+                    switching = (other, continuation)
+                    movie.stopRecording()  // then fileOutput(_:didFinishRecordingTo:...) switches
+                    return
+                }
+                continuation.resume(with: Result { try reconfigure(other) })
+            }
         }
+    }
+
+    private func reconfigure(_ position: AVCaptureDevice.Position) throws -> Lenses {
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        return try use(position)
     }
 
     /// Zoom as shown (1× the main camera), within what the camera allows.
@@ -148,12 +174,22 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// Starts a video, stopping by itself at `seconds`. `stopRecording` gives the file.
     func startRecording(seconds: Int) {
         queue.async { [self] in
-            guard session.isRunning, !movie.isRecording else { return }
-            movie.maxRecordedDuration = CMTime(seconds: Double(seconds), preferredTimescale: 600)
-            Self.orient(movie.connection(with: .video), mirrored: facing == .front)
-            let url = FileManager.default.temporaryDirectory.appending(path: "napsack-recording-\(UUID().uuidString).mov")
-            movie.startRecording(to: url, recordingDelegate: self)
+            guard session.isRunning, !movie.isRecording, switching == nil else { return }
+            parts.forEach { try? FileManager.default.removeItem(at: $0) }
+            parts = []
+            recorded = 0
+            limit = Double(seconds)
+            stopAfterSwitch = false
+            startPart()
         }
+    }
+
+    /// The next part, on the camera in use, for what's left of the limit.
+    private func startPart() {
+        movie.maxRecordedDuration = CMTime(seconds: limit - recorded, preferredTimescale: 600)
+        Self.orient(movie.connection(with: .video), mirrored: facing == .front)
+        let url = FileManager.default.temporaryDirectory.appending(path: "napsack-recording-\(UUID().uuidString).mov")
+        movie.startRecording(to: url, recordingDelegate: self)
     }
 
     /// Upright for a phone held up (the app is portrait only), and mirrored for
@@ -172,12 +208,14 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// Stops (or waits for the limit to stop it) and gives the recording, as
     /// MP4 that fits the server's cap (VideoEncoder) so every client plays it.
     func stopRecording(maxBytes: Int, seconds: Int) async throws -> URL {
-        let recorded: URL = try await withCheckedThrowingContinuation { continuation in
+        let recorded: [URL] = try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 movieDone = continuation
                 if let pending = pendingMovie {  // the limit stopped it already
                     pendingMovie = nil
                     finishMovie(pending, nil)
+                } else if switching != nil {
+                    stopAfterSwitch = true  // the part ending now is the last
                 } else if movie.isRecording {
                     movie.stopRecording()
                 } else {
@@ -185,7 +223,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
                 }
             }
         }
-        defer { try? FileManager.default.removeItem(at: recorded) }
+        defer { recorded.forEach { try? FileManager.default.removeItem(at: $0) } }
         return try await VideoEncoder.mp4(recorded, maxBytes: maxBytes, seconds: seconds)
     }
 
@@ -197,7 +235,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
                 movie.stopRecording()
             } else if let pending = pendingMovie {
                 pendingMovie = nil
-                try? FileManager.default.removeItem(at: pending)
+                pending.forEach { try? FileManager.default.removeItem(at: $0) }
             }
         }
     }
@@ -205,24 +243,39 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo url: URL, from connections: [AVCaptureConnection], error: (any Error)?) {
         // Reaching the time limit "fails" with the file complete: that's a finished video.
         let finished = (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? (error == nil)
+        let seconds = output.recordedDuration.seconds
         queue.async { [self] in
+            if finished { parts.append(url); recorded += seconds.isFinite ? seconds : 0 } else { try? FileManager.default.removeItem(at: url) }
+            if let (position, done) = switching {
+                switching = nil
+                done.resume(with: Result { try reconfigure(position) })
+                // Onwards on the other camera, unless that was all.
+                if !discarding, !stopAfterSwitch, limit - recorded > 0.3 {
+                    startPart()
+                    return
+                }
+            }
+            stopAfterSwitch = false
             if discarding {
                 discarding = false
-                try? FileManager.default.removeItem(at: url)
+                parts.forEach { try? FileManager.default.removeItem(at: $0) }
+                parts = []
                 return
             }
-            finishMovie(finished ? url : nil, finished ? nil : Problem.failed)
+            let all = parts
+            parts = []
+            finishMovie(all.isEmpty ? nil : all, Problem.failed)
         }
     }
 
-    private var pendingMovie: URL?
+    private var pendingMovie: [URL]?
 
-    private func finishMovie(_ url: URL?, _ error: (any Error)?) {
+    private func finishMovie(_ parts: [URL]?, _ error: (any Error)?) {
         if let done = movieDone {
             movieDone = nil
-            if let url { done.resume(returning: url) } else { done.resume(throwing: error ?? Problem.failed) }
+            if let parts { done.resume(returning: parts) } else { done.resume(throwing: error ?? Problem.failed) }
         } else {
-            pendingMovie = url  // stopped by the limit before anyone asked
+            pendingMovie = parts  // stopped by the limit before anyone asked
         }
     }
 
@@ -358,6 +411,10 @@ struct CameraScreen: View {
     @State private var sendProblem: String?
     @State private var choosing = false
     @State private var prepared: ReadyToSend?
+    /// A recorded video's copy without sound, made just after it's recorded;
+    /// the sound button sends it instead (as on the web).
+    @State private var silent: URL?
+    @State private var muted = false
 
     init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil) {
         self.maxSeconds = maxSeconds
@@ -386,6 +443,8 @@ struct CameraScreen: View {
                             setZoom(pinchFrom * value.magnification)
                         }
                         .onEnded { _ in pinchFrom = zoom })
+                    // A double tap switches cameras, while recording too (a second finger; as on the web).
+                    .onTapGesture(count: 2) { if shot == nil { flip() } }
                 if let shot {
                     review(shot)
                 } else {
@@ -437,17 +496,10 @@ struct CameraScreen: View {
                 Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Image(systemName: "xmark").font(.title2).padding() }
                     .accessibilityLabel("Close")
                 Spacer()
-                Button {
-                    Task {
-                        if let flipped = try? await camera.flip() { lenses = flipped }
-                        zoom = 1
-                        pinchFrom = 1
-                    }
-                } label: {
+                Button { flip() } label: {
                     Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title2).padding()
                 }
                 .accessibilityLabel("Switch cameras")
-                .disabled(recording)
             }
             .foregroundStyle(.white)
             Spacer()
@@ -598,12 +650,29 @@ struct CameraScreen: View {
         }
     }
 
+    /// The other camera; recording goes on (CameraSession.flip).
+    private func flip() {
+        Task {
+            if let flipped = try? await camera.flip() { lenses = flipped }
+            zoom = 1
+            pinchFrom = 1
+        }
+    }
+
     /// Shown in place; the next capture starts at 1× (Nate, 2026-10-29).
     private func captured(_ media: Captured) {
         shot = media
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
+        muted = false
+        if case .video(let url) = media {
+            Task {
+                let quiet = try? await VideoEncoder.withoutSound(url)
+                // Retaken meanwhile: not this one's.
+                if case .video(url) = shot { silent = quiet } else if let quiet { try? FileManager.default.removeItem(at: quiet) }
+            }
+        }
     }
 
     // ---------- after a capture ----------
@@ -618,7 +687,7 @@ struct CameraScreen: View {
                             .frame(width: geo.size.width, height: geo.size.height).clipped()
                         PenLayer(image: image.size, box: geo.size, strokes: $strokes, drawing: penOn)
                     case .video(let url):
-                        LoopingPlayer(url: url)
+                        LoopingPlayer(url: url, muted: muted)
                     }
                     captionBar(in: geo.size)
                 }
@@ -694,6 +763,12 @@ struct CameraScreen: View {
                             Button { editingCaption = false; penOn = true } label: { Image(systemName: "pencil.tip").font(.title2) }
                                 .accessibilityLabel("Draw")
                         }
+                        if case .video = media, silent != nil {
+                            Button { muted.toggle() } label: {
+                                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.title2)
+                            }
+                            .accessibilityLabel(muted ? "Sound off. Tap to send it with sound" : "Sound on. Tap to send it without sound")
+                        }
                     }
                 }
                 .padding()
@@ -740,6 +815,9 @@ struct CameraScreen: View {
         if case .photo(let image) = shot, !strokes.isEmpty {
             media = .photo(Pen.flatten(image, strokes: strokes))
         }
+        if case .video = shot, muted, let silent {
+            media = .video(silent)  // a different file: one with no sound in it
+        }
         let ready = ReadyToSend(media: media, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines), y: captionY)
         switch send {
         case .chat(_, let go):
@@ -775,13 +853,18 @@ struct CameraScreen: View {
 
     private func discardShot() {
         if case .video(let url) = shot { try? FileManager.default.removeItem(at: url) }
+        if let silent { try? FileManager.default.removeItem(at: silent) }
         shot = nil
+        silent = nil
+        muted = false
     }
 }
 
-/// A recorded video filling the screen, looping with its sound, until it's sent or retaken.
+/// A recorded video filling the screen, looping with its sound (unless it's
+/// to go without), until it's sent or retaken.
 struct LoopingPlayer: UIViewRepresentable {
     let url: URL
+    var muted = false
 
     final class PlayerView: UIView {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
@@ -795,11 +878,14 @@ struct LoopingPlayer: UIViewRepresentable {
         view.looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
         view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspectFill
+        player.isMuted = muted
         player.play()
         return view
     }
 
-    func updateUIView(_ view: PlayerView, context: Context) {}
+    func updateUIView(_ view: PlayerView, context: Context) {
+        view.playerLayer.player?.isMuted = muted
+    }
 
     static func dismantleUIView(_ view: PlayerView, coordinator: ()) {
         view.playerLayer.player?.pause()
