@@ -1399,6 +1399,28 @@ async def check_late_joiner(tag):
     print("  groups: newcomers never get messages from before they joined, even as updates")
 
 
+async def check_group_reads(tag):
+    """Reading a group tells the reader's other apps (groups_changed) and the
+    other members (group_read), only when the read position moved: reading
+    a group already read sends nothing, so no app refetches its lists for it."""
+    ra, rb = (ok(register(f"rd_{n}_{tag}")).json() for n in "ab")
+    a_tok, b_tok, ben_id = ra["token"], rb["token"], rb["user"]["id"]
+    befriend(a_tok, rb["user"], b_tok, ra["user"]["id"])
+    gid = ok(call("POST", "/groups", a_tok, json={"name": f"reads {tag}", "member_ids": [ben_id]})).json()["id"]
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "read me"}))
+    ana, ben_phone = await socket(a_tok), await socket(b_tok)
+    ok(call("POST", f"/groups/{gid}/read", b_tok))
+    assert (await next_event(ben_phone, "groups_changed"))["group_id"] == gid       # his other app clears its badge
+    seen = await next_event(ana, "group_read")
+    assert (seen["group_id"], seen["user_id"]) == (gid, ben_id), seen
+    ok(call("POST", f"/groups/{gid}/read", b_tok))                                   # nothing new since
+    await asyncio.gather(no_event(ben_phone, "groups_changed"), no_event(ana, "group_read"))
+    assert [g for g in ok(call("GET", "/groups", b_tok)).json() if g["id"] == gid][0]["unread"] == 0
+    await ana.close()
+    await ben_phone.close()
+    print("  groups: reading tells the others once; a group already read sends nothing")
+
+
 def check_metrics(not_admin):
     """The admin Metrics tab's data: admins only; real readings of this
     machine within ~20 seconds of starting; ranges clamped to what's kept."""
@@ -1896,6 +1918,7 @@ async def main():
     check_rename(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
+    await check_group_reads(tag)
     check_graph(tag)
     check_roles(tag)
     check_admin_users(tag)

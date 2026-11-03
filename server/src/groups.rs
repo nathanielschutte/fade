@@ -1195,13 +1195,14 @@ pub async fn mark_read(
 ) -> AppResult<Json<Value>> {
     require_member(&state.db, group, me.id).await?;
     let moved = advance_read(&state.db, group, me.id).await?;
-    // The caller's other devices clear their badge.
-    state
-        .hub
-        .send(me.id, &Event::GroupsChanged { group_id: group });
-    // Everyone else updates "Seen by". Only when it moved, so reading an
-    // already-read chat sends nothing.
+    // Only when it moved, so reading an already-read chat sends nothing:
+    // every groups_changed has each of the caller's apps fetch its lists again.
     if let Some(last_read_id) = moved {
+        // The caller's other devices clear their badge.
+        state
+            .hub
+            .send(me.id, &Event::GroupsChanged { group_id: group });
+        // Everyone else updates "Seen by".
         let others: Vec<i64> = member_ids(&state.db, group)
             .await?
             .into_iter()
