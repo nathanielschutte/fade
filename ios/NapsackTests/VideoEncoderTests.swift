@@ -21,11 +21,13 @@ import Testing
 /// Encoding, one test at a time: each makes its own movie and encodes it,
 /// and run side by side they can use up the Simulator's video encoders
 /// (they stalled together on GitHub's smaller Simulator).
+/// Two minutes each: GitHub's Simulator runs them several times slower than a
+/// Mac (one passed at 60 seconds there, 2026-11-03).
 @Suite(.serialized) struct VideoEncoding {
     /// A recording as the camera makes it (1080p turned upright by its transform,
     /// with sound and a location) comes out 720p upright, H.264 High, AAC, under
     /// the cap, and with nothing of the camera's metadata.
-    @Test(.timeLimit(.minutes(1))) func aRecordingBecomesWhatIsSent() async throws {
+    @Test(.timeLimit(.minutes(2))) func aRecordingBecomesWhatIsSent() async throws {
         let source = try await TestMovie.make(seconds: 2)
         defer { try? FileManager.default.removeItem(at: source) }
         // The Simulator's encoder (software) doesn't keep to a bitrate, so the cap
@@ -55,7 +57,7 @@ import Testing
     }
 
     /// Without sound (the microphone not allowed), it's still a video.
-    @Test(.timeLimit(.minutes(1))) func aSilentRecordingStillEncodes() async throws {
+    @Test(.timeLimit(.minutes(2))) func aSilentRecordingStillEncodes() async throws {
         let source = try await TestMovie.make(seconds: 1, sound: false)
         defer { try? FileManager.default.removeItem(at: source) }
         let out = try await VideoEncoder.mp4(source, maxBytes: 4 << 20, seconds: 10)
@@ -67,7 +69,7 @@ import Testing
 
     /// Sound recorded with more than two channels (newer iPhones record four
     /// microphones) still comes out as stereo AAC.
-    @Test(.timeLimit(.minutes(1))) func fourChannelSoundIsMixedToStereo() async throws {
+    @Test(.timeLimit(.minutes(2))) func fourChannelSoundIsMixedToStereo() async throws {
         let source = try await TestMovie.make(seconds: 1, channels: 4)
         defer { try? FileManager.default.removeItem(at: source) }
         let out = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
@@ -80,7 +82,7 @@ import Testing
 
     /// Switching cameras while recording makes two parts, each at its camera's
     /// own size: they come out one video, both parts' length, at one size, with sound.
-    @Test(.timeLimit(.minutes(1))) func partsFromBothCamerasBecomeOneVideo() async throws {
+    @Test(.timeLimit(.minutes(2))) func partsFromBothCamerasBecomeOneVideo() async throws {
         let back = try await TestMovie.make(seconds: 1)
         let front = try await TestMovie.make(seconds: 1, width: 1280, height: 720)
         defer { [back, front].forEach { try? FileManager.default.removeItem(at: $0) } }
@@ -96,7 +98,7 @@ import Testing
     }
 
     /// The sound button's copy: the same picture, no sound track at all.
-    @Test(.timeLimit(.minutes(1))) func theSilentCopyHasNoSound() async throws {
+    @Test(.timeLimit(.minutes(2))) func theSilentCopyHasNoSound() async throws {
         let source = try await TestMovie.make(seconds: 1)
         defer { try? FileManager.default.removeItem(at: source) }
         let sent = try await VideoEncoder.mp4(source, maxBytes: 6 << 20, seconds: 10)
@@ -112,7 +114,7 @@ import Testing
     }
 
     /// A cap nothing can fit says so, rather than sending something the server refuses.
-    @Test(.timeLimit(.minutes(1))) func aCapTooSmallIsSaid() async throws {
+    @Test(.timeLimit(.minutes(2))) func aCapTooSmallIsSaid() async throws {
         let source = try await TestMovie.make(seconds: 1, sound: false)
         defer { try? FileManager.default.removeItem(at: source) }
         await #expect(throws: VideoEncoder.Problem.tooLarge) {
