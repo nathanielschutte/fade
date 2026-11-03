@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::{str::FromStr, sync::LazyLock, time::Duration};
 
 use serde::Serialize;
 use sqlx::{
@@ -128,6 +128,33 @@ pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<Option<Messag
         .bind(id)
         .fetch_optional(db)
         .await
+}
+
+/// Messages by id, from a JSON list of them.
+pub static BY_IDS: LazyLock<String> = LazyLock::new(|| {
+    format!("SELECT {MESSAGE_COLS} FROM messages WHERE id IN (SELECT value FROM json_each(?))")
+});
+
+/// The messages with these ids, by id, in one query (a list's newest
+/// message per chat, rather than a query per chat). Missing ids are left out.
+pub async fn messages_by_id(
+    db: &SqlitePool,
+    ids: &[i64],
+) -> sqlx::Result<std::collections::HashMap<i64, Message>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let found = sqlx::query_as::<_, Message>(&BY_IDS)
+        .bind(json_ids(ids))
+        .fetch_all(db)
+        .await?;
+    Ok(found.into_iter().map(|m| (m.id, m)).collect())
+}
+
+/// Ids as a JSON array, bound as one parameter and read with
+/// `IN (SELECT value FROM json_each(?))`: a list of any length, still bound.
+pub fn json_ids(ids: &[i64]) -> String {
+    serde_json::to_string(ids).unwrap_or_else(|_| "[]".into())
 }
 
 /// Standard base64 with padding, non-empty and at most `max_len` characters.
@@ -351,10 +378,13 @@ pub mod tests {
     /// SQL injection can't happen when every value is a bound `?` parameter.
     /// The only SQL built with `format!` may splice in UPPERCASE constants
     /// (column lists, shared SELECTs), never a variable or positional argument.
+    /// That goes for SQL built once into a static `LazyLock<String>` by a
+    /// `format!` too, which lets a test explain exactly the SQL that runs.
     #[test]
     fn sql_only_interpolates_constants() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut checked = 0;
+        let mut statics = 0;
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let src = std::fs::read_to_string(&path).unwrap();
@@ -369,39 +399,154 @@ pub mod tests {
                 {
                     continue; // not a query
                 }
-                let lit = rest.trim_start();
-                assert!(
-                    lit.starts_with('"'),
-                    "{}: query format! must start with a string literal",
-                    path.display()
-                );
-                let end = lit[1..].find('"').expect("closing quote") + 1;
-                let template = &lit[1..end];
-                let after = lit[end + 1..].trim_start();
-                assert!(
-                    after.starts_with(')'),
-                    "{}: query format! has extra arguments: {}",
-                    path.display(),
-                    &after[..after.len().min(60)]
-                );
-                let mut t = template;
-                while let Some(open) = t.find('{') {
-                    let close = t[open..].find('}').expect("closing brace") + open;
-                    let name = &t[open + 1..close];
-                    assert!(
-                        !name.is_empty() && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
-                        "{}: query splices in `{{{name}}}`; only UPPERCASE constants are allowed, values must be bound",
-                        path.display()
-                    );
-                    t = &t[close + 1..];
-                }
+                check_template(&path, rest);
                 checked += 1;
+            }
+            let mut rest = src.as_str();
+            while let Some(at) = rest.find("LazyLock::new(||") {
+                rest = &rest[at + "LazyLock::new(||".len()..];
+                let body = rest.trim_start();
+                let body = body.strip_prefix('{').unwrap_or(body).trim_start();
+                let Some(args) = body.strip_prefix("format!(") else {
+                    continue; // not SQL built with format!
+                };
+                check_template(&path, args);
+                statics += 1;
             }
         }
         assert!(
-            checked >= 8,
-            "found only {checked} format!-built queries; did the pattern change?"
+            checked >= 8 && statics >= 3,
+            "found only {checked} format!-built queries and {statics} statics; did the pattern change?"
         );
+    }
+
+    /// `rest` starts with a `format!`'s arguments: one string literal, and it
+    /// splices in only UPPERCASE constants.
+    fn check_template(path: &std::path::Path, rest: &str) {
+        let lit = rest.trim_start();
+        assert!(
+            lit.starts_with('"'),
+            "{}: query format! must start with a string literal",
+            path.display()
+        );
+        let end = lit[1..].find('"').expect("closing quote") + 1;
+        let template = &lit[1..end];
+        let after = lit[end + 1..].trim_start();
+        assert!(
+            after.starts_with(')'),
+            "{}: query format! has extra arguments: {}",
+            path.display(),
+            &after[..after.len().min(60)]
+        );
+        let mut t = template;
+        while let Some(open) = t.find('{') {
+            let close = t[open..].find('}').expect("closing brace") + open;
+            let name = &t[open + 1..close];
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "{}: query splices in `{{{name}}}`; only UPPERCASE constants are allowed, values must be bound",
+                path.display()
+            );
+            t = &t[close + 1..];
+        }
+    }
+
+    /// The plan SQLite picks for `sql`: its steps as (id, parent id, step),
+    /// a step like "SEARCH m USING INDEX messages_pair (sender_id=? AND
+    /// recipient_id=?)". Parameters stay unbound; plans don't depend on them.
+    pub async fn plan_tree(db: &SqlitePool, sql: &str) -> Vec<(i64, i64, String)> {
+        // Our own SQL behind EXPLAIN: nothing from outside is spliced in.
+        let explain = ["EXPLAIN QUERY PLAN ", sql].concat();
+        sqlx::query_as::<_, (i64, i64, i64, String)>(&explain)
+            .fetch_all(db)
+            .await
+            .unwrap_or_else(|e| panic!("explaining {sql}: {e}"))
+            .into_iter()
+            .map(|(id, parent, _, step)| (id, parent, step))
+            .collect()
+    }
+
+    /// The plan's steps alone.
+    pub async fn plan(db: &SqlitePool, sql: &str) -> Vec<String> {
+        plan_tree(db, sql)
+            .await
+            .into_iter()
+            .map(|(_, _, step)| step)
+            .collect()
+    }
+
+    /// Fails unless `sql` searches every table it reads, by key or index,
+    /// rather than reading all of it ("SCAN"), which over messages means
+    /// every text ever sent. A JSON list of ids, a subquery's own rows, and
+    /// the small tables in `small` (by the names the query gives them) may
+    /// be scanned. Nor may a query or subquery sort what it found in a table
+    /// named in `unsorted`: a chat's whole history, sorted to find its newest.
+    pub async fn assert_searches(db: &SqlitePool, sql: &str, small: &[&str], unsorted: &[&str]) {
+        let steps = plan_tree(db, sql).await;
+        let fail = |step: &str| panic!("{step} in the plan for\n{sql}\nplan: {steps:#?}");
+        let table = |step: &str| {
+            step.strip_prefix("SCAN ")
+                .or_else(|| step.strip_prefix("SEARCH "))
+                .and_then(|rest| rest.split_whitespace().next())
+                .map(str::to_owned)
+        };
+        for (_, parent, step) in &steps {
+            if let Some(what) = step.strip_prefix("SCAN ") {
+                let name = table(step).unwrap_or_default();
+                if !(name == "json_each"
+                    || name.starts_with("(subquery-")
+                    || what.starts_with("CONSTANT ROW")
+                    || small.contains(&name.as_str()))
+                {
+                    fail(step);
+                }
+            }
+            if step.contains("TEMP B-TREE") {
+                // What this (sub)query reads, leaving out its own subqueries.
+                let mut under = vec![*parent];
+                while let Some(node) = under.pop() {
+                    for (id, p, s) in &steps {
+                        if *p != node || s.contains("SUBQUERY") {
+                            continue;
+                        }
+                        if table(s).is_some_and(|t| unsorted.contains(&t.as_str())) {
+                            fail(step);
+                        }
+                        under.push(*id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The old chat list's newest-message query, which sorted a chat's whole
+    /// history, fails `assert_searches`; the new one passes.
+    #[tokio::test]
+    #[should_panic(expected = "TEMP B-TREE")]
+    async fn sorting_a_whole_chat_fails_the_plan_check() {
+        let db = temp_db().await;
+        assert_searches(
+            &db,
+            "SELECT u.id, (SELECT m.id FROM messages m
+                WHERE (m.sender_id = ?1 AND m.recipient_id = u.id) OR (m.sender_id = u.id AND m.recipient_id = ?1)
+                ORDER BY m.id DESC LIMIT 1) FROM users u WHERE u.id = ?2",
+            &[],
+            &["m"],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "SCAN messages")]
+    async fn reading_every_message_fails_the_plan_check() {
+        let db = temp_db().await;
+        assert_searches(
+            &db,
+            "SELECT COUNT(*) FROM messages WHERE kind = 'text'",
+            &[],
+            &[],
+        )
+        .await;
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! not data loss) and the database rows stay. Group pictures are small and
 //! kept in the database, every one ever set, so backups include them.
 
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use axum::{
     body::Bytes,
@@ -87,26 +87,39 @@ fn pic_path(state: &SharedState, id: i64) -> PathBuf {
     state.config.pic_dir.join(format!("{id}.bin"))
 }
 
-async fn pic_info(db: &SqlitePool, id: i64) -> sqlx::Result<PicInfo> {
-    let mut info: PicInfo =
-        sqlx::query_as("SELECT id, bytes, expires_at, discard_reason FROM group_pics WHERE id = ?")
-            .bind(id)
-            .fetch_one(db)
-            .await?;
-    info.viewers = sqlx::query_scalar(
-        "SELECT user_id FROM group_pic_views WHERE pic_id = ? ORDER BY viewed_at",
-    )
-    .bind(id)
-    .fetch_all(db)
-    .await?;
-    Ok(info)
-}
+/// The group pics in a JSON list of ids, and who has opened each: in the
+/// order they did, and in the same second by id.
+const PICS: &str = "SELECT id, bytes, expires_at, discard_reason FROM group_pics
+     WHERE id IN (SELECT value FROM json_each(?))";
+const VIEWERS: &str = "SELECT pic_id, user_id FROM group_pic_views
+     WHERE pic_id IN (SELECT value FROM json_each(?))
+     ORDER BY pic_id, viewed_at, user_id";
 
-/// Fills in `pic` on messages that carry one.
+/// Fills in `pic` on messages that carry one: two queries for any number of
+/// messages.
 pub async fn attach(db: &SqlitePool, messages: &mut [GroupMessage]) -> sqlx::Result<()> {
+    let ids: Vec<i64> = messages.iter().filter_map(|m| m.pic_id).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let ids = crate::db::json_ids(&ids);
+    let mut pics: HashMap<i64, PicInfo> = sqlx::query_as::<_, PicInfo>(PICS)
+        .bind(&ids)
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .map(|p| (p.id, p))
+        .collect();
+    let views: Vec<(i64, i64)> = sqlx::query_as(VIEWERS).bind(&ids).fetch_all(db).await?;
+    for (pic, user) in views {
+        if let Some(p) = pics.get_mut(&pic) {
+            p.viewers.push(user);
+        }
+    }
     for m in messages.iter_mut() {
         if let Some(id) = m.pic_id {
-            m.pic = Some(pic_info(db, id).await?);
+            // Every pic_id has its row (a foreign key).
+            m.pic = Some(pics.get(&id).cloned().ok_or(sqlx::Error::RowNotFound)?);
         }
     }
     Ok(())
@@ -718,8 +731,79 @@ pub async fn get_avatar(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::db::tests::{assert_searches, temp_db};
+
+    /// A pic's state as it was read before migration 0028, one pic at a time.
+    pub(crate) async fn old_pic_info(db: &SqlitePool, id: i64) -> sqlx::Result<PicInfo> {
+        let mut info: PicInfo = sqlx::query_as(
+            "SELECT id, bytes, expires_at, discard_reason FROM group_pics WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(db)
+        .await?;
+        info.viewers = sqlx::query_scalar(
+            "SELECT user_id FROM group_pic_views WHERE pic_id = ? ORDER BY viewed_at",
+        )
+        .bind(id)
+        .fetch_all(db)
+        .await?;
+        Ok(info)
+    }
+
+    /// `attach` as it was: two queries per pic.
+    pub(crate) async fn old_attach(
+        db: &SqlitePool,
+        messages: &mut [GroupMessage],
+    ) -> sqlx::Result<()> {
+        for m in messages.iter_mut() {
+            if let Some(id) = m.pic_id {
+                m.pic = Some(old_pic_info(db, id).await?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Every group pic in the mix, attached all at once: the same states and
+    /// viewers, in the same order (two who opened it in the same second too).
+    #[tokio::test]
+    async fn pics_are_what_they_were() {
+        let db = temp_db().await;
+        crate::testdata::mix(&db).await;
+        let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM group_messages ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+        let mut old = crate::groups::get_messages(&db, &ids).await.unwrap();
+        old.sort_by_key(|m| m.id);
+        for m in old.iter_mut() {
+            m.pic = None;
+        }
+        let mut new = old.clone();
+        old_attach(&db, &mut old).await.unwrap();
+        attach(&db, &mut new).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&new).unwrap(),
+            serde_json::to_value(&old).unwrap()
+        );
+        let tied = new.iter().find(|m| m.pic_id == Some(300)).unwrap();
+        assert_eq!(
+            tied.pic.as_ref().unwrap().viewers,
+            [
+                crate::testdata::ANA,
+                crate::testdata::CAL,
+                crate::testdata::HAL
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn pics_search_indexes() {
+        let db = temp_db().await;
+        assert_searches(&db, PICS, &[], &[]).await;
+        assert_searches(&db, VIEWERS, &[], &[]).await;
+    }
 
     #[test]
     fn sniffs_image_types() {

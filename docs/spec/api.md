@@ -34,7 +34,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `POST /groups/{id}/members` | `{user_id}`: add one of your friends, any member |
 | `DELETE /groups/{id}/members/{user_id}` | Leave (yourself) or remove (owner only). Marks the membership ended; nothing is deleted |
 | `GET  /groups/{id}/messages?before=&limit=` · `POST` | History from when you joined, oldest first · send `{format: 3, content, client_id, recipients, wraps}` (end-to-end encrypted; [group-encryption.md](../implementation/group-encryption.md)): `recipients` must be exactly the current members, you included (409 if the group changed: refetch and seal again), one 60-byte `wraps[member id]` each, `client_id` 16 random bytes (sending the same one again, after a dropped response, returns the message already stored). Format 3 messages come back with `content`, `client_id`, `recipients`, `sender_public_key`, and only your own `key`; `body` is empty. `{text, reply_to?}` (plain, `format` 0) still works for old clients |
-| `POST /groups/{id}/read` | Marks the group read; tells the other members (`group_read`) if it moved |
+| `POST /groups/{id}/read` | Marks the group read; if it moved, tells the reader's other apps (`groups_changed`) and the other members (`group_read`). Reading a group already read sends nothing |
 | `GET /groups/{id}/reads` | `[{user_id, username, last_read_id}]` for current members, for "Seen by" |
 | `POST /auth/unlock` | `{auth_key}` with a session: returns your password-wrapped key, so the client can wrap it again |
 | `POST /me/password` | `{auth_key, new_auth_key, new_wrapped_private_key}`: same key, new password; other sessions end |

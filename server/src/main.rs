@@ -36,6 +36,8 @@ mod snaps;
 mod streaks;
 mod sysinfo;
 mod team;
+#[cfg(test)]
+mod testdata;
 mod text;
 mod usernames;
 mod version;
