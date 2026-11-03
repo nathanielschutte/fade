@@ -211,6 +211,7 @@ enum SignInError: LocalizedError, Equatable {
         let username: String
         let authKey: String
         let inviteCode: String?
+        let inviteToken: String?
         let publicKey: String
         let wrappedPrivateKey: String
     }
@@ -224,7 +225,9 @@ enum SignInError: LocalizedError, Equatable {
     /// A new account, as the web app makes one: keys made here from the
     /// password, a new key pair (the private key goes to the server only
     /// wrapped), then a recovery key, registered and shown once.
-    func signUp(server address: String, username typed: String, password: String, inviteCode: String?) async throws {
+    /// With a friend's link (`inviteToken`, Links.swift) no invite code is
+    /// needed, and the new account starts out friends with them.
+    func signUp(server address: String, username typed: String, password: String, inviteCode: String?, inviteToken: String? = nil) async throws {
         let username = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.contains("@") else { throw SignInError.emailAsUsername }
         guard password.count >= 8 else { throw SignInError.shortPassword }
@@ -235,8 +238,8 @@ enum SignInError: LocalizedError, Equatable {
         let code = inviteCode?.trimmingCharacters(in: .whitespacesAndNewlines)
         let answer = try await watchingForUpdates {
             try Server.decoder.decode(SessionResponse.self, from: await server.send("auth/register", method: "POST", json: Register(
-                username: username, authKey: keys.authKey, inviteCode: code?.isEmpty == false ? code : nil,
-                publicKey: identity.publicKey, wrappedPrivateKey: identity.wrappedPrivateKey)))
+                username: username, authKey: keys.authKey, inviteCode: inviteToken == nil && code?.isEmpty == false ? code : nil,
+                inviteToken: inviteToken, publicKey: identity.publicKey, wrappedPrivateKey: identity.wrappedPrivateKey)))
         }
         var account = Account(server: server.address, token: answer.token, user: answer.user,
                               publicKey: answer.publicKey, privateKey: identity.privateKey.derRepresentation)
@@ -248,6 +251,7 @@ enum SignInError: LocalizedError, Equatable {
             recoveryKeyToShow = recoveryKey
         }
         try store.save(account)
+        if inviteToken != nil { FriendLinks.shared.pending = nil }  // used: they're friends already
         state = .signedIn(account)
     }
 

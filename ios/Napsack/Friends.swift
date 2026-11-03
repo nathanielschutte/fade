@@ -125,6 +125,7 @@ struct FriendsScreen: View {
     @State private var username = ""
     @State private var note: String?
     @State private var copied = false
+    @State private var scanning = false
 
     var body: some View {
         List {
@@ -161,6 +162,7 @@ struct FriendsScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                 }
+                Button("Scan their code", systemImage: "qrcode.viewfinder") { scanning = true }
                 HStack {
                     TextField("Add by username", text: $username)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
@@ -170,7 +172,7 @@ struct FriendsScreen: View {
             } header: {
                 Text("Add a friend")
             } footer: {
-                Text(note ?? "Show them your code, send them your link, or type their username.")
+                Text(note ?? "Show them your code, scan theirs, send them your link, or type their username.")
             }
             Section {
                 NavigationLink {
@@ -192,6 +194,8 @@ struct FriendsScreen: View {
             }
         }
         .navigationTitle("Friends")
+        // What it finds is offered as any opened link is (ChatListScreen).
+        .sheet(isPresented: $scanning) { ScanScreen { url in Task { await FriendLinks.shared.open(url) } } }
         .refreshable { await load() }
         .task { await load() }
     }

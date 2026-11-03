@@ -30,6 +30,9 @@ struct ChatListScreen: View {
     @State private var showingFriends = false
     /// Notifications on this phone: a tapped one opens its chat here (Notifications.swift).
     @State private var notifications = Notifications.shared
+    /// A friend's link opened or scanned (Links.swift), and the one being offered.
+    @State private var links = FriendLinks.shared
+    @State private var offer: FriendLinks.Invite?
     @State private var makingGroup = false
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
@@ -91,6 +94,18 @@ struct ChatListScreen: View {
         }
         .onChange(of: unreadChats, initial: true) { _, count in
             if list.loaded { notifications.setBadge(count) }
+        }
+        .onChange(of: links.pending, initial: true) { _, invite in
+            // Once the server has said whose it is (or that it doesn't work).
+            guard let invite, invite.inviter != nil || invite.problem != nil else { return }
+            links.pending = nil
+            Task { await offerLink(invite) }
+        }
+        .alert("Add a friend?", isPresented: Binding(get: { offer != nil }, set: { if !$0 { offer = nil } }), presenting: offer) { invite in
+            Button("Add") { Task { await acceptLink(invite) } }
+            Button("Not now", role: .cancel) {}
+        } message: { invite in
+            Text("This is \(invite.inviter?.username ?? "someone")'s napsack link. Add them as a friend?")
         }
         .onDisappear { live.stop() }  // signed out
     }
@@ -388,6 +403,39 @@ struct ChatListScreen: View {
                 showingFriends = false
                 path = [kind]
             }
+        }
+    }
+
+    /// As the web's `offerInvite`: your own link says so, a friend's opens
+    /// their chat, anyone else's asks first.
+    private func offerLink(_ invite: FriendLinks.Invite) async {
+        tab = .chats
+        guard let inviter = invite.inviter else {
+            toast = Toast(text: invite.problem ?? "That link doesn't work.", undo: nil)
+            return
+        }
+        if inviter.id == account.user.id {
+            toast = Toast(text: "That's your own link. Send it to a friend.", undo: nil)
+            return
+        }
+        if !list.loaded { await load() }
+        if conversation(.friend(inviter.id)) != nil {
+            showingFriends = false
+            path = [.friend(inviter.id)]
+        } else {
+            offer = invite
+        }
+    }
+
+    private func acceptLink(_ invite: FriendLinks.Invite) async {
+        do {
+            let friend = try await FriendLinks.accept(invite.token, account: account)
+            await load()
+            showingFriends = false
+            if conversation(.friend(friend.id)) != nil { path = [.friend(friend.id)] }
+            toast = Toast(text: "You and \(friend.username) are now friends.", undo: nil)
+        } catch {
+            toast = Toast(text: error.localizedDescription, undo: nil)
         }
     }
 

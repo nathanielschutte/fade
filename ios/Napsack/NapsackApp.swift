@@ -30,6 +30,8 @@ struct NapsackApp: App {
             }
             .environment(session)
             .task { await session.restore(server: AppInfo.server) }
+            // An add-a-friend link opened on the phone (Universal Links, Links.swift).
+            .onOpenURL { url in Task { await FriendLinks.shared.open(url) } }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background { Task { await Reporter.shared.flush() } }  // before iOS suspends the app
             }

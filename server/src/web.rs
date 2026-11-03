@@ -81,6 +81,11 @@ pub fn routes() -> Router<SharedState> {
         .route("/", get(index))
         // Invite links open the app, which reads the token from the address.
         .route("/i/{token}", get(index))
+        // ...or the iPhone app, when it's installed (Universal Links).
+        .route(
+            "/.well-known/apple-app-site-association",
+            get(apple_app_site_association),
+        )
         .route("/app.js", get(|| async { script(APP_JS.text()) }))
         .route("/crypto.js", get(|| async { script(CRYPTO_JS.text()) }))
         .route("/keystore.js", get(|| async { script(KEYSTORE_JS.text()) }))
@@ -166,6 +171,36 @@ async fn favicon() -> impl IntoResponse {
         ],
         FAVICON_SVG.text(),
     )
+}
+
+/// Apple's app-site association: on an iPhone with napsack installed,
+/// add-a-friend links (`/i/<token>`) open the app instead of this page. Apple
+/// fetches it from the site when the app is installed. It names the app (the
+/// team and bundle id, `FADE_APPLE_TEAM_ID`), nothing else; without the team
+/// set there's nothing here.
+async fn apple_app_site_association(State(state): State<SharedState>) -> axum::response::Response {
+    match &state.config.apple_app_id {
+        Some(app_id) => (
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "public, max-age=3600"),
+            ],
+            app_links(app_id).to_string(),
+        )
+            .into_response(),
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn app_links(app_id: &str) -> Value {
+    json!({
+        "applinks": {
+            "details": [{
+                "appIDs": [app_id],
+                "components": [{ "/": "/i/*", "comment": "add-a-friend links (invites.rs)" }],
+            }],
+        },
+    })
 }
 
 fn png(body: &'static [u8]) -> impl IntoResponse {
@@ -307,6 +342,16 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Apple's format: the app, and only add-a-friend links.
+    #[test]
+    fn app_links_name_the_app_and_only_friend_links() {
+        let v = app_links("TEAM123456.com.getattr.napsack");
+        let details = &v["applinks"]["details"][0];
+        assert_eq!(details["appIDs"], json!(["TEAM123456.com.getattr.napsack"]));
+        assert_eq!(details["components"].as_array().unwrap().len(), 1);
+        assert_eq!(details["components"][0]["/"], "/i/*");
+    }
 
     /// Debug builds read the real files; what's compiled in is the same file.
     #[test]

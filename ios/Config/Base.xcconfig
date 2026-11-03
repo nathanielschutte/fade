@@ -36,4 +36,9 @@ NAPSACK_RELEASE_SERVER_URL = https:/$()/api.napsack.io
 // development (the sandbox) here, production in Release builds.
 NAPSACK_APS_ENVIRONMENT = development
 
+// The site whose add-a-friend links open this build (Associated Domains):
+// staging's for Xcode builds, the real site's in Release. A domain move
+// changes it (docs/operations/domain-move.md).
+NAPSACK_LINK_HOST = staging.napsack.io
+
 #include? "Local.xcconfig"
