@@ -9,12 +9,12 @@
 
 /**
  * @param {typeof import("./crypto.js")} e2e
- * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any, edits2?: any, media6?: any }} vectors the files in tests/vectors/
+ * @param {{ format1: any, format2: any, recovery: any, texts2: any, group3?: any, media4?: any, edits2?: any, media6?: any, passkey1?: any }} vectors the files in tests/vectors/
  * @param {(r: CheckResult) => void} [onResult] called as each check finishes
  * @returns {Promise<CheckResult[]>}
  */
 export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
-  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm, edits2: ve, media6: vp } = vectors;
+  const { format1: v, format2: v2, recovery: vr, texts2: vt, group3: vg, media4: vm, edits2: ve, media6: vp, passkey1: vk } = vectors;
   const s = globalThis.crypto.subtle;
   const ECDH = { name: "ECDH", namedCurve: "P-256" };
   const priv = (p) => s.importKey("pkcs8", e2e.fromB64(p.pkcs8), ECDH, false, ["deriveBits"]);
@@ -306,6 +306,28 @@ export async function runVectorChecks(e2e, vectors, onResult = () => {}) {
     return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext
       && (await fails(() => e2e.unwrapIdentity(ctx.d.wrapKey, rewrapped)));
   });
+
+  // Passkeys: a third copy of the key, opened by a passkey's PRF secret
+  if (vk) {
+    const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    const secret = Uint8Array.from(vk.prf_secret_hex.match(/../g), (h) => parseInt(h, 16));
+    await check("the passkey PRF input matches the vector", async () => hex(await e2e.passkeyPrfInput()) === vk.prf_input_hex);
+    await check("a passkey's copy of the key opens like the vector", async () => {
+      ctx.pk = await e2e.deriveFromPasskey(secret);
+      const k = await e2e.pairKey(await e2e.unwrapWithPasskey(ctx.pk, vk.passkey_wrapped_key), v.bob.spki, v.alice.id, v.bob.id);
+      return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext;
+    });
+    await check("a passkey copy round-trips", async () => {
+      const copy = await e2e.wrapForPasskey(ctx.d.wrapKey, v.password.wrapped_private_key, ctx.pk);
+      const k = await e2e.pairKey(await e2e.unwrapWithPasskey(ctx.pk, copy), v.bob.spki, v.alice.id, v.bob.id);
+      return (await e2e.decryptText(k, v.text.ciphertext, v.text.from, v.text.to)) === v.text.plaintext;
+    });
+    await check("another passkey, or the password's copy, can't pass as it", async () =>
+      (await fails(async () => e2e.unwrapWithPasskey(await e2e.deriveFromPasskey(new Uint8Array(32)), vk.passkey_wrapped_key)))
+      && (await fails(() => e2e.unwrapWithPasskey(ctx.pk, v.password.wrapped_private_key)))
+      && (await fails(() => e2e.unwrapIdentity(ctx.pk, vk.passkey_wrapped_key)))
+      && (await fails(() => e2e.deriveFromPasskey(new Uint8Array(16)))));
+  }
 
   // Safety code and formats
   await check("safety code matches the vector", async () => (await e2e.safetyCode(v.alice.spki, v.bob.spki)) === v.safety_code);

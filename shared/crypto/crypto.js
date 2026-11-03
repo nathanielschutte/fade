@@ -198,6 +198,44 @@ export async function recoverIdentity(recoveryWrapKey, recoveryWrappedB64, newWr
   return { wrappedPrivateKey, privateKey: await unwrapIdentity(newWrapKey, wrappedPrivateKey) };
 }
 
+// ---------- passkeys ----------
+// A third copy of the private key, beside the password's and the recovery
+// key's, wrapped by a secret only one passkey can produce: WebAuthn's PRF
+// extension, asked for the same input every time. The server keeps the copy
+// and never sees the secret (docs/design/passkeys.md).
+
+const PASSKEY_AAD = "napsack/v1/passkey";
+
+/** The PRF input every napsack passkey is asked for (32 bytes). Each passkey
+ * turns it into its own secret. */
+export async function passkeyPrfInput() {
+  return new Uint8Array(await subtle.digest("SHA-256", enc.encode("napsack/v1/passkey/prf")));
+}
+
+/** The wrap key from a passkey's PRF secret. The secret is random, so HKDF is enough. */
+export async function deriveFromPasskey(prfSecret) {
+  const secret = prfSecret instanceof Uint8Array ? prfSecret : new Uint8Array(prfSecret);
+  if (secret.length !== 32) throw new Error("This passkey didn't give napsack what it needs.");
+  const hkdf = await subtle.importKey("raw", secret, "HKDF", false, ["deriveKey"]);
+  return subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: enc.encode("napsack/v1/passkey/wrap") },
+    hkdf, AES, false, ["encrypt", "decrypt"]);
+}
+
+/** The passkey's copy of the private key, made from the password-wrapped one. */
+export async function wrapForPasskey(wrapKey, wrappedB64, passkeyWrapKey) {
+  return rewrap(wrapKey, wrappedB64, WRAP_AAD, passkeyWrapKey, PASSKEY_AAD);
+}
+
+/** Signing in with a passkey: its copy, opened. Throws for any other passkey's. */
+export async function unwrapWithPasskey(passkeyWrapKey, passkeyWrappedB64) {
+  const pkcs8 = await open(passkeyWrapKey, fromB64(passkeyWrappedB64), PASSKEY_AAD);
+  try {
+    return await subtle.importKey("pkcs8", pkcs8, ECDH, false, ["deriveBits"]);
+  } finally {
+    pkcs8.fill(0);
+  }
+}
+
 // ---------- per-friend key ----------
 
 /** Same key on both sides: ECDH(mine, theirs) is symmetric, and the salt uses sorted ids. */

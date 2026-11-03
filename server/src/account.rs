@@ -573,6 +573,8 @@ pub async fn reset_with_code(
         return Err(failed("code already used"));
     }
     keep_history(&mut tx, id, "admin_reset").await?;
+    // Passkeys hold copies of the old key, which can't open anything now.
+    crate::passkeys::end_for_key_reset(&mut tx, id).await?;
     sqlx::query(
         "UPDATE users SET auth_hash = ?, public_key = ?, wrapped_private_key = ?,
             recovery_hash = NULL, recovery_wrapped_key = NULL, recovery_set_at = NULL, key_reset_at = ?

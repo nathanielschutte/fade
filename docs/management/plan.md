@@ -35,7 +35,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 11 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 12 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 13 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 14 | [Passkeys](#f26-passkeys) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 14 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
 
 **Done**
 
@@ -375,10 +375,11 @@ Oldest first; newly shipped rows go at the bottom.
 - Built (`AppLock.swift`): Settings › Security › Lock with Face ID (Touch ID, or the passcode, as the phone has), on only after one successful check; locks when the app opens and when it comes back after a minute away; asks at once, then a button (asking on every return would loop, since Face ID's prompt itself takes the app off the foreground); covered in the app switcher while the lock is on; signing out turns it off. Tested: the rules (a minute, on at launch, off never locks, sign-out). Needs the phone.
 
 #### F25. Sign in by scanning from a signed-in device
-- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate).
+- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate). Nate (2026-11-03): later; passkeys first.
 
 #### F26. Passkeys
 - Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first: [passkeys.md](../design/passkeys.md) (proposed, 2026-11-03: a third wrap of the key, beside the password's and the recovery key's; two questions for Nate).
+- Nate (2026-11-03), decided: staging's passkeys working only on staging is fine. Sign-up starts with a password as now; right after it, as with the recovery key, napsack recommends adding a passkey; and Security offers it any time.
 
 ### Debug
 

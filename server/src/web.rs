@@ -355,6 +355,8 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
         "site_url": state.config.site_url,
         // When this server started (unix seconds), for the build line on non-production copies.
         "started_at": crate::db::now() - state.started_at.elapsed().as_secs() as i64,
+        // Signing in with a passkey works here (passkeys.rs); its site's name.
+        "passkey_rp_id": state.rp.id,
         // The browser's applicationServerKey for push subscriptions (push.rs).
         "vapid_public_key": state.vapid.public,
     }))

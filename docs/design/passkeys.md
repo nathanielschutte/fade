@@ -1,6 +1,6 @@
 # Passkeys
 
-Status: proposed (Nate, 2026-11-03, [plan.md](../management/plan.md) F26). Nothing built; for Nate to review.
+Status: decided (Nate, 2026-11-03, [plan.md](../management/plan.md) F26); being built.
 
 Sign in with Face ID, Touch ID, or Windows Hello instead of a password. A passkey normally only proves who you are; napsack also needs your private key on the device, so the passkey must unlock that too. WebAuthn's **PRF extension** does it: the passkey gives the browser or app a secret only it can produce, the same every time, and napsack wraps a copy of your private key with it.
 
@@ -33,7 +33,7 @@ Today your private key is stored on the server wrapped twice: by your password a
 - Web: `navigator.credentials.create/get` with `prf`. iOS: `ASAuthorizationPlatformPublicKeyCredentialProvider` with PRF (iOS 18).
 - Where PRF isn't supported (some browsers and older devices), passkeys aren't offered: the password works everywhere.
 
-## Questions for Nate
+## Decided (Nate, 2026-11-03)
 
-- Staging's site is its own relying party (`staging.napsack.io`), so passkeys made there only work there. Fine?
-- Offer it at sign-up as well, or only from Security once signed in (simpler, and the password stays the first way in)?
+- Staging's site is its own relying party (`staging.napsack.io`), so passkeys made there only work there: fine.
+- Sign-up starts with a password, as now. Right after it (as the recovery key is shown), napsack recommends adding a passkey; Security offers it any time.
