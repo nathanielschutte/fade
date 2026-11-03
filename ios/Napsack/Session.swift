@@ -443,7 +443,8 @@ enum SignInError: LocalizedError, Equatable {
 
     /// Signing out leaves nothing of the account on the phone (CLAUDE.md,
     /// Security): the account and its key go from the Keychain; the chats, the
-    /// socket, and open chats go with the signed-in screens (NapsackApp); the
+    /// socket, and open chats go with the signed-in screens (NapsackApp); its
+    /// notifications leave Notification Center and the icon; the
     /// system never kept its requests (NetworkTransport). Pins stay, per
     /// account, as on the web: public keys, which open nothing.
     private func endLocally(notice: String?) {
@@ -451,6 +452,7 @@ enum SignInError: LocalizedError, Equatable {
         try? store.delete()
         UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
         ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
+        Notifications.shared.signedOut()  // delivered ones and the badge; the server stops with the session
         self.notice = notice
         state = .signedOut
     }

@@ -32,4 +32,8 @@ NAPSACK_BUNDLE_ID = com.getattr.napsack
 NAPSACK_SERVER_URL = https:/$()/staging.napsack.io
 NAPSACK_RELEASE_SERVER_URL = https:/$()/api.napsack.io
 
+// Which of Apple's push servers knows this build's notification tokens:
+// development (the sandbox) here, production in Release builds.
+NAPSACK_APS_ENVIRONMENT = development
+
 #include? "Local.xcconfig"

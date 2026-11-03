@@ -357,6 +357,11 @@ struct Server: Sendable {
     func logout(token: String) async throws {
         _ = try await send("auth/logout", method: "POST", token: token)
     }
+
+    /// This iPhone's notification token, for this session (the server's apns.rs).
+    func registerAPNs(token deviceToken: String, environment: String, auth: String) async throws {
+        _ = try await send("push/apns", method: "POST", token: auth, json: ["token": deviceToken, "environment": environment])
+    }
 }
 
 /// App versions compared the way the server compares them (server/src/version.rs,
