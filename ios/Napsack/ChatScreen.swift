@@ -81,6 +81,7 @@ struct ChatScreen: View {
         .defaultScrollAnchor(.bottom)
         .scrollPosition(id: $position, anchor: .top)
         .scrollDismissesKeyboard(.interactively)
+        .modifier(ShowFound(conversation: conversation, proxy: proxy))  // a search result's message (Search.swift)
         .safeAreaInset(edge: .bottom) { composer(proxy) }
         .onChange(of: conversation.bubbles.last?.id) { before, after in
             // A newer message came (older pages change the first, not the last).

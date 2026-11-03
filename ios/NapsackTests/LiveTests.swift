@@ -23,9 +23,12 @@ import Testing
         else { Issue.record("a direct message"); return }
         guard case .groupMessage(let g) = event(["type": "group_message", "group_id": 12, "message": list.groupMessage(body: "hi")]), g.id == 50
         else { Issue.record("a group message"); return }
-        for type in ["friends_changed", "groups_changed", "read", "group_read"] {
-            guard case .listChanged = event(["type": type]) else { Issue.record("\(type)"); return }
-        }
+        // Each says which list changed; a read that can't be read refetches the list it's in.
+        guard case .friendsChanged = event(["type": "friends_changed"]), case .groupsChanged(12) = event(["type": "groups_changed", "group_id": 12]),
+              case .groupsChanged(nil) = event(["type": "groups_changed"]),
+              case .friendsChanged = event(["type": "read"]), case .groupsChanged(nil) = event(["type": "group_read"]),
+              case .groupRead(12, 7, 99) = event(["type": "group_read", "group_id": 12, "user_id": 7, "last_read_id": 99])
+        else { Issue.record("the lists' events"); return }
         guard case .other = event(["type": "visibility_changed"]), case .other = LiveEvent.decode(Data("not json".utf8)),
               case .other = event(["type": "message", "message": ["id": "broken"]]) else { Issue.record("the rest"); return }
     }
