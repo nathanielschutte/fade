@@ -40,7 +40,8 @@ extension OnScreen {
             try await host.until("the picker is up") { host.presented.map { !$0.isBeingPresented } ?? false }
             let picker = try #require(host.presented)
             chat.picking = false  // a photo's chosen: the picker goes...
-            try await host.until("the picker is closing") { picker.isBeingDismissed }
+            // Closing, or (on a slow machine, between two looks) already closed.
+            try await host.until("the picker is closing") { picker.isBeingDismissed || host.presented !== picker }
             chat.camera = CameraOpening(start: .photo(TestPicture.plain(.green)))  // ...and the camera opens on it meanwhile
             try await host.until("the camera is up") {
                 guard let camera = host.presented, [.fullScreen, .overFullScreen].contains(camera.modalPresentationStyle) else { return false }
