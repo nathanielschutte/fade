@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -36,7 +38,40 @@ struct ChatRow {
     muted_raw: Option<i64>,
     deactivated: bool,
     system: bool,
+    /// Their newest past username, and when they stopped using it.
+    was: Option<String>,
+    renamed_at: Option<i64>,
 }
+
+/// The chat list's rows: every friend, and Team Napsack once it has sent you
+/// something, with what the list shows of each. Everything per friend is a
+/// search of an index: their newest message is the newer of two (the newest
+/// each way, in messages_pair), and unread counts read messages_waiting,
+/// whose condition the count repeats so SQLite uses it.
+static CHAT_ROWS: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
+            {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
+            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
+            {DEACTIVATED} AS deactivated, {SYSTEM} AS system,
+            NULLIF(MAX(COALESCE((SELECT MAX(m.id) FROM messages m WHERE m.sender_id = ?1 AND m.recipient_id = u.id), 0),
+                       COALESCE((SELECT MAX(m.id) FROM messages m WHERE m.sender_id = u.id AND m.recipient_id = ?1), 0)), 0) AS last_id,
+            (SELECT COUNT(*) FROM messages m
+              WHERE m.recipient_id = ?1 AND m.sender_id = u.id
+                AND ((m.kind = 'text' AND m.read_at IS NULL)
+                  OR (m.kind = 'snap' AND m.snap_state = 'pending'))
+                -- Nothing from before an admin reset code: it's sealed to the old key (D14).
+                AND m.created_at > {SINCE_MY_KEY}) AS unread,
+            (SELECT p.username FROM past_usernames p WHERE p.user_id = u.id ORDER BY p.id DESC LIMIT 1) AS was,
+            (SELECT p.until FROM past_usernames p WHERE p.user_id = u.id ORDER BY p.id DESC LIMIT 1) AS renamed_at
+         FROM users u
+         WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+                        FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL
+                        UNION ALL
+                        SELECT s.user_id FROM system_accounts s
+                        WHERE EXISTS (SELECT 1 FROM messages m WHERE m.sender_id = s.user_id AND m.recipient_id = ?1))"
+    )
+});
 
 #[derive(Serialize)]
 pub struct ChatSummary {
@@ -91,43 +126,40 @@ pub async fn list_chats(
     AuthUser(me): AuthUser,
     Query(tz): Query<crate::streaks::Tz>,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
-    let streaks = crate::streaks::for_friends(&state.db, me.id, tz.offset_minutes()).await?;
-    let rows = sqlx::query_as::<_, ChatRow>(&format!(
-        "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
-            {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
-            {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
-            {DEACTIVATED} AS deactivated, {SYSTEM} AS system,
-            (SELECT m.id FROM messages m
-              WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
-                 OR (m.sender_id = u.id AND m.recipient_id = ?1)
-              ORDER BY m.id DESC LIMIT 1) AS last_id,
-            (SELECT COUNT(*) FROM messages m
-              WHERE m.sender_id = u.id AND m.recipient_id = ?1
-                AND ((m.kind = 'text' AND m.read_at IS NULL)
-                  OR (m.kind = 'snap' AND m.snap_state = 'pending'))
-                -- Nothing from before an admin reset code: it's sealed to the old key (D14).
-                AND m.created_at > {SINCE_MY_KEY}) AS unread
-         FROM users u
-         WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-                        FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
-            OR ({SYSTEM} AND EXISTS (SELECT 1 FROM messages m WHERE m.sender_id = u.id AND m.recipient_id = ?1))"
-    ))
-    .bind(me.id)
-    .fetch_all(&state.db)
+    let chats = chats_for(&state.db, me.id, tz.offset_minutes(), |id| {
+        state.hub.is_online(id)
+    })
     .await?;
+    Ok(Json(chats))
+}
 
-    let i_share = crate::presence::shares(&state.db, me.id).await?;
+/// `list_chats` for `me`, in a few queries however many friends they have:
+/// the rows, their newest messages, streaks, and whether `me` shares
+/// activity. `online`: whether someone has napsack open right now.
+pub(crate) async fn chats_for(
+    db: &SqlitePool,
+    me: i64,
+    offset_minutes: i64,
+    online: impl Fn(i64) -> bool,
+) -> sqlx::Result<Vec<ChatSummary>> {
+    let rows = sqlx::query_as::<_, ChatRow>(&CHAT_ROWS)
+        .bind(me)
+        .fetch_all(db)
+        .await?;
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let streaks = crate::streaks::for_chats(db, me, &ids, offset_minutes).await?;
+    let last_ids: Vec<i64> = rows.iter().filter_map(|r| r.last_id).collect();
+    let mut newest = db::messages_by_id(db, &last_ids).await?;
+    let i_share = crate::presence::shares(db, me).await?;
+    let at = now();
     let mut chats = Vec::with_capacity(rows.len());
     for row in rows {
-        let last_message = match row.last_id {
-            Some(id) => db::get_message(&state.db, id).await?,
-            None => None,
-        };
-        let renamed = crate::usernames::past_of(&state.db, row.id)
-            .await?
-            .into_iter()
-            .next()
-            .filter(|(_, at)| now() - at < crate::usernames::SHOW_RENAME_SECS);
+        let last_message = row.last_id.and_then(|id| newest.remove(&id));
+        let renamed = row
+            .was
+            .zip(row.renamed_at)
+            .filter(|(_, until)| at - until < crate::usernames::SHOW_RENAME_SECS);
+        let (muted, muted_until) = crate::marks::muted(row.muted_raw, at);
         chats.push(ChatSummary {
             id: row.id,
             username: row.username,
@@ -137,7 +169,7 @@ pub async fn list_chats(
             public_key: row.public_key,
             key_reset_at: row.key_reset_at,
             active_now: (i_share && row.share_activity && !row.deactivated && !row.system)
-                .then(|| state.hub.is_online(row.id)),
+                .then(|| online(row.id)),
             last_seen_at: if i_share && row.share_activity && !row.deactivated {
                 row.last_seen_at
             } else {
@@ -148,14 +180,14 @@ pub async fn list_chats(
             birthday: row.birthday,
             streak: streaks.get(&row.id).map_or(0, |s| s.current),
             streak_expiring: streaks.get(&row.id).is_some_and(|s| s.expiring),
-            muted: crate::marks::muted(row.muted_raw, now()).0,
-            muted_until: crate::marks::muted(row.muted_raw, now()).1,
+            muted,
+            muted_until,
             last_message,
             unread: row.unread,
             deactivated: row.deactivated,
             system: row.system,
             was: renamed.as_ref().map(|(name, _)| name.clone()),
-            renamed_at: renamed.map(|(_, at)| at),
+            renamed_at: renamed.map(|(_, until)| until),
         });
     }
     chats.sort_by(|a, b| {
@@ -164,7 +196,7 @@ pub async fn list_chats(
         kb.cmp(&ka)
             .then_with(|| a.username.to_lowercase().cmp(&b.username.to_lowercase()))
     });
-    Ok(Json(chats))
+    Ok(chats)
 }
 
 #[derive(Serialize, FromRow)]
@@ -480,5 +512,174 @@ pub async fn require_friend(state: &SharedState, me: i64, friend: i64) -> AppRes
         Ok(())
     } else {
         Err(AppError::not_found("You can only message friends."))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::db::tests::{assert_searches, temp_db};
+    use crate::testdata::{self, *};
+
+    /// The chat list as it was built before migration 0028 (a query per
+    /// friend for their newest message and past usernames, and streaks from
+    /// every pic ever): what `chats_for` must match exactly. `was` and
+    /// `renamed_at` are read as before, from `past_of`.
+    pub(crate) async fn old_chats(
+        db: &SqlitePool,
+        me: i64,
+        offset_minutes: i64,
+        online: impl Fn(i64) -> bool,
+    ) -> Vec<ChatSummary> {
+        let streaks = crate::streaks::tests::old_for_friends(db, me, offset_minutes)
+            .await
+            .unwrap();
+        let rows = sqlx::query_as::<_, ChatRow>(&format!(
+            "SELECT u.id, u.username, u.public_key, u.key_reset_at, u.share_activity, u.last_seen_at,
+                {DISPLAY_NAME} AS display_name, {NICKNAME} AS nickname, {AVATAR_ID} AS avatar_id,
+                {FAVORITE_FRIEND} AS favorite, {HIDDEN_UPTO} AS hidden_upto, {BIRTHDAY_MD} AS birthday, {MUTED_FRIEND} AS muted_raw,
+                {DEACTIVATED} AS deactivated, {SYSTEM} AS system,
+                (SELECT m.id FROM messages m
+                  WHERE (m.sender_id = ?1 AND m.recipient_id = u.id)
+                     OR (m.sender_id = u.id AND m.recipient_id = ?1)
+                  ORDER BY m.id DESC LIMIT 1) AS last_id,
+                (SELECT COUNT(*) FROM messages m
+                  WHERE m.sender_id = u.id AND m.recipient_id = ?1
+                    AND ((m.kind = 'text' AND m.read_at IS NULL)
+                      OR (m.kind = 'snap' AND m.snap_state = 'pending'))
+                    AND m.created_at > {SINCE_MY_KEY}) AS unread,
+                NULL AS was, NULL AS renamed_at
+             FROM users u
+             WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+                            FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
+                OR ({SYSTEM} AND EXISTS (SELECT 1 FROM messages m WHERE m.sender_id = u.id AND m.recipient_id = ?1))"
+        ))
+        .bind(me)
+        .fetch_all(db)
+        .await
+        .unwrap();
+        let i_share = crate::presence::shares(db, me).await.unwrap();
+        let mut chats = Vec::with_capacity(rows.len());
+        for row in rows {
+            let last_message = match row.last_id {
+                Some(id) => db::get_message(db, id).await.unwrap(),
+                None => None,
+            };
+            let renamed = crate::usernames::past_of(db, row.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .next()
+                .filter(|(_, at)| now() - at < crate::usernames::SHOW_RENAME_SECS);
+            chats.push(ChatSummary {
+                id: row.id,
+                username: row.username,
+                display_name: row.display_name,
+                nickname: row.nickname,
+                avatar_id: row.avatar_id,
+                public_key: row.public_key,
+                key_reset_at: row.key_reset_at,
+                active_now: (i_share && row.share_activity && !row.deactivated && !row.system)
+                    .then(|| online(row.id)),
+                last_seen_at: if i_share && row.share_activity && !row.deactivated {
+                    row.last_seen_at
+                } else {
+                    None
+                },
+                hidden: crate::marks::is_hidden(row.hidden_upto, row.last_id),
+                favorite: row.favorite.unwrap_or(false),
+                birthday: row.birthday,
+                streak: streaks.get(&row.id).map_or(0, |s| s.current),
+                streak_expiring: streaks.get(&row.id).is_some_and(|s| s.expiring),
+                muted: crate::marks::muted(row.muted_raw, now()).0,
+                muted_until: crate::marks::muted(row.muted_raw, now()).1,
+                last_message,
+                unread: row.unread,
+                deactivated: row.deactivated,
+                system: row.system,
+                was: renamed.as_ref().map(|(name, _)| name.clone()),
+                renamed_at: renamed.map(|(_, at)| at),
+            });
+        }
+        chats.sort_by(|a, b| {
+            let ka = a.last_message.as_ref().map(|m| m.id).unwrap_or(0);
+            let kb = b.last_message.as_ref().map(|m| m.id).unwrap_or(0);
+            kb.cmp(&ka)
+                .then_with(|| a.username.to_lowercase().cmp(&b.username.to_lowercase()))
+        });
+        chats
+    }
+
+    /// Everyone's chat list in the mix, in three time zones: exactly what
+    /// the old queries made, field for field and in the same order.
+    #[tokio::test]
+    async fn chat_lists_are_what_they_were() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        let online = |id: i64| id == BEN || id == JO;
+        for me in PEOPLE {
+            for tz in [0, -300, 840] {
+                let old = serde_json::to_value(old_chats(&db, me, tz, online).await).unwrap();
+                let new =
+                    serde_json::to_value(chats_for(&db, me, tz, online).await.unwrap()).unwrap();
+                assert_eq!(new, old, "{me}'s chat list, tz {tz}");
+            }
+        }
+
+        // By hand, Ana's: the newest chats first; what's unread, renamed,
+        // streaking, hidden, muted.
+        let chats = chats_for(&db, ANA, 0, online).await.unwrap();
+        let chat = |id: i64| chats.iter().find(|c| c.id == id).unwrap();
+        let order: Vec<i64> = chats.iter().map(|c| c.id).collect();
+        assert_eq!(
+            order,
+            [TEAM, JO, IVY, DEE, CAL, BEN, EVE],
+            "by newest message (the mix's ids follow the order it's written in); \
+             Fay is no friend now, Gus never was"
+        );
+        let ben = chat(BEN);
+        assert_eq!(
+            ben.unread, 3,
+            "two texts and a pic since Ana's new key, not the one before"
+        );
+        assert_eq!(
+            (ben.streak, ben.was.as_deref(), ben.favorite, ben.muted),
+            (3, Some("benjamin"), true, false)
+        );
+        assert_eq!(ben.active_now, Some(true));
+        let cal = chat(CAL);
+        assert_eq!(
+            (cal.streak, cal.was.as_deref(), cal.muted),
+            (70, None, false),
+            "renamed too long ago; mute over"
+        );
+        assert_eq!(
+            cal.last_message.as_ref().map(|m| m.snap_state.as_deref()),
+            Some(Some("pending"))
+        );
+        assert!(chat(IVY).hidden && chat(IVY).muted && !chat(JO).hidden);
+        assert_eq!(chat(JO).active_now, None, "Jo doesn't share activity");
+        assert!(chat(TEAM).system && chat(DEE).deactivated && chat(EVE).last_message.is_none());
+        let bens = chats_for(&db, BEN, 0, online).await.unwrap();
+        assert_eq!(bens.iter().find(|c| c.id == ANA).unwrap().unread, 2);
+    }
+
+    /// Every part of the chat list is a search of an index: no read of every
+    /// message, and no chat's history sorted to find its newest.
+    #[tokio::test]
+    async fn chat_list_searches_indexes() {
+        let db = temp_db().await;
+        assert_searches(&db, &CHAT_ROWS, &["s"], &["m"]).await;
+        assert_searches(&db, &db::BY_IDS, &[], &["messages"]).await;
+        let plan = crate::db::tests::plan(&db, &CHAT_ROWS).await;
+        assert!(
+            plan.iter().any(|s| s.contains("INDEX messages_waiting")),
+            "unread counts read the small index: {plan:#?}"
+        );
+        let newest_each_way = plan
+            .iter()
+            .filter(|s| s.contains("COVERING INDEX messages_pair (sender_id=? AND recipient_id=?)"))
+            .count();
+        assert_eq!(newest_each_way, 2, "{plan:#?}");
     }
 }

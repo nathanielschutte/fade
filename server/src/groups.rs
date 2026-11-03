@@ -12,6 +12,8 @@
 //! longest-standing member becomes owner. Members see messages from when they
 //! (last) joined, by message id (`visible_after_id`).
 
+use std::{collections::HashMap, sync::LazyLock};
+
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -236,6 +238,25 @@ pub async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<GroupMessage>
     Ok(m)
 }
 
+/// Group messages by id, from a JSON list of them.
+static BY_IDS: LazyLock<String> =
+    LazyLock::new(|| format!("{GM_SELECT} WHERE gm.id IN (SELECT value FROM json_each(?))"));
+
+/// `get_message` for several messages at once, in no order: a few queries
+/// in all, not a few per message. Missing ids are left out.
+pub async fn get_messages(db: &SqlitePool, ids: &[i64]) -> sqlx::Result<Vec<GroupMessage>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut found: Vec<GroupMessage> = sqlx::query_as(&BY_IDS)
+        .bind(db::json_ids(ids))
+        .fetch_all(db)
+        .await?;
+    crate::group_pics::attach(db, &mut found).await?;
+    crate::reactions::attach_group(db, &mut found).await?;
+    Ok(found)
+}
+
 /// Notifies everyone in the group but `sender` ("Ana: new message"), each
 /// with the name they know the sender by.
 pub async fn notify_members(
@@ -324,9 +345,7 @@ pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Resu
         );
         return Ok(());
     }
-    for id in ids {
-        let mut m = message.clone();
-        prepare_for(&state.db, id, std::slice::from_mut(&mut m)).await?;
+    for (id, m) in for_each(&state.db, &message, &ids).await? {
         state.hub.send(
             id,
             &Event::GroupMessage {
@@ -338,40 +357,113 @@ pub async fn broadcast(state: &SharedState, message: GroupMessage) -> sqlx::Resu
     Ok(())
 }
 
+/// Every member's wrap of a message's key, and of an edit's.
+const MEMBER_KEYS: &str = "SELECT user_id, wrapped FROM group_message_keys WHERE message_id = ?";
+const MEMBER_EDIT_KEYS: &str = "SELECT user_id, wrapped FROM group_edit_keys WHERE edit_id = ?";
+/// One viewer's wraps of the keys of the messages, and of the edits, in a
+/// JSON list.
+const VIEWER_KEYS: &str = "SELECT message_id, wrapped FROM group_message_keys
+     WHERE user_id = ?1 AND message_id IN (SELECT value FROM json_each(?2))";
+const VIEWER_EDIT_KEYS: &str = "SELECT edit_id, wrapped FROM group_edit_keys
+     WHERE user_id = ?1 AND edit_id IN (SELECT value FROM json_each(?2))";
+
+/// A format 3 message readied for each of `members`, as `prepare_for` would
+/// for each alone, with every member's keys read at once.
+async fn for_each(
+    db: &SqlitePool,
+    message: &GroupMessage,
+    members: &[i64],
+) -> sqlx::Result<Vec<(i64, GroupMessage)>> {
+    let keys: HashMap<i64, String> = sqlx::query_as(MEMBER_KEYS)
+        .bind(message.id)
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let edit_keys: HashMap<i64, String> = match message.edit_id {
+        Some(edit) => sqlx::query_as(MEMBER_EDIT_KEYS)
+            .bind(edit)
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect(),
+        None => HashMap::new(),
+    };
+    Ok(members
+        .iter()
+        .map(|&member| {
+            let mut m = message.clone();
+            ready(
+                &mut m,
+                keys.get(&member).cloned(),
+                edit_keys.get(&member).cloned(),
+            );
+            (member, m)
+        })
+        .collect())
+}
+
 /// Readies format 3 messages for one viewer: content out of `body`, the
 /// member list parsed, and that viewer's own wrap attached (or none, if it
-/// wasn't sent to them). Safe to call twice on the same message.
+/// wasn't sent to them). Safe to call twice on the same message. The
+/// viewer's keys for all of them are read in two queries.
 pub async fn prepare_for(
     db: &SqlitePool,
     viewer: i64,
     messages: &mut [GroupMessage],
 ) -> sqlx::Result<()> {
-    for m in messages.iter_mut().filter(|m| sealed(m.format)) {
-        if m.content.is_none() && m.pic_id.is_none() {
-            m.content = Some(std::mem::take(&mut m.body));
-        }
-        m.recipients = m
-            .recipients_json
-            .as_deref()
-            .and_then(|j| serde_json::from_str(j).ok());
-        m.key = sqlx::query_scalar(
-            "SELECT wrapped FROM group_message_keys WHERE message_id = ? AND user_id = ?",
-        )
-        .bind(m.id)
+    let ids: Vec<i64> = messages
+        .iter()
+        .filter(|m| sealed(m.format))
+        .map(|m| m.id)
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let edits: Vec<i64> = messages
+        .iter()
+        .filter(|m| sealed(m.format))
+        .filter_map(|m| m.edit_id)
+        .collect();
+    let keys: HashMap<i64, String> = sqlx::query_as(VIEWER_KEYS)
         .bind(viewer)
-        .fetch_optional(db)
-        .await?;
-        if let Some(edit) = m.edit_id {
-            m.edit_key = sqlx::query_scalar(
-                "SELECT wrapped FROM group_edit_keys WHERE edit_id = ? AND user_id = ?",
-            )
-            .bind(edit)
+        .bind(db::json_ids(&ids))
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let edit_keys: HashMap<i64, String> = if edits.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as(VIEWER_EDIT_KEYS)
             .bind(viewer)
-            .fetch_optional(db)
-            .await?;
-        }
+            .bind(db::json_ids(&edits))
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect()
+    };
+    for m in messages.iter_mut().filter(|m| sealed(m.format)) {
+        let edit_key = m.edit_id.and_then(|edit| edit_keys.get(&edit).cloned());
+        ready(m, keys.get(&m.id).cloned(), edit_key);
     }
     Ok(())
+}
+
+/// Fills in a format 3 message for one viewer, given their keys to it and to
+/// its newest edit.
+fn ready(m: &mut GroupMessage, key: Option<String>, edit_key: Option<String>) {
+    if m.content.is_none() && m.pic_id.is_none() {
+        m.content = Some(std::mem::take(&mut m.body));
+    }
+    m.recipients = m
+        .recipients_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str(j).ok());
+    m.key = key;
+    if m.edit_id.is_some() {
+        m.edit_key = edit_key;
+    }
 }
 
 /// What a format 3 sender sends besides the content.
@@ -558,14 +650,13 @@ struct SummaryRow {
     unread: i64,
     favorite: Option<bool>,
     muted_raw: Option<i64>,
+    avatar_id: Option<i64>,
 }
 
-/// `GET /api/groups`: the caller's current groups, newest activity first.
-pub async fn list(
-    State(state): State<SharedState>,
-    AuthUser(me): AuthUser,
-) -> AppResult<Json<Vec<GroupSummary>>> {
-    let rows = sqlx::query_as::<_, SummaryRow>(&format!(
+/// The group list's rows: the caller's current groups, with their newest
+/// message's id and the current picture's (as `group_pics::current_avatar`).
+static GROUP_ROWS: LazyLock<String> = LazyLock::new(|| {
+    format!(
         "SELECT g.id, g.name, m.role,
             (SELECT COUNT(*) FROM group_members x WHERE x.group_id = g.id AND x.left_at IS NULL) AS member_count,
             (SELECT MAX(gm.id) FROM group_messages gm
@@ -574,23 +665,41 @@ pub async fn list(
               WHERE gm.group_id = g.id AND gm.id > m.last_read_id AND gm.kind = 'text'
                 AND gm.sender_id != ?1 AND gm.id > m.visible_after_id
                 AND gm.created_at > {SINCE_MY_KEY}) AS unread,
-            {FAVORITE_GROUP} AS favorite, {MUTED_GROUP} AS muted_raw
+            {FAVORITE_GROUP} AS favorite, {MUTED_GROUP} AS muted_raw,
+            (SELECT MAX(a.id) FROM group_avatars a WHERE a.group_id = g.id) AS avatar_id
          FROM group_members m JOIN groups g ON g.id = m.group_id
          WHERE m.user_id = ?1 AND m.left_at IS NULL"
-    ))
-    .bind(me.id)
-    .fetch_all(&state.db)
-    .await?;
+    )
+});
+
+/// `GET /api/groups`: the caller's current groups, newest activity first.
+pub async fn list(
+    State(state): State<SharedState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<Vec<GroupSummary>>> {
+    Ok(Json(groups_for(&state.db, me.id).await?))
+}
+
+/// `list` for `me`, in a few queries however many groups they're in: the
+/// rows, then every newest message at once (with pics, reactions, and `me`'s
+/// keys).
+pub(crate) async fn groups_for(db: &SqlitePool, me: i64) -> sqlx::Result<Vec<GroupSummary>> {
+    let rows = sqlx::query_as::<_, SummaryRow>(&GROUP_ROWS)
+        .bind(me)
+        .fetch_all(db)
+        .await?;
+    let ids: Vec<i64> = rows.iter().filter_map(|r| r.last_id).collect();
+    let mut newest = get_messages(db, &ids).await?;
+    prepare_for(db, me, &mut newest).await?;
+    let mut newest: HashMap<i64, GroupMessage> = newest.into_iter().map(|m| (m.id, m)).collect();
+    let at = now();
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let last_message = match r.last_id {
-            Some(id) => {
-                let mut m = get_message(&state.db, id).await?;
-                prepare_for(&state.db, me.id, std::slice::from_mut(&mut m)).await?;
-                Some(m)
-            }
+            Some(id) => Some(newest.remove(&id).ok_or(sqlx::Error::RowNotFound)?),
             None => None,
         };
+        let (muted, muted_until) = crate::marks::muted(r.muted_raw, at);
         out.push(GroupSummary {
             id: r.id,
             name: r.name,
@@ -599,14 +708,14 @@ pub async fn list(
             last_message,
             unread: r.unread,
             favorite: r.favorite.unwrap_or(false),
-            muted: crate::marks::muted(r.muted_raw, now()).0,
-            muted_until: crate::marks::muted(r.muted_raw, now()).1,
+            muted,
+            muted_until,
             encrypted: false,
-            avatar_id: crate::group_pics::current_avatar(&state.db, r.id).await?,
+            avatar_id: r.avatar_id,
         });
     }
     out.sort_by_key(|g| std::cmp::Reverse(g.last_message.as_ref().map_or(0, |m| m.id)));
-    Ok(Json(out))
+    Ok(out)
 }
 
 #[derive(Deserialize)]
@@ -895,21 +1004,44 @@ pub async fn messages(
     Query(page): Query<Page>,
 ) -> AppResult<Json<Vec<GroupMessage>>> {
     let (_, visible_after) = require_member(&state.db, group, me.id).await?;
-    let mut out: Vec<GroupMessage> = sqlx::query_as(&format!(
+    let before = page.before.unwrap_or(i64::MAX);
+    let limit = page.limit.unwrap_or(50).clamp(1, 200);
+    Ok(Json(
+        page_of(&state.db, me.id, group, visible_after, before, limit).await?,
+    ))
+}
+
+/// A page of group `?1`'s messages: the `?4` newest above `?2` and below `?3`.
+static PAGE: LazyLock<String> = LazyLock::new(|| {
+    format!(
         "{GM_SELECT} WHERE gm.group_id = ? AND gm.id > ? AND gm.id < ?
          ORDER BY gm.id DESC LIMIT ?"
-    ))
-    .bind(group)
-    .bind(visible_after)
-    .bind(page.before.unwrap_or(i64::MAX))
-    .bind(page.limit.unwrap_or(50).clamp(1, 200))
-    .fetch_all(&state.db)
-    .await?;
+    )
+});
+
+/// Up to `limit` of `group`'s messages older than `before` and newer than
+/// `visible_after` (when `me` joined), oldest first, readied for `me`: six
+/// queries at most for a whole page, rather than a few per message.
+pub(crate) async fn page_of(
+    db: &SqlitePool,
+    me: i64,
+    group: i64,
+    visible_after: i64,
+    before: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<GroupMessage>> {
+    let mut out: Vec<GroupMessage> = sqlx::query_as(&PAGE)
+        .bind(group)
+        .bind(visible_after)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
     out.reverse();
-    crate::group_pics::attach(&state.db, &mut out).await?;
-    crate::reactions::attach_group(&state.db, &mut out).await?;
-    prepare_for(&state.db, me.id, &mut out).await?;
-    Ok(Json(out))
+    crate::group_pics::attach(db, &mut out).await?;
+    crate::reactions::attach_group(db, &mut out).await?;
+    prepare_for(db, me, &mut out).await?;
+    Ok(out)
 }
 
 #[derive(Deserialize)]
@@ -1140,9 +1272,260 @@ pub async fn reads(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::db::tests::temp_db;
+    use crate::db::tests::{assert_searches, temp_db};
+    use crate::testdata::{self, *};
+
+    /// How messages were read before migration 0028, a few queries per
+    /// message: what the batched reads must match exactly.
+    pub(crate) mod old {
+        use super::*;
+
+        pub(crate) async fn get_message(db: &SqlitePool, id: i64) -> sqlx::Result<GroupMessage> {
+            let mut m: GroupMessage = sqlx::query_as(&format!("{GM_SELECT} WHERE gm.id = ?"))
+                .bind(id)
+                .fetch_one(db)
+                .await?;
+            crate::group_pics::tests::old_attach(db, std::slice::from_mut(&mut m)).await?;
+            crate::reactions::attach_group(db, std::slice::from_mut(&mut m)).await?;
+            Ok(m)
+        }
+
+        pub(crate) async fn prepare_for(
+            db: &SqlitePool,
+            viewer: i64,
+            messages: &mut [GroupMessage],
+        ) -> sqlx::Result<()> {
+            for m in messages.iter_mut().filter(|m| sealed(m.format)) {
+                if m.content.is_none() && m.pic_id.is_none() {
+                    m.content = Some(std::mem::take(&mut m.body));
+                }
+                m.recipients = m
+                    .recipients_json
+                    .as_deref()
+                    .and_then(|j| serde_json::from_str(j).ok());
+                m.key = sqlx::query_scalar(
+                    "SELECT wrapped FROM group_message_keys WHERE message_id = ? AND user_id = ?",
+                )
+                .bind(m.id)
+                .bind(viewer)
+                .fetch_optional(db)
+                .await?;
+                if let Some(edit) = m.edit_id {
+                    m.edit_key = sqlx::query_scalar(
+                        "SELECT wrapped FROM group_edit_keys WHERE edit_id = ? AND user_id = ?",
+                    )
+                    .bind(edit)
+                    .bind(viewer)
+                    .fetch_optional(db)
+                    .await?;
+                }
+            }
+            Ok(())
+        }
+
+        pub(crate) async fn groups_for(db: &SqlitePool, me: i64) -> Vec<GroupSummary> {
+            let rows = sqlx::query_as::<_, SummaryRow>(&format!(
+                "SELECT g.id, g.name, m.role,
+                    (SELECT COUNT(*) FROM group_members x WHERE x.group_id = g.id AND x.left_at IS NULL) AS member_count,
+                    (SELECT MAX(gm.id) FROM group_messages gm
+                      WHERE gm.group_id = g.id AND gm.id > m.visible_after_id) AS last_id,
+                    (SELECT COUNT(*) FROM group_messages gm
+                      WHERE gm.group_id = g.id AND gm.id > m.last_read_id AND gm.kind = 'text'
+                        AND gm.sender_id != ?1 AND gm.id > m.visible_after_id
+                        AND gm.created_at > {SINCE_MY_KEY}) AS unread,
+                    {FAVORITE_GROUP} AS favorite, {MUTED_GROUP} AS muted_raw, NULL AS avatar_id
+                 FROM group_members m JOIN groups g ON g.id = m.group_id
+                 WHERE m.user_id = ?1 AND m.left_at IS NULL"
+            ))
+            .bind(me)
+            .fetch_all(db)
+            .await
+            .unwrap();
+            let mut out = Vec::with_capacity(rows.len());
+            for r in rows {
+                let last_message = match r.last_id {
+                    Some(id) => {
+                        let mut m = get_message(db, id).await.unwrap();
+                        prepare_for(db, me, std::slice::from_mut(&mut m))
+                            .await
+                            .unwrap();
+                        Some(m)
+                    }
+                    None => None,
+                };
+                out.push(GroupSummary {
+                    id: r.id,
+                    name: r.name,
+                    role: r.role,
+                    member_count: r.member_count,
+                    last_message,
+                    unread: r.unread,
+                    favorite: r.favorite.unwrap_or(false),
+                    muted: crate::marks::muted(r.muted_raw, now()).0,
+                    muted_until: crate::marks::muted(r.muted_raw, now()).1,
+                    encrypted: false,
+                    avatar_id: crate::group_pics::current_avatar(db, r.id).await.unwrap(),
+                });
+            }
+            out.sort_by_key(|g| std::cmp::Reverse(g.last_message.as_ref().map_or(0, |m| m.id)));
+            out
+        }
+
+        pub(crate) async fn page_of(
+            db: &SqlitePool,
+            me: i64,
+            group: i64,
+            visible_after: i64,
+            before: i64,
+            limit: i64,
+        ) -> Vec<GroupMessage> {
+            let mut out: Vec<GroupMessage> = sqlx::query_as(&format!(
+                "{GM_SELECT} WHERE gm.group_id = ? AND gm.id > ? AND gm.id < ?
+                 ORDER BY gm.id DESC LIMIT ?"
+            ))
+            .bind(group)
+            .bind(visible_after)
+            .bind(before)
+            .bind(limit)
+            .fetch_all(db)
+            .await
+            .unwrap();
+            out.reverse();
+            crate::group_pics::tests::old_attach(db, &mut out)
+                .await
+                .unwrap();
+            crate::reactions::attach_group(db, &mut out).await.unwrap();
+            prepare_for(db, me, &mut out).await.unwrap();
+            out
+        }
+    }
+
+    fn json<T: Serialize>(v: &T) -> serde_json::Value {
+        serde_json::to_value(v).unwrap()
+    }
+
+    /// Everyone's group list in the mix: exactly what the old queries made.
+    #[tokio::test]
+    async fn group_lists_are_what_they_were() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        for me in PEOPLE {
+            let new = groups_for(&db, me).await.unwrap();
+            assert_eq!(
+                json(&new),
+                json(&old::groups_for(&db, me).await),
+                "{me}'s groups"
+            );
+        }
+        // By hand, Ana's: newest first, then the two she sees nothing in yet,
+        // as listed; four unread in the trip; her own key to a sealed pic.
+        let ana = groups_for(&db, ANA).await.unwrap();
+        let ids: Vec<i64> = ana.iter().map(|g| g.id).collect();
+        assert_eq!(
+            ids,
+            [QUIET, LATE, TRIP, BLANK_A, BLANK_B],
+            "not the one she left"
+        );
+        let trip = &ana[2];
+        assert_eq!((trip.unread, trip.member_count), (4, 4));
+        assert!(trip.avatar_id.is_some() && ana[0].favorite && ana[0].muted);
+        let late = ana[1].last_message.as_ref().unwrap();
+        assert_eq!(late.key.as_deref(), Some("wrap 153 for 1"));
+        assert_eq!(late.pic.as_ref().unwrap().viewers, [BEN]);
+    }
+
+    /// Every member's pages of every group, in several page sizes: the same
+    /// messages, pics, reactions, edits, and only their own keys.
+    #[tokio::test]
+    async fn group_pages_are_what_they_were() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        let mut seen = 0;
+        for group in GROUPS {
+            for me in PEOPLE {
+                let Some((_, after)) = membership(&db, group, me).await.unwrap() else {
+                    continue;
+                };
+                for limit in [1, 3, 50, 200] {
+                    let mut before = i64::MAX;
+                    loop {
+                        let new = page_of(&db, me, group, after, before, limit).await.unwrap();
+                        let old = old::page_of(&db, me, group, after, before, limit).await;
+                        assert_eq!(
+                            json(&new),
+                            json(&old),
+                            "{me} in {group}, {limit} before {before}"
+                        );
+                        seen += new.len();
+                        match new.first() {
+                            Some(oldest) if new.len() as i64 == limit => before = oldest.id,
+                            _ => break,
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen > 100, "{seen}");
+        // Hal has no key to 106 or to the edit of 107: none, not someone else's.
+        let hal = page_of(&db, HAL, TRIP, 0, i64::MAX, 50).await.unwrap();
+        let by_id = |id: i64| hal.iter().find(|m| m.id == id).unwrap();
+        assert_eq!(
+            (by_id(105).key.as_deref(), by_id(106).key.as_deref()),
+            (Some("wrap 105 for 9"), None)
+        );
+        assert_eq!(
+            (
+                by_id(107).edit_content.as_deref(),
+                by_id(107).edit_key.as_deref()
+            ),
+            (Some("edit 501"), None)
+        );
+        assert_eq!(by_id(102).sender_name, "Deleted account");
+    }
+
+    /// A sealed message as sent to each member, its keys read once for all:
+    /// what each got when it was readied for them one at a time.
+    #[tokio::test]
+    async fn each_member_gets_what_they_did() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        let sealed_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM group_messages WHERE format IN (3, 5, 7) ORDER BY id",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert!(sealed_ids.len() >= 6);
+        for id in sealed_ids {
+            let message = get_message(&db, id).await.unwrap();
+            let members = audience(&db, message.group_id, id).await.unwrap();
+            let mut everyone = PEOPLE.to_vec();
+            everyone.extend(&members);
+            for (member, m) in for_each(&db, &message, &everyone).await.unwrap() {
+                let mut alone = old::get_message(&db, id).await.unwrap();
+                old::prepare_for(&db, member, std::slice::from_mut(&mut alone))
+                    .await
+                    .unwrap();
+                assert_eq!(json(&m), json(&alone), "message {id} for {member}");
+            }
+        }
+    }
+
+    /// The group list, a page, and readying them read indexes: no read of
+    /// every group message, and no sort of what they found.
+    #[tokio::test]
+    async fn groups_search_indexes() {
+        let db = temp_db().await;
+        assert_searches(&db, &GROUP_ROWS, &[], &["gm"]).await;
+        for sql in [&*BY_IDS, &*PAGE] {
+            assert_searches(&db, sql, &[], &["gm"]).await;
+        }
+        for sql in [MEMBER_KEYS, MEMBER_EDIT_KEYS, VIEWER_KEYS, VIEWER_EDIT_KEYS] {
+            assert_searches(&db, sql, &[], &[]).await;
+        }
+    }
 
     #[test]
     fn config_lists_every_group_format() {

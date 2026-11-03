@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -27,6 +29,24 @@ pub struct Page {
     limit: Option<i64>,
 }
 
+/// A page of the chat between `?1` and `?2`: the `?4` newest messages older
+/// than `?3`, newest first. The newest that many each way (two short runs
+/// of messages_pair, newest first), then the newest of those, so a page
+/// reads the same however long the chat's history is.
+static PAGE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT {MESSAGE_COLS} FROM messages
+         WHERE id IN (SELECT id FROM (SELECT id FROM messages
+                                      WHERE sender_id = ?1 AND recipient_id = ?2 AND id < ?3
+                                      ORDER BY id DESC LIMIT ?4)
+                      UNION ALL
+                      SELECT id FROM (SELECT id FROM messages
+                                      WHERE sender_id = ?2 AND recipient_id = ?1 AND id < ?3
+                                      ORDER BY id DESC LIMIT ?4))
+         ORDER BY id DESC LIMIT ?4"
+    )
+});
+
 /// Messages between the caller and a friend, oldest first.
 pub async fn list(
     State(state): State<SharedState>,
@@ -37,24 +57,30 @@ pub async fn list(
     require_friend_or_team(&state, me.id, friend_id).await?;
     let limit = page.limit.unwrap_or(50).clamp(1, 200);
     let before = page.before.unwrap_or(i64::MAX);
-
-    let mut messages = sqlx::query_as::<_, Message>(&format!(
-        "SELECT {MESSAGE_COLS} FROM messages
-         WHERE ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
-           AND id < ?
-         ORDER BY id DESC LIMIT ?"
+    Ok(Json(
+        page_of(&state.db, me.id, friend_id, before, limit).await?,
     ))
-    .bind(me.id)
-    .bind(friend_id)
-    .bind(friend_id)
-    .bind(me.id)
-    .bind(before)
-    .bind(limit)
-    .fetch_all(&state.db)
-    .await?;
+}
+
+/// Up to `limit` messages between `me` and `friend` older than `before`,
+/// oldest first, with their reactions.
+pub(crate) async fn page_of(
+    db: &sqlx::SqlitePool,
+    me: i64,
+    friend: i64,
+    before: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Message>> {
+    let mut messages = sqlx::query_as::<_, Message>(&PAGE)
+        .bind(me)
+        .bind(friend)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
     messages.reverse();
-    crate::reactions::attach(&state.db, &mut messages).await?;
-    Ok(Json(messages))
+    crate::reactions::attach(db, &mut messages).await?;
+    Ok(messages)
 }
 
 #[derive(Deserialize)]
@@ -159,15 +185,12 @@ pub async fn mark_read(
 ) -> AppResult<Json<Value>> {
     require_friend_or_team(&state, me.id, friend_id).await?;
     let at = now();
-    let result = sqlx::query(
-        "UPDATE messages SET read_at = ?
-         WHERE sender_id = ? AND recipient_id = ? AND kind = 'text' AND read_at IS NULL",
-    )
-    .bind(at)
-    .bind(friend_id)
-    .bind(me.id)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query(MARK_READ)
+        .bind(at)
+        .bind(friend_id)
+        .bind(me.id)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() > 0 {
         // The friend sees "Seen"; the caller's other devices clear their badge.
@@ -176,4 +199,147 @@ pub async fn mark_read(
             .send_both(me.id, friend_id, &Event::Read { by: me.id, at });
     }
     Ok(Json(json!({ "updated": result.rows_affected() })))
+}
+
+/// Marks the texts `?2` sent `?3` read at `?1`. The last line is true of
+/// every row the rest picks: it's messages_waiting's condition, so SQLite
+/// reads just what's unread rather than the whole chat.
+const MARK_READ: &str = "UPDATE messages SET read_at = ?
+     WHERE sender_id = ? AND recipient_id = ? AND kind = 'text' AND read_at IS NULL
+       AND ((kind = 'text' AND read_at IS NULL) OR (kind = 'snap' AND snap_state = 'pending'))";
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::db::tests::{assert_searches, plan, temp_db};
+    use crate::testdata::{self, *};
+
+    /// A page as the old query read it (both ways at once, sorted).
+    pub(crate) async fn old_page_of(
+        db: &sqlx::SqlitePool,
+        me: i64,
+        friend: i64,
+        before: i64,
+        limit: i64,
+    ) -> Vec<Message> {
+        let mut messages = sqlx::query_as::<_, Message>(&format!(
+            "SELECT {MESSAGE_COLS} FROM messages
+             WHERE ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
+               AND id < ?
+             ORDER BY id DESC LIMIT ?"
+        ))
+        .bind(me)
+        .bind(friend)
+        .bind(friend)
+        .bind(me)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .unwrap();
+        messages.reverse();
+        crate::reactions::attach(db, &mut messages).await.unwrap();
+        messages
+    }
+
+    /// Every chat in the mix, paged through from the newest in pages of
+    /// several sizes: the same messages, edits, and reactions, in order.
+    #[tokio::test]
+    async fn pages_are_what_they_were() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        let mut seen = 0;
+        for (me, friend) in [
+            (ANA, BEN),
+            (BEN, ANA),
+            (ANA, CAL),
+            (ANA, TEAM),
+            (ANA, EVE),
+            (BEN, GUS),
+            (ANA, ANA),
+        ] {
+            for limit in [1, 7, 50, 200] {
+                let mut before = i64::MAX;
+                loop {
+                    let old = old_page_of(&db, me, friend, before, limit).await;
+                    let new = page_of(&db, me, friend, before, limit).await.unwrap();
+                    assert_eq!(
+                        serde_json::to_value(&new).unwrap(),
+                        serde_json::to_value(&old).unwrap(),
+                        "{me} and {friend}, {limit} before {before}"
+                    );
+                    seen += new.len();
+                    match new.first() {
+                        Some(oldest) if new.len() as i64 == limit => before = oldest.id,
+                        _ => break,
+                    }
+                }
+            }
+        }
+        assert!(seen > 500, "{seen}");
+        let newest = page_of(&db, ANA, BEN, i64::MAX, 3).await.unwrap();
+        assert!(newest.windows(2).all(|w| w[0].id < w[1].id), "oldest first");
+    }
+
+    /// Marking a chat read changes the rows the old statement did: each
+    /// unread text from that friend, nothing else.
+    #[tokio::test]
+    async fn marking_read_marks_what_it_did() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        for (me, friend) in [
+            (ANA, BEN),
+            (BEN, ANA),
+            (ANA, JO),
+            (ANA, TEAM),
+            (CAL, ANA),
+            (ANA, EVE),
+        ] {
+            let state = |db: sqlx::SqlitePool| async move {
+                sqlx::query_as::<_, (i64, Option<i64>)>(
+                    "SELECT id, read_at FROM messages ORDER BY id",
+                )
+                .fetch_all(&db)
+                .await
+                .unwrap()
+            };
+            let before = state(db.clone()).await;
+            let unread: Vec<i64> = sqlx::query_scalar(
+                "SELECT id FROM messages
+                 WHERE sender_id = ? AND recipient_id = ? AND kind = 'text' AND read_at IS NULL",
+            )
+            .bind(friend)
+            .bind(me)
+            .fetch_all(&db)
+            .await
+            .unwrap();
+            let changed = sqlx::query(MARK_READ)
+                .bind(-7)
+                .bind(friend)
+                .bind(me)
+                .execute(&db)
+                .await
+                .unwrap()
+                .rows_affected();
+            assert_eq!(changed, unread.len() as u64, "{me} reading {friend}");
+            for ((id, was), (_, now)) in before.iter().zip(state(db.clone()).await) {
+                let want = if unread.contains(id) { Some(-7) } else { *was };
+                assert_eq!(now, want, "message {id}, {me} reading {friend}");
+            }
+        }
+    }
+
+    /// A page reads a few rows of messages_pair each way, never the chat's
+    /// whole history; marking read reads only what's unread.
+    #[tokio::test]
+    async fn pages_and_reads_search_indexes() {
+        let db = temp_db().await;
+        assert_searches(&db, &PAGE, &[], &["messages"]).await;
+        assert_searches(&db, MARK_READ, &[], &[]).await;
+        let steps = plan(&db, MARK_READ).await;
+        assert!(
+            steps.iter().any(|s| s.contains("INDEX messages_waiting")),
+            "{steps:#?}"
+        );
+    }
 }
