@@ -1,6 +1,6 @@
 # Deleting your own account
 
-Status: decided (Nate, 2026-11-03), being built ([plan.md](../management/plan.md), F22).
+Status: decided (Nate, 2026-11-03), built in 0.49.0 ([plan.md](../management/plan.md), F22).
 
 Anyone can delete their own account, from the web app or the iOS app, and everything of theirs goes. It's the one exception to Rule 1 (user data is never deleted), and only the person themselves can do it. Admins keep turning accounts off ([admin-users.md](../implementation/admin-users.md)), which deletes nothing.
 
@@ -50,4 +50,4 @@ For 30 days no one can take it, so nobody can pose as the person their friends j
 
 ## Every client
 
-The web (desktop and phone) and the iOS app build the same confirmation. An Admin's System › Users shows deleted accounts as "Deleted" with no details, and they can't be turned back on.
+The web (desktop and phone) and the iOS app build the same confirmation. An Admin's System › Users doesn't list deleted accounts at all, and their pages answer "not found": there's nothing left to show or turn back on.

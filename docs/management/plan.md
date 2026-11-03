@@ -358,6 +358,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### F22. Delete your own account
 - Nate (2026-11-03): people can delete their own account, and it wipes everything of theirs; other people only lose that chat. A robust confirmation. Admins keep turning accounts off. Group messages they sent go too; backups last 30 days, then go; the username is held 30 days, then free. The App Store requires it (5.1.1(v)).
 - Design: [account-deletion.md](../design/account-deletion.md). Rule 1's one exception: `deletion.rs`, run only by the person themselves.
+- Built (0.49.0): `POST /api/me/delete` (the password and the username typed again) wipes everything of theirs in one transaction, leaving a hollow, turned-off users row; the username held 30 days as a keyed hash; markers in the backups bucket re-applied at start after a restore; database backups expire after 30 days. Web: Profile › Delete account; iOS: Settings › Delete account. Tested: a unit test seeding every table that refers to users (a new one fails until deletion handles it), the smoke test, a browser test, and a live iOS test. The privacy page says so.
 - Every client: the web (desktop and phone) and the iOS app.
 
 #### F23. Easier sign-in: password managers, strong passwords, the recovery key saved
