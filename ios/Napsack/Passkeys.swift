@@ -254,6 +254,8 @@ struct PasskeysScreen: View {
     var authenticator: any PasskeyAuthenticator = SystemPasskeys.shared
     /// Nil while loading.
     @State private var list: Session.PasskeyList?
+    /// Loads asked for: only the newest one's answer is shown.
+    @State private var loads = 0
     @State private var problem: String?
     @State private var note: String?
     @State private var adding = false
@@ -324,8 +326,12 @@ struct PasskeysScreen: View {
     }
 
     private func load() async {
+        loads += 1
+        let mine = loads
         do {
-            list = try await session.passkeys()
+            let fresh = try await session.passkeys()
+            guard mine == loads else { return }  // a newer one is on its way, after a change
+            list = fresh
             problem = nil
         } catch {
             if list == nil { problem = error.localizedDescription }  // keep what's shown
@@ -334,11 +340,13 @@ struct PasskeysScreen: View {
     }
 
     private func remove(_ passkey: Session.Passkey) async {
-        guard let current = list else { return }
+        guard let rpID = list?.rpId else { return }
         do {
-            try await session.removePasskey(passkey, rpID: current.rpId, using: authenticator)
-            list = Session.PasskeyList(passkeys: current.passkeys.filter { $0.id != passkey.id }, rpId: current.rpId)
+            try await session.removePasskey(passkey, rpID: rpID, using: authenticator)
+            // The list as it is now (a refresh may have landed meanwhile), then the server's.
+            if let now = list { list = Session.PasskeyList(passkeys: now.passkeys.filter { $0.id != passkey.id }, rpId: now.rpId) }
             note = "Passkey removed."
+            await load()
         } catch {
             note = error.localizedDescription
             session.noticed(error)
