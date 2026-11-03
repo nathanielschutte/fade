@@ -46,9 +46,9 @@ struct ChatScreen: View {
     @State private var versionsOf: Bubble?
     /// A photo from the library: it opens in the camera, ready for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
-    @State private var usingCamera = false
-    /// What the camera opens on: a picked photo, or nothing (the live camera).
-    @State private var cameraStart: Captured?
+    @State private var picks = PhotoPicks()
+    /// The camera, while it's open: live, or on a picked photo.
+    @State private var camera: CameraOpening?
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
@@ -282,7 +282,7 @@ struct ChatScreen: View {
                 }
                 HStack(alignment: .bottom, spacing: 8) {
                     if editing == nil {
-                        Button { usingCamera = true } label: {
+                        Button { camera = CameraOpening() } label: {
                             Image(systemName: "camera").font(.system(size: 22)).frame(width: 32, height: 36)
                         }
                         .disabled(!conversation.canSend)
@@ -425,34 +425,30 @@ struct ChatScreen: View {
         content
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
+            let pick = picks.began()
             Task {
                 defer { pickedPhoto = nil }
-                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                let photo = await Captured.picked(item)
+                guard picks.stillWanted(pick, busy: camera != nil) else { return }  // the camera opened meanwhile, or a newer pick
+                guard let photo else {
                     failure = "Couldn't open that photo."
                     return
                 }
-                cameraStart = .photo(image)
-                usingCamera = true
+                camera = CameraOpening(start: photo)
             }
         }
         .sheet(item: $versionsOf) { bubble in
             EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
         }
-        .fullScreenCover(isPresented: $usingCamera, onDismiss: { cameraStart = nil }) {
+        .fullScreenCover(item: $camera) { opening in
             // Captured, it stays on the camera until it's sent here (Nate, 2026-10-30).
             CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
                          send: .chat(conversation.title) { ready in
-                             switch ready.media {
-                             case .photo(let image):
-                                 guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                                 try await conversation.sendPhoto(jpeg, caption: ready.caption, y: ready.y, maxBytes: limits?.snapMaxBytes)
-                             case .video(let url):
-                                 try await conversation.sendVideo(try Data(contentsOf: url), caption: ready.caption, y: ready.y, maxBytes: limits?.videoMaxBytes)
-                             }
+                             try await ready.send(to: conversation, limits: limits)
                              tapped += 1
-                             usingCamera = false
+                             camera = nil
                          },
-                         start: cameraStart)
+                         start: opening.start)
         }
         .task { limits = try? await Server(AppInfo.server).config() }
         .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in

@@ -5,7 +5,8 @@ import UIKit
 /// 2026-10-30: not PencilKit; one pen to build on). One color, one width,
 /// undo. Strokes are kept in the photo's own pixels, so they land where they
 /// were drawn whatever the screen, and they're flattened into the photo
-/// before it's sealed (as the web's draw.js does).
+/// before it's sealed (as the web's draw.js does). A guide to changing it:
+/// docs/implementation/ios-drawing.md.
 struct Stroke: Equatable {
     /// Points in the photo's pixels.
     var points: [CGPoint]
@@ -92,4 +93,19 @@ struct PenLayer: View {
         .allowsHitTesting(drawing)
         .accessibilityHidden(true)
     }
+}
+
+/// The pen on its own, to try a change in Xcode's canvas (⌥⌘↩): draw on it
+/// with the mouse. The gray is a stand-in photo, 1200 by 1600 pixels.
+#Preview("Pen") {
+    @Previewable @State var strokes: [Stroke] = []
+    GeometryReader { geo in
+        ZStack(alignment: .bottom) {
+            Color.gray
+            PenLayer(image: CGSize(width: 1200, height: 1600), box: geo.size, strokes: $strokes, drawing: true)
+            Button("Undo (\(strokes.count) strokes)") { _ = strokes.popLast() }
+                .buttonStyle(.borderedProminent).padding(.bottom, 40)
+        }
+    }
+    .ignoresSafeArea()
 }

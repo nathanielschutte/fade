@@ -62,13 +62,7 @@ struct ChatListScreen: View {
                     CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
                                  send: .pick(sendable, { kind, ready in
                                      guard let chat = conversation(kind) else { throw SendError.cantOpen }
-                                     switch ready.media {
-                                     case .photo(let image):
-                                         guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                                         try await chat.sendPhoto(jpeg, caption: ready.caption, y: ready.y, maxBytes: limits?.snapMaxBytes)
-                                     case .video(let url):
-                                         try await chat.sendVideo(try Data(contentsOf: url), caption: ready.caption, y: ready.y, maxBytes: limits?.videoMaxBytes)
-                                     }
+                                     try await ready.send(to: chat, limits: limits)  // compressed once, sealed for each chat
                                  }, done: { words in
                                      toast = Toast(text: words, undo: nil)
                                      tab = .chats  // where it went, as on the web
