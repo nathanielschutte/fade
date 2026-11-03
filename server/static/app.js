@@ -1389,7 +1389,7 @@ function ownEcho(key) {
 // What's kept is written only when it changed. The two lists also follow
 // what the socket says, through copies of its messages taken before they're
 // decrypted, so the device's copy stays current without asking the server.
-const kept = { chats: null, groups: null, tags: new Map(), dirty: new Set(), timer: null };
+const kept = { chats: null, groups: null, tags: new Map(), dirty: new Set(), timer: null, wroteAt: 0 };
 const KEPT_LISTS = { chats: "friends", groups: "groups" };
 const keptChat = (id) => kept.chats?.find((c) => c.id === id);
 const keptGroup = (id) => kept.groups?.find((g) => g.id === id);
@@ -1409,15 +1409,22 @@ function keepAnswer(key, text, value = JSON.parse(text)) {
   cache.put(`${state.me.id}:${key}`, value);
 }
 
-/** The kept chat list or groups changed here: written shortly, with whatever else changes meanwhile. */
+// A change is written as soon as this event is handled, and a burst of them
+// at most every KEEP_EVERY_MS, together. Never put off for longer: a write
+// left for the page closing may not land (the page goes before the database
+// has it), and the next start would show the list from before.
+const KEEP_EVERY_MS = 250;
+
+/** The kept chat list or groups changed here: written at once, or with the burst it's part of. */
 function keepListSoon(which) {
   kept.dirty.add(which);
-  clearTimeout(kept.timer);
-  kept.timer = setTimeout(writeKeptLists, 250);
+  kept.timer ??= setTimeout(writeKeptLists, Math.max(0, kept.wroteAt + KEEP_EVERY_MS - Date.now()));
 }
 
 function writeKeptLists() {
   clearTimeout(kept.timer);
+  kept.timer = null;
+  kept.wroteAt = Date.now();
   if (!state.me || signingOut) return;
   for (const which of kept.dirty) {
     if (!kept[which]) continue;
