@@ -37,6 +37,8 @@
     </label>
     <p class="form-error" id="auth-error" role="alert"></p>
     <button type="submit" class="button primary" id="auth-submit">Sign in</button>
+    <!-- Only where passkeys can work (app.js, passkeysHere) -->
+    <button type="button" class="button" id="passkey-sign-in" hidden>Sign in with a passkey</button>
   </form>
   <button type="button" class="link" id="auth-toggle">New here? Create an account</button>
   <button type="button" class="link" id="auth-forgot">Forgot your password?</button>
@@ -398,6 +400,14 @@
       <button type="button" class="button" id="security-sessions">Sign out other devices</button>
     </div>
     <p class="form-note" id="security-note" role="status"></p>
+    <h3>Passkeys</h3>
+    <p class="field-hint">Sign in with Face ID or your fingerprint instead of your password. A passkey unlocks your messages too.</p>
+    <ul class="people passkey-list" id="passkey-list"></ul>
+    <div class="picture-row" id="passkey-add-row" hidden>
+      <button type="button" class="button" id="passkey-add">Add a passkey</button>
+    </div>
+    <p class="field-hint" id="passkey-unavailable" hidden></p>
+    <p class="form-note" id="passkey-note" role="status"></p>
     <h3>Notifications</h3>
     <p class="field-hint" id="push-status"></p>
     <div class="picture-row">
@@ -543,6 +553,19 @@
     <label class="check"><input type="checkbox" id="recovery-saved"> I've saved it somewhere safe</label>
   </div>
   <button type="button" class="button primary" id="recovery-done" disabled>Done</button>
+</dialog>
+
+<!-- Right after sign-up, once the recovery key is saved: a passkey, recommended (F26) -->
+<dialog id="passkey-offer" class="sheet" aria-labelledby="passkey-offer-title">
+  <header class="sheet-head">
+    <h2 id="passkey-offer-title">Add a passkey</h2>
+  </header>
+  <p class="sheet-text" id="passkey-offer-text"></p>
+  <p class="form-error" id="passkey-offer-error" role="alert"></p>
+  <div class="offer-actions">
+    <button type="button" class="button primary" id="passkey-offer-add">Add a passkey</button>
+    <button type="button" class="button" id="passkey-offer-later">Not now</button>
+  </div>
 </dialog>
 
 <!-- Camera -->

@@ -12,6 +12,8 @@
 //! APNs key (`FADE_APNS_*`, set by Terraform), made fresh every 40 minutes
 //! (Apple refuses one older than an hour, or new ones more often than every 20).
 
+use std::sync::LazyLock;
+
 use axum::{extract::State, http::HeaderMap, Json};
 use base64::{
     engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL},
@@ -265,29 +267,36 @@ pub async fn end_for_session(db: &SqlitePool, session_hash: &str) -> sqlx::Resul
 
 // ---------- sending ----------
 
+/// The chats with something waiting for `?1`, as tags: the people with an
+/// unread text or unopened pic (read through messages_waiting, so the badge
+/// never reads a whole chat's history), then the groups with an unread text.
+static WAITING: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT 'dm-' || m.sender_id FROM messages m
+              WHERE m.recipient_id = ?1
+                AND ((m.kind = 'text' AND m.read_at IS NULL) OR (m.kind = 'snap' AND m.snap_state = 'pending'))
+                AND m.created_at > {SINCE_MY_KEY}
+                AND (EXISTS (SELECT 1 FROM friendships f WHERE f.ended_at IS NULL
+                              AND ((f.user_lo = ?1 AND f.user_hi = m.sender_id) OR (f.user_hi = ?1 AND f.user_lo = m.sender_id)))
+                     OR EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = m.sender_id))
+              GROUP BY m.sender_id
+             UNION ALL
+             SELECT 'group-' || g.group_id FROM group_members g
+              WHERE g.user_id = ?1 AND g.left_at IS NULL
+                AND EXISTS (SELECT 1 FROM group_messages gm
+                             WHERE gm.group_id = g.group_id AND gm.id > g.last_read_id AND gm.kind = 'text'
+                               AND gm.sender_id != ?1 AND gm.id > g.visible_after_id
+                               AND gm.created_at > {SINCE_MY_KEY})"
+    )
+});
+
 /// What the app's icon shows: chats with something waiting, muted ones not
 /// counted, as the app's Chats tab counts them.
 pub async fn waiting_chats(db: &SqlitePool, user: i64) -> sqlx::Result<i64> {
-    let tags: Vec<String> = sqlx::query_scalar(&format!(
-        "SELECT 'dm-' || m.sender_id FROM messages m
-          WHERE m.recipient_id = ?1
-            AND ((m.kind = 'text' AND m.read_at IS NULL) OR (m.kind = 'snap' AND m.snap_state = 'pending'))
-            AND m.created_at > {SINCE_MY_KEY}
-            AND (EXISTS (SELECT 1 FROM friendships f WHERE f.ended_at IS NULL
-                          AND ((f.user_lo = ?1 AND f.user_hi = m.sender_id) OR (f.user_hi = ?1 AND f.user_lo = m.sender_id)))
-                 OR EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = m.sender_id))
-          GROUP BY m.sender_id
-         UNION ALL
-         SELECT 'group-' || g.group_id FROM group_members g
-          WHERE g.user_id = ?1 AND g.left_at IS NULL
-            AND EXISTS (SELECT 1 FROM group_messages gm
-                         WHERE gm.group_id = g.group_id AND gm.id > g.last_read_id AND gm.kind = 'text'
-                           AND gm.sender_id != ?1 AND gm.id > g.visible_after_id
-                           AND gm.created_at > {SINCE_MY_KEY})"
-    ))
-    .bind(user)
-    .fetch_all(db)
-    .await?;
+    let tags: Vec<String> = sqlx::query_scalar(&WAITING)
+        .bind(user)
+        .fetch_all(db)
+        .await?;
     let mut count = 0;
     for tag in tags {
         if !crate::marks::muted_for_tag(db, user, &tag).await? {
@@ -395,6 +404,7 @@ pub async fn deliver(state: &SharedState, user: i64, note: &Note) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::tests::{assert_searches, plan, temp_db};
     use p256::{
         ecdsa::{signature::Verifier, VerifyingKey},
         elliptic_curve::rand_core::OsRng,
@@ -546,5 +556,18 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(waiting_chats(&db, 1).await.unwrap(), 1, "ben is muted");
+    }
+
+    /// The badge reads what's waiting through messages_waiting, never a
+    /// whole chat's history or every message.
+    #[tokio::test]
+    async fn the_badge_reads_whats_waiting() {
+        let db = temp_db().await;
+        assert_searches(&db, &WAITING, &[], &[]).await;
+        let steps = plan(&db, &WAITING).await;
+        assert!(
+            steps.iter().any(|s| s.contains("INDEX messages_waiting")),
+            "{steps:#?}"
+        );
     }
 }

@@ -27,15 +27,17 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
 | 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side waits on a try on the phone |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
-| 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 8 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 9 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 10 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 11 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 12 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 13 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 14 | [Passkeys](#f26-passkeys) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 6 | [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | Infrastructure | Nate | In progress | Nate (2026-11-03): the chat list, groups, profiles, and the friend map read every message, and more queries per friend, as texts pile up forever |
+| 7 | [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) | Experience/visual | Nate | In progress | Nate (2026-11-02): a speed survey of the web client, and chats that jump while he scrolls |
+| 8 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 9 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 10 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 11 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 12 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 13 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 14 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 15 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 16 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, and the web built; the iOS app next |
 
 **Done**
 
@@ -228,7 +230,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F3. Chat pagination
 - Text chat pagination. We DO want texts to live forever. Make sure the clients use pagination for when chat history grows extensively.
-- The server already pages (`?before=&limit=`). The web client loads the newest 100 and never asks for more. Add load-on-scroll-up, and keep the chat list query fast as tables grow (check indexes).
+- The server already pages (`?before=&limit=`). The web client loads the newest 100 and never asks for more. Add load-on-scroll-up, and keep the chat list query fast as tables grow (check indexes). (The queries: [I13](#i13-the-server-stays-fast-as-history-grows).)
 - Done (0.5.0): chats open on the newest 50; scrolling up loads 50 more at a time without jumping; short histories fill the screen; the top says where the chat began; reconnecting merges new messages without dropping loaded history. The iOS app should page the same way (`?before=<oldest id>&limit=50`).
 
 #### F4. Profile page
@@ -375,10 +377,11 @@ Oldest first; newly shipped rows go at the bottom.
 - Built (`AppLock.swift`): Settings › Security › Lock with Face ID (Touch ID, or the passcode, as the phone has), on only after one successful check; locks when the app opens and when it comes back after a minute away; asks at once, then a button (asking on every return would loop, since Face ID's prompt itself takes the app off the foreground); covered in the app switcher while the lock is on; signing out turns it off. Tested: the rules (a minute, on at launch, off never locks, sign-out). Needs the phone.
 
 #### F25. Sign in by scanning from a signed-in device
-- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate).
+- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first: [sign-in-by-scanning.md](../design/sign-in-by-scanning.md) (proposed, 2026-11-03; two questions for Nate). Nate (2026-11-03): later; passkeys first.
 
 #### F26. Passkeys
 - Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first: [passkeys.md](../design/passkeys.md) (proposed, 2026-11-03: a third wrap of the key, beside the password's and the recovery key's; two questions for Nate).
+- Nate (2026-11-03), decided: staging's passkeys working only on staging is fine. Sign-up starts with a password as now; right after it, as with the recovery key, napsack recommends adding a passkey; and Security offers it any time.
 
 ### Debug
 
@@ -527,6 +530,16 @@ Oldest first; newly shipped rows go at the bottom.
 - The API shrinks here, against the usual rule (releasing.md): the only clients are the web app, which ships inside the server, and the iOS app, not yet released.
 - **Built:** the routes for one-time links (`POST`/`GET /invites`, revoke) and `POST /friend-link/reset` are gone, and only add-a-friend links are honored (`invites::find_valid`); the web app's "More" section and the iOS app's Reset and invite links are gone. Unknown API addresses now answer a `404` that's never cached (they used to skip `no-store`). `test_invites.py`, smoke `check_invites`, `LiveFriendsTests`.
 - **Concern for Nate:** with no reset, a link that gets out to the wrong people can't be stopped, and opening it makes them friends at once. A backstop worth having: an Admin can reset someone's link from System → Users.
+
+#### X40. The web app stays fast as data grows; natural chat scrolling
+- Nate (2026-11-02): keep the web client fast and usable as chats and friends grow. A survey found the chat list fetched again (`GET /friends`) on every message and every read, my own included; `friends_changed` loaded four things one after another; every load wrote the whole list to the device; the list and the open chat were rebuilt from scratch on every message, read, presence change, typing hint, and search keystroke; search fetched and decrypted 200 messages per chat each time and never let go of them; a page of messages derived the same key once per message; the group info sheet rebuilt everything on every change; and the admin log tail redrew 2,000 rows every 3 seconds, new entries or not. What search covers is Nate's call and stays as it is.
+- Scrolling, Nate (verbatim): "sometimes the Y scroll of chats feel buggy, like they are suddenly too far up or down or forcefully trying to snap somewhere. we should do our best to have fewer control rules here - keep scrolling organic, and only enforce our known UX decisions about where stuff on the page absolutely has to move." And: "the name of the game is to make the scrolling natural, the user should always expect it to do what it does because it shouldn't be very controlled - (apparently) fewer rules, natural flow, content you want to see is always visible, the app isn't taking control away from you while you scroll, etc. nothing jumpy." Seen on his iPhone when a message grows to several lines, the keyboard comes up, or the other person starts typing.
+- **The rules kept, and only these:** opening a chat shows the newest message at the bottom; sending your own brings you there; while you're at (or within 40px of) the bottom, a new message, the typing line, the composer growing, and the keyboard keep the newest message fully in view; once you've scrolled up, nothing moves what you're reading (older pages load above without a shift, new messages arrive below without pulling you down). The browser's own scroll anchoring is off for the chat, so every browser behaves the same.
+- **Built (web):** a message, read, or presence change updates its own row in place; the lists load again only on start, reconnect, `friends_changed`, and `groups_changed`, never two loads at once; the kept copy is written only when it changed. Rows are kept by chat and repainted at most once a frame; an open chat rebuilds only the lines that changed and places messages by id. Keys are derived once per friend (the promise is kept). Search reuses pages already loaded and lets go of its copies when searching ends. Group info keeps its members unless the member count moved. The admin tail adds only new rows. Tests: `test_chat_scroll.py` (390px and desktop, real element boxes), `test_list_live.py`, `test_admin.py`.
+- **Kept on purpose:** the list loads again when the socket says it's ready, even just after the first load. Skipping it "if a load finished a few seconds ago" would be a timing rule, and the gap between the first load and the socket joining is exactly when something can be missed; an answer that hasn't changed now costs only the request.
+- **Following from rows being kept** (review, 2026-11-03): what arrives in the chat you're reading isn't shown as unread while its read is on its way (the row and the tab's count treat the open chat, with napsack on screen, as read; pics still wait to be opened), and coming back to napsack with a chat open reads what came meanwhile. A mute for some hours ends by itself, by its time, without the list loading again (before, the next message's refetch ended it). A first tap on Leave in the list disarms when the row is swiped shut or the pointer or focus leaves it.
+- **Found, not changed:** two texts sent within a moment of each other go out side by side, and the server can store the second first (seen in a test that sent three in 20 ms); a slow first send overtaken by the next would do the same. The outbox could send one at a time per chat; Nate's call.
+- iOS: the same scroll rules are in [plan-ios.md](plan-ios.md#8-chats-native).
 
 ### Security
 
@@ -756,6 +769,12 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Nate (2026-10-30): a way to clear staging of load-test accounts and data for good, a general reset. Maybe a ready-made database for non-production copies, with the data we want already in it, kept in S3.
 - Staging has no user data, so a reset is safe there (never production: the same guards as `test-staging.sh`). Options: (a) stop the server, replace `fade.db` with a seed copy from S3, start; (b) a fresh empty database plus a seeding script (an Admin, a few friends, groups, messages) run against the API, so the seed always matches the current schema. (b) keeps working as migrations are added; (a) needs regenerating when they are.
 - **Needs decision:** what staging should start with (accounts, friends, groups, history), and whether the seed is a file or a script.
+
+#### I13. The server stays fast as history grows
+- Nate (2026-11-03): make the server's hot queries fast as data grows, without changing what any endpoint returns. Texts are kept forever, so every read of a whole history only gets slower. A survey of the code found: streaks and profile counts read the whole messages table; the chat list sorted each pair's whole history for its newest message and ran about 200 queries for 99 friends; the groups list and a group's page ran a few queries per group or message (up to ~600 a page); the friend map loaded every friendship in the database; and every read of a group sent `groups_changed`, so each of the reader's apps fetched its lists again.
+- Built (on `nate/server-speed`): migration 0028, four indexes and nothing else (messages by recipient; what's waiting for each person; pics by pair and time; unopened pics by time). The chat list is one query for its rows plus one for every newest message, with streaks from the last 62 days of pics (further back only for a run that reaches the window's start); a chat's page reads at most `limit` ids each way; the groups list and a group's page batch their lookups (`json_each`); profiles count from indexes alone; your own friend map reads only the friendships near you. Reading a group sends `groups_changed` and `group_read` only when the read position moved.
+- Tests: the old queries run beside the new on a mix of data and the answers are compared field by field; plan tests (`db::tests::assert_searches`) fail if the chat list, a chat, groups, profiles, streaks, the map, the iPhone badge, or the unopened-pic checks read every message or sort a whole history; `check_group_reads` in the smoke test. Timing on a seeded set (100 people, 60 friends each, ~200,000 messages), fastest of 15 runs before and after on Nate's Mac: the chat list 38 → 8 ms, the groups list 2.3 → 0.3 ms, your own profile 53 → 9 ms, a friend's 33 → 8 ms, a chat's newest 50 13 → 0.3 ms, the iPhone badge 14 → 0.5 ms, the pic disk check 20 → 0.05 ms, the friend map 3.7 → 3.0 ms (`cargo test --release timing -- --ignored --nocapture`).
+- Left for Nate: admin stats still load the whole users list without using it.
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now

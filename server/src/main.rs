@@ -24,6 +24,7 @@ mod logs;
 mod marks;
 mod metrics;
 mod occasions;
+mod passkeys;
 mod people;
 mod presence;
 mod profiles;
@@ -35,10 +36,13 @@ mod snaps;
 mod streaks;
 mod sysinfo;
 mod team;
+#[cfg(test)]
+mod testdata;
 mod text;
 mod usernames;
 mod version;
 mod web;
+mod webauthn;
 mod ws;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -280,6 +284,10 @@ pub struct AppState {
     pub metrics: metrics::Metrics,
     /// Who's an Admin (roles.rs): settings, reloadable.
     pub admins: roles::Admins,
+    /// Whom passkeys are made for: the site's name (webauthn.rs).
+    pub rp: webauthn::Rp,
+    /// Passkey challenges handed out and not yet answered.
+    pub challenges: webauthn::Challenges,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -325,6 +333,8 @@ async fn main() -> anyhow::Result<()> {
     let admins = roles::Admins::new(config.admins.clone(), config.admins_param.clone());
     let bind = config.bind;
     let metrics = metrics::Metrics::open(&config.metrics_db, config.metrics_retention_hours).await;
+    let (config_public_url, config_deployed) =
+        (config.public_url.clone(), config.site_url.is_some());
     let state = Arc::new(AppState {
         db,
         hub: ws::Hub::default(),
@@ -353,6 +363,8 @@ async fn main() -> anyhow::Result<()> {
             .build()?,
         metrics,
         admins,
+        rp: webauthn::Rp::new(&config_public_url, config_deployed),
+        challenges: webauthn::Challenges::default(),
     });
     metrics::spawn(state.clone());
     // Team Napsack and its scheduled messages (occasions.rs).
@@ -405,6 +417,11 @@ fn router(state: SharedState) -> Router {
         .route("/me/security", get(account::security))
         .route("/me/sessions/end-others", post(account::end_other_sessions))
         .route("/me/delete", post(deletion::delete))
+        .route("/me/passkeys", get(passkeys::list).post(passkeys::add))
+        .route("/me/passkeys/options", post(passkeys::register_options))
+        .route("/me/passkeys/{id}/remove", post(passkeys::remove))
+        .route("/auth/passkey/options", post(passkeys::sign_in_options))
+        .route("/auth/passkey", post(passkeys::sign_in))
         .route(
             "/admin/users/{user_id}/reset-code",
             post(account::issue_reset_code),

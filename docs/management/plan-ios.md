@@ -102,6 +102,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Swipe a message to reply | Nate | Done | 2026-10-30: swipe right past a threshold (a haptic tap), sideways only so scrolling stays scrolling |
 | Haptics where they help: sending, reacting, a new message in the open chat | Nate | Done | 2026-10-30: holding a message, swiping to reply, sending, reacting, and a new message from them in the open chat |
 | Accessibility pass: Dynamic Type, VoiceOver labels, Reduce Motion | Nate | In progress | 2026-10-30: chats checked at the largest standard text size (everything wraps, nothing cut off); controls have VoiceOver labels and actions (holding a message has a "Message actions" action). Not yet: a full VoiceOver walk-through on a phone, Reduce Motion |
+| The chat scrolls by the web's few rules ([X40](plan.md#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling)) | – | Planned | Nate (2026-11-02), seen on his iPhone. Match these and force nothing else: opening a chat shows the newest message; sending brings you to it; at (or very near) the bottom, a new message, the typing line, the composer growing, and the keyboard keep it fully in view; scrolled up, nothing moves what you're reading (older pages load above without a shift, new messages arrive below). Test each on a Simulator |
 
 ## 9. Groups
 

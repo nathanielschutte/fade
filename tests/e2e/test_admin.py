@@ -102,6 +102,20 @@ async def main():
         assert await admin.evaluate(BAR_SPOTS) == spots, (spots, await admin.evaluate(BAR_SPOTS))
         assert spots[0] < 300, f"tabs should sit by the wordmark, not float mid-bar: {spots}"
         await expect(admin.locator("#log-rows tr").first).to_be_visible()
+        # Live, every few seconds: what's new goes on top, and the rows already
+        # there stay as they are (not thousands rebuilt on every tail).
+        await expect(admin.locator("#log-live")).to_be_checked()
+        await admin.locator("#log-rows tr").first.evaluate("(e) => { e.dataset.probe = 'kept'; }")
+        await other.evaluate("""async () => fetch('/api/logs', { method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('fade.token') },
+            body: JSON.stringify({ entries: [{ level: 'warn', message: 'e2e tail probe', fields: {} }] }) })""")
+        await expect(admin.locator("#log-rows tr", has_text="e2e tail probe")).to_have_count(1, timeout=15000)
+        await expect(admin.locator("#log-rows tr[data-probe='kept']")).to_have_count(1)
+        assert await admin.evaluate("""() => {
+          const rows = [...document.querySelectorAll('#log-rows tr')];
+          return rows.findIndex((r) => r.textContent.includes('e2e tail probe')) < rows.findIndex((r) => r.dataset.probe === 'kept');
+        }"""), "a new entry goes above the ones shown"
+        print("logs: the live tail adds what's new and keeps the rest")
         logs = await admin.evaluate("""async () => (await fetch('/api/admin/logs?limit=500&level=debug',
             { headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token') } })).json()""")
         raw = json.dumps(logs)

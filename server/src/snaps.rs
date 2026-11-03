@@ -39,14 +39,29 @@ fn snap_path(state: &SharedState, id: i64) -> PathBuf {
     dir(&state.config.pic_dir).join(format!("{id}.bin"))
 }
 
+// Unopened pics, read through messages_unopened_pics (migration 0028), which
+// holds only those: never every pic or text ever sent. Its WHERE has to be
+// `kind = 'snap' AND snap_state = 'pending'`, word for word, for SQLite to
+// use it (unopened_pics_use_their_index checks).
+
+/// How many unopened pics wait on disk, and their bytes.
+const USAGE: &str = "SELECT COUNT(*), COALESCE(SUM(snap_bytes), 0) FROM messages
+     WHERE kind = 'snap' AND snap_state = 'pending'";
+
+/// Every unopened pic, for matching against the files at startup.
+const PENDING: &str = "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'";
+
+/// Unopened pics sent at or before `?`, to expire.
+const DUE: &str =
+    "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending' AND created_at <= ?";
+
+/// Unopened pics fetched at or before `?` and never confirmed opened.
+const FETCHED: &str = "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'
+       AND snap_fetched_at IS NOT NULL AND snap_fetched_at <= ?";
+
 /// (count, bytes) of unopened pics waiting on disk.
 pub async fn usage(db: &SqlitePool) -> sqlx::Result<(i64, i64)> {
-    sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(snap_bytes), 0) FROM messages
-         WHERE kind = 'snap' AND snap_state = 'pending'",
-    )
-    .fetch_one(db)
-    .await
+    sqlx::query_as(USAGE).fetch_one(db).await
 }
 
 /// Moves a pending snap to `opened` or `expired` and discards its file.
@@ -327,11 +342,7 @@ pub async fn opened(
 pub async fn reconcile(db: &SqlitePool, pic_dir: &std::path::Path) -> anyhow::Result<(u64, u64)> {
     let dir = dir(pic_dir);
     tokio::fs::create_dir_all(&dir).await?;
-    let pending: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'",
-    )
-    .fetch_all(db)
-    .await?;
+    let pending: Vec<i64> = sqlx::query_scalar(PENDING).fetch_all(db).await?;
     let mut lost = 0;
     for id in &pending {
         if !tokio::fs::try_exists(dir.join(format!("{id}.bin"))).await? {
@@ -375,12 +386,10 @@ pub fn spawn_sweeper(state: SharedState) {
 
 async fn sweep(state: &SharedState) -> sqlx::Result<()> {
     let cutoff = now() - state.config.snap_ttl.as_secs() as i64;
-    let due: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending' AND created_at <= ?",
-    )
-    .bind(cutoff)
-    .fetch_all(&state.db)
-    .await?;
+    let due: Vec<i64> = sqlx::query_scalar(DUE)
+        .bind(cutoff)
+        .fetch_all(&state.db)
+        .await?;
     if !due.is_empty() {
         tracing::info!(count = due.len(), "pics expired unopened");
     }
@@ -391,13 +400,10 @@ async fn sweep(state: &SharedState) -> sqlx::Result<()> {
     }
     // Fetched long ago and never confirmed (an older app, an abandoned open):
     // that counts as opened.
-    let fetched: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM messages WHERE kind = 'snap' AND snap_state = 'pending'
-           AND snap_fetched_at IS NOT NULL AND snap_fetched_at <= ?",
-    )
-    .bind(now() - OPEN_GRACE_SECS)
-    .fetch_all(&state.db)
-    .await?;
+    let fetched: Vec<i64> = sqlx::query_scalar(FETCHED)
+        .bind(now() - OPEN_GRACE_SECS)
+        .fetch_all(&state.db)
+        .await?;
     for id in fetched {
         if let Some(message) = finish(state, id, "opened").await? {
             tracing::info!(message_id = id, "pic opened (fetched, not confirmed)");
@@ -410,7 +416,24 @@ async fn sweep(state: &SharedState) -> sqlx::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::tests::temp_db;
+    use crate::db::tests::{plan, temp_db};
+
+    /// The disk check on every pic sent, the startup check, and the sweep
+    /// every minute read only unopened pics (messages_unopened_pics), never
+    /// the whole messages table, however many texts and opened pics it holds.
+    #[tokio::test]
+    async fn unopened_pics_use_their_index() {
+        let db = temp_db().await;
+        for sql in [USAGE, PENDING, DUE, FETCHED] {
+            let steps = plan(&db, sql).await;
+            assert!(
+                steps
+                    .iter()
+                    .all(|s| s.contains("INDEX messages_unopened_pics")),
+                "{sql}\nplan: {steps:#?}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn reconcile_expires_lost_pics_and_removes_strays() {

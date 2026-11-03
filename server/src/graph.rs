@@ -99,9 +99,40 @@ async fn friendships(db: &SqlitePool) -> sqlx::Result<Vec<(i64, i64)>> {
         .await
 }
 
+/// The current friendships that touch `?1` or one of `?1`'s friends: all a
+/// person's own map shows.
+const FRIENDSHIPS_NEAR: &str = "WITH near(id) AS (
+        SELECT ?1
+        UNION
+        SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END FROM friendships f
+         WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
+     SELECT f.user_lo, f.user_hi FROM friendships f
+      WHERE f.ended_at IS NULL AND (f.user_lo IN near OR f.user_hi IN near)";
+
+/// The current members of the groups `?1` is in, as (group id, user id), in
+/// the order they were first added (the order a read of every membership had).
+const MEMBERSHIPS_OF_MINE: &str = "SELECT m.group_id, m.user_id FROM group_members m
+      WHERE m.left_at IS NULL
+        AND m.group_id IN (SELECT x.group_id FROM group_members x WHERE x.user_id = ?1 AND x.left_at IS NULL)
+      ORDER BY m.rowid";
+
+async fn friendships_near(db: &SqlitePool, user: i64) -> sqlx::Result<Vec<(i64, i64)>> {
+    sqlx::query_as(FRIENDSHIPS_NEAR)
+        .bind(user)
+        .fetch_all(db)
+        .await
+}
+
 /// Every current group membership, as (group id, user id).
 async fn memberships(db: &SqlitePool) -> sqlx::Result<Vec<(i64, i64)>> {
     sqlx::query_as("SELECT group_id, user_id FROM group_members WHERE left_at IS NULL")
+        .fetch_all(db)
+        .await
+}
+
+async fn memberships_of_mine(db: &SqlitePool, user: i64) -> sqlx::Result<Vec<(i64, i64)>> {
+    sqlx::query_as(MEMBERSHIPS_OF_MINE)
+        .bind(user)
         .fetch_all(db)
         .await
 }
@@ -321,15 +352,30 @@ pub async fn mine(
     AuthUser(me): AuthUser,
     Query(q): Query<MapQuery>,
 ) -> AppResult<Json<Graph>> {
-    let edges = friendships(&state.db).await?;
-    let mut g = ego(me.id, &edges, |v| v.shuffle(&mut rand::thread_rng()));
-    if q.chats == Some(1) {
-        let members = memberships(&state.db).await?;
-        let mine = chats_of(&state.db, me.id).await?;
-        add_chats(&mut g, &members, &mine, true, 1, None);
-    }
+    let g = map_for(&state.db, me.id, q.chats == Some(1), |v| {
+        v.shuffle(&mut rand::thread_rng())
+    })
+    .await?;
     tracing::debug!(user_id = me.id, nodes = g.nodes.len(), "friend map viewed");
     Ok(Json(g))
+}
+
+/// `me`'s own map (with `chats`, their group chats), from just the
+/// friendships and memberships it can show. `shuffle` as for `ego`.
+pub(crate) async fn map_for(
+    db: &SqlitePool,
+    me: i64,
+    chats: bool,
+    shuffle: impl FnOnce(&mut Vec<BTreeSet<i64>>),
+) -> sqlx::Result<Graph> {
+    let edges = friendships_near(db, me).await?;
+    let mut g = ego(me, &edges, shuffle);
+    if chats {
+        let members = memberships_of_mine(db, me).await?;
+        let mine = chats_of(db, me).await?;
+        add_chats(&mut g, &members, &mine, true, 1, None);
+    }
+    Ok(g)
 }
 
 #[derive(Deserialize)]
@@ -440,9 +486,56 @@ pub async fn admin(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::db::tests::temp_db;
+    use crate::db::tests::{assert_searches, temp_db};
+    use crate::testdata::{self, PEOPLE};
+
+    /// A person's own map as it was made before migration 0028, from every
+    /// friendship and membership there is (the "?"s left unshuffled).
+    pub(crate) async fn old_map(db: &SqlitePool, me: i64, chats: bool) -> Graph {
+        let edges = friendships(db).await.unwrap();
+        let mut g = ego(me, &edges, |_| {});
+        if chats {
+            let members = memberships(db).await.unwrap();
+            let mine = chats_of(db, me).await.unwrap();
+            add_chats(&mut g, &members, &mine, true, 1, None);
+        }
+        g
+    }
+
+    /// Everyone's map in the mix, with and without their chats: the same
+    /// people, "?"s, chats, and lines, in the same order.
+    #[tokio::test]
+    async fn maps_are_what_they_were() {
+        let db = temp_db().await;
+        testdata::mix(&db).await;
+        for me in PEOPLE {
+            for chats in [false, true] {
+                let new = map_for(&db, me, chats, |_| {}).await.unwrap();
+                let old = old_map(&db, me, chats).await;
+                assert_eq!(
+                    serde_json::to_value(&new).unwrap(),
+                    serde_json::to_value(&old).unwrap(),
+                    "{me}'s map, chats {chats}"
+                );
+            }
+        }
+        let ana = map_for(&db, testdata::ANA, true, |_| {}).await.unwrap();
+        let kinds = |kind: &str| ana.nodes.iter().filter(|n| n.kind == kind).count();
+        assert_eq!(
+            (kinds("friend"), kinds("unknown"), kinds("chat")),
+            (6, 3, 5),
+            "{ana:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn maps_search_indexes() {
+        let db = temp_db().await;
+        assert_searches(&db, FRIENDSHIPS_NEAR, &["near"], &[]).await;
+        assert_searches(&db, MEMBERSHIPS_OF_MINE, &[], &[]).await;
+    }
 
     fn keys(g: &Graph) -> Vec<&str> {
         g.nodes.iter().map(|n| n.key.as_str()).collect()

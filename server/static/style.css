@@ -250,6 +250,10 @@ a.button { display: inline-flex; align-items: center; justify-content: center; c
   flex: 1; overflow-y: auto;
   padding: 1rem var(--pad) 0.5rem;
   display: flex; flex-direction: column; gap: 0.15rem;
+  /* app.js keeps what you're reading in place (and the newest message in
+     view at the bottom); the browser's own anchoring, which only some
+     browsers have, would move it a second time. */
+  overflow-anchor: none;
 }
 .messages > :first-child { margin-top: auto; }
 
@@ -804,6 +808,16 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .profile-security h3 { font-size: var(--step-0); margin-bottom: 0.25rem; }
 .profile-security .picture-row { flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
 #safety-trust { width: 100%; }
+
+/* ---------- passkeys (F26) ---------- */
+.passkey-list { margin-top: 0.25rem; }
+.passkey-list .person { gap: 0.75rem; }
+/* The name over its dates, which wrap on a phone rather than push the button out. */
+.passkey-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
+.passkey-text .person-meta { white-space: normal; }
+.passkey-none { padding: 0.35rem 0; color: var(--fixer); font-size: var(--step--1); }
+/* Sign-up's offer: both choices the width of the sheet, the one recommended first. */
+.offer-actions { display: grid; gap: 0.5rem; }
 
 /* admin: reset codes */
 .reset-button {

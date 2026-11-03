@@ -304,6 +304,7 @@ async fn account(tx: &mut SqliteConnection, user: i64) -> sqlx::Result<()> {
         "DELETE FROM sessions WHERE user_id = ?1",
         "DELETE FROM push_subscriptions WHERE user_id = ?1",
         "DELETE FROM apns_devices WHERE user_id = ?1",
+        "DELETE FROM passkeys WHERE user_id = ?1",
         "DELETE FROM past_usernames WHERE user_id = ?1",
         "DELETE FROM user_roles WHERE user_id = ?1",
         "DELETE FROM user_role_upgrades WHERE user_id = ?1",
@@ -510,6 +511,7 @@ mod tests {
         INSERT INTO announcements (id, body, created_by, created_at, ends_at, withdrawn_by, withdrawn_at) VALUES (1, 'hi', 1, 0, 9, 1, 5);
         INSERT INTO past_usernames (id, user_id, username, until) VALUES (1, 1, 'anna', 0);
         INSERT INTO apns_devices (id, user_id, session_hash, token, environment, created_at) VALUES (1, 1, 's1', 'ab', 'sandbox', 0);
+        INSERT INTO passkeys (id, user_id, credential_id, public_key, wrapped_key, created_at) VALUES (1, 1, 'c1', x'04', 'w', 0), (2, 2, 'c2', x'04', 'w', 0);
     ";
 
     /// Every (table, column) that refers to users.

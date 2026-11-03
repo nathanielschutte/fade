@@ -31,9 +31,9 @@ def call(method, path, token=None, **kw):
     return r
 
 # Secrets the server holds that must never appear in any response.
-NEVER_SERVED = ("auth_hash", "token_hash", "password_hash", "password")
+NEVER_SERVED = ("auth_hash", "token_hash", "password_hash", "password", "wrapped_key")
 # Allowed only in the response to signing up or in.
-ONLY_FROM_AUTH = ("token", "wrapped_private_key")
+ONLY_FROM_AUTH = ("token", "wrapped_private_key", "passkey_wrapped_key")
 
 def keys_in(value):
     if isinstance(value, dict):
@@ -377,6 +377,7 @@ def check_account(tag):
     unread = lambda t: ([c for c in ok(call("GET", "/friends", t)).json() if c["id"] == rf["user"]["id"]][0]["unread"],
                         [g for g in ok(call("GET", "/groups", t)).json() if g["id"] == grp["id"]][0]["unread"])
     assert unread(tok) == (2, 1)
+    reset_pk, _ = add_passkey(tok, k4)                                     # ends with the old key
     adm = admin_token()
     ok(call("POST", f"/admin/users/{u['id']}/reset-code", tok), 404)       # not an admin
     ok(call("POST", "/admin/users/999999/reset-code", adm), 404)
@@ -401,6 +402,7 @@ def check_account(tag):
     seen = [c for c in ok(call("GET", "/friends", rf["token"])).json() if c["id"] == u["id"]][0]
     assert seen["public_key"] == new_pub and seen["key_reset_at"] == res["user"]["key_reset_at"]
     ok(call("POST", "/auth/recover/start", json={"username": name, "recovery_auth_key": rk}), 400)  # went with the old key
+    assert "isn't set up" in passkey_sign_in(reset_pk, 400).json()["error"], "passkeys went with the old key"
     if DB:
         reasons = [x for (x,) in sqlite3.connect(DB).execute(
             "SELECT reason FROM credential_history WHERE user_id = ? ORDER BY id", (u["id"],))]
@@ -408,6 +410,142 @@ def check_account(tag):
         codes = sqlite3.connect(DB).execute("SELECT code_hash FROM reset_codes WHERE user_id = ?", (u["id"],)).fetchall()
         assert len(codes) == 2 and all(issued["code"] not in h for (h,) in codes), "codes are stored hashed"
     print("  account: password change, recovery key, reset codes, sign out elsewhere; history kept")
+
+
+# ---------- passkeys: a stand-in authenticator (webauthn.rs) ----------
+
+def cbor(v):
+    """Just enough CBOR (RFC 8949) for what authenticators send."""
+    def head(major, n):
+        if n < 24: return bytes([major << 5 | n])
+        if n < 256: return bytes([major << 5 | 24, n])
+        return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if isinstance(v, int): return head(0, v) if v >= 0 else head(1, -1 - v)
+    if isinstance(v, bytes): return head(2, len(v)) + v
+    if isinstance(v, str): return head(3, len(v.encode())) + v.encode()
+    if isinstance(v, dict): return head(5, len(v)) + b"".join(cbor(k) + cbor(x) for k, x in v.items())
+    raise TypeError(v)
+
+b64url = lambda raw: base64.urlsafe_b64encode(raw).decode().rstrip("=")
+unb64url = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+ICLOUD_AAGUID = bytes.fromhex("fbfc3007154e4ecc8c0b6e020557d7bd")
+
+class Passkey:
+    """Makes a passkey and signs in with it, as a browser and its passkey
+    manager would (ES256, no attestation)."""
+    def __init__(self):
+        from cryptography.hazmat.primitives.asymmetric import ec
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.id = os.urandom(16)
+
+    @staticmethod
+    def origin(rp_id):
+        # Development allows any localhost port; a deployment, only its site.
+        return f"http://localhost:{urllib.parse.urlparse(BASE).port or 80}" if rp_id == "localhost" else f"https://{rp_id}"
+
+    def _data(self, rp_id, flags, created=False):
+        import hashlib
+        d = hashlib.sha256(rp_id.encode()).digest() + bytes([flags]) + (0).to_bytes(4, "big")
+        if created:
+            n = self.key.public_key().public_numbers()
+            cose = cbor({1: 2, 3: -7, -1: 1, -2: n.x.to_bytes(32, "big"), -3: n.y.to_bytes(32, "big")})
+            d += ICLOUD_AAGUID + len(self.id).to_bytes(2, "big") + self.id + cose
+        return d
+
+    def create(self, options, origin=None, flags=0x45, rp_id=None):
+        client = json.dumps({"type": "webauthn.create", "challenge": options["challenge"],
+                             "origin": origin or self.origin(options["rp_id"])}).encode()
+        att = cbor({"fmt": "none", "attStmt": {}, "authData": self._data(rp_id or options["rp_id"], flags, True)})
+        return {"client_data_json": b64url(client), "attestation_object": b64url(att)}
+
+    def get(self, options, signer=None):
+        import hashlib
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        client = json.dumps({"type": "webauthn.get", "challenge": options["challenge"],
+                             "origin": self.origin(options["rp_id"])}).encode()
+        data = self._data(options["rp_id"], 0x05)
+        sig = (signer or self.key).sign(data + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
+        return {"credential_id": b64url(self.id), "client_data_json": b64url(client),
+                "authenticator_data": b64url(data), "signature": b64url(sig)}
+
+
+def add_passkey(tok, auth_key, wrapped=None):
+    """A new passkey on the account; returns it and what the server answered."""
+    pk = Passkey()
+    opts = ok(call("POST", "/me/passkeys/options", tok)).json()
+    body = {"auth_key": auth_key, "wrapped_key": wrapped or b64(os.urandom(166)), **pk.create(opts)}
+    return pk, ok(call("POST", "/me/passkeys", tok, json=body)).json()
+
+
+def passkey_sign_in(pk, code=200, signer=None):
+    opts = ok(call("POST", "/auth/passkey/options")).json()
+    return ok(call("POST", "/auth/passkey", json=pk.get(opts, signer)), code)
+
+
+def check_passkeys(tag):
+    """Passkeys (passkeys.rs, webauthn.rs; F26): adding one needs the password
+    and a fresh challenge, each answer counts once, the server checks the
+    site, the person, and the signature, and signing in hands back the
+    passkey's own wrapped copy of the key, never anyone else's."""
+    rp_id = ok(call("GET", "/config")).json()["passkey_rp_id"]
+    r = ok(register(f"pk_{tag}")).json()
+    u, tok = r["user"], r["token"]
+    ok(call("POST", "/me/passkeys/options"), 401)
+    ok(call("GET", "/me/passkeys"), 401)
+
+    # Adding: the password, the right site and origin, and a verified person; each challenge once.
+    pk = Passkey()
+    opts = ok(call("POST", "/me/passkeys/options", tok)).json()
+    assert opts["rp_id"] == rp_id and opts["user_name"] == u["username"] and opts["exclude"] == []
+    assert unb64url(opts["user_id"]) == u["id"].to_bytes(8, "big")
+    wrapped = b64(os.urandom(166))
+    body = {"auth_key": AUTH_KEY, "wrapped_key": wrapped, **pk.create(opts)}
+    assert "current password" in ok(call("POST", "/me/passkeys", tok, json={**body, "auth_key": b64(os.urandom(32))}), 400).json()["error"]
+    assert "too long" in ok(call("POST", "/me/passkeys", tok, json=body), 400).json()["error"], "the challenge went with the try"
+    for wrong in (dict(origin="https://evil.example"), dict(rp_id="evil.example"), dict(flags=0x41)):   # no verification
+        o = ok(call("POST", "/me/passkeys/options", tok)).json()
+        ok(call("POST", "/me/passkeys", tok, json={**body, **pk.create(o, **wrong)}), 400)
+    other = ok(register(f"pkother_{tag}")).json()
+    o = ok(call("POST", "/me/passkeys/options", other["token"])).json()
+    ok(call("POST", "/me/passkeys", tok, json={**body, **pk.create(o)}), 400)       # someone else's challenge
+    o = ok(call("POST", "/me/passkeys/options", tok)).json()
+    added = ok(call("POST", "/me/passkeys", tok, json={**body, **pk.create(o)})).json()
+    assert added["provider"] == "iCloud Keychain", added
+    o = ok(call("POST", "/me/passkeys/options", tok)).json()
+    assert o["exclude"] == [b64url(pk.id)]
+    assert "already" in ok(call("POST", "/me/passkeys", tok, json={**body, **pk.create(o)}), 409).json()["error"]
+    listed = ok(call("GET", "/me/passkeys", tok)).json()["passkeys"]
+    assert [(p["id"], p["credential_id"], p["provider"]) for p in listed] == [(added["id"], b64url(pk.id), "iCloud Keychain")]
+
+    # Signing in: a session for its account and the passkey's own copy; each answer once.
+    opts = ok(call("POST", "/auth/passkey/options")).json()
+    answer = pk.get(opts)
+    s = ok(call("POST", "/auth/passkey", json=answer)).json()
+    assert s["user"]["id"] == u["id"] and s["passkey_wrapped_key"] == wrapped and s["public_key"] == r["public_key"]
+    assert ok(call("GET", "/me", s["token"])).json()["id"] == u["id"]
+    assert "too long" in ok(call("POST", "/auth/passkey", json=answer), 400).json()["error"], "a replay"
+    from cryptography.hazmat.primitives.asymmetric import ec
+    passkey_sign_in(pk, 400, signer=ec.generate_private_key(ec.SECP256R1()))       # not its key
+    passkey_sign_in(Passkey(), 400)                                                  # not anyone's
+    assert ok(call("GET", "/me/passkeys", tok)).json()["passkeys"][0]["last_used_at"]
+
+    # Removing: it stops working; only your own.
+    ok(call("POST", f"/me/passkeys/{added['id']}/remove", other["token"]), 404)
+    ok(call("POST", f"/me/passkeys/{added['id']}/remove", tok))
+    ok(call("POST", f"/me/passkeys/{added['id']}/remove", tok), 404)
+    assert "isn't set up" in passkey_sign_in(pk, 400).json()["error"]
+    assert ok(call("GET", "/me/passkeys", tok)).json()["passkeys"] == []
+
+    # At most ten at once.
+    for _ in range(10):
+        add_passkey(tok, AUTH_KEY)
+    ok(call("POST", "/me/passkeys/options", tok), 400)
+    if DB:
+        ended = sqlite3.connect(DB).execute(
+            "SELECT end_reason FROM passkeys WHERE user_id = ? AND ended_at IS NOT NULL", (u["id"],)).fetchall()
+        assert ended == [("removed",)], "removed, not deleted"
+    print("  passkeys: added with the password, checked, signed in with once per challenge, removed, capped")
 
 
 async def socket(tok):
@@ -420,13 +558,18 @@ async def socket(tok):
 
 
 async def next_event(ws, kind, timeout=3.0):
+    return await first_of(ws, (kind,), timeout)
+
+
+async def first_of(ws, kinds, timeout=3.0):
+    """The first event of any of `kinds`, whichever comes first."""
     end = time.time() + timeout
     while True:
         left = end - time.time()
         if left <= 0:
-            raise AssertionError(f"no {kind} event")
+            raise AssertionError(f"no {' or '.join(kinds)} event")
         ev = json.loads(await asyncio.wait_for(ws.recv(), left))
-        if ev["type"] == kind:
+        if ev["type"] in kinds:
             return ev
 
 
@@ -1001,7 +1144,9 @@ def check_deletion(tag):
     ok(call("POST", "/me/delete", json={"auth_key": AUTH_KEY, "username": ana["username"]}), 401)
     assert ok(call("GET", "/me", a_tok)).json()["username"] == ana["username"], "still there"
 
+    ana_pk, _ = add_passkey(a_tok, AUTH_KEY)
     ok(call("POST", "/me/delete", a_tok, json={"auth_key": AUTH_KEY, "username": ana["username"].upper()}))
+    assert "isn't set up" in passkey_sign_in(ana_pk, 400).json()["error"], "her passkeys went too"
     ok(call("GET", "/me", a_tok), 401)                                         # every session ended
     ok(call("POST", "/auth/login", json={"username": ana["username"], "auth_key": AUTH_KEY}), 400)
     assert ana["id"] not in [f["id"] for f in ok(call("GET", "/friends", b_tok)).json()], "ben lost the chat"
@@ -1259,6 +1404,33 @@ async def check_late_joiner(tag):
     print("  groups: newcomers never get messages from before they joined, even as updates")
 
 
+async def check_group_reads(tag):
+    """Reading a group tells the reader's other apps (groups_changed) and the
+    other members (group_read), only when the read position moved: reading
+    a group already read sends nothing, so no app refetches its lists for it."""
+    ra, rb = (ok(register(f"rd_{n}_{tag}")).json() for n in "ab")
+    a_tok, b_tok, ben_id = ra["token"], rb["token"], rb["user"]["id"]
+    befriend(a_tok, rb["user"], b_tok, ra["user"]["id"])
+    gid = ok(call("POST", "/groups", a_tok, json={"name": f"reads {tag}", "member_ids": [ben_id]})).json()["id"]
+    ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "read me"}))
+    ana, ben_phone = await socket(a_tok), await socket(b_tok)
+    ok(call("POST", f"/groups/{gid}/read", b_tok))
+    assert (await next_event(ben_phone, "groups_changed"))["group_id"] == gid       # his other app clears its badge
+    seen = await next_event(ana, "group_read")
+    assert (seen["group_id"], seen["user_id"]) == (gid, ben_id), seen
+    ok(call("POST", f"/groups/{gid}/read", b_tok))                                   # nothing new since
+    assert [g for g in ok(call("GET", "/groups", b_tok)).json() if g["id"] == gid][0]["unread"] == 0
+    # Then something sure to arrive: on both sockets the next group event is
+    # Ana's next message, so the second read sent nothing ahead of it.
+    after = ok(call("POST", f"/groups/{gid}/messages", a_tok, json={"text": "after"})).json()
+    for ws in (ben_phone, ana):
+        ev = await first_of(ws, ("groups_changed", "group_read", "group_message"))
+        assert ev["type"] == "group_message" and ev["message"]["id"] == after["id"], ev
+    await ana.close()
+    await ben_phone.close()
+    print("  groups: reading tells the others once; a group already read sends nothing")
+
+
 def check_metrics(not_admin):
     """The admin Metrics tab's data: admins only; real readings of this
     machine within ~20 seconds of starting; ranges clamped to what's kept."""
@@ -1306,13 +1478,13 @@ def check_guard(tag):
     assert r.status_code == 200 and r.text == "User-agent: *\nDisallow: /\n"
     assert r.headers["X-Robots-Tag"] == "noindex, nofollow, noarchive"
 
-    # Apple's app-site association: on an iPhone, add-a-friend links open the app (web.rs).
+    # Apple's app-site association: on an iPhone, add-a-friend links and the home page open the app (web.rs).
     # Locally the team is the test one (test-env.sh); a deployment has it once its team is set.
     r = requests.get(BASE + "/.well-known/apple-app-site-association")
     if not REMOTE or r.status_code != 404:
         assert r.status_code == 200 and r.headers["Content-Type"] == "application/json", r.status_code
         details = r.json()["applinks"]["details"]
-        assert len(details) == 1 and details[0]["components"] == [{"/": "/i/*", "comment": "add-a-friend links (invites.rs)"}], details
+        assert len(details) == 1 and [c["/"] for c in details[0]["components"]] == ["/i/*", "/"], details
         apps = details[0]["appIDs"]
         assert r.json()["webcredentials"] == {"apps": apps}, r.json()      # passwords shared with the app
         assert apps == ["TESTTEAM01.com.getattr.napsack"] if not REMOTE else len(apps) == 1 and apps[0].endswith(".com.getattr.napsack"), apps
@@ -1745,6 +1917,7 @@ async def main():
     ok(call("GET", "/me", a_tok), 401)
 
     check_account(tag)
+    check_passkeys(tag)
     if REMOTE:
         print("  live: skipped (needs a local push receiver)")
     else:
@@ -1755,6 +1928,7 @@ async def main():
     check_rename(tag)
     await check_resend(tag)
     await check_late_joiner(tag)
+    await check_group_reads(tag)
     check_graph(tag)
     check_roles(tag)
     check_admin_users(tag)
