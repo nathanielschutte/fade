@@ -3,11 +3,27 @@ import SwiftUI
 import UIKit
 
 /// Profile and group pictures for this session: fetched with the session's
-/// token, kept in memory only (gone with the session), each fetched once even
-/// when several rows ask at the same time.
+/// token, kept in memory only (gone with the session; Nate: not kept on the
+/// phone across launches), each fetched once even when several rows ask at
+/// the same time. Each is decoded off the main thread, at the size it's shown,
+/// and each Avatar watches only its own picture, so one arriving redraws just
+/// the rows that show it.
 @MainActor @Observable final class Pictures {
-    private(set) var images: [String: UIImage] = [:]
-    @ObservationIgnored private var loading: [String: Task<Void, Never>] = [:]
+    /// One picture: the sizes made from it so far (what avatars watch).
+    @MainActor @Observable final class Picture {
+        fileprivate(set) var sizes: [Int: UIImage] = [:]
+        @ObservationIgnored fileprivate var making: [Int: Task<Void, Never>] = [:]
+
+        /// At `pixels` across, or (while that's being made) the nearest made so far.
+        func image(_ pixels: Int) -> UIImage? {
+            sizes[pixels] ?? sizes.min { abs($0.key - pixels) < abs($1.key - pixels) }?.value
+        }
+    }
+
+    // Not watched themselves: each Picture is.
+    @ObservationIgnored private var pictures: [String: Picture] = [:]
+    @ObservationIgnored private var bytes: [String: Data] = [:]
+    @ObservationIgnored private var fetching: [String: Task<Data?, Never>] = [:]
     private let account: Account
     private let transport: any Transport
 
@@ -23,22 +39,66 @@ import UIKit
         }
     }
 
-    func load(_ path: String) async {
-        if images[path] != nil { return }
-        if let pending = loading[path] { return await pending.value }  // already on its way
-        let account = account, transport = transport
-        let task = Task { [weak self] in
-            let data = try? await Server(account.server, transport: transport).send(path, token: account.token)
-            if let data, let image = UIImage(data: data) { self?.images[path] = image }
-            self?.loading[path] = nil
+    /// The sizes pictures are made at: a few, so avatars near in size share one.
+    static func pixels(_ points: CGFloat, scale: CGFloat) -> Int {
+        let wanted = Int((points * scale).rounded(.up))
+        return [96, 192, 384].first { $0 >= wanted } ?? 512
+    }
+
+    /// The picture at `path`, made now if it's new (its sizes come with `load`).
+    func picture(_ path: String) -> Picture {
+        if let picture = pictures[path] { return picture }
+        let picture = Picture()
+        pictures[path] = picture
+        return picture
+    }
+
+    /// Fetches it (once) and makes it `pixels` across, off the main thread.
+    func load(_ path: String, pixels: Int) async {
+        let picture = picture(path)
+        if picture.sizes[pixels] != nil { return }
+        if let making = picture.making[pixels] { return await making.value }  // already on its way
+        let task = Task {
+            if let data = await self.data(path), let image = await Self.thumbnail(data, pixels: pixels) {
+                picture.sizes[pixels] = image
+            }
+            picture.making[pixels] = nil
         }
-        loading[path] = task
+        picture.making[pixels] = task
         await task.value
+    }
+
+    /// The whole picture (tapping one to see it big), decoded off the main thread.
+    func full(_ path: String) async -> UIImage? {
+        guard let data = await data(path) else { return nil }
+        return await UIImage(data: data)?.byPreparingForDisplay()
+    }
+
+    private func data(_ path: String) async -> Data? {
+        if let data = bytes[path] { return data }
+        if let pending = fetching[path] { return await pending.value }
+        let account = account, transport = transport
+        let task = Task<Data?, Never> { try? await Server(account.server, transport: transport).send(path, token: account.token) }
+        fetching[path] = task
+        let data = await task.value
+        fetching[path] = nil
+        if let data { bytes[path] = data }
+        return data
+    }
+
+    /// Decoded and scaled on a background thread (UIKit's thumbnail), filling `pixels` on its shorter side.
+    nonisolated static func thumbnail(_ data: Data, pixels: Int) async -> UIImage? {
+        guard let image = UIImage(data: data) else { return nil }
+        let width = image.size.width * image.scale, height = image.size.height * image.scale
+        guard min(width, height) > 0 else { return nil }
+        let factor = min(1, CGFloat(pixels) / min(width, height))
+        return await image.byPreparingThumbnail(ofSize: CGSize(width: (width * factor).rounded(), height: (height * factor).rounded()))
     }
 
     /// A picture just changed: fetch it again next time.
     func forget(_ path: String) {
-        images[path] = nil
+        pictures[path] = nil
+        bytes[path] = nil
     }
 }
 
@@ -84,6 +144,7 @@ struct BigPicture: View {
 /// A friend's or group's picture, or their initial until it's in.
 struct Avatar: View {
     @Environment(Pictures.self) private var pictures: Pictures?
+    @Environment(\.displayScale) private var scale
     let kind: ChatRow.Kind
     let avatarId: Int64?
     let name: String
@@ -94,21 +155,23 @@ struct Avatar: View {
 
     var body: some View {
         let path = avatarId.map { Pictures.path(kind, avatar: $0) }
+        let pixels = Pictures.pixels(size, scale: scale)
         let group = if case .group = kind { true } else { false }
         Group {
-            if let path, let image = pictures?.images[path] {
+            // Only this picture is watched: another one arriving doesn't redraw this row.
+            if let path, let image = pictures?.picture(path).image(pixels) {
                 Image(uiImage: image).resizable().scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(group ? AnyShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)) : AnyShape(Circle()))
                     .accessibilityHidden(!enlarges)
-                    .onTapGesture { if enlarges { big = image } }
+                    .onTapGesture { if enlarges { Task { big = await pictures?.full(path) ?? image } } }
                     .accessibilityAddTraits(enlarges ? .isButton : [])
                     .accessibilityLabel(enlarges ? "Picture of \(name). Tap to see it big" : "")
             } else {
                 Initial(name: name, group: group, size: size)
             }
         }
-        .task(id: path) { if let path { await pictures?.load(path) } }
+        .task(id: path.map { "\($0)@\(pixels)" }) { if let path { await pictures?.load(path, pixels: pixels) } }
         .fullScreenCover(item: Binding(get: { big.map(IdentifiedImage.init) }, set: { big = $0?.image })) { BigPicture(image: $0.image) }
     }
 }
