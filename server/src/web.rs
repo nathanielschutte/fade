@@ -372,7 +372,10 @@ mod tests {
         assert_eq!(details["appIDs"], json!(["TEAM123456.com.getattr.napsack"]));
         assert_eq!(details["components"].as_array().unwrap().len(), 1);
         assert_eq!(details["components"][0]["/"], "/i/*");
-        assert_eq!(v["webcredentials"]["apps"], json!(["TEAM123456.com.getattr.napsack"]));
+        assert_eq!(
+            v["webcredentials"]["apps"],
+            json!(["TEAM123456.com.getattr.napsack"])
+        );
     }
 
     /// Debug builds read the real files; what's compiled in is the same file.
