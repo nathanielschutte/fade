@@ -147,16 +147,28 @@ struct FriendsScreen: View {
                     VStack(spacing: 12) {
                         QRCode(text: address).frame(width: 200, height: 200).padding(8)
                             .background(.white, in: RoundedRectangle(cornerRadius: 12))
-                        Text("They scan it with their phone's camera, or open your link. Someone new to napsack signs up with it and you're friends.")
+                        Text("Friends can scan this with their phone's camera, or open your link. Someone new to napsack signs up with it and you're friends.")
                             .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        HStack {
-                            ShareLink(item: URL(string: address)!) { Label("Share", systemImage: "square.and.arrow.up") }
-                                .buttonStyle(.borderedProminent)
-                            Button(copied ? "Copied" : "Copy link", systemImage: "doc.on.doc") {
+                        // A matched, quiet pair: the same style, size, and width, icon and words in
+                        // the text's own color (the pale accent is hard to read as a fill or as text).
+                        HStack(spacing: 12) {
+                            ShareLink(item: URL(string: address)!) {
+                                LinkButtonLabel(text: "Share", symbol: "square.and.arrow.up")
+                            }
+                            Button {
                                 UIPasteboard.general.string = address
                                 copied = true
+                            } label: {
+                                LinkButtonLabel(text: copied ? "Copied" : "Copy link", symbol: copied ? "checkmark" : "link")
                             }
-                            .buttonStyle(.bordered)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .buttonStyle(.bordered)
+                        .tint(.primary)
+                        .task(id: copied) {
+                            guard copied else { return }
+                            try? await Task.sleep(for: .seconds(2))
+                            copied = false
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -223,5 +235,20 @@ struct FriendsScreen: View {
                 if let failed { failed(error.localizedDescription) } else { note = error.localizedDescription }
             }
         }
+    }
+}
+
+/// Share and Copy link's insides: the icon at the words' size and in their color.
+private struct LinkButtonLabel: View {
+    let text: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).imageScale(.small)
+            Text(text)
+        }
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity)
     }
 }
