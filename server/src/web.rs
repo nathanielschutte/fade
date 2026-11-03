@@ -191,7 +191,8 @@ async fn favicon() -> impl IntoResponse {
 }
 
 /// Apple's app-site association: on an iPhone with napsack installed,
-/// add-a-friend links (`/i/<token>`) open the app instead of this page. Apple
+/// add-a-friend links (`/i/<token>`) open the app instead of this page, and
+/// the app and the site share saved passwords. Apple
 /// fetches it from the site when the app is installed. It names the app (the
 /// team and bundle id, `FADE_APPLE_TEAM_ID`), nothing else; without the team
 /// set there's nothing here.
@@ -217,6 +218,9 @@ fn app_links(app_id: &str) -> Value {
                 "components": [{ "/": "/i/*", "comment": "add-a-friend links (invites.rs)" }],
             }],
         },
+        // The app and the site share saved passwords: iOS offers to save the
+        // app's sign-in in Passwords, and fills in the one saved on the web (F23).
+        "webcredentials": { "apps": [app_id] },
     })
 }
 
@@ -368,6 +372,7 @@ mod tests {
         assert_eq!(details["appIDs"], json!(["TEAM123456.com.getattr.napsack"]));
         assert_eq!(details["components"].as_array().unwrap().len(), 1);
         assert_eq!(details["components"][0]["/"], "/i/*");
+        assert_eq!(v["webcredentials"]["apps"], json!(["TEAM123456.com.getattr.napsack"]));
     }
 
     /// Debug builds read the real files; what's compiled in is the same file.

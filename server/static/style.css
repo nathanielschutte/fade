@@ -731,6 +731,10 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .button.danger-solid:disabled { opacity: 0.45; cursor: not-allowed; }
 .sheet-list { margin: 0 0 0.5rem; padding-left: 1.25rem; color: var(--paper); }
 .sheet-list li { margin: 0.25rem 0; }
+/* How strong a new password is (F23): a hint, never a rule. */
+.strength[data-level="short"], .strength[data-level="weak"] { color: var(--danger); }
+.strength[data-level="good"] { color: var(--fixer); }
+.strength[data-level="strong"] { color: var(--sage); }
 
 /* ---------- account bar (bottom of the chat list) ---------- */
 

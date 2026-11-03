@@ -500,6 +500,37 @@ function showAuth() {
   setAuthMode("login");
 }
 
+// ---------- password strength (F23) ----------
+// A hint while a new password is chosen, never a rule beyond the 8 characters
+// the server asks for. Length counts most; a few unrelated words is the advice.
+const COMMON_PASSWORDS = new Set(["password", "password1", "12345678", "123456789", "1234567890", "qwertyuiop",
+  "qwerty123", "iloveyou", "11111111", "abc12345", "letmein1", "napsack1", "baseball", "football", "sunshine"]);
+
+function passwordStrength(pw) {
+  if (pw.length < 8) return { level: "short", text: "Too short: at least 8 characters." };
+  const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(pw)).length;
+  if (COMMON_PASSWORDS.has(pw.toLowerCase()) || new Set(pw).size <= 3) {
+    return { level: "weak", text: "Easy to guess. A few unrelated words make a strong one." };
+  }
+  if (pw.length >= 16 || (pw.length >= 12 && kinds >= 3)) return { level: "strong", text: "Strong." };
+  if (pw.length >= 12 || (pw.length >= 10 && kinds >= 3)) return { level: "good", text: "Good. Longer is even better." };
+  return { level: "weak", text: "Weak. Longer is stronger: try a few unrelated words." };
+}
+
+function showStrength(input, hint) {
+  const value = input.value;
+  hint.hidden = !value;
+  if (!value) return;
+  const { level, text } = passwordStrength(value);
+  hint.textContent = text;
+  hint.dataset.level = level;
+}
+
+$("#auth-form").password.addEventListener("input", (e) => {
+  if (authMode === "register") showStrength(e.target, $("#password-strength"));
+});
+$("#password-form").change_password.addEventListener("input", (e) => showStrength(e.target, $("#change-strength")));
+
 function setAuthMode(mode) {
   authMode = mode;
   const register = mode === "register";
@@ -509,6 +540,7 @@ function setAuthMode(mode) {
     : "New here? Create an account";
   $("#invite-field").hidden = !(register && state.config?.invite_required && !state.invite?.inviter);
   $("#password-hint").hidden = !register;
+  $("#password-strength").hidden = true;
   $("#auth-form").password.autocomplete = register ? "new-password" : "current-password";
   $("#auth-error").textContent = "";
 }
@@ -628,6 +660,16 @@ function showRecoveryKey(recoveryKey) {
 }
 
 $("#recovery-saved").addEventListener("change", (e) => { $("#recovery-done").disabled = !e.target.checked; });
+// A file to keep with your other important things (F23): the key, and what it's for.
+$("#recovery-download").addEventListener("click", () => {
+  const key = $("#recovery-key").textContent;
+  const text = `napsack recovery key for ${state.me?.username ?? "your account"}\n\n${key}\n\n`
+    + "If you forget your password, choose \"Forgot your password?\" when you sign in and enter this key: "
+    + "you get back in with all your messages. Keep it somewhere safe and private.\n";
+  const link = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/plain" })), download: "napsack-recovery-key.txt" });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
 $("#recovery-done").addEventListener("click", () => $("#recovery-dialog").close());
 // Escape doesn't dismiss it before it's saved.
 $("#recovery-dialog").addEventListener("cancel", (e) => { if (!$("#recovery-saved").checked) e.preventDefault(); });
@@ -653,6 +695,7 @@ function openPasswordDialog(mode) {
   passwordMode = mode;
   const change = mode === "change";
   $("#password-form").reset();
+  $("#change-strength").hidden = true;
   $("#password-error").textContent = "";
   $("#password-title").textContent = change ? "Change password" : "Recovery key";
   $("#password-text").textContent = change

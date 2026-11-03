@@ -44,6 +44,7 @@ struct SignInScreen: View {
                     SecureField("Password", text: $password)
                         .textContentType(creating ? .newPassword : .password)
                         .onSubmit(submit)
+                    if creating { StrengthHint(password: password) }
                     if creating && inviteRequired && inviter == nil {
                         TextField("Invite code", text: $inviteCode)
                             .textInputAutocapitalization(.never)
@@ -132,6 +133,7 @@ struct RecoverScreen: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("Recovery key or reset code", text: $secret).textInputAutocapitalization(.characters).autocorrectionDisabled()
                     SecureField("New password", text: $password).textContentType(.newPassword)
+                    StrengthHint(password: password)
                     SecureField("New password again", text: $confirm).textContentType(.newPassword)
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {

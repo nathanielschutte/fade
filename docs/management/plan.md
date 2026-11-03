@@ -25,7 +25,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it |
 | 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
-| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | Up next | Nate (2026-11-03) |
+| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03) |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
 | 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
 | 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
@@ -366,6 +366,7 @@ Oldest first; newly shipped rows go at the bottom.
 - iOS: the site's `apple-app-site-association` gains `webcredentials`, and the app `webcredentials:` in Associated Domains, so iOS offers to save the password and fills in the one saved on the web (and the reverse). Sign-up suggests a strong password (`passwordrules`).
 - Web: the sign-up form says `new-password`, so managers offer to generate and save one; a strength meter says how strong it is.
 - The recovery key: save it to Passwords or a password manager (as a second login item for napsack) or as a file, instead of only showing it.
+- Built: the site's association file gains `webcredentials` and the app `webcredentials:` (staging's site for Xcode builds, napsack.io in Release), so Passwords saves and fills napsack's sign-in across the app and the web; a strength hint under every new password (web and iOS, the same rules: length counts most); the recovery key downloads as a file on the web and goes to the share sheet on iOS (Files, a password manager, Notes). Not a second login item: it would sit beside the real one in autofill and get filled in as a password. The web's forms already said `username`, `current-password`, and `new-password`, so browsers' managers save and generate. Needs a try on the phone (saving after sign-in, filling in the web's password).
 
 #### F24. Lock napsack with Face ID (iOS)
 - Nate (2026-11-03): plan it and build it (was "not now", 2026-11-02). An optional lock when the app opens or comes back after a while: Face ID, falling back to the phone's passcode. Off by default; a switch in Settings. The app's screen blurs in the app switcher while it's locked.
