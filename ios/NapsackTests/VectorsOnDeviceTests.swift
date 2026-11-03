@@ -9,7 +9,7 @@ import Testing
     @MainActor @Test func everyCheckPassesHere() throws {
         let results = VectorChecks.run(try VectorRun.bundled())
         let failed = results.filter { !$0.ok }.map { "\($0.name): \($0.error ?? "false")" }
-        #expect(results.count == 64)
+        #expect(results.count == 68)
         #expect(failed.isEmpty, "\(failed.joined(separator: "; "))")
         if let derivation = results.first(where: { $0.name == VectorRun.derivation }) {
             print("PBKDF2 (600,000 rounds) took \(derivation.duration) here")
