@@ -4662,6 +4662,9 @@ $("#new-group-form").addEventListener("submit", async (e) => {
 
 /** Opens the info sheet (or brings it up to date) with the group as the server has it now. */
 async function openGroupInfo(groupId) {
+  // A refresh of the open sheet that comes back after it was closed leaves it
+  // closed: on a slow connection the answer can land after the tap on Close.
+  const refreshing = $("#group-dialog").open;
   let g;
   try {
     g = await getJSON(`/groups/${groupId}`);
@@ -4669,6 +4672,7 @@ async function openGroupInfo(groupId) {
     if ($("#group-dialog").open) $("#group-dialog").close();
     return;
   }
+  if (refreshing && !$("#group-dialog").open) return;
   state.groupDetail = g;
   groupMemberKeys.set(groupId, g.members); // the same members, with keys, that sending seals for
   drawGroupInfo();
