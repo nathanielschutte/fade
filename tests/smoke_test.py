@@ -1306,13 +1306,13 @@ def check_guard(tag):
     assert r.status_code == 200 and r.text == "User-agent: *\nDisallow: /\n"
     assert r.headers["X-Robots-Tag"] == "noindex, nofollow, noarchive"
 
-    # Apple's app-site association: on an iPhone, add-a-friend links open the app (web.rs).
+    # Apple's app-site association: on an iPhone, add-a-friend links and the home page open the app (web.rs).
     # Locally the team is the test one (test-env.sh); a deployment has it once its team is set.
     r = requests.get(BASE + "/.well-known/apple-app-site-association")
     if not REMOTE or r.status_code != 404:
         assert r.status_code == 200 and r.headers["Content-Type"] == "application/json", r.status_code
         details = r.json()["applinks"]["details"]
-        assert len(details) == 1 and details[0]["components"] == [{"/": "/i/*", "comment": "add-a-friend links (invites.rs)"}], details
+        assert len(details) == 1 and [c["/"] for c in details[0]["components"]] == ["/i/*", "/"], details
         apps = details[0]["appIDs"]
         assert r.json()["webcredentials"] == {"apps": apps}, r.json()      # passwords shared with the app
         assert apps == ["TESTTEAM01.com.getattr.napsack"] if not REMOTE else len(apps) == 1 and apps[0].endswith(".com.getattr.napsack"), apps

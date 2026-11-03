@@ -215,7 +215,12 @@ fn app_links(app_id: &str) -> Value {
         "applinks": {
             "details": [{
                 "appIDs": [app_id],
-                "components": [{ "/": "/i/*", "comment": "add-a-friend links (invites.rs)" }],
+                "components": [
+                    { "/": "/i/*", "comment": "add-a-friend links (invites.rs)" },
+                    // napsack.io itself, tapped in Messages or Mail, opens the app
+                    // when it's installed; the site's other pages stay pages.
+                    { "/": "/", "comment": "the home page" },
+                ],
             }],
         },
         // The app and the site share saved passwords: iOS offers to save the
@@ -364,14 +369,20 @@ pub async fn config(State(state): State<SharedState>) -> Json<Value> {
 mod tests {
     use super::*;
 
-    /// Apple's format: the app, and only add-a-friend links.
+    /// Apple's format: the app, add-a-friend links, and the home page.
     #[test]
-    fn app_links_name_the_app_and_only_friend_links() {
+    fn app_links_name_the_app_friend_links_and_the_home_page() {
         let v = app_links("TEAM123456.com.getattr.napsack");
         let details = &v["applinks"]["details"][0];
         assert_eq!(details["appIDs"], json!(["TEAM123456.com.getattr.napsack"]));
-        assert_eq!(details["components"].as_array().unwrap().len(), 1);
-        assert_eq!(details["components"][0]["/"], "/i/*");
+        // Only these: /privacy, /support, /admin, and the API stay on the site.
+        let paths: Vec<&str> = details["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["/"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, ["/i/*", "/"]);
         assert_eq!(
             v["webcredentials"]["apps"],
             json!(["TEAM123456.com.getattr.napsack"])
