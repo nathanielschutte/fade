@@ -28,16 +28,16 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side waits on a try on the phone |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
 | 6 | [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | Infrastructure | Nate | In progress | Nate (2026-11-03): the chat list, groups, profiles, and the friend map read every message, and more queries per friend, as texts pile up forever |
-| 6 | [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) | Experience/visual | Nate | In progress | Nate (2026-11-02): a speed survey of the web client, and chats that jump while he scrolls |
-| 7 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 8 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 9 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 10 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 11 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 12 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 13 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 14 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 15 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
+| 7 | [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) | Experience/visual | Nate | In progress | Nate (2026-11-02): a speed survey of the web client, and chats that jump while he scrolls |
+| 8 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 9 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 10 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 11 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 12 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 13 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 14 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 15 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 16 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, and the web built; the iOS app next |
 
 **Done**
 
