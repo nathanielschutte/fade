@@ -912,7 +912,7 @@ struct CameraScreen: View {
                     .accessibilityLabel("Retake")
                 Spacer()
                 // Big and well apart, so Aa and the pen aren't hit for each other (Nate, 2026-11-03).
-                VStack(spacing: Self.buttonSpacing) {
+                VStack(alignment: .trailing, spacing: Self.buttonSpacing) {
                     if penOn {
                         Button { penOn = false } label: {
                             Text("Done").font(.headline).foregroundStyle(.white)
