@@ -13,6 +13,8 @@ struct PicPage: View {
     var place: String?
     /// It's on screen: from now on it counts as opened.
     var onShown: () -> Void = {}
+    /// Closes the viewer while it's still opening (a slow connection): it stays unopened.
+    var close: (() -> Void)?
     /// Shown, and tapped past (or a video's end): on to the next, or closed.
     let next: () -> Void
     @State private var opened: OpenedPic?
@@ -60,7 +62,7 @@ struct PicPage: View {
                 }
                 .padding()
             } else {
-                ProgressView("Opening…").tint(.white).foregroundStyle(.white)
+                Opening(close: close)
             }
         }
         .overlay(alignment: .top) { PicHeader(from: from, place: place) }
@@ -104,6 +106,21 @@ struct PicPage: View {
     }
 }
 
+/// "Opening…", with Close beneath it: a slow connection mustn't keep you on a
+/// black screen (a full-screen cover can't be swiped away).
+struct Opening: View {
+    let close: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView("Opening…").tint(.white).foregroundStyle(.white)
+            if let close {
+                Button("Close", action: close).buttonStyle(.bordered).tint(.white)
+            }
+        }
+    }
+}
+
 /// Over the top of a pic: who sent it, and "2 of 3" when there are more.
 struct PicHeader: View {
     let from: String
@@ -139,6 +156,9 @@ struct PicViewer: View {
     let conversation: Conversation
     /// When it closes: the messages shown (each now opened).
     var done: (Set<Int64>) -> Void = { _ in }
+    /// From the list, when nothing turns out to be waiting (opened on another
+    /// device meanwhile): the tap opens the chat instead.
+    var nothingWaiting: () -> Void = {}
     @State private var index = 0
     @State private var shown: Set<Int64> = []
     @State private var problem: String?
@@ -150,9 +170,10 @@ struct PicViewer: View {
     }
 
     /// From the chat list: the chat's waiting pics, loaded first.
-    init(waitingIn conversation: Conversation, done: @escaping (Set<Int64>) -> Void = { _ in }) {
+    init(waitingIn conversation: Conversation, nothingWaiting: @escaping () -> Void = {}, done: @escaping (Set<Int64>) -> Void = { _ in }) {
         _pics = State(initialValue: nil)
         self.conversation = conversation
+        self.nothingWaiting = nothingWaiting
         self.done = done
     }
 
@@ -170,7 +191,7 @@ struct PicViewer: View {
                     let pic = pics[index]
                     PicPage(pic: pic, conversation: conversation, from: sender(pic),
                             place: pics.count > 1 ? "\(index + 1) of \(pics.count)" : nil,
-                            onShown: { shown.insert(pic.messageId) }) {
+                            onShown: { shown.insert(pic.messageId) }, close: { dismiss() }) {
                         if index + 1 < pics.count { index += 1 } else { dismiss() }
                     }
                     .id(index)  // a fresh page (and its own opening) for each
@@ -185,17 +206,20 @@ struct PicViewer: View {
                         }
                         .padding()
                     } else {
-                        ProgressView("Opening…").tint(.white).foregroundStyle(.white)
+                        Opening { dismiss() }
                     }
                 }
                 .overlay(alignment: .top) { PicHeader(from: conversation.title, place: nil) }
                 .contentShape(Rectangle())
-                .onTapGesture { if problem != nil { dismiss() } }
+                .onTapGesture { dismiss() }  // nothing's shown yet, so nothing is opened
                 .statusBarHidden()
                 .task {
                     do {
                         let waiting = try await Self.waiting(in: conversation)
-                        if waiting.isEmpty { return dismiss() }  // opened elsewhere meanwhile: nothing to show
+                        if waiting.isEmpty {  // opened elsewhere meanwhile: the chat, as any other row
+                            nothingWaiting()
+                            return dismiss()
+                        }
                         pics = waiting
                     } catch {
                         Reporter.shared.report(.warn, "opening pics from the list failed", Reporter.fields(error))

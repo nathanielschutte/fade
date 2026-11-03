@@ -47,6 +47,8 @@ struct Friend: Decodable, Sendable, Identifiable, Equatable {
     var favorite: Bool
     var hidden: Bool
     var muted: Bool
+    /// When a mute "for 8 hours" or "a week" ends (nil: until turned back on).
+    let mutedUntil: Int64?
     /// An Admin turned their account off: the chat is read-only.
     let deactivated: Bool?
     /// Team Napsack, napsack's own account (team-napsack.md).
@@ -115,6 +117,7 @@ struct GroupSummary: Decodable, Sendable, Identifiable, Equatable {
     var unread: Int
     var favorite: Bool
     var muted: Bool
+    let mutedUntil: Int64?
     /// The group's picture, if it has one. Not end-to-end encrypted (each group says so).
     let avatarId: Int64?
 }
@@ -261,7 +264,9 @@ struct Reader: Sendable {
             let label = mine
                 ? ["pending": "Sent a \(word)", "opened": "\(Word) opened", "expired": "\(Word) expired unopened"]
                 : ["opened": "\(Word) viewed", "expired": "\(Word) expired"]
-            return (label[m.snapState ?? ""] ?? Word, nil)
+            // A text from before it can still be unread (the server's count): its
+            // pics viewed from the list, say, or a pic sent from the camera.
+            return (label[m.snapState ?? ""] ?? Word, friend.unread > 0 ? .text : nil)
         }
         let text = self.text(m, with: friend) ?? "Encrypted message"
         if !mine && m.readAt == nil { return (text, .text) }
@@ -536,7 +541,9 @@ struct Reader: Sendable {
         case .ready:
             reloadSoon(account, .all, transport: transport)  // anything could have happened while disconnected
         case .message(let m):
-            if !arrived(m) { reloadSoon(account, .friends, transport: transport) }  // a chat new to the list
+            // A chat new to the list; or a pic, sent or opened: the streak and the
+            // unread count are the server's to work out (pics are few, so it's cheap).
+            if !arrived(m) || m.kind == "snap" { reloadSoon(account, .friends, transport: transport) }
         case .groupMessage(let m):
             if !arrived(m) { reloadSoon(account, .groups, transport: transport) }
         case .read(let by, _):
@@ -565,6 +572,8 @@ struct Reader: Sendable {
         if m.id > newest {
             if m.senderId == friendId && (m.kind == "text" ? m.readAt == nil : m.snapState == "pending") { friend.unread += 1 }
             friend.hidden = false  // a new message brings a hidden chat back (marks.rs)
+        } else if m.senderId == friendId, friend.lastMessage?.snapState == "pending", m.snapState != "pending" {
+            friend.unread = max(0, friend.unread - 1)  // their newest pic, opened: the reload this brings confirms it
         }
         friend.lastMessage = m
         guard friend != friendList[i] else { return true }
@@ -592,6 +601,18 @@ struct Reader: Sendable {
         }
         touched(.group(group.id))
         return true
+    }
+
+    /// A key was accepted in a chat (or a group sender pinned there): the
+    /// rows and what opening a chat needs take the shared pins at once, so
+    /// "Safety code changed" goes, and the camera can send to them again,
+    /// without waiting for a reload.
+    func pinsChanged() {
+        guard let pinBook, var reader, reader.pins != pinBook.pins || reader.changed != pinBook.changed else { return }
+        reader.pins = pinBook.pins
+        reader.changed = pinBook.changed
+        self.reader = reader
+        recompute()
     }
 
     private func change(_ kind: ChatRow.Kind, friend change: (inout Friend) -> Void, group changeGroup: (inout GroupSummary) -> Void) {
@@ -718,12 +739,35 @@ struct Reader: Sendable {
             if answers.announced { announce(answers.announcement) }
             take(answers, number: number, since: since)
             try await show(account)
+            reloadWhenAMuteEnds(account, transport: transport)
             if parts.isSuperset(of: [.friends, .groups]) { fromCache = false }
             problem = nil
         } catch {
             Reporter.shared.report(.warn, "loading chats failed", Reporter.fields(error))
             problem = error.localizedDescription
             throw error
+        }
+    }
+
+    @ObservationIgnored private var unmuting: Task<Void, Never>?
+    /// When the next mute ends, if one does (the reload then is waiting for it).
+    @ObservationIgnored private(set) var nextMuteEnd: Int64?
+
+    /// A mute for 8 hours or a week ends on the server's clock, and nothing
+    /// says so: the list reloads then, so the bell goes and the chat counts again.
+    private func reloadWhenAMuteEnds(_ account: Account, transport: any Transport) {
+        let now = Int64(Date().timeIntervalSince1970)
+        let next = (friendList.compactMap(\.mutedUntil) + groupList.compactMap(\.mutedUntil)).filter { $0 > now }.min()
+        guard next != nextMuteEnd else { return }
+        nextMuteEnd = next
+        unmuting?.cancel()
+        unmuting = next.map { end in
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(end - now + 1))
+                guard !Task.isCancelled, let self else { return }
+                nextMuteEnd = nil
+                reloadSoon(account, [.friends, .groups], transport: transport)
+            }
         }
     }
 

@@ -88,6 +88,14 @@ import Testing
         #expect(try snap(3, "expired") == ("Pic expired unopened", nil))
         #expect(try snap(7, "opened") == ("Pic viewed", nil))
         #expect(try snap(7, "expired", format: 4) == ("Video expired", nil))
+        // A text from before the pic still unread (the server's count): the row still says so,
+        // whether the pic was viewed from the list or I answered with one from the camera.
+        func unread(_ from: Int64, _ state: String) throws -> ChatRow.Waiting? {
+            reader.status(try direct(message(from: from, to: from == 3 ? 7 : 3, kind: "snap", format: 6, snap: state), extra: ["unread": 1])).1
+        }
+        #expect(try unread(7, "opened") == .text)
+        #expect(try unread(3, "pending") == .text)
+        #expect(try unread(7, "pending") == .snap)
     }
 
     @Test func emptyAndTurnedOffChats() throws {

@@ -259,7 +259,7 @@ struct OpenedPic: Sendable {
          transport: any Transport = NetworkTransport()) {
         self.chat = chat
         self.account = account
-        self.reader = reader
+        self.reader = Self.current(reader, pinBook)
         self.pinBook = pinBook
         self.cache = cache
         self.transport = transport
@@ -467,7 +467,19 @@ struct OpenedPic: Sendable {
     /// What's shown and what's still being sent carry on.
     func update(_ chat: Chat, reader: Reader) {
         self.chat = chat
-        self.reader = reader
+        self.reader = Self.current(reader, pinBook)
+    }
+
+    /// A reader with the pins as they are now. The shared book is the truth:
+    /// a key accepted here (or in another chat) since the list last loaded
+    /// must not be undone by the list's older copy, or texts would be sealed
+    /// to the old key.
+    private static func current(_ reader: Reader, _ pinBook: PinBook?) -> Reader {
+        guard let pinBook else { return reader }
+        var reader = reader
+        reader.pins = pinBook.pins
+        reader.changed = pinBook.changed
+        return reader
     }
 
     /// Why nothing can be sent here, when it's the chat itself (the web app's words).

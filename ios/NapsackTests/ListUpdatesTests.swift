@@ -66,18 +66,21 @@ import Testing
         #expect(list.rows.first?.preview == "You: yes")
         #expect(await asked(server, since: before).isEmpty)
 
-        // A pic from her: it waits, and a tap shows it from the list.
+        // A pic from her: it waits, and a tap shows it from the list. Pics change the
+        // streak and the unread count, which are the server's: friends reload, and only they.
         let pic = try ChatListTests.decode(DirectMessage.self, t.message(from: 7, to: 3, kind: "snap", format: 6, snap: "pending", id: 103))
         list.heard(.message(pic), account: account, transport: server)
-        await list.quiet()
+        await list.settled()  // at once, before the reload (whose answer, this stand-in's, is the truth after)
         #expect(list.rows.first?.waiting == .snap && list.rows.first?.opensPics == true)
+        await list.quiet()
+        #expect(await asked(server, since: before) == ["GET /api/friends"])
 
         // Someone the list doesn't have yet (a friendship just made): the friends list reloads, and only it.
         var stranger = t.message(from: 8, to: 3, id: 104)
         stranger["recipient_id"] = 3
         list.heard(.message(try ChatListTests.decode(DirectMessage.self, stranger)), account: account, transport: server)
         await list.quiet()
-        #expect(await asked(server, since: before) == ["GET /api/friends"])
+        #expect(await asked(server, since: before) == ["GET /api/friends", "GET /api/friends"])
     }
 
     @Test func readsDontReloadTheListAndChangesReloadOnlyTheirOwn() async throws {
@@ -178,6 +181,73 @@ import Testing
                          format: 2, id: 102))
         try await list.load(account, .friends, transport: stub)
         #expect(list.rows.first?.preview == "You: newest of all")
+    }
+
+    /// Her pic opened (from the list, say) with a text of hers from before it
+    /// still unread: the row keeps saying something's waiting, by the server's
+    /// count, which the pic's change reloads. With nothing else unread, nothing waits.
+    @Test func aViewedPicLeavesAnEarlierTextUnread() async throws {
+        final class Answer: @unchecked Sendable { var friends = Data() }
+        let answer = Answer()
+        func newest(_ state: String, unread: Int) {
+            let m = t.message(from: 7, to: 3, kind: "snap", format: 6, snap: state, id: 101)
+            answer.friends = json([ChatListTests.friendJSON(alice: t.alice, nickname: "Al", last: m, extra: ["unread": unread])])
+        }
+        let stub = StubServer { request in
+            switch request.url!.path {
+            case "/api/friends": return (200, answer.friends)
+            case "/api/groups": return (200, json([]))
+            default: return (200, json(["incoming": [], "outgoing": []]))
+            }
+        }
+        let opened = try ChatListTests.decode(DirectMessage.self, t.message(from: 7, to: 3, kind: "snap", format: 6, snap: "opened", id: 101))
+
+        // A text, then the pic: two unread. Once the pic's opened, the text still is.
+        newest("pending", unread: 2)
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await list.load(account, transport: stub)
+        #expect(list.rows.first?.waiting == .snap && list.rows.first?.opensPics == true && list.waitingCount == 1)
+        newest("opened", unread: 1)
+        list.heard(.message(opened), account: account, transport: stub)
+        await list.settled()
+        #expect(list.rows.first?.preview == "Pic viewed" && list.rows.first?.waiting == .text)  // at once, before the reload
+        await list.quiet()
+        #expect(list.rows.first?.waiting == .text && list.rows.first?.opensPics == false && list.waitingCount == 1)
+        #expect(list.reader?.friends[7]?.unread == 1)
+
+        // Only the pic: once it's opened, nothing waits (at once, and after the reload).
+        newest("pending", unread: 1)
+        let only = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await only.load(account, transport: stub)
+        newest("opened", unread: 0)
+        only.heard(.message(opened), account: account, transport: stub)
+        await only.settled()
+        #expect(only.rows.first?.waiting == nil)
+        await only.quiet()
+        #expect(only.rows.first?.waiting == nil && only.waitingCount == 0)
+    }
+
+    /// A mute for a while ends with no event: the list reloads when the soonest ends.
+    @Test func theListReloadsWhenAMuteEnds() async throws {
+        let now = Int64(Date().timeIntervalSince1970)
+        let friends = json([ChatListTests.friendJSON(alice: t.alice, last: nil, extra: ["muted": true, "muted_until": now + 3600])])
+        let groups = json([["id": 12, "name": "Road trip", "role": "member", "member_count": 4, "last_message": NSNull(), "unread": 0,
+                            "favorite": false, "muted": true, "muted_until": now + 600, "avatar_id": NSNull(), "encrypted": false],
+                           ["id": 13, "name": "Ended", "role": "member", "member_count": 4, "last_message": NSNull(), "unread": 0,
+                            "favorite": false, "muted": false, "muted_until": now - 60, "avatar_id": NSNull(), "encrypted": false]])
+        let stub = StubServer { request in
+            switch request.url!.path {
+            case "/api/friends": return (200, friends)
+            case "/api/groups": return (200, groups)
+            default: return (200, json(["incoming": [], "outgoing": []]))
+            }
+        }
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await list.load(account, transport: stub)
+        #expect(list.nextMuteEnd == now + 600)  // the soonest still to come, not one already past
+        let unmuted = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await unmuted.load(account, transport: server(last: t.message(from: 7, to: 3, read: true, id: 100)))
+        #expect(unmuted.nextMuteEnd == nil)
     }
 
     @Test func rowActionsShowAtOnceWithoutAReload() async throws {

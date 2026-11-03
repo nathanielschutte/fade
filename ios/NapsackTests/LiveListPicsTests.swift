@@ -8,7 +8,8 @@ import UIKit
 /// Opening pics straight from the chat list (Nate, 2026-11-02), against a
 /// real napsack server (a local one; it makes accounts): a friend's two pics
 /// are shown back to back, the list hears they were opened and leaves the chat
-/// read; a group's is read only when nothing else waited there. What the
+/// read, unless a text of theirs from before still waits; a group's is read
+/// only when nothing else waited there. What the
 /// screen does with a tap is `ChatRow.opensPics`; what its viewer does is
 /// `PicViewer.waiting(in:)`, then opening each as it's shown. Runs only with
 /// NAPSACK_TEST_SERVER set (LiveSignInTests says how).
@@ -80,6 +81,55 @@ struct LiveListPicsTests {
         #expect(list.waitingCount == 0)
         let fromServer = try await Server(live.address).friends(token: ben.token)
         #expect(fromServer.first { $0.id == ana.user.id }?.unread == 0)
+    }
+
+    /// A text, then a pic: the pic opens from the list, and the text stays
+    /// unread (the row says so, and so does the server) for when he opens the chat.
+    @Test func aTextBeforeTheirPicStaysUnreadAfterViewingFromTheList() async throws {
+        let (ana, ben) = try await friends()
+        let anas = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await anas.load(ana)
+        let toBen = Conversation(.friend(try #require(anas.reader?.friends[ben.user.id])), account: ana, reader: try #require(anas.reader))
+        try await toBen.loadNewest()
+        await toBen.send("look at this", replyTo: nil)
+        #expect(toBen.outbox.isEmpty)
+        let jpeg = try #require(Conversation.photoJPEG(LiveProfileTests.photo(.systemTeal, width: 600, height: 800)))
+        try await toBen.sendPhoto(jpeg, caption: "")
+
+        let list = ChatList(pinStore: MemoryPinStore(), cacheRoot: nil)
+        try await list.load(ben)
+        var row = try #require(list.rows.first { $0.kind == .friend(ana.user.id) })
+        #expect(row.opensPics && list.reader?.friends[ana.user.id]?.unread == 2)
+
+        let (events, arriving) = AsyncStream.makeStream(of: LiveEvent.self)
+        let socket = Live(account: ben)
+        socket.onEvent = { event in
+            list.heard(event, account: ben)
+            arriving.yield(event)
+        }
+        socket.start()
+        defer { socket.stop() }
+        let giveUp = Task { try? await Task.sleep(for: .seconds(15)); arriving.finish() }
+        defer { giveUp.cancel() }
+        var heard = events.makeAsyncIterator()
+        var ready = false
+        while !ready, let e = await heard.next() { if case .ready = e { ready = true } }
+        try #require(ready)
+
+        let chat = Conversation(.friend(try #require(list.reader?.friends[ana.user.id])), account: ben, reader: try #require(list.reader))
+        let waiting = try await PicViewer.waiting(in: chat)
+        #expect(waiting.count == 1)
+        _ = try await chat.open(waiting[0])
+        await chat.confirmOpened(waiting[0])
+        var opened = false
+        while !opened, let e = await heard.next() { if case .message(let m) = e, m.snapState == "opened" { opened = true } }
+        #expect(opened)
+        await list.quiet()
+        row = try #require(list.rows.first { $0.kind == .friend(ana.user.id) })
+        #expect(row.preview == "Pic viewed" && row.waiting == .text && !row.opensPics)
+        #expect(list.waitingCount == 1 && list.reader?.friends[ana.user.id]?.unread == 1)
+        let fromServer = try await Server(live.address).friends(token: ben.token)
+        #expect(fromServer.first { $0.id == ana.user.id }?.unread == 1)
     }
 
     @Test func aGroupsPicFromTheListReadsItOnlyWhenNothingElseWaited() async throws {

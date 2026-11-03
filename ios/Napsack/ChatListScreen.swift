@@ -45,6 +45,8 @@ struct ChatListScreen: View {
     @State private var found: MessageHit.ID?
     /// A chat's waiting pics, shown straight from the list.
     @State private var viewing: PicsFromList?
+    /// Nothing was waiting after all (opened on another device): the chat, once the viewer's gone.
+    @State private var openAfterViewing: ChatRow.Kind?
     @State private var showingHidden = false
     @State private var muting: ChatRow?
     @State private var leaving: ChatRow?
@@ -190,6 +192,9 @@ struct ChatListScreen: View {
             .onChange(of: searching) { _, now in if now { prepareSearch() } }
             .onChange(of: list.loaded) { _, loaded in if loaded && searching { prepareSearch() } }  // searched before the list was in
             .onChange(of: search) { _, text in finder.find(text) }
+            // A key accepted in a chat: the list takes it at once (no event comes from the server for it).
+            .onChange(of: list.pinBook?.pins) { list.pinsChanged() }
+            .onChange(of: list.pinBook?.changed) { list.pinsChanged() }
             .safeAreaInset(edge: .bottom) {  // (above the search field, which sits at the bottom on newer iOS)
                 if let toast {
                     ToastView(toast: toast) { self.toast = nil }
@@ -247,8 +252,13 @@ struct ChatListScreen: View {
                         .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
                 }
             }
-            .fullScreenCover(item: $viewing) { item in
-                PicViewer(waitingIn: item.conversation) { shown in shownFromList(item, shown) }
+            .fullScreenCover(item: $viewing, onDismiss: {
+                if let kind = openAfterViewing {
+                    openAfterViewing = nil
+                    path = [kind]
+                }
+            }) { item in
+                PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -439,7 +449,10 @@ struct ChatListScreen: View {
     }
 
     /// The pics shown from the list are opened (each as it was shown; the
-    /// server's `message_updated` changes the row). A group whose only unread
+    /// server's `message_updated` changes the row, and reloads friends for
+    /// the unread count). A direct chat with a text still unread from before
+    /// them keeps its dot (`Reader.status`), and the text stays unread for when
+    /// you open the chat. A group whose only unread
     /// messages were those pics is read now, as opening its chat would have
     /// done (its `groups_changed` reloads the row); otherwise its texts stay
     /// unread for when you open it.
