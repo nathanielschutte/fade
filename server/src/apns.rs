@@ -313,9 +313,9 @@ pub async fn end_for_session(db: &SqlitePool, session_hash: &str) -> sqlx::Resul
 static WAITING: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT {MUTED_FRIEND} FROM users u
-          WHERE (u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
-                            FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL)
-                 OR EXISTS (SELECT 1 FROM system_accounts s WHERE s.user_id = u.id))
+          WHERE u.id IN (SELECT CASE WHEN f.user_lo = ?1 THEN f.user_hi ELSE f.user_lo END
+                           FROM friendships f WHERE (f.user_lo = ?1 OR f.user_hi = ?1) AND f.ended_at IS NULL
+                         UNION SELECT s.user_id FROM system_accounts s)
             AND NOT EXISTS (SELECT 1 FROM deactivations d WHERE d.user_id = u.id AND d.reactivated_at IS NULL)
             AND EXISTS (SELECT 1 FROM messages m
                          WHERE m.id = (SELECT MAX(x.id) FROM messages x
@@ -350,7 +350,10 @@ static WAITING: LazyLock<String> = LazyLock::new(|| {
 /// thing only the app knows, a friend's changed safety code, takes that
 /// chat's dot away there and not here.
 pub async fn waiting_chats(db: &SqlitePool, user: i64) -> sqlx::Result<i64> {
-    let mutes: Vec<Option<i64>> = sqlx::query_scalar(&WAITING).bind(user).fetch_all(db).await?;
+    let mutes: Vec<Option<i64>> = sqlx::query_scalar(&WAITING)
+        .bind(user)
+        .fetch_all(db)
+        .await?;
     let at = now();
     Ok(mutes
         .into_iter()
@@ -803,6 +806,6 @@ mod tests {
     #[tokio::test]
     async fn the_badge_reads_whats_waiting() {
         let db = temp_db().await;
-        assert_searches(&db, &WAITING, &[], &["x", "y"]).await;
+        assert_searches(&db, &WAITING, &["s"], &["x", "y"]).await;
     }
 }
