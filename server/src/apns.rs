@@ -577,7 +577,7 @@ async fn update_badge(state: &SharedState, user: i64) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::tests::{assert_searches, plan, temp_db};
+    use crate::db::tests::{assert_searches, temp_db};
     use p256::{
         ecdsa::{signature::Verifier, VerifyingKey},
         elliptic_curve::rand_core::OsRng,
