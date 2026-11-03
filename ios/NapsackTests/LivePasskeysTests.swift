@@ -66,6 +66,11 @@ struct LivePasskeysTests {
             #expect(words.contains("isn't set up for napsack"))
         }
         #expect(refused.account == nil)
+
+        // Removed from another device: a laptop's sheet still has it, until the server's answer drops it there too.
+        let laptop = StandInPasskeys(sharing: passkeys)
+        await #expect(throws: ServerError.self) { try await Session(store: MemoryStore(), reporter: Reporter()).signInWithPasskey(server: live.address, using: laptop) }
+        #expect(laptop.forgotten == [passkeys.credentials[0].id])
     }
 
     @Test func theOneRecommendedAfterSignUp() async throws {

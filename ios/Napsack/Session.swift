@@ -503,6 +503,9 @@ enum SignInError: LocalizedError, Equatable {
             }
         } catch {
             reporter.report(.warn, "passkey sign-in failed", Reporter.fields(error))
+            // One the server doesn't know (removed elsewhere, or never added):
+            // the phone's told, so its sheet stops offering it.
+            if Self.unknownPasskey(error) { await authenticator.forget(rpID: options.rpId, credentialID: signed.credentialID) }
             throw error
         }
         // Its copy has to open, and be the account's own key.
@@ -537,7 +540,8 @@ enum SignInError: LocalizedError, Equatable {
 
     /// The passkey recommended after sign-up, with the keys sign-up kept.
     func addOfferedPasskey(using authenticator: any PasskeyAuthenticator) async throws -> Passkey {
-        guard let offer = passkeyOffer else { throw ServerError.sessionEnded }
+        // Already decided ("Not now"): nothing to add, and nothing to say.
+        guard let offer = passkeyOffer else { throw PasskeyError.canceled }
         let added = try await addPasskey(keys: offer.keys, wrapped: offer.wrapped, using: authenticator)
         passkeyOffer = nil
         return added
@@ -583,6 +587,14 @@ enum SignInError: LocalizedError, Equatable {
             if Self.surelyNotKept(error) { await authenticator.forget(rpID: options.rpId, credentialID: made.credentialID) }
             throw error
         }
+    }
+
+    /// The server's answer for a passkey it doesn't know, as it was removed or
+    /// never added (passkeys.rs, `sign_in`). Only this answer: a passkey it
+    /// knows whose signature didn't check out is still the person's.
+    static func unknownPasskey(_ error: any Error) -> Bool {
+        guard case ServerError.refused(let words, status: 400) = error else { return false }
+        return words.contains("isn't set up for napsack any more")
     }
 
     /// Whether a passkey just made surely isn't on the server after this:

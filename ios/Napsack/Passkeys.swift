@@ -477,7 +477,8 @@ struct PasskeyOfferScreen: View {
     }
 
     private func add() {
-        guard !working else { return }
+        // "Not now" may have closed it already (the sheet's still going away).
+        guard !working, session.passkeyOffer != nil else { return }
         working = true
         problem = nil
         Task {

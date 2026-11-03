@@ -89,15 +89,16 @@ import Testing
     // ---------- signing in ----------
 
     /// A server whose passkey sign-in hands back the vectors' account and its
-    /// passkey copy (or `copy`), whatever passkey answers.
-    func signInServer(copy: String? = nil) -> StubServer {
-        let answer = json(["token": "pk-token", "user": me, "public_key": alice["spki"]!, "wrapped_private_key": password["wrapped_private_key"]!,
-                           "passkey_wrapped_key": copy ?? vk["passkey_wrapped_key"]!])
+    /// passkey copy (or `copy`, or another `publicKey`), whatever passkey
+    /// answers; or refuses it in `refusal`'s words.
+    func signInServer(copy: String? = nil, publicKey: Any? = nil, refusal: String? = nil) -> StubServer {
+        let answer = json(["token": "pk-token", "user": me, "public_key": publicKey ?? alice["spki"]!,
+                           "wrapped_private_key": password["wrapped_private_key"]!, "passkey_wrapped_key": copy ?? vk["passkey_wrapped_key"]!])
         let options = json(["challenge": Passkeys.b64url(Self.challenge), "rp_id": "localhost"])
         return StubServer { request in
             switch request.url!.path {
             case "/api/auth/passkey/options": (200, options)
-            case "/api/auth/passkey": (200, answer)
+            case "/api/auth/passkey": refusal.map { (400, json(["error": $0])) } ?? (200, answer)
             case "/api/auth/logout": (200, json(["ok": true]))
             default: (404, json(["error": "not here"]))
             }
@@ -165,6 +166,36 @@ import Testing
         #expect(session.account == nil)
     }
 
+    @Test func aCopyOfSomeoneElsesKeyEndsTheSessionAtOnce() async throws {
+        // The copy opens with the passkey's secret, but it isn't the account's key (Bob's public key): no session.
+        let server = signInServer(publicKey: bob["spki"]!), passkeys = try await vectorPasskey(), store = MemoryStore()
+        let session = Session(transport: server, store: store, reporter: Reporter())
+        await #expect(throws: PasskeyError.cantUnlock) { try await session.signInWithPasskey(server: "https://napsack.test", using: passkeys) }
+        let sent = await server.requests
+        #expect(sent.last?.url?.path == "/api/auth/logout" && sent.last?.value(forHTTPHeaderField: "Authorization") == "Bearer pk-token")
+        #expect(session.account == nil && (try? store.load()) == nil)
+    }
+
+    @Test func aPasskeyTheServerDoesntKnowIsDroppedFromThePhone() async throws {
+        // Removed on another device, say: the phone's sheet would keep offering it.
+        let gone = "That passkey isn't set up for napsack any more. Sign in with your password."
+        let passkeys = try await vectorPasskey()
+        let session = Session(transport: signInServer(refusal: gone), store: MemoryStore(), reporter: Reporter())
+        await #expect(throws: ServerError.refused(gone, status: 400)) {
+            try await session.signInWithPasskey(server: "https://napsack.test", using: passkeys)
+        }
+        #expect(passkeys.forgotten == [passkeys.credentials[0].id] && session.account == nil)
+
+        // One it knows that didn't check out is still theirs: kept.
+        let failed = "That passkey didn't work. Try again, or sign in with your password."
+        let other = Session(transport: signInServer(refusal: failed), store: MemoryStore(), reporter: Reporter())
+        await #expect(throws: ServerError.refused(failed, status: 400)) {
+            try await other.signInWithPasskey(server: "https://napsack.test", using: passkeys)
+        }
+        #expect(passkeys.forgotten.count == 1)
+        #expect(!Session.unknownPasskey(ServerError.refused(gone, status: 503)) && !Session.unknownPasskey(PasskeyError.cantUnlock))
+    }
+
     // ---------- adding one ----------
 
     /// Sign-up, a recovery key, and passkeys: options for `newbie`, and adding
@@ -224,7 +255,23 @@ import Testing
     @Test func noOfferUnlessPasskeysWorkWithTheServer() async throws {
         let session = try await signedUp(signUpServer(), offer: false)
         #expect(session.recoveryKeyToShow != nil && session.passkeyOffer == nil)
-        await #expect(throws: ServerError.sessionEnded) { _ = try await session.addOfferedPasskey(using: StandInPasskeys()) }
+        await #expect(throws: PasskeyError.canceled) { _ = try await session.addOfferedPasskey(using: StandInPasskeys()) }
+    }
+
+    @Test func addingAnOfferAlreadyDeclinedLeavesTheNewAccountSignedIn() async throws {
+        // "Add a passkey" tapped as "Not now" closes the offer: nothing to do, and the session's still good.
+        let server = signUpServer(), passkeys = StandInPasskeys()
+        let session = try await signedUp(server)
+        session.passkeyOffer = nil
+        do {
+            _ = try await session.addOfferedPasskey(using: passkeys)
+            Issue.record("added a passkey nobody was offered")
+        } catch {
+            session.noticed(error)
+        }
+        #expect(session.account?.token == "new-token" && session.notice == nil)
+        #expect(passkeys.credentials.isEmpty && passkeys.signed.isEmpty)
+        #expect(await server.requests.map { $0.url!.path } == ["/api/auth/register", "/api/me/recovery"])
     }
 
     @Test func aPasskeyThatGivesItsSecretOnlyWhenUsedIsAskedOnce() async throws {
@@ -234,6 +281,21 @@ import Testing
         _ = try await session.addOfferedPasskey(using: passkeys)
         #expect(passkeys.signed.count == 1 && passkeys.signed[0].allowed == [passkeys.credentials[0].id])  // the new one alone
         #expect(passkeys.forgotten.isEmpty)
+    }
+
+    @Test func onlyTheNewPasskeysSecretWraps() async throws {
+        // Asked for the new passkey's secret alone, the sheet answers with another of the site's: never used.
+        let server = signUpServer(), passkeys = StandInPasskeys()
+        let session = try await signedUp(server)
+        let older = try await passkeys.create(rpID: "localhost", challenge: Self.challenge, userName: "newbie", userID: Data([0, 0, 0, 0, 0, 0, 0, 9]),
+                                              excluding: [], prfInput: E2E.passkeyPrfInput())
+        passkeys.prfAsMade = false
+        passkeys.answersWith = older.credentialID
+        await #expect(throws: PasskeyError.cantUnlock) { _ = try await session.addOfferedPasskey(using: passkeys) }
+        let new = passkeys.credentials[1].id
+        #expect(passkeys.signed.count == 1 && passkeys.signed[0].allowed == [new])
+        #expect(await server.requests.map { $0.url!.path }.last == "/api/me/passkeys/options")  // nothing sent to add
+        #expect(passkeys.forgotten == [new])  // the new one's dropped; the other one's left alone
     }
 
     @Test func aPasskeyThatCantUnlockIsNeverAdded() async throws {

@@ -29,6 +29,8 @@ import Foundation
     var closesSheet = false
     /// Answers with this secret instead of its own (the vectors' secret).
     var fixedSecret: Data?
+    /// Answers with this passkey whatever was asked for, as a sheet that ignored `allowed` would.
+    var answersWith: Data?
     private(set) var signed: [(rpID: String, allowed: [Data])] = []
     private(set) var forgotten: [Data] = []
 
@@ -42,6 +44,13 @@ import Foundation
     convenience init(server address: String) {
         let port = URL(string: address)?.port.map { ":\($0)" } ?? ""
         self.init(origin: "http://localhost\(port)")
+    }
+
+    /// Another device with the same passkeys (iCloud Keychain keeps them on
+    /// each), and nothing forgotten there yet.
+    convenience init(sharing other: StandInPasskeys) {
+        self.init(origin: other.origin)
+        credentials = other.credentials
     }
 
     func works(for rpID: String) -> Bool { true }
@@ -66,7 +75,8 @@ import Foundation
         signed.append((rpID, allowed))
         if closesSheet { closesSheet = false; throw PasskeyError.canceled }
         // The newest of the site's, as the sheet would offer first (or one of those allowed).
-        guard let credential = credentials.last(where: { $0.rpID == rpID && (allowed.isEmpty || allowed.contains($0.id)) }) else {
+        let wanted = answersWith.map { [$0] } ?? allowed
+        guard let credential = credentials.last(where: { $0.rpID == rpID && (wanted.isEmpty || wanted.contains($0.id)) }) else {
             throw PasskeyError.canceled  // no passkey to offer: the person can only close the sheet
         }
         let client = clientData("webauthn.get", challenge)
