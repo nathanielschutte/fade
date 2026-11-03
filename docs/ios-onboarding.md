@@ -156,9 +156,8 @@ Sizes are in **points**, the unit SwiftUI lays out in (a point is 2 or 3 pixels,
 | Points (wide × tall) | iPhones | Top of the screen | Unlocks with |
 |---|---|---|---|
 | 320 wide | the small ones with **Display Zoom** on (Settings › Display & Brightness), which makes everything bigger: about 320 × 568 on an SE, 320 × 693 on a mini | | |
-| 375 × 667 | SE (2nd and 3rd generation): the shortest | a plain status bar, and a home button below the screen | Touch ID (the home button) |
-| 360 × 780 | 12 mini, 13 mini: the narrowest without Display Zoom | notch | Face ID |
-| 375 × 812 | XS, 11 Pro | notch | Face ID |
+| 375 × 667 | SE (2nd and 3rd generation): the shortest, and with the minis the narrowest without Display Zoom | a plain status bar, and a home button below the screen | Touch ID (the home button) |
+| 375 × 812 | XS, 11 Pro, 12 mini, 13 mini (a mini's panel has fewer pixels, but iOS lays it out at 375 × 812 and scales it down) | notch | Face ID |
 | 390 × 844 | 12, 12 Pro, 13, 13 Pro, 14, 16e, 17e | notch | Face ID |
 | 393 × 852 | 14 Pro, 15, 15 Pro, 16 | Dynamic Island | Face ID |
 | 402 × 874 | 16 Pro, 17, 17 Pro, 18 Pro | Dynamic Island | Face ID |
@@ -175,7 +174,7 @@ The **safe area** is the part of the screen nothing covers. On top it's 20 point
 
 - **Face ID or Touch ID.** The SE and the Duo have Touch ID; the others Face ID. `LAContext().biometryType` says which (`AppLock.method` turns it into "Face ID" or "Touch ID" for the screen), so text on screen never says "Face ID" by itself. `NSFaceIDUsageDescription` is the question iOS asks on Face ID phones only; Touch ID doesn't ask.
 - **Cameras.** The back of an iPhone has one camera (XR, SE, 16e, 17e, Air), two (a wide and an ultra wide (0.5×) on most; a wide and a 2× telephoto on the XS), or three on the Pros (adding a telephoto of 2×, 2.5×, 3×, 4×, or 5×). The front camera is the TrueDepth camera on Face ID phones. The camera finds the lenses itself (`CameraSession.Lenses`, from the device's own zoom factors, Camera.swift), so the lens buttons are whatever this phone has. The Simulator has no camera at all.
-- **Buttons.** Every iPhone has volume buttons. **Camera Control**, a button on the side that clicks and slides, is on the 16, 16 Pro, 17, 17 Pro, 18 Pro, and Air (not the 16e or 17e). An app's camera gets the volume buttons and Camera Control's click as the shutter through `AVCaptureEventInteraction`, and Camera Control's slider (zoom, for one) through `AVCaptureSession`'s controls (iOS 18; check `supportsControls`, which is false on phones without it). The **Action button** (15 Pro and later, in place of the ring switch) does whatever the person picked; an app takes part only through App Intents or a Control Center control, never by reading the button.
+- **Buttons.** Every iPhone has volume buttons. **Camera Control**, a button on the side that clicks and slides, is on the 16, 16 Pro, 17, 17 Pro, 18 Pro, and Air (not the 16e or 17e). An app's camera gets the volume buttons and Camera Control's click as the shutter through `AVCaptureEventInteraction`, and Camera Control's slider (zoom, for one) through `AVCaptureSession`'s controls (iOS 18; check `supportsControls`, which is false on phones without it). napsack's camera uses neither yet: there the volume buttons only change the volume, and Camera Control opens whichever camera app the person chose in Settings (plan-ios.md, section 10). The **Action button** (the 15 Pro and every iPhone from the 16 on, in place of the ring switch; the Duo has neither) does whatever the person picked; an app takes part only through App Intents or a Control Center control, never by reading the button.
 - **Screen speed.** Pro models from the 13 Pro on, and the 17 and Air, draw up to 120 times a second (ProMotion); the others 60. Animate with SwiftUI's animations or `TimelineView`, never with a timer that assumes 60.
 - **The Duo** changes size while napsack is open: folding or unfolding switches screens, and the inner screen can show two apps side by side. A layout that works from 320 to 669 points wide covers it, as long as nothing on screen is rebuilt (and its state lost) because the size changed. It also takes the Apple Pencil, which the drawing tool should treat like a finger. napsack is an iPhone-only, portrait-only app (`TARGETED_DEVICE_FAMILY = 1`, `UISupportedInterfaceOrientations`); how the inner screen shows such an app is to be checked on the Duo Simulator (it needs the iOS 27.1 runtime).
 - **iPads** run iPhone-only apps too, in a phone-sized window, and Apple's reviewers sometimes use one (guideline 2.4.1). It has to work there, even though it won't look its best.
@@ -187,8 +186,8 @@ The **safe area** is the part of the screen nothing covers. On top it's 20 point
 3. **Fixed sizes only for small things**, like an icon, an avatar, or a button's tap area (at least 44 × 44 points). When it sits next to text, let it grow with the text (`@ScaledMetric var size = 32.0`). A fixed width on anything holding text (a menu, a row of buttons, a field) breaks at large text or on a 320-point screen.
 4. **Dynamic Type.** People choose their text size (Settings › Display & Brightness › Text Size, and much larger under Accessibility), and napsack follows it. Use text styles (`.body`, `.headline`, `.caption`), never `.font(.system(size:))` for words. Text wraps instead of cutting off a name or a button's label; at the accessibility sizes a row may need to stack (`ViewThatFits`, or `dynamicTypeSize.isAccessibilitySize`).
 5. **The keyboard.** On a 375 × 667 phone it leaves under 400 points. What you're typing and the button that sends it stay in sight.
-6. **Ask the phone, not the model.** Cameras: `AVCaptureDevice.DiscoverySession` and the device's zoom factors. Unlocking: `LAContext().biometryType`. Camera Control: `supportsControls`. Space: the layout.
-7. **Check both ends** before calling something done: the SE (shortest), a mini (narrowest), and a Pro Max (largest), once with large text, and the Duo's two screens for anything with a lot on it. A real phone for what the Simulator can't do (the camera, Face ID's feel, notifications).
+6. **Ask the phone, not the model.** Cameras: `AVCaptureDevice.DiscoverySession` and the device's zoom factors. Unlocking: `LAContext().biometryType`. Camera Control: `supportsControls` (once napsack's camera uses it). Space: the layout.
+7. **Check both ends** before calling something done: the SE (shortest, and 375 wide like the minis), the SE with Display Zoom (320 × 568, the narrowest), and a Pro Max (largest), once with large text, and the Duo's two screens for anything with a lot on it. A real phone for what the Simulator can't do (the camera, Face ID's feel, notifications).
 
 ### How to check
 
@@ -211,7 +210,7 @@ The **safe area** is the part of the screen nothing covers. On top it's 20 point
       window.isHidden = true
   }
   ```
-  Call it with `ChatListScreen(account: account).environment(session)` (and `.environment(\.dynamicTypeSize, .accessibility3)` for large text) at 375 × 667, 360 × 780, 440 × 956, and the Duo's 466 × 678 and 669 × 951. The window keeps the safe area of the Simulator it runs on, so check edges and the keyboard on a Simulator of that model. Pictures like these are for looking, not for committing.
+  Call it with `ChatListScreen(account: account).environment(session)` (and `.environment(\.dynamicTypeSize, .accessibility3)` for large text) at 320 × 568 (the SE with Display Zoom), 375 × 667, 375 × 812, 440 × 956, and the Duo's 466 × 678 and 669 × 951. The window keeps the safe area of the Simulator it runs on, so check edges and the keyboard on a Simulator of that model. Pictures like these are for looking, not for committing.
 
 ## TestFlight
 
