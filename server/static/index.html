@@ -29,6 +29,7 @@
       <span>Password</span>
       <input name="password" type="password" autocomplete="current-password" required minlength="8">
       <small class="field-hint" id="password-hint" hidden>Your password also unlocks your messages. If you forget it, they can't be recovered.</small>
+      <small class="field-hint strength" id="password-strength" hidden></small>
     </label>
     <label class="field" id="invite-field" hidden>
       <span>Invite code</span>
@@ -456,6 +457,7 @@
     <label class="field" id="password-new-field">
       <span>New password</span>
       <input name="change_password" type="password" autocomplete="new-password" minlength="8">
+      <small class="field-hint strength" id="change-strength" hidden></small>
     </label>
     <label class="field" id="password-confirm-field">
       <span>New password again</span>
@@ -537,6 +539,7 @@
   <p class="recovery-key" id="recovery-key"></p>
   <div class="recovery-actions">
     <button type="button" class="button" id="recovery-copy">Copy</button>
+    <button type="button" class="button" id="recovery-download">Download</button>
     <label class="check"><input type="checkbox" id="recovery-saved"> I've saved it somewhere safe</label>
   </div>
   <button type="button" class="button primary" id="recovery-done" disabled>Done</button>

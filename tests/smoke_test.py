@@ -1314,6 +1314,7 @@ def check_guard(tag):
         details = r.json()["applinks"]["details"]
         assert len(details) == 1 and details[0]["components"] == [{"/": "/i/*", "comment": "add-a-friend links (invites.rs)"}], details
         apps = details[0]["appIDs"]
+        assert r.json()["webcredentials"] == {"apps": apps}, r.json()      # passwords shared with the app
         assert apps == ["TESTTEAM01.com.getattr.napsack"] if not REMOTE else len(apps) == 1 and apps[0].endswith(".com.getattr.napsack"), apps
 
     # The privacy policy and support pages (for people and the App Store): plain pages, the strict CSP.

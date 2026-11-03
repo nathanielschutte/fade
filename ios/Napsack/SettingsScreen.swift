@@ -266,6 +266,7 @@ struct PasswordSheet: View {
                         .textContentType(.password)
                     if purpose == .password {
                         SecureField("New password", text: $new).textContentType(.newPassword)
+                        StrengthHint(password: new)
                         SecureField("New password again", text: $confirm).textContentType(.newPassword)
                     }
                 } footer: {

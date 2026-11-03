@@ -6,11 +6,14 @@
 	     NAPSACK_APS_ENVIRONMENT (Config/Base.xcconfig, Release.xcconfig). -->
 	<key>aps-environment</key>
 	<string>$(NAPSACK_APS_ENVIRONMENT)</string>
-	<!-- Add-a-friend links on the site open the app (Links.swift; the site's
-	     apple-app-site-association, server/src/web.rs). -->
+	<!-- Add-a-friend links on the site open the app (Links.swift), and the app
+	     and the site share saved passwords (webcredentials: Passwords offers to
+	     save the app's sign-in and fills in the web's). The site's
+	     apple-app-site-association names the app (server/src/web.rs). -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:$(NAPSACK_LINK_HOST)</string>
+		<string>webcredentials:$(NAPSACK_LINK_HOST)</string>
 	</array>
 </dict>
 </plist>
