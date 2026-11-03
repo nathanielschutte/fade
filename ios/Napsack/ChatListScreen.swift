@@ -29,7 +29,7 @@ struct ChatListScreen: View {
     @State private var path: [ChatRow.Kind] = []
     @State private var showingFriends = false
     /// Notifications on this phone: a tapped one opens its chat here (Notifications.swift).
-    @State private var notifications = Notifications.shared
+    @State private var notifications: Notifications
     /// A friend's link opened or scanned (Links.swift), and the one being offered.
     @State private var links = FriendLinks.shared
     @State private var offer: FriendLinks.Invite?
@@ -43,10 +43,11 @@ struct ChatListScreen: View {
     /// A short note at the bottom, with Undo where it can be undone (app.js, `showToast`).
     @State private var toast: Toast?
 
-    init(account: Account) {
+    init(account: Account, notifications: Notifications = .shared) {
         self.account = account
         _live = State(initialValue: Live(account: account))
         _pictures = State(initialValue: Pictures(account: account))
+        _notifications = State(initialValue: notifications)
     }
 
     var body: some View {
@@ -92,9 +93,7 @@ struct ChatListScreen: View {
         .onChange(of: notifications.opened, initial: true) { _, destination in
             if destination != nil { Task { await openNotification() } }
         }
-        .onChange(of: unreadChats, initial: true) { _, count in
-            if list.loaded { notifications.setBadge(count) }
-        }
+        .modifier(AppBadge(notifications: notifications, count: list.loaded ? unreadChats : nil))
         .onChange(of: links.pending, initial: true) { _, invite in
             // Once the server has said whose it is (or that it doesn't work).
             guard let invite, invite.inviter != nil || invite.problem != nil else { return }
@@ -110,10 +109,8 @@ struct ChatListScreen: View {
         .onDisappear { live.stop() }  // signed out
     }
 
-    /// Chats with something unread or unopened, for the tab's badge (muted ones don't count).
-    private var unreadChats: Int {
-        list.rows.filter { $0.waiting != nil && !$0.muted && !$0.hidden }.count
-    }
+    /// Chats with something unread or unopened, for the tab's badge and the icon's (muted and hidden ones don't count).
+    private var unreadChats: Int { Notifications.badge(list.rows) }
 
     private var chats: some View {
         NavigationStack(path: $path) {
@@ -213,6 +210,9 @@ struct ChatListScreen: View {
             .navigationDestination(for: ChatRow.Kind.self) { kind in
                 if let conversation = conversation(kind) {
                     ChatScreen(conversation: conversation)
+                        // Its own screen per chat: one chat swapped for another in place (a notification
+                        // or link opened while a chat is open) starts fresh, loading and reading it.
+                        .id(kind)
                         .environment(live)
                         .onDisappear { Task { await load() } }  // reads and new messages since
                 }
@@ -395,7 +395,14 @@ struct ChatListScreen: View {
         tab = .chats
         switch destination {
         case .friends:
-            path = []
+            if !path.isEmpty {
+                // Out of the open chat first: a push asked for while the stack is still
+                // popping is dropped, so the pop goes without animation and finishes first.
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) { path = [] }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
             showingFriends = true
         case .chat(let kind):
             if conversation(kind) == nil { await load() }

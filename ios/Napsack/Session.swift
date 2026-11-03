@@ -80,8 +80,12 @@ enum SignInError: LocalizedError, Equatable {
     }
 
     private(set) var state: State = .starting {
-        // The app's reports go as whoever's signed in.
-        didSet { if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) } }
+        didSet {
+            // The app's reports go as whoever's signed in.
+            if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) }
+            // A notification tapped while signed out was for whoever was here before.
+            if case .signedOut = oldValue, account != nil { Notifications.shared.opened = nil }
+        }
     }
     /// Where sign-in last went, for reports while signed out.
     private var lastServer: String?
