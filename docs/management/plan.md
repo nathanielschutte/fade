@@ -23,13 +23,19 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 3 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 4 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 5 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it |
+| 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | Up next | Nate (2026-11-03), on his phone |
+| 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | Up next | Nate (2026-11-03) |
+| 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | Up next | Nate (2026-11-03) |
+| 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 7 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 8 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 9 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 10 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 11 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 12 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 13 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 14 | [Passkeys](#f26-passkeys) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -349,6 +355,26 @@ Oldest first; newly shipped rows go at the bottom.
 - Direct chats: two people, so the list is you and them. Groups: reactions aren't end-to-end encrypted yet (the server has who and which emoji), so the list comes with the messages; once group reactions are encrypted (row 7's work), the list is worked out on each member's phone from what it decrypts.
 - Every client: the web (desktop and phone) and the iOS app.
 
+#### F22. Delete your own account
+- Nate (2026-11-03): people can delete their own account, and it wipes everything of theirs; other people only lose that chat. A robust confirmation. Admins keep turning accounts off. Group messages they sent go too; backups last 30 days, then go; the username is held 30 days, then free. The App Store requires it (5.1.1(v)).
+- Design: [account-deletion.md](../design/account-deletion.md). Rule 1's one exception: `deletion.rs`, run only by the person themselves.
+- Every client: the web (desktop and phone) and the iOS app.
+
+#### F23. Easier sign-in: password managers, strong passwords, the recovery key saved
+- Nate (2026-11-03): the iOS app saves your password in Passwords, and the desktop works with password managers wherever it can. "What else can we do to make life easier?"
+- iOS: the site's `apple-app-site-association` gains `webcredentials`, and the app `webcredentials:` in Associated Domains, so iOS offers to save the password and fills in the one saved on the web (and the reverse). Sign-up suggests a strong password (`passwordrules`).
+- Web: the sign-up form says `new-password`, so managers offer to generate and save one; a strength meter says how strong it is.
+- The recovery key: save it to Passwords or a password manager (as a second login item for napsack) or as a file, instead of only showing it.
+
+#### F24. Lock napsack with Face ID (iOS)
+- Nate (2026-11-03): plan it and build it (was "not now", 2026-11-02). An optional lock when the app opens or comes back after a while: Face ID, falling back to the phone's passcode. Off by default; a switch in Settings. The app's screen blurs in the app switcher while it's locked.
+
+#### F25. Sign in by scanning from a signed-in device
+- Nate (2026-11-03), planned: on a new phone or computer, show a QR; scan it from a device you're already signed in on, which hands over the private key encrypted to the new device. No password typed there. A new format with its own vectors; a design doc first.
+
+#### F26. Passkeys
+- Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first (how it sits beside the password and the recovery key).
+
 ### Debug
 
 #### D13. "Database is locked" under load (fixed)
@@ -410,6 +436,9 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-11-02): people keep getting signed out, far sooner than the 90 days sessions last; he'd rather sessions last about a year. Does a restart end them? (No: sessions are in the database.)
 - Found (production, read-only): no session expired in the 14 days before; of 55 that ended, 23 were cut by the 4-device cap at someone's new sign-in, including sessions 2 to 10 days old on devices in use (users 7, 10, 11, 16, and Nate's often). The cap ended the oldest *sign-in*, and sessions a browser had forgotten (Safari clears a site's storage after 7 days without a visit; the home-screen app counts separately; reinstalls) stayed live and filled the slots, so the next sign-in pushed out a phone in daily use.
 - **Built:** the cap now ends the session used least recently (`sessions.last_used_at`, migration 0024, noted at most hourly); sessions last 365 days (`FADE_SESSION_DAYS`) and renew while they're used, so a device that's opened never gets signed out. Nate (2026-11-02): and 10 devices per person instead of 4 (`FADE_MAX_SESSIONS`). Unit: `the_cap_ends_the_least_recently_used`, `a_session_in_use_renews`.
+
+#### D17. The iOS chat is stuck for a second or two when it opens
+- Nate (2026-11-03): opening a chat, it won't scroll for one to two seconds. Likely work on the main thread as it opens (decrypting the page, laying out every bubble at once).
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
