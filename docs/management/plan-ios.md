@@ -55,7 +55,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Forgot password: the recovery key or an admin's reset code | Nate | Done | 2026-10-30: "Forgot your password?" on sign-in: the recovery key (the same key, every message readable) or an Admin's reset code (a new key, which it says first; then a new recovery key, shown once). Tested against a real server, both ways |
 | Change your username (once a week) | Nate | Done | 2026-10-29: Settings; the key is locked again under the new name (the salt); the server's own words when it's too soon or taken |
 | Account security: when the recovery key was set, devices signed in, sign out every other device | Nate | Done | 2026-10-29: Settings. `LiveAccountTests` proves each against a real server by signing in again afterwards |
-| Lock napsack with Face ID | Nate | Up next | Nate (2026-11-03): build it ([F24](plan.md#f24-lock-napsack-with-face-id-ios)): optional, off by default, Face ID with the passcode as fallback, when the app opens or comes back after a while; blurred in the app switcher. Was: not now (2026-11-02) |
+| Lock napsack with Face ID | Nate | In progress | Nate (2026-11-03): build it ([F24](plan.md#f24-lock-napsack-with-face-id-ios)). Built: Settings › Security › Lock with Face ID, on after one check; locks at launch and after a minute away; covered in the app switcher; signing out turns it off. Needs the phone. Was: not now (2026-11-02) |
 
 ## 5. Friends
 

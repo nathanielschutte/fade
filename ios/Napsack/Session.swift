@@ -477,6 +477,7 @@ enum SignInError: LocalizedError, Equatable {
         UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
         ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
         Notifications.shared.signedOut()  // delivered ones and the badge; the server stops with the session
+        AppLock.shared.signedOut()  // the lock was this account's choice
         self.notice = notice
         state = .signedOut
     }
