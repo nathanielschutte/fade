@@ -42,10 +42,10 @@ struct LiveProfileTests {
         #expect(seen.profile?.avatarId == avatar)
         let pictures = Pictures(account: ben)
         let path = Pictures.path(.friend(ana.user.id), avatar: avatar)
-        async let one: Void = pictures.load(path)
-        async let two: Void = pictures.load(path)  // asked twice at once: fetched once
+        async let one: Void = pictures.load(path, pixels: 192)
+        async let two: Void = pictures.load(path, pixels: 192)  // asked twice at once: fetched once
         _ = await (one, two)
-        #expect(pictures.images[path] != nil)
+        #expect(pictures.picture(path).image(192).map { $0.size.width * $0.scale } == 192)
 
         // A nickname only Ben sees.
         try await seen.setNickname("Banana", for: ana.user.id)

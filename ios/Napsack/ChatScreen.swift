@@ -106,6 +106,7 @@ struct ChatScreen: View {
         // scroll view keeps what's on screen where it is.
         .defaultScrollAnchor(.bottom)
         .scrollPosition($position)
+        .modifier(ShowFound(conversation: conversation, position: $position))  // a search result's message (Search.swift)
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.visibleRect.maxY >= geometry.contentSize.height - Self.nearBottom
         } action: { _, now in

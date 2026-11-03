@@ -38,6 +38,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 13 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 14 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 | 15 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided; the server and the format first |
+| 16 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
@@ -542,6 +543,11 @@ Oldest first; newly shipped rows go at the bottom.
 - **Following from rows being kept** (review, 2026-11-03): what arrives in the chat you're reading isn't shown as unread while its read is on its way (the row and the tab's count treat the open chat, with napsack on screen, as read; pics still wait to be opened), and coming back to napsack with a chat open reads what came meanwhile. A mute for some hours ends by itself, by its time, without the list loading again (before, the next message's refetch ended it). A first tap on Leave in the list disarms when the row is swiped shut or the pointer or focus leaves it.
 - **Found, not changed:** two texts sent within a moment of each other go out side by side, and the server can store the second first (seen in a test that sent three in 20 ms); a slow first send overtaken by the next would do the same. The outbox could send one at a time per chat; Nate's call.
 - iOS: the same scroll rules are in [plan-ios.md](plan-ios.md#8-chats-native).
+#### X41. Open the latest waiting pics straight from the chat list
+- Nate (2026-11-02), for the iOS app: "we should be able to automatically start viewing the latest pic message in a chat from the chat list view (as long as the most recent message is a pic). When you're done viewing all latest pics (might be multiple in a row) from the sender, you should just stay on the list view." Built there ([plan-ios.md](plan-ios.md#7-the-chat-list-native)): a tap on a row whose newest message is a pic or video waiting from them shows that chat's waiting pics back to back over the list, each opened only once shown, and leaves you on the list; groups too.
+- **The web today:** a tap on a chat in the list always opens the chat (`openChat`); pics open only from a chat's "Tap to view pic" (`snap-chip`, `openPics`); a double tap opens the camera for that chat ([X12](#x12-double-tap-a-chat-to-send-a-pic)).
+- **For the web to match:** a single tap on such a row runs `openPics` for that chat's waiting pics without opening the chat, then returns to the list. The double tap must still be told apart (the phone's 150ms wait before a tap acts already does that). A text from them before the pics stays unread: the row keeps its marker, from the server's `unread` count (`chatStatus` looks only at the newest message today). A group is marked read after only if those pics were all that was unread. If they turn out opened elsewhere, the tap opens the chat.
+- iOS's own double tap (answer with a pic, as X12) is planned there, not built (Nate: "leave that as planned for now").
 
 ### Security
 
