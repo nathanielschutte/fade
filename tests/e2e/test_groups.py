@@ -216,9 +216,31 @@ async def main():
         await expect(ben.locator("#group-members .person")).to_have_count(3)
         await expect(ben.locator("#group-members button", has_text="Remove")).to_have_count(0)
         await expect(ben.locator("#group-remove-hint")).to_have_text(f"Only {ANA} can remove people. You can add your friends.")
+        # Ana's sheet is open as Ben renames; its refresh comes back only after
+        # she's closed it (held here, as a slow connection would), and it stays closed.
+        await ana.click("#chat-title")
+        await expect(ana.locator("#group-dialog")).to_be_visible()
+        held, release = asyncio.Event(), asyncio.Event()
+        one_group = re.compile(r".*/api/groups/\d+$")
+
+        async def hold(route):
+            if route.request.method == "GET":
+                held.set()
+                await release.wait()
+            await route.continue_()
+        await ana.route(one_group, hold)
         await ben.fill("#rename-input", "Road trip 2026")
         await ben.click("#rename-form button")
         await expect(ana.locator("#chat-title")).to_have_text("Road trip 2026", timeout=10000)
+        await asyncio.wait_for(held.wait(), 10)
+        await ana.click("#group-dialog [data-close]")
+        await expect(ana.locator("#group-dialog")).to_be_hidden()
+        async with ana.expect_response(one_group):
+            release.set()
+        await ana.evaluate("() => new Promise((done) => setTimeout(done))")  # the answer's handling runs first
+        await expect(ana.locator("#group-dialog")).to_be_hidden()
+        await ana.unroute(one_group)
+        print("a refresh that comes back after the sheet was closed leaves it closed")
 
         # Leaving takes two taps.
         await ben.click("#leave-group")

@@ -16,7 +16,10 @@ errors = []
 
 async def forget_kept(page):
     """What the app kept on this device (cache.js) would show at once; these
-    checks are about the first load, before anything was kept."""
+    checks are about the first load, before anything was kept. Cleared now,
+    and again as the page next loads, before napsack's own scripts run: live
+    updates (a friend's presence) can keep the list again in between."""
+    await page.add_init_script("indexedDB.deleteDatabase('napsack-cache')")  # cache.js's DB_NAME
     await page.evaluate("import('/cache.js').then((c) => c.clear())")
 
 

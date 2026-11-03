@@ -170,7 +170,10 @@ async def main():
         await admin.locator(".switch:has(#g-chats)").click()
         await expect(admin.locator("#g-host .gnode.chat")).to_have_count(0, timeout=10000)
         # "Show their graph" from a picked person.
-        await admin.locator(f"#g-host .gnode[aria-label='{DEE}'] .ghit").click()
+        # Picked by its own click, not by where it is: the layout can still be
+        # settling, and a click by position could land on the node beside it.
+        await admin.locator(f"#g-host .gnode[aria-label='{DEE}'] .ghit").dispatch_event("click")
+        await expect(admin.locator(".graph-caption")).to_contain_text(DEE)
         await admin.locator(".graph-caption button", has_text="Show their graph").click()
         await expect(admin.locator("#g-host .gnode.center")).to_have_attribute("aria-label", DEE, timeout=10000)
 
