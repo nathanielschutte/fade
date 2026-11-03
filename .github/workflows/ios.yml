@@ -5,12 +5,14 @@ name: iOS app
 # tests (a real server), the UI tests (NapsackUITests) among them, skip here;
 # they run on a Mac with a local server (scripts/test-ios.sh).
 #
-# Runs only when something the app depends on changes; ci.yml's server and
-# Terraform checks skip changes that are only in ios/ and the docs.
+# Runs only on main, once a pull request is merged, and only when something
+# the app depends on changes; or by hand (Actions › iOS app › Run workflow).
+# Not on pull requests: macOS minutes cost about ten times Linux's, so a pull
+# request is checked on a Mac first (make ios; Nate, 2026-11-03). ci.yml's
+# server and Terraform checks skip changes that are only in ios/ and the docs.
 
 on:
-  pull_request:
-    paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]

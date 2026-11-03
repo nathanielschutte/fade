@@ -1,12 +1,16 @@
 name: CI
 
+# Runs on main, once a pull request is merged, or by hand (Actions › CI › Run
+# workflow). Not on pull requests, to keep the bill down (Nate, 2026-11-03): a
+# pull request is checked locally first (scripts/test.sh, make lint, terraform
+# fmt and validate; CLAUDE.md).
 on:
-  pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
     # On main, a change only to the iOS app or the docs makes no candidate, so
     # it doesn't run at all: that way it can't push a server commit's waiting
-    # run out of the queue below. (Pull requests still run, for the required checks.)
+    # run out of the queue below.
     paths-ignore: ["ios/**", "docs/**", "*.md"]
 
 concurrency:
