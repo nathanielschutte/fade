@@ -38,8 +38,6 @@ struct ChatScreen: View {
     @State private var failure: String?
     /// The message being held: its reactions and actions show over the chat.
     @State private var held: Bubble?
-    /// The message under a finger, before its menu comes: it gives a little.
-    @State private var pressing: Int64?
     /// Counts what you've sent and reacted, for a light tap of haptics each time.
     @State private var tapped = 0
     /// A pic or video being opened (once).
@@ -328,17 +326,7 @@ struct ChatScreen: View {
         }
         BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(bubble, next),
                    react: conversation.canSend && bubble.repliable ? { react(bubble, $0) } : nil)
-            // Gives a little under the finger until the menu comes.
-            .scaleEffect(pressing == bubble.id ? 0.95 : 1)
-            .animation(.easeOut(duration: 0.2), value: pressing == bubble.id)
-            // Before the tap, so it isn't waiting on the tap: the menu comes at
-            // the moment, while the finger is still down, not when it lifts.
-            .onLongPressGesture(minimumDuration: 0.35) {
-                pressing = nil
-                if holdable(bubble) { held = bubble }
-            } onPressingChanged: { down in
-                if down { pressing = bubble.id } else if pressing == bubble.id { pressing = nil }
-            }
+            .modifier(HoldForMenu(enabled: holdable(bubble)) { held = bubble })
             .onTapGesture { if let pic = bubble.opening { viewing = pic } }
             .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable && held == nil) {
                 editing = nil
@@ -702,6 +690,30 @@ struct MessageActions: View {
 /// Swipe a message right to reply, as people expect on a phone: it follows the
 /// finger a little, and past the threshold a tap of haptics and the reply bar.
 /// Vertical drags are left to the scroll view.
+/// Holding a message brings its menu while the finger is still down, with a
+/// haptic then (ChatScreen), and the bubble gives a little under the finger
+/// until it comes. Only a message that has a menu gives. The pressed state is
+/// the row's own, so a touch redraws one bubble, not the chat.
+struct HoldForMenu: ViewModifier {
+    let enabled: Bool
+    let open: () -> Void
+    @State private var pressing = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(pressing ? 0.95 : 1)
+            .animation(.easeOut(duration: 0.2), value: pressing)
+            // Before the tap (ChatScreen), so it isn't waiting on the tap: the
+            // menu comes at the moment, while the finger is down, not when it lifts.
+            .onLongPressGesture(minimumDuration: 0.35) {
+                pressing = false
+                if enabled { open() }
+            } onPressingChanged: { down in
+                pressing = down && enabled
+            }
+    }
+}
+
 struct SwipeToReply: ViewModifier {
     let enabled: Bool
     let reply: () -> Void
