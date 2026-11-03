@@ -22,6 +22,7 @@ The exact strings and numbers here come from [`shared/crypto/crypto.js`](../shar
 - [Safety codes and changed keys](#safety-codes-and-changed-keys)
 - [Limits](#limits)
 - [Roles and the System page](#roles-and-the-system-page)
+- [Deleting your account](#deleting-your-account)
 - [Keeping it running](#keeping-it-running)
 - [Glossary](#glossary)
 
@@ -281,9 +282,15 @@ Everyone is a **User**. Two roles see more of how napsack is doing, never more o
 
 Nothing on the System page shows message content: the server doesn't have any. Logs record events and ids (sign-ins, friendships, errors), never what anyone wrote, and the server redacts anything that looks like content or a secret.
 
+## Deleting your account
+
+In your profile, **Delete account** deletes everything of yours from napsack, for good: every message, pic, and video you sent or got, in every chat and group; your friends, and their chats with you; your name, picture, and birthday; your account. It asks for your password and for your username typed again, then it's done at once. Your friends lose their chat with you; in groups, your messages are gone and the group says a member left. What's left is an empty placeholder others' records point at (who created a group), with nothing of you in it. Your username can't be taken by anyone for 30 days, so nobody can pose as you to the friends who just lost you; then it's free.
+
+Backups last 30 days, so 30 days after you delete your account it's in no copy anywhere. If a backup ever had to be restored, the deletion is applied again as the server starts. Admins can turn an account off, which deletes nothing, but they can't delete anyone. [account-deletion.md](design/account-deletion.md)
+
 ## Keeping it running
 
-- **Backups.** The database is copied to S3 every hour and kept forever; the server can add backups but can't read, change, or delete them. The data disk is also snapshotted daily, kept 30 days. Nothing in the database is ever deleted in the first place: when something ends (a friendship, a session), it's marked, not removed. [backups.md](operations/backups.md)
+- **Backups.** The database is copied to S3 every hour and kept 30 days; the server can add backups but can't read, change, or delete them. The data disk is also snapshotted daily, kept 30 days. Nothing in the database is deleted in the first place, except by people deleting their own account: when something ends (a friendship, a session), it's marked, not removed. [backups.md](operations/backups.md)
 - **The health monitor.** Every 5 minutes, a small program outside the server (an AWS Lambda) asks `https://napsack.io/api/health` whether the database answers and the disk has room. Two failures in a row open an incident, and it tries to fix things one gentle step at a time: restart the app, reboot, then move the server to new hardware. If none of that works, it asks for a person. Every step and its evidence is written down, and Admins see the last week of incidents on the Metrics tab. [health-monitor.md](implementation/health-monitor.md)
 - **Metrics.** The Metrics tab shows how the machine and the server are doing (CPU, memory, disk, response times, errors) and says plainly whether anything needs attention. [metrics.md](implementation/metrics.md)
 - **Staging.** A separate copy at staging.napsack.io, with no real accounts and no access to production's data, is where changes get tried on a real deployment and load tested. On the same size machine it handled 400 people online and 718 texts a second. [staging.md](operations/staging.md)

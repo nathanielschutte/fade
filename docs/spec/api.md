@@ -42,6 +42,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `PUT  /me/recovery` | `{auth_key, recovery_auth_key, recovery_wrapped_key}`: set or replace your recovery key (needs the password) |
 | `GET  /me/security` | `{recovery_set_at, key_reset_at, active_sessions}` |
 | `POST /me/sessions/end-others` | Sign out every other device; their live connections close |
+| `POST /me/delete` | `{auth_key, username}`: the password (proven by its auth key; failures count toward the sign-in limit) and the username typed again (any case). Deletes the account and everything of it, for good ([account-deletion.md](../design/account-deletion.md)): every session ends, friends get `friends_changed`, groups get `groups_changed` and a `left` event from "Deleted account". Its username can't be taken for 30 days. `400` for a wrong password or username; Team Napsack can't be deleted |
 | `POST /auth/recover/start` · `/finish` | Forgot password, with the recovery key: get the recovery copy of your key, then set a new password. Rate-limited like sign-in |
 | `POST /auth/reset` | `{username, code, new_auth_key, public_key, wrapped_private_key}`: an admin's one-time code; a new key pair, no history |
 | `POST /admin/users/{id}/reset-code` | Admins: issue a reset code (shown once, 24 hours, any older one stops working) |

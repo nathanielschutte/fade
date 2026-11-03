@@ -66,6 +66,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
+| `FADE_DELETION_MARKERS` | `false` | Production only (Terraform sets it): each account deletion leaves a marker (the id) in the backups bucket, and the server wipes any marked account it finds at start, so a restored backup loses no deletion ([backups.md](backups.md)) |
 | `FADE_APNS_KEY` · `FADE_APNS_KEY_ID` | unset | iPhone notifications ([below](#iphone-notifications-apns)): the APNs key's .p8 file base64-encoded, and its Key ID. Without a key, iPhones get none |
 | `FADE_APPLE_TEAM_ID` · `FADE_IOS_BUNDLE_ID` | unset · `com.getattr.napsack` | The iPhone app (`apple_team_id` in tfvars): signs notifications, and names the app in `/.well-known/apple-app-site-association`, so add-a-friend links open it (Universal Links). Without a team, that file is a 404 and links open the site |
 | `FADE_SESSION_DAYS` | `365` | How long a session lasts after it was last used: each use (noted at most hourly) pushes its end out again |

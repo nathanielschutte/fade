@@ -1,6 +1,8 @@
-# Database backups: an hourly consistent copy of the SQLite database, kept
-# forever (docs/operations/backups.md). The instance can only add objects here, never
-# delete or overwrite them, and versioning keeps anything that does change.
+# Database backups: an hourly consistent copy of the SQLite database, kept 30
+# days (docs/operations/backups.md): a deleted account is gone from every copy
+# within 30 days (Nate, 2026-11-03; docs/design/account-deletion.md). The instance
+# can only add objects here, never delete or overwrite them, and versioning keeps
+# anything that does change until the lifecycle below removes it.
 
 resource "aws_s3_bucket" "backups" {
   bucket = "${var.app_name}-backups-${data.aws_caller_identity.current.account_id}-${var.region}"
@@ -36,20 +38,22 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
   }
 }
 
-# Never expires anything; older backups just move to cheaper storage.
+# Database backups last 30 days, then go, every version of them. Deletion
+# markers (`deletions/<id>`, ids only) are kept: a restored backup is wiped
+# again from them at start (server/src/deletion.rs).
 resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
   rule {
-    id     = "cheaper-storage-after-30-days"
+    id     = "backups-last-30-days"
     status = "Enabled"
-    filter {}
-    transition {
-      days          = 30
-      storage_class = "GLACIER_IR"
-    }
-    noncurrent_version_transition {
-      noncurrent_days = 30
-      storage_class   = "GLACIER_IR"
-    }
+    filter { prefix = "db/" }
+    expiration { days = 30 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+  rule {
+    id     = "expired-backup-markers"
+    status = "Enabled"
+    filter { prefix = "db/" }
+    expiration { expired_object_delete_marker = true }
   }
 }

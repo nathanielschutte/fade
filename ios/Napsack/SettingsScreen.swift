@@ -12,6 +12,7 @@ struct SettingsScreen: View {
     @State private var note: String?
     @State private var asking: PasswordSheet.Purpose?
     @State private var confirmingEndOthers = false
+    @State private var deleting = false
     @State private var signingOut = false
     @State private var profile: ProfileModel?
     @State private var name = ""
@@ -98,6 +99,11 @@ struct SettingsScreen: View {
                 }
             }
             Section {
+                Button("Delete account", role: .destructive) { deleting = true }
+            } footer: {
+                Text("Deletes everything of yours from napsack, for good.")
+            }
+            Section {
                 Button("Sign out", role: .destructive) {
                     signingOut = true
                     Task { await session.signOut() }
@@ -123,6 +129,7 @@ struct SettingsScreen: View {
         .sheet(item: $asking) { purpose in
             PasswordSheet(purpose: purpose, hasRecoveryKey: account.user.hasRecoveryKey) { note = $0; Task { await loadSecurity() } }
         }
+        .sheet(isPresented: $deleting) { DeleteAccountSheet(username: account.user.username) }
         .confirmationDialog("Sign out every other device?", isPresented: $confirmingEndOthers, titleVisibility: .visible) {
             Button("Sign out other devices", role: .destructive) { Task { await endOthers() } }
         } message: {
@@ -336,6 +343,74 @@ struct PasswordSheet: View {
             } catch {
                 problem = error.localizedDescription
                 session.noticed(error)
+            }
+        }
+    }
+}
+
+/// Deleting your account (the web's delete dialog): what goes, then the
+/// password and the username typed again; the red button works only once
+/// both are in and the name matches. It can't be undone.
+struct DeleteAccountSheet: View {
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let username: String
+    @State private var password = ""
+    @State private var typed = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    private var ready: Bool {
+        !password.isEmpty && typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == username.lowercased()
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("This deletes, for good:")
+                    Label("Every message, pic, and video you sent or got, in every chat and group", systemImage: "bubble.left.and.bubble.right")
+                    Label("Your friends, and their chats with you", systemImage: "person.2")
+                    Label("Your name, picture, and birthday", systemImage: "person.crop.circle")
+                    Label("Your account. Your username is free for someone else after 30 days.", systemImage: "at")
+                } footer: {
+                    Text("It can't be undone, by you or anyone. Copies in napsack's backups are gone within 30 days.")
+                }
+                Section {
+                    SecureField("Your password", text: $password).textContentType(.password)
+                    TextField("Type your username, \(username)", text: $typed)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                } footer: {
+                    if let problem { Text(problem).foregroundStyle(.red) }
+                }
+                Section {
+                    Button(role: .destructive) { delete() } label: {
+                        HStack {
+                            Spacer()
+                            Text(working ? "Deleting…" : "Delete my account forever").bold()
+                            Spacer()
+                        }
+                    }
+                    .disabled(!ready || working)
+                }
+            }
+            .navigationTitle("Delete your account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(working) } }
+            .interactiveDismissDisabled(working)
+        }
+    }
+
+    private func delete() {
+        guard ready, !working else { return }
+        working = true
+        problem = nil
+        Task {
+            defer { working = false }
+            do {
+                try await session.deleteAccount(password: password, typedUsername: typed)
+            } catch {
+                problem = error.localizedDescription
             }
         }
     }

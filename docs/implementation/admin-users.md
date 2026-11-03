@@ -6,7 +6,7 @@ Code: `server/src/admin_users.rs`, `server/src/announcements.rs`, migration `001
 
 ## People
 
-A table of every account: username, role, status (online, active, or turned off), when they joined, when they were last seen, friends, texts and pics sent, with a search. The header says how many of the account cap are in use; a turned-off account doesn't count toward it.
+A table of every account (an account its owner deleted isn't listed, and its page is "not found": nothing of it is left to show): username, role, status (online, active, or turned off), when they joined, when they were last seen, friends, texts and pics sent, with a search. The header says how many of the account cap are in use; a turned-off account doesn't count toward it.
 
 Choosing someone opens their account:
 
@@ -27,7 +27,7 @@ Counts and dates only, like the rest of the System page: never a message, a key,
 
 Every action takes two taps, and each is recorded (below).
 
-**Turn the account off.** For someone who should no longer use napsack. Nothing is deleted (Rule 1): a row is added to `deactivations`, with an optional reason only Admins see. From that moment:
+**Turn the account off.** For someone who should no longer use napsack. Nothing is deleted (Rule 1; only people themselves can delete their account, [account-deletion.md](../design/account-deletion.md), and Admins never can): a row is added to `deactivations`, with an optional reason only Admins see. From that moment:
 - every session ends and their live connections close, so their apps find themselves signed out;
 - signing in, recovering with a recovery key, or using a reset code says "This account has been turned off", but only after the right password or key, so it tells a guesser nothing;
 - friends keep the chat and can read all of it, but can't send texts, pics, or reactions to them; their chat list says "Account turned off" and the chat explains why sending is blocked;

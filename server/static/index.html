@@ -404,6 +404,11 @@
     </div>
     <label class="check activity-check"><input type="checkbox" id="share-activity"> Show friends when I'm active or typing</label>
     <p class="field-hint">Off means you won't see theirs either.</p>
+    <h3>Delete account</h3>
+    <p class="field-hint">Deletes everything of yours from napsack, for good.</p>
+    <div class="picture-row">
+      <button type="button" class="button danger" id="delete-account">Delete account</button>
+    </div>
   </section>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>
@@ -458,6 +463,36 @@
     </label>
     <p class="form-error" id="password-error" role="alert"></p>
     <button type="submit" class="button primary" id="password-submit"></button>
+  </form>
+</dialog>
+
+<!-- Deleting your own account (deletion.rs): what goes, then the password and the username -->
+<dialog id="delete-dialog" class="sheet" aria-labelledby="delete-title">
+  <header class="sheet-head">
+    <h2 id="delete-title">Delete your account</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <form id="delete-form" class="group-form" novalidate>
+    <p class="sheet-text">This deletes, for good:</p>
+    <ul class="sheet-list">
+      <li>every message, pic, and video you sent or got, in every chat and group</li>
+      <li>your friends, and their chats with you</li>
+      <li>your name, picture, and birthday</li>
+      <li>your account. Your username is free for someone else after 30 days.</li>
+    </ul>
+    <p class="sheet-text">It can't be undone, by you or anyone. Copies in napsack's backups are gone within 30 days.</p>
+    <label class="field">
+      <span>Your password</span>
+      <input name="delete_password" type="password" autocomplete="current-password" required>
+    </label>
+    <label class="field">
+      <span id="delete-username-label">Type your username</span>
+      <input name="delete_username" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <p class="form-error" id="delete-error" role="alert"></p>
+    <button type="submit" class="button danger-solid" id="delete-submit" disabled>Delete my account forever</button>
   </form>
 </dialog>
 
