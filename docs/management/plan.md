@@ -24,7 +24,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it |
-| 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | Up next | Nate (2026-11-03), on his phone |
+| 3 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone |
 | 4 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | Up next | Nate (2026-11-03) |
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | Up next | Nate (2026-11-03) |
 | 6 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
@@ -440,6 +440,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### D17. The iOS chat is stuck for a second or two when it opens
 - Nate (2026-11-03): opening a chat, it won't scroll for one to two seconds. Likely work on the main thread as it opens (decrypting the page, laying out every bubble at once).
+- Found: not the main thread (the page is decrypted off it, and each bubble is cheap). A chat opens from the kept copy at once, then the server's page arrives a moment later and *replaced* the whole list, which put the scroll view back at the bottom, cancelling a scroll under way. Now a page already on screen is merged, changing only what changed: the same messages again change nothing (`thePageOnScreenIsMergedNotReplaced`). Needs Nate's phone to confirm.
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
