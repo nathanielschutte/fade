@@ -2,7 +2,8 @@ name: iOS app
 
 # The iOS app (ios/, docs/ios-onboarding.md): the Swift crypto against the
 # pinned vectors, then the app's build and unit tests on a simulator. The live
-# tests (a real server) skip here; they run on a Mac with a local server.
+# tests (a real server), the UI tests (NapsackUITests) among them, skip here;
+# they run on a Mac with a local server (scripts/test-ios.sh).
 #
 # Runs only when something the app depends on changes; ci.yml's server and
 # Terraform checks skip changes that are only in ios/ and the docs.
@@ -33,7 +34,7 @@ jobs:
       - name: Build and unit tests (simulator)
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
-          -destination "platform=iOS Simulator,name=iPhone 17"
+          -destination "platform=iOS Simulator,name=iPhone 17" -collect-test-diagnostics never
       # What ships: a Release build compiles, and carries no test data (App.xcconfig).
       - name: Release build, without the vectors
         run: |

@@ -9,6 +9,12 @@ struct NapsackApp: App {
     @State private var lock = AppLock.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        #if DEBUG
+        AppInfo.freshStartIfAsked()  // before the session is read (UI tests)
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {

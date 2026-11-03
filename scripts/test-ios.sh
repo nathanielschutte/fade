@@ -2,12 +2,14 @@
 # The iOS app's tests, as scripts/test.sh runs the server's: the encryption
 # package against the pinned vectors (swift test), then the app's tests on a
 # Simulator, against a fresh server and throwaway database so the live tests
-# (sign-in, sending, the socket, the log viewer) run too.
+# (sign-in, sending, the socket, the log viewer) and the UI tests (NapsackUITests:
+# the real app, driven through its screens) run too.
 #
 #   bash scripts/test-ios.sh                everything
 #   bash scripts/test-ios.sh --no-live      without a server: the same commands as CI (.github/workflows/ios.yml; keep them matching)
 #   bash scripts/test-ios.sh --staging      live against staging, a real deployment (makes test accounts there; never production)
 #   ONLY=NapsackTests/SendingTests bash scripts/test-ios.sh     one suite (or a test: .../SendingTests/name())
+#   ONLY=NapsackUITests bash scripts/test-ios.sh                 the UI tests: the app driven through its screens
 #   SIMULATOR="iPhone 17 Pro" bash scripts/test-ios.sh
 #
 # Needs a Mac with Xcode (docs/ios-onboarding.md). The full xcodebuild output
@@ -74,13 +76,19 @@ REL="$TMP/release"
 xcodebuild build -project ios/Napsack.xcodeproj -scheme Napsack -configuration Release -destination "generic/platform=iOS Simulator" \
   -derivedDataPath "$REL" CODE_SIGNING_ALLOWED=NO -quiet >"$TMP/release.log" 2>&1 || { tail -20 "$TMP/release.log"; exit 1; }
 if ls "$REL/Build/Products/Release-iphonesimulator/Napsack.app" | grep -q vectors; then echo "a release build carries the test vectors"; exit 1; fi
+# The UI tests point a Debug build at their server, and start it fresh, through its launch environment (AppInfo); a release build never reads either.
+if grep -raqE "NAPSACK_UI_TEST_SERVER|NAPSACK_FRESH_START" "$REL/Build/Products/Release-iphonesimulator/Napsack.app"; then
+  echo "a release build reads the UI tests' launch settings"; exit 1
+fi
 
 section "app tests on the $SIMULATOR Simulator$([ "$LIVE" = 1 ] && echo ", live against $NAPSACK_URL")"
 LOG="$TMP/ios-test.log"
-ARGS=(test -project ios/Napsack.xcodeproj -scheme Napsack -destination "platform=iOS Simulator,name=$SIMULATOR")
+# Without a system diagnosis on a failure: it takes up to ten minutes, and the log and .xcresult say why.
+ARGS=(test -project ios/Napsack.xcodeproj -scheme Napsack -destination "platform=iOS Simulator,name=$SIMULATOR" -collect-test-diagnostics never)
 [ -n "${ONLY:-}" ] && ARGS+=("-only-testing:$ONLY")
-# Counts from xcodebuild's own lines ("Test case 'Suite/name()' passed on ..."), the same with or without parallel Simulator clones.
-count() { grep -cE "^Test case '.*' $1 on" "$LOG" || true; }
+# Counts from xcodebuild's own lines: "Test case 'Suite/name()' passed on ..." for the unit tests (the same with or
+# without parallel Simulator clones), and XCTest's "Test Case '-[NapsackUITests.Suite name]' passed (...)" for the UI tests.
+count() { grep -cE "^Test case '.*' $1 on|^Test Case '-\[NapsackUITests\..*\]' $1 \(" "$LOG" || true; }
 if env ${ENV[@]+"${ENV[@]}"} xcodebuild "${ARGS[@]}" >"$LOG" 2>&1; then
   echo "$(count passed) passed, $(count skipped) skipped$([ "$LIVE" = 0 ] && echo " (the live ones need a server)")"
 else
