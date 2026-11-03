@@ -128,6 +128,8 @@ import UIKit
     }
 }
 
+// Its windows take turns with the other suites' (Hosting.swift).
+extension OnScreen {
 @MainActor @Suite(.serialized) struct ChatScrollTests {
     /// At the bottom (where a chat opens), what comes below keeps the newest in
     /// sight: a new message and the typing line. On a small and a large phone.
@@ -149,4 +151,5 @@ import UIKit
         #expect(abs(chat.belowBottom) < 1, "the typing line: \(chat.describe)")
         chat.shoot("chat-typing-\(name)")
     }
+}
 }

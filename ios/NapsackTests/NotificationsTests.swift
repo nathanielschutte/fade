@@ -183,6 +183,8 @@ struct LiveNotificationsTests {
 /// for a direct chat, a group, and a friend request. Each chat opens and is
 /// read, and the icon's number follows as the phone reads them. Runs only
 /// with NAPSACK_TEST_SERVER set.
+// Its windows take turns with the other suites' (Hosting.swift).
+extension OnScreen {
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(2)))
 struct LiveNotificationTapTests {
     let live = LiveChatListTests()
@@ -310,4 +312,5 @@ struct LiveNotificationTapTests {
         for child in controller.children { titles += Self.titles(child) }
         return titles + Self.titles(controller.presentedViewController)
     }
+}
 }
