@@ -151,7 +151,7 @@ TestFlight is how builds reach phones before the App Store: yours and up to 100 
 
 1. **The bundle id.** It's the app's permanent identity: once the app is in App Store Connect it can't change. The code uses `NAPSACK_BUNDLE_ID` in `Config/Base.xcconfig`. Register it at [developer.apple.com](https://developer.apple.com/account) → Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs → App:
    - **Description:** napsack. **Bundle ID:** Explicit, exactly what `Base.xcconfig` says.
-   - **Capabilities:** only **Push Notifications** (for notifications later; it does nothing until the server sends them). Associated Domains (opening `napsack.io` links in the app) can be added later.
+   - **Capabilities:** **Push Notifications** and **Associated Domains** (add-a-friend links on the site opening the app). Both are in the app's entitlements (`Config/Napsack.entitlements`); cloud signing turns them on for the App ID if they aren't yet.
    - **App Services:** none. **Capability Requests:** none (special permissions Apple grants one by one; napsack needs none).
 2. **The app in App Store Connect.** [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → Apps → **+** → New App:
    - **Platforms:** iOS. **Name:** napsack (the App Store name: unique across the store; it can change later). **Primary language:** English (U.S.).
@@ -171,9 +171,28 @@ TestFlight is how builds reach phones before the App Store: yours and up to 100 
 2. `scripts/ios-testflight.sh`: it checks the settings (the real bundle id, the team, the server: release builds always use `https://api.napsack.io`), runs the crypto checks, builds the Release archive signed for the App Store, checks no test data is in it, and uploads it. `make ios-archive` does everything but the upload.
 3. In App Store Connect → the app → TestFlight, the build appears after processing (minutes). The first time, and for each build until it's decided in the app's settings, it asks about **export compliance** (encryption): the owner's legal answer (plan-ios.md, section 12).
 4. **Internal testing:** make a group, add yourself (and anyone on the team); TestFlight on the phone offers the build.
-5. **External testing:** make a group with a public link or emails, fill in the test information (what to test, a feedback email, a privacy policy URL, and a sign-in for Apple's reviewer: sign-up is invite-only, so make the reviewer an account on production), and submit the build for Beta App Review.
+5. **External testing:** make a group with a public link or emails, fill in the test information (what to test, a feedback email, a privacy policy URL, and a sign-in for Apple's reviewer: sign-up is invite-only, so make the reviewer an account on production), and submit the build for Beta App Review (below).
 
+### External testing: what Apple's review needs
 
+The first build of each version goes through Beta App Review. In App Store Connect → the app → TestFlight → Test Information (filled in once, edited when it changes):
+
+- **Beta App Description:** napsack is a private messenger for close friends: texts, and pics and videos that can be viewed once, all end-to-end encrypted. Sign-up is by invitation from a friend.
+- **Feedback Email:** the contact address on `/support`.
+- **Privacy Policy URL:** `https://napsack.io/privacy`. **Marketing URL:** none needed.
+- **Sign-in required:** yes, with the reviewer account (below). **Review notes:** "Sign in with the account above. Its friend, nate, will answer. Try a text, a reply (swipe a message), a reaction (hold a message), and a pic or video from the camera tab: the friend can open it once. Add-a-friend is by QR code or link (Friends)."
+- **What to Test** (each build): what's new in it, in a sentence or two.
+
+**The reviewer account** (Nate, 2026-11-02: a dedicated account, a User's permissions only; the one account on production made for testing). The owner makes it, so its password never passes through anyone else:
+
+1. In a private browser window, open your own add-a-friend link (Friends → Copy link), so the new account starts out your friend and needs no invite code.
+2. Sign up as `appreview` with a long password from your password manager. Save its recovery key there too.
+3. New accounts are Users: no PowerUser or Admin role (`/fade/admins` stays as it is).
+4. Put the username and password in the Test Information's sign-in fields, and nowhere else (never the repository, the plan, or a chat).
+
+Answer its messages while a build is in review. Between reviews it can stay; turning it off (System → Users) also works, but turn it back on before the next submission.
+
+## When it doesn't work
 
 - **"Signing for Napsack requires a development team":** `Config/Local.xcconfig` is missing or has no `DEVELOPMENT_TEAM` (First time, step 3).
 - **"No such module 'NapsackCrypto'":** File › Packages › Reset Package Caches, then build again.

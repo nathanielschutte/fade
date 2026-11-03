@@ -111,6 +111,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [After an admin reset code, old messages stay unread](#d14-after-an-admin-reset-code-old-messages-stay-unread-and-notify) | 0.45.0 | Nate |
 | [People signed out long before their sessions end](#d15-people-signed-out-long-before-their-sessions-end) | 0.46.0 | Nate |
 | [api.napsack.io: a stable address for the apps](#i10-apinapsackio-a-stable-address-for-the-apps) | 0.47.0, infra | Nate |
+| [iOS app](plan-ios.md): iPhone notifications through Apple (APNs) and add-a-friend links opening the app, the server side | 0.48.0 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
