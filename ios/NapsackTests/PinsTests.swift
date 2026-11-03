@@ -110,6 +110,55 @@ final class MemoryPinStore: PinStore, @unchecked Sendable {
         #expect(chats.rows.map(\.preview) == [text["plaintext"] as! String])
     }
 
+    /// Accepting her new key in her chat holds when the chat's opened again
+    /// from the list, which still has the pins from before (no event comes for
+    /// it): texts go sealed to the new key, and the list's row and camera take it at once.
+    @Test func anAcceptedKeyHoldsWhenTheChatIsOpenedAgain() async throws {
+        let newIdentity = P256.KeyAgreement.PrivateKey()
+        let newKey = E2E.toB64(newIdentity.publicKey.derRepresentation)
+        let message = list.message(from: 7, to: 3, read: true)
+        let friends = json([ChatListTests.friendJSON(alice: list.alice, nickname: "Al", last: message, extra: ["public_key": newKey])])
+        let server = StubServer { request in
+            let path = request.url!.path
+            if path.hasSuffix("/friends") { return (200, friends) }
+            if path.hasSuffix("/groups") { return (200, json([])) }
+            if path.hasSuffix("/messages") { return request.httpMethod == "POST" ? (200, SendingTests.stored(request)) : (200, json([])) }
+            return (200, json(["ok": true]))
+        }
+        var pinned = Pins()
+        _ = pinned.see(7, real)
+        let reader = list.reader
+        let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: list.bob["spki"] as! String,
+                              privateKey: reader.identity.derRepresentation)
+        let chats = ChatList(pinStore: MemoryPinStore(pinned), cacheRoot: nil)
+        try await chats.load(account, transport: server)
+        let stale = try #require(chats.reader)
+        #expect(stale.changed == [7])
+
+        let alice = try #require(stale.friends[7])
+        let chat = Conversation(.friend(alice), account: account, reader: stale, pinBook: chats.pinBook, transport: server)
+        try await chat.loadNewest()
+        try await chat.acceptNewKey(verified: true)
+        // Opened again from the list, with its reader from before: still accepted.
+        chat.update(.friend(alice), reader: stale)
+        #expect(!chat.keyChanged && chat.canSend)
+        await chat.send("new phone?", replyTo: nil)
+        let sent = try #require(await server.requests.last { $0.httpMethod == "POST" })
+        let theirs = try E2E.pairKey(mine: newIdentity, theirs: account.publicKey, myId: 7, theirId: 3)
+        #expect(try E2E.decryptAnyText(theirs, body(sent)["ciphertext"] as! String, format: 2, sender: 3, recipient: 7).text == "new phone?")
+        // A chat made fresh from that old reader too.
+        let again = Conversation(.friend(alice), account: account, reader: stale, pinBook: chats.pinBook, transport: server)
+        #expect(!again.keyChanged)
+
+        // The list: no more "Safety code changed", and she can be sent pics again, without a reload.
+        let asked = await server.requests.count
+        chats.pinsChanged()
+        await chats.settled()
+        #expect(chats.reader?.changed.isEmpty == true && chats.reader?.pins.current[7] == newKey)
+        #expect(chats.rows.first?.preview != "Safety code changed")
+        #expect(await server.requests.count == asked)
+    }
+
     @Test func groupMessagesAreReadWithThePinnedSenderKey() throws {
         let t = list.vg["text"] as! [String: Any]
         let sender = list.vg["sender"] as! Int64

@@ -41,6 +41,11 @@ public enum VectorChecks {
             do { _ = try body(); return false } catch { return true }
         }
         func data(_ b64: String) throws -> Data { try E2E.fromB64(b64) }
+        func hex(_ d: Data) -> String { d.map { String(format: "%02x", $0) }.joined() }
+        func bytes(_ hex: String) -> Data {
+            let h = Array(hex)
+            return Data(stride(from: 0, to: h.count, by: 2).compactMap { UInt8(String(h[$0..<$0 + 2]), radix: 16) })
+        }
         func priv(_ p: Format1.Party) throws -> P256.KeyAgreement.PrivateKey {
             try P256.KeyAgreement.PrivateKey(derRepresentation: data(p.pkcs8))
         }
@@ -302,11 +307,7 @@ public enum VectorChecks {
         }
 
         // Recovery keys and changing the password
-        check("recovery key displays like the vector") {
-            let hex = Array(vr.keyBytesHex)
-            let bytes = stride(from: 0, to: hex.count, by: 2).compactMap { UInt8(String(hex[$0..<$0 + 2]), radix: 16) }
-            return E2E.formatRecoveryKey(Data(bytes)) == vr.recoveryKey
-        }
+        check("recovery key displays like the vector") { E2E.formatRecoveryKey(bytes(vr.keyBytesHex)) == vr.recoveryKey }
         check("recovery key reads back despite typos") {
             let sloppy = vr.recoveryKey.lowercased()
                 .replacingOccurrences(of: "-", with: " ")
@@ -351,6 +352,30 @@ public enum VectorChecks {
             let k = try E2E.pairKey(mine: E2E.unwrapIdentity(wrapKey: next.wrapKey, wrapped: rewrapped), theirs: v.bob.spki, myId: v.alice.id, theirId: v.bob.id)
             return try E2E.decryptText(k, v.text.ciphertext, sender: v.text.from, recipient: v.text.to) == v.text.plaintext
                 && fails { try E2E.unwrapIdentity(wrapKey: old.wrapKey, wrapped: rewrapped) }
+        }
+
+        // Passkeys: a third copy of the key, opened by a passkey's PRF secret
+        let vk = vectors.passkey1
+        var pk: SymmetricKey?
+        check("the passkey PRF input matches the vector") { hex(E2E.passkeyPrfInput()) == vk.prfInputHex }
+        check("a passkey's copy of the key opens like the vector") {
+            pk = try E2E.deriveFromPasskey(bytes(vk.prfSecretHex))
+            let k = try E2E.pairKey(mine: E2E.unwrapWithPasskey(passkeyWrapKey: got(pk), wrapped: vk.passkeyWrappedKey),
+                                    theirs: v.bob.spki, myId: v.alice.id, theirId: v.bob.id)
+            return try E2E.decryptText(k, v.text.ciphertext, sender: v.text.from, recipient: v.text.to) == v.text.plaintext
+        }
+        check("a passkey copy round-trips") {
+            let copy = try E2E.wrapForPasskey(wrapKey: got(d).wrapKey, wrapped: v.password.wrappedPrivateKey, passkeyWrapKey: got(pk))
+            let k = try E2E.pairKey(mine: E2E.unwrapWithPasskey(passkeyWrapKey: got(pk), wrapped: copy),
+                                    theirs: v.bob.spki, myId: v.alice.id, theirId: v.bob.id)
+            return try E2E.decryptText(k, v.text.ciphertext, sender: v.text.from, recipient: v.text.to) == v.text.plaintext
+        }
+        check("another passkey, or the password's copy, can't pass as it") {
+            let key = try got(pk)
+            return fails { try E2E.unwrapWithPasskey(passkeyWrapKey: E2E.deriveFromPasskey(Data(count: 32)), wrapped: vk.passkeyWrappedKey) }
+                && fails { try E2E.unwrapWithPasskey(passkeyWrapKey: key, wrapped: v.password.wrappedPrivateKey) }
+                && fails { try E2E.unwrapIdentity(wrapKey: key, wrapped: vk.passkeyWrappedKey) }
+                && fails { try E2E.deriveFromPasskey(Data(count: 16)) }
         }
 
         // Safety code and formats

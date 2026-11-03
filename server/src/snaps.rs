@@ -237,6 +237,8 @@ pub async fn expire_waiting_for(state: &SharedState, user: i64) -> sqlx::Result<
 }
 
 fn notify(state: &SharedState, message: Message) {
+    // Opened or expired: no longer waiting for them.
+    crate::apns::badge_changed(state, message.recipient_id);
     state.hub.send_both(
         message.sender_id,
         message.recipient_id,

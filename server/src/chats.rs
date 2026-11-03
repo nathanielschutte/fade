@@ -197,6 +197,7 @@ pub async fn mark_read(
         state
             .hub
             .send_both(me.id, friend_id, &Event::Read { by: me.id, at });
+        crate::apns::badge_changed(&state, me.id);
     }
     Ok(Json(json!({ "updated": result.rows_affected() })))
 }

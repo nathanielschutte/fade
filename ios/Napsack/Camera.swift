@@ -1,6 +1,23 @@
 @preconcurrency import AVFoundation
+import ImageIO
 import PhotosUI
 import SwiftUI
+
+/// Which camera a camera screen opens on (Nate, 2026-11-03): the front one
+/// after a launch, then whichever was used last, until the app is quit. Only
+/// in memory, so a fresh launch starts at the front again (as the web does,
+/// `camera.facing`). Read and written from the camera's queue and the screen.
+final class CameraChoice: @unchecked Sendable {
+    static let shared = CameraChoice()
+    private let lock = NSLock()
+    private var last: AVCaptureDevice.Position = .front
+
+    /// Where the next camera screen opens.
+    var current: AVCaptureDevice.Position { lock.withLock { last } }
+
+    /// A camera opened (or switched to): the next screen opens on it.
+    func used(_ position: AVCaptureDevice.Position) { lock.withLock { last = position } }
+}
 
 /// The camera, done the iOS way (AVFoundation), as the web app's camera does
 /// it: tap for a photo, hold for a video (with sound, up to the server's
@@ -28,7 +45,10 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     private var microphone: AVCaptureDeviceInput?
     private let photo = AVCapturePhotoOutput()
     private let movie = AVCaptureMovieFileOutput()
-    private var facing: AVCaptureDevice.Position = .back
+    private let choice: CameraChoice
+    private var facing: AVCaptureDevice.Position
+    /// What the camera in use offers, once it's set up (start, flip).
+    private var configured: Lenses?
     private var photoDone: CheckedContinuation<Data, any Error>?
     private var movieDone: CheckedContinuation<[URL], any Error>?
     /// The recording so far, one part per camera: switching cameras ends a
@@ -70,6 +90,13 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
+    /// Opens on the camera `choice` says (the front one, after a launch).
+    init(choice: CameraChoice = .shared) {
+        self.choice = choice
+        facing = choice.current
+        super.init()
+    }
+
     static func allowed(_ type: AVMediaType) async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: type) {
         case .authorized: true
@@ -79,10 +106,12 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     /// Opens the camera (asking the first time), at 1×. Throws why it can't.
+    /// Already running, it stays as it is (a retake goes straight back to it).
     func start() async throws -> Lenses {
         guard await Self.allowed(.video) else { throw Problem.denied }
         let withSound = await Self.allowed(.audio)  // without it, videos have no sound (the web says so too)
         return try await run { [self] in
+            if session.isRunning, let configured { return configured }
             session.beginConfiguration()
             let lenses: Lenses
             do {
@@ -300,7 +329,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
         session.addInput(new)
         input = new
-        facing = position
+        face(position)
         multiplier = Self.multiplier(of: device)
         let lenses = Lenses.of(multiplier: multiplier, switchOvers: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) },
                                minFactor: device.minAvailableVideoZoomFactor, maxFactor: device.maxAvailableVideoZoomFactor)
@@ -308,7 +337,20 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             device.videoZoomFactor = min(max(1 / multiplier, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
             device.unlockForConfiguration()
         }
+        configured = lenses
         return lenses
+    }
+
+    /// Now on the camera facing `position`: the next camera screen opens on
+    /// it, until the app is quit. Only on `queue` (or in a test, alone).
+    func face(_ position: AVCaptureDevice.Position) {
+        facing = position
+        choice.used(position)
+    }
+
+    /// The camera this session opens on, or, once open, is using.
+    var opensOn: AVCaptureDevice.Position {
+        get async { (try? await run { [self] in facing }) ?? .front }
     }
 
     /// Shown zoom = factor × this: a camera with an ultra wide starts below 1×.
@@ -354,29 +396,142 @@ enum Captured: Identifiable {
         case .video(let url): url.absoluteString
         }
     }
+
+    /// A photo picked from the library; nil if it can't be opened. The chat's
+    /// photo button and the camera's both come this way.
+    static func picked(_ item: PhotosPickerItem) async -> Captured? {
+        guard let data = try? await item.loadTransferable(type: Data.self), let image = await photo(data) else { return nil }
+        return .photo(image)
+    }
+
+    /// The longest side a photo is kept at while it's on the camera screen:
+    /// enough to fill the largest screen (2868 pixels high), and well over
+    /// what's sent (1280).
+    static let longestEdge = 2880
+
+    /// A photo from its file's bytes (the camera's, or the library's), upright
+    /// and at most `longestEdge` on its longest side, decoded off the main
+    /// thread: it shows at once, and a 48-megapixel photo never sits in memory
+    /// whole (ImageIO decodes it at the smaller size).
+    static func photo(_ data: Data, longestEdge: Int = longestEdge) async -> UIImage? {
+        await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,  // from the photo itself, not a small preview in the file
+                kCGImageSourceCreateThumbnailWithTransform: true,  // upright, whichever way the file says it was held
+                kCGImageSourceThumbnailMaxPixelSize: longestEdge,
+                kCGImageSourceShouldCacheImmediately: true,  // decoded here, not when it's first drawn
+            ]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
+        }.value
+    }
 }
 
-/// A capture ready to go: the photo as drawn on, its caption, and where the
-/// caption sits (0 top, 1 bottom; recipients see it there, X33).
-struct ReadyToSend {
-    let media: Captured
+/// Photos picked from the library, which can take a while to open (one in
+/// iCloud is downloaded first). Meanwhile the picker has closed, so the
+/// screen moves on: by the time a photo's ready, the camera may be open, a
+/// capture on screen, or another photo picked. Only the newest pick opens,
+/// and only onto nothing, so a late one never replaces what's there.
+struct PhotoPicks {
+    private var newest = 0
+
+    /// A photo's been picked: its number, to ask about once it's opened.
+    mutating func began() -> Int {
+        newest += 1
+        return newest
+    }
+
+    /// Whether pick `number` still opens, `busy` while something's on screen it would replace.
+    func stillWanted(_ number: Int, busy: Bool) -> Bool { number == newest && !busy }
+}
+
+/// The camera as a chat opens it: live, or on a photo picked from the library,
+/// frozen in place for its caption, drawing, and Send. One value for both, so
+/// the camera opens on what it was opened for, and each opening is a new
+/// camera screen.
+struct CameraOpening: Identifiable {
+    let id = UUID()
+    /// What it opens on; nil for the live camera.
+    var start: Captured?
+}
+
+/// A capture ready to go, made once however many chats it goes to: the photo
+/// with what was drawn flattened in and compressed to JPEG, or the video's
+/// MP4, both off the main thread; each chat still seals its own copy. With its
+/// caption, and where the caption sits (0 top, 1 bottom; recipients see it
+/// there, X33).
+struct ReadyToSend: Sendable {
+    enum Media: Sendable {
+        case photo(Data)
+        case video(Data)
+    }
+
+    let media: Media
     let caption: String
     let y: Double
+
+    var isVideo: Bool {
+        if case .video = media { true } else { false }
+    }
+
+    /// Flattens the drawing into the photo and compresses it (Pen.flatten,
+    /// Conversation.photoJPEG), or reads the video's file, off the main thread.
+    static func prepare(_ shot: Captured, strokes: [Stroke], caption: String, y: Double) async throws -> ReadyToSend {
+        let media = try await Task.detached(priority: .userInitiated) { () throws -> Media in
+            switch shot {
+            case .photo(let image):
+                guard let jpeg = Conversation.photoJPEG(Pen.flatten(image, strokes: strokes)) else { throw SendError.tooLarge }
+                return .photo(jpeg)
+            case .video(let url):
+                return .video(try Data(contentsOf: url))
+            }
+        }.value
+        return ReadyToSend(media: media, caption: caption, y: y)
+    }
+
+    /// Seals it for `chat` and sends it there, within the server's limits.
+    @MainActor func send(to chat: Conversation, limits: ServerConfig?) async throws {
+        switch media {
+        case .photo(let jpeg): try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
+        case .video(let mp4): try await chat.sendVideo(mp4, caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
+        }
+    }
 }
 
-/// What the camera's Send does.
+/// What the camera's Send does. The sends seal in a chat's Conversation, on
+/// the main actor; what they're handed was made ready once, off it.
 enum CameraSend {
-    /// Straight to one chat ("Send to Ben"), from that chat's camera.
-    case chat(String, (ReadyToSend) async throws -> Void)
+    /// Straight to one chat ("Send to Ben"), from that chat's camera, which
+    /// the chat closes once it's sent.
+    case chat(String, @MainActor (ReadyToSend) async throws -> Void)
     /// To chats picked on the next screen, from the Camera tab; `done` says where it went.
-    case pick([ChatRow], (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+    case pick([ChatRow], @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+}
+
+/// A capture's temporary files on the camera screen (a recorded video, its
+/// copy without sound): removed on Retake, and when the screen is gone for
+/// good. Never just because it disappeared: SwiftUI also says that while a
+/// cover is still going up, and a photo picked in a chat was lost to it.
+final class CaptureFiles {
+    private var urls: [URL] = []
+
+    func keep(_ url: URL) { urls.append(url) }
+
+    func removeAll() {
+        for url in urls { try? FileManager.default.removeItem(at: url) }
+        urls = []
+    }
+
+    deinit { removeAll() }
 }
 
 /// The camera screen. Live: the preview, a shutter (tap for a photo, hold for
-/// a video and slide up to zoom it), the lens buttons and pinch, flip, a photo
-/// from the library, and close. After a capture it stays here, the photo
-/// frozen in place or the video looping (Nate, 2026-10-30: no separate
-/// screen), with a caption, the pen (photos), retake, and Send.
+/// a video and slide up to zoom it), the lens buttons and pinch, a photo from
+/// the library and flip on either side of the shutter, and close. After a
+/// capture it stays here, the photo frozen in place or the video looping
+/// (Nate, 2026-10-30: no separate screen), with a caption, the pen (photos),
+/// retake, and Send. The camera runs only while it's live: opened on a picked
+/// photo, it starts on Retake.
 struct CameraScreen: View {
     @Environment(\.dismiss) private var dismiss
     let maxSeconds: Int
@@ -392,6 +547,7 @@ struct CameraScreen: View {
     @State private var zoom: CGFloat = 1
     @State private var pinchFrom: CGFloat = 1
     @State private var picked: PhotosPickerItem?
+    @State private var picks = PhotoPicks()
     // The press on the shutter: when it began, where, and the zoom then (for sliding up).
     @State private var pressAt: Date?
     @State private var pressY: CGFloat = 0
@@ -399,18 +555,19 @@ struct CameraScreen: View {
     @State private var holdTask: Task<Void, Never>?
     // After a capture.
     @State private var shot: Captured?
+    @State private var files = CaptureFiles()
     @State private var caption = ""
     @State private var captionY = 0.75
     @State private var editingCaption = false
     @FocusState private var captionFocused: Bool
     @State private var strokes: [Stroke] = []
     @State private var penOn = false
-    @State private var shownSize: CGSize = .zero
     @State private var sending = false
     /// Why the last send didn't go, by the Send button.
     @State private var sendProblem: String?
     @State private var choosing = false
-    @State private var prepared: ReadyToSend?
+    /// The capture being made ready for Send to…, while the chats are picked.
+    @State private var preparing: Task<ReadyToSend, any Error>?
     /// A recorded video's copy without sound, made just after it's recorded;
     /// the sound button sends it instead (as on the web).
     @State private var silent: URL?
@@ -429,6 +586,11 @@ struct CameraScreen: View {
     /// Shorter than this, a press is a tap: a photo. Decided by the touch's own
     /// times, not by when the hold timer ran (D11).
     static let holdSeconds = 0.4
+    /// The round buttons' size, in points: easy to hit without aiming (Nate,
+    /// 2026-11-03; Apple's guidelines ask for at least 44).
+    nonisolated static let button: CGFloat = 48
+    /// Between the buttons stacked on the right of a capture.
+    static let buttonSpacing: CGFloat = 16
 
     static func isTap(from: Date, to: Date) -> Bool { to.timeIntervalSince(from) < holdSeconds }
 
@@ -457,7 +619,10 @@ struct CameraScreen: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .statusBarHidden()
-            .task {
+            // Only once it's live: opened on a picked photo, the camera waits for
+            // Retake (no camera question, nothing running behind the photo).
+            .task(id: shot == nil) {
+                guard shot == nil else { return }
                 do {
                     lenses = try await camera.start()
                     zoom = 1
@@ -467,58 +632,62 @@ struct CameraScreen: View {
             .onDisappear { camera.stop() }  // also while choosing who to send to
             .onChange(of: picked) { _, item in
                 guard let item else { return }
+                let pick = picks.began()
                 Task {
                     defer { picked = nil }
-                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                        captured(.photo(image))
-                    } else {
-                        problem = "Couldn't open that photo."
-                    }
+                    let photo = await Captured.picked(item)
+                    guard picks.stillWanted(pick, busy: shot != nil || recording) else { return }  // taken over meanwhile
+                    if let photo { captured(photo) } else { problem = "Couldn't open that photo." }
                 }
             }
             .navigationDestination(isPresented: $choosing) {
-                if case .pick(let chats, let go, let done) = send, let prepared {
-                    SendToScreen(ready: prepared, chats: chats, send: go) { words in
+                if case .pick(let chats, let go, let done) = send, let preparing {
+                    SendToScreen(ready: preparing, chats: chats, send: go) { words in
                         retake()
                         done(words)
                     }
                 }
             }
         }
-        .onDisappear { discardShot() }
     }
 
     // ---------- live ----------
 
     private var live: some View {
-        VStack {
+        VStack(spacing: 0) {
             HStack {
-                Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Image(systemName: "xmark").font(.title2).padding() }
+                Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Self.round("xmark") }
                     .accessibilityLabel("Close")
                 Spacer()
-                Button { flip() } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath.camera").font(.title2).padding()
-                }
-                .accessibilityLabel("Switch cameras")
             }
-            .foregroundStyle(.white)
+            .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
-            lensButtons.padding(.bottom, 12)
-            ZStack {
-                shutter
-                HStack {
-                    // A photo from the library instead (what the camera's messages offer).
-                    PhotosPicker(selection: $picked, matching: .images) {
-                        Image(systemName: "photo.on.rectangle").font(.title2).foregroundStyle(.white).padding()
-                    }
+            lensButtons.padding(.bottom, 16)
+            // Under the thumb: a photo from the library left of the shutter, and
+            // switching cameras right of it (Nate, 2026-11-03: not up top).
+            HStack(spacing: 0) {
+                PhotosPicker(selection: $picked, matching: .images) { Self.round("photo.on.rectangle") }
                     .accessibilityLabel("Choose a photo")
                     .opacity(recording ? 0 : 1)
-                    Spacer()
-                }
-                .padding(.horizontal, 24)
+                    .disabled(recording)
+                    .frame(maxWidth: .infinity)
+                shutter
+                Button { flip() } label: { Self.round("arrow.triangle.2.circlepath.camera") }
+                    .accessibilityLabel("Switch cameras")
+                    .frame(maxWidth: .infinity)
             }
-            .padding(.bottom, 30)
+            .padding(.bottom, 24)
         }
+    }
+
+    /// An icon on a round, dark button, white on any picture.
+    nonisolated private static func round(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 21, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: Self.button, height: Self.button)
+            .background(.black.opacity(0.35), in: Circle())
+            .contentShape(Circle())
     }
 
     /// The Camera app's lens buttons (.5, 1×, 2, 5, as the phone has them): the
@@ -566,7 +735,8 @@ struct CameraScreen: View {
 
     /// Tap for a photo; hold to record, sliding up to zoom; let go to stop.
     private var shutter: some View {
-        TimelineView(.periodic(from: .now, by: 0.1)) { context in
+        // The ring only moves while recording; otherwise nothing redraws.
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !recording)) { context in
             let progress = recordStart.map { min(1, context.date.timeIntervalSince($0) / Double(maxSeconds)) } ?? 0
             ZStack {
                 Circle().stroke(.white, lineWidth: 5).frame(width: 78, height: 78)
@@ -633,7 +803,7 @@ struct CameraScreen: View {
         Task {
             do {
                 let data = try await camera.takePhoto()
-                guard let image = UIImage(data: data) else { throw CameraSession.Problem.failed }
+                guard let image = await Captured.photo(data) else { throw CameraSession.Problem.failed }
                 captured(.photo(image))
             } catch { problem = error.localizedDescription }
         }
@@ -667,10 +837,16 @@ struct CameraScreen: View {
         camera.zoom(1)
         muted = false
         if case .video(let url) = media {
+            files.keep(url)
             Task {
                 let quiet = try? await VideoEncoder.withoutSound(url)
                 // Retaken meanwhile: not this one's.
-                if case .video(url) = shot { silent = quiet } else if let quiet { try? FileManager.default.removeItem(at: quiet) }
+                if case .video(url) = shot, let quiet {
+                    silent = quiet
+                    files.keep(quiet)
+                } else if let quiet {
+                    try? FileManager.default.removeItem(at: quiet)
+                }
             }
         }
     }
@@ -693,16 +869,28 @@ struct CameraScreen: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { at in
-                    // A tap on the picture starts a caption there (as on the web).
-                    guard !penOn, !editingCaption, caption.isEmpty else { return }
-                    startCaption(at: at.y / max(geo.size.height, 1))
+                    switch Self.tap(writing: editingCaption, drawing: penOn, captioned: !caption.isEmpty) {
+                    case .putKeyboardAway: endCaption()
+                    case .startCaption: startCaption(at: at.y / max(geo.size.height, 1))
+                    case .nothing: break
+                    }
                 }
-                .onAppear { shownSize = geo.size }
-                .onChange(of: geo.size) { _, size in shownSize = size }
             }
             .ignoresSafeArea()
             reviewControls(media)
         }
+    }
+
+    /// What a tap on the picture does (the caption line takes its own taps).
+    enum PictureTap: Equatable { case putKeyboardAway, startCaption, nothing }
+
+    /// Writing a caption, a tap anywhere else puts the keyboard away, and only
+    /// that: no new caption, no pen stroke (Nate, 2026-11-03). Otherwise it
+    /// starts a caption where it lands (as on the web), unless there's one
+    /// already or the pen is on (the pen draws).
+    static func tap(writing: Bool, drawing: Bool, captioned: Bool) -> PictureTap {
+        if writing { return .putKeyboardAway }
+        return drawing || captioned ? .nothing : .startCaption
     }
 
     @ViewBuilder private func captionBar(in size: CGSize) -> some View {
@@ -712,7 +900,7 @@ struct CameraScreen: View {
                     TextField("", text: $caption)
                         .focused($captionFocused)
                         .submitLabel(.done)
-                        .onSubmit { editingCaption = false }
+                        .onSubmit { endCaption() }
                         .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
                 } else {
                     Text(caption)
@@ -729,6 +917,7 @@ struct CameraScreen: View {
                 captionY = min(max(drag.location.y / max(size.height, 1), 0.08), 0.92)
             })
             .onTapGesture { startCaption(at: captionY) }
+            .allowsHitTesting(!penOn)  // drawing, the pen goes over it
             .accessibilityLabel(caption.isEmpty ? "Caption" : "Caption: \(caption)")
             .accessibilityHint("Drag up or down to place it")
             .accessibilityAdjustableAction { direction in
@@ -743,38 +932,45 @@ struct CameraScreen: View {
         captionFocused = true
     }
 
+    /// Done writing: the keyboard goes, the caption stays where it was put.
+    private func endCaption() {
+        editingCaption = false
+        captionFocused = false
+    }
+
     private func reviewControls(_ media: Captured) -> some View {
-        VStack {
+        VStack(spacing: 0) {
             HStack(alignment: .top) {
-                Button { retake() } label: { Image(systemName: "xmark").font(.title2).padding() }
+                Button { retake() } label: { Self.round("xmark") }
                     .accessibilityLabel("Retake")
                 Spacer()
-                VStack(spacing: 18) {
+                // Big and well apart, so Aa and the pen aren't hit for each other (Nate, 2026-11-03).
+                VStack(alignment: .trailing, spacing: Self.buttonSpacing) {
                     if penOn {
-                        Button("Done") { penOn = false }.font(.headline)
-                        Button { _ = strokes.popLast() } label: { Image(systemName: "arrow.uturn.backward").font(.title3) }
+                        Button { penOn = false } label: {
+                            Text("Done").font(.headline).foregroundStyle(.white)
+                                .padding(.horizontal, 16)
+                                .frame(minWidth: Self.button, minHeight: Self.button)
+                                .background(.black.opacity(0.35), in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        Button { _ = strokes.popLast() } label: { Self.round("arrow.uturn.backward") }
                             .accessibilityLabel("Undo").disabled(strokes.isEmpty)
                     } else {
-                        Button { startCaption(at: caption.isEmpty ? 0.75 : captionY) } label: {
-                            Image(systemName: "textformat").font(.title2)
-                        }
-                        .accessibilityLabel("Caption")
+                        Button { startCaption(at: caption.isEmpty ? 0.75 : captionY) } label: { Self.round("textformat") }
+                            .accessibilityLabel("Caption")
                         if case .photo = media {
-                            Button { editingCaption = false; penOn = true } label: { Image(systemName: "pencil.tip").font(.title2) }
+                            Button { endCaption(); penOn = true } label: { Self.round("scribble") }
                                 .accessibilityLabel("Draw")
                         }
                         if case .video = media, silent != nil {
-                            Button { muted.toggle() } label: {
-                                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.title2)
-                            }
-                            .accessibilityLabel(muted ? "Sound off. Tap to send it with sound" : "Sound on. Tap to send it without sound")
+                            Button { muted.toggle() } label: { Self.round(muted ? "speaker.slash.fill" : "speaker.wave.2.fill") }
+                                .accessibilityLabel(muted ? "Sound off. Tap to send it with sound" : "Sound on. Tap to send it without sound")
                         }
                     }
                 }
-                .padding()
             }
-            .foregroundStyle(.white)
-            .shadow(radius: 3)
+            .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
             if !penOn && !editingCaption {
                 if let sendProblem {
@@ -810,53 +1006,47 @@ struct CameraScreen: View {
 
     private func sendTapped() {
         guard let shot else { return }
-        editingCaption = false
+        endCaption()
         var media = shot
-        if case .photo(let image) = shot, !strokes.isEmpty {
-            media = .photo(Pen.flatten(image, strokes: strokes))
-        }
         if case .video = shot, muted, let silent {
             media = .video(silent)  // a different file: one with no sound in it
         }
-        let ready = ReadyToSend(media: media, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines), y: captionY)
+        // Made ready once, off the main thread: straight away, or while the chats are picked.
+        let strokes = strokes, caption = caption.trimmingCharacters(in: .whitespacesAndNewlines), y = captionY
+        let ready = Task { try await ReadyToSend.prepare(media, strokes: strokes, caption: caption, y: y) }
         switch send {
         case .chat(_, let go):
             sending = true
             sendProblem = nil
             Task {
-                defer { sending = false }
                 do {
-                    try await go(ready)
-                    retake()
+                    try await go(try await ready.value)
+                    // Sent: the chat closes the camera, with the pic on screen (and Send off) as it goes.
                 } catch {
+                    sending = false
                     Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
                     sendProblem = error.localizedDescription
                 }
             }
         case .pick:
-            prepared = ready
+            preparing = ready
             choosing = true
         }
     }
 
-    /// Back to the live camera; a recorded video's file goes.
+    /// Back to the live camera; a recorded video's files go.
     private func retake() {
-        discardShot()
-        caption = ""
-        captionY = 0.75
-        editingCaption = false
-        strokes = []
-        penOn = false
-        prepared = nil
-        sendProblem = nil
-    }
-
-    private func discardShot() {
-        if case .video(let url) = shot { try? FileManager.default.removeItem(at: url) }
-        if let silent { try? FileManager.default.removeItem(at: silent) }
+        files.removeAll()
         shot = nil
         silent = nil
         muted = false
+        caption = ""
+        captionY = 0.75
+        endCaption()
+        strokes = []
+        penOn = false
+        preparing = nil
+        sendProblem = nil
     }
 }
 
@@ -898,15 +1088,19 @@ struct LoopingPlayer: UIViewRepresentable {
 /// camera, the pic still there. Chats that can't take one (a changed key, a
 /// turned-off account, Team Napsack) aren't offered.
 struct SendToScreen: View {
-    let ready: ReadyToSend
+    /// The capture, being made ready meanwhile: once, for every chat picked.
+    let ready: Task<ReadyToSend, any Error>
     let chats: [ChatRow]
     /// Sends to one chat; throws what went wrong there.
-    let send: (ChatRow.Kind, ReadyToSend) async throws -> Void
+    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
     let done: (String) -> Void
     @State private var picked: [ChatRow.Kind] = []
     @State private var search = ""
     @State private var sending = false
     @State private var problem: String?
+
+    /// Chats sent to at once: the uploads overlap, without crowding a phone's connection.
+    static let atOnce = 3
 
     var body: some View {
         List {
@@ -942,29 +1136,64 @@ struct SendToScreen: View {
         return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) }
     }
 
-    /// One after another; what failed is said, and only what failed stays picked to try again.
+    /// A few chats at a time, each sealed its own copy of the same bytes; what
+    /// failed is said, and only what failed stays picked to try again.
     private func go() {
         sending = true
         problem = nil
         Task {
             defer { sending = false }
-            var sent: [String] = [], failed: [(String, String)] = []
-            for kind in picked {
-                let name = chats.first { $0.kind == kind }?.name ?? "a chat"
-                do {
-                    try await send(kind, ready)
-                    sent.append(name)
-                } catch {
-                    failed.append((name, error.localizedDescription))
-                }
+            let prepared: ReadyToSend
+            do {
+                prepared = try await ready.value
+            } catch {
+                problem = error.localizedDescription
+                return
             }
+            let kinds = picked
+            let why = await Self.each(kinds, atOnce: Self.atOnce) { kind in try await send(kind, prepared) }
+            let name = { (kind: ChatRow.Kind) in chats.first { $0.kind == kind }?.name ?? "a chat" }
+            let sent = zip(kinds, why).filter { $0.1 == nil }.map { name($0.0) }
+            let failed = zip(kinds, why).compactMap { kind, why in why.map { (kind, $0) } }
             if failed.isEmpty {
-                let word = if case .video = ready.media { "Video" } else { "Pic" }
+                let word = prepared.isVideo ? "Video" : "Pic"
                 done(sent.count == 1 ? "\(word) sent to \(sent[0])." : "\(word) sent to \(sent[0]) and \(sent.count - 1) more.")
             } else {
-                picked = picked.filter { kind in failed.contains { $0.0 == chats.first { $0.kind == kind }?.name } }
-                problem = failed.map { "Not sent to \($0.0): \($0.1)" }.joined(separator: "\n")
+                picked = failed.map(\.0)
+                problem = failed.map { "Not sent to \(name($0.0)): \($0.1)" }.joined(separator: "\n")
             }
+        }
+    }
+
+    /// Runs `work` for each item, at most `limit` at once; what went wrong
+    /// with each (nil if it went), in the items' order.
+    static func each<Item: Sendable>(_ items: [Item], atOnce limit: Int,
+                                     _ work: @escaping @MainActor (Item) async throws -> Void) async -> [String?] {
+        let attempt: @MainActor (Int) async -> (Int, String?) = { i in
+            do {
+                try await work(items[i])
+                return (i, nil)
+            } catch {
+                return (i, error.localizedDescription)
+            }
+        }
+        return await withTaskGroup(of: (Int, String?).self) { group in
+            var why = [String?](repeating: nil, count: items.count)
+            var next = 0
+            while next < min(max(limit, 1), items.count) {
+                let i = next
+                next += 1
+                group.addTask { await attempt(i) }
+            }
+            while let (i, problem) = await group.next() {
+                why[i] = problem
+                if next < items.count {
+                    let i = next
+                    next += 1
+                    group.addTask { await attempt(i) }
+                }
+            }
+            return why
         }
     }
 }

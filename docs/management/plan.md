@@ -29,15 +29,17 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 5 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03) |
 | 6 | [The server stays fast as history grows](#i13-the-server-stays-fast-as-history-grows) | Infrastructure | Nate | In progress | Nate (2026-11-03): the chat list, groups, profiles, and the friend map read every message, and more queries per friend, as texts pile up forever |
 | 7 | [The web app stays fast as data grows; natural chat scrolling](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling) | Experience/visual | Nate | In progress | Nate (2026-11-02): a speed survey of the web client, and chats that jump while he scrolls |
-| 8 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 9 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 10 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 11 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 12 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 13 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 14 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 15 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 16 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, and the web built; the iOS app next |
+| 8 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests; needs a server release, then a try on the phone |
+| 9 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 10 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 11 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 12 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 13 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 14 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 15 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 16 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 17 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. The server, the format, the web, and the iOS app built; the iOS side waits on a try on the phone (staging) |
+| 18 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
@@ -382,6 +384,11 @@ Oldest first; newly shipped rows go at the bottom.
 #### F26. Passkeys
 - Nate (2026-11-03), planned: sign in with Face ID or Touch ID instead of a password, the passkey also unlocking the private key (WebAuthn's PRF extension, iOS 18 and current browsers). The biggest change to signing in; a design doc first: [passkeys.md](../design/passkeys.md) (proposed, 2026-11-03: a third wrap of the key, beside the password's and the recovery key's; two questions for Nate).
 - Nate (2026-11-03), decided: staging's passkeys working only on staging is fine. Sign-up starts with a password as now; right after it, as with the recovery key, napsack recommends adding a passkey; and Security offers it any time.
+- Built (iOS, `Passkeys.swift`; [plan-ios.md](plan-ios.md#4-your-account)): **Sign in with a passkey** on the sign-in screen; right after sign-up's recovery key, a screen recommending one (Add a passkey / Not now), made with the sign-up's keys still in memory; Settings › Security › Passkeys lists them (where each is kept, added, last used), adds one (the password first), and removes one (swipe, then confirm). Offered only when the server's `passkey_rp_id` is the app's `webcredentials` site (staging's for Xcode builds, `napsack.io` in Release), so never with a development server. A passkey that gives no PRF secret is never added and signs nobody in; one the server doesn't know any more is dropped from the phone (iOS 26.2's `reportUnknownPublicKeyCredential`). Tested: the Swift format against `passkey1.json`, and every flow against a stand-in authenticator, unit and live. Needs the phone (see plan-ios.md).
+
+#### F27. The iPhone's badge, kept right by the server
+- Requested (Nate, 2026-11-03): "what's the status on notifications going to that chat and marking it read, and the app's badge? ... make sure these are done and have passing tests." The iOS side is [plan-ios.md](plan-ios.md) section 11.
+- Built: the number on the icon is the chats with a dot, counted by the server as the apps count them (`apns::waiting_chats`: hidden and muted chats left out, left groups, ended friendships, and turned-off accounts too). When it changes with no notification to carry it (read or a pic opened on the web, a chat muted or hidden, a message while napsack is on another screen, a group left or an event in it, a friend removed, turned off or on, or deleted), the person's iPhones get the number alone: no alert or sound, expiring at once so it never takes a waiting notification's place at Apple, batched to one a second per person, and only when it differs from what they were last given (`apns::badge_changed`). Smoke test: the APNs block, against the stand-in for Apple. Left to the next notification or launch: a timed mute running out, and a resumed friendship's old unread texts.
 
 ### Debug
 
@@ -448,6 +455,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### D17. The iOS chat is stuck for a second or two when it opens
 - Nate (2026-11-03): opening a chat, it won't scroll for one to two seconds. Likely work on the main thread as it opens (decrypting the page, laying out every bubble at once).
 - Found: not the main thread (the page is decrypted off it, and each bubble is cheap). A chat opens from the kept copy at once, then the server's page arrives a moment later and *replaced* the whole list, which put the scroll view back at the bottom, cancelling a scroll under way. Now a page already on screen is merged, changing only what changed: the same messages again change nothing (`thePageOnScreenIsMergedNotReplaced`). Needs Nate's phone to confirm.
+- Also (2026-11-03, [plan-ios.md](plan-ios.md#8-chats-native)): what the chat did on the main thread anyway is off it or smaller (keys worked out once per chat, pages read and decrypted off it, merging by halving), and the scrolling has fewer rules, so nothing pulls the chat back to the bottom while you scroll up.
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
@@ -540,6 +548,11 @@ Oldest first; newly shipped rows go at the bottom.
 - **Following from rows being kept** (review, 2026-11-03): what arrives in the chat you're reading isn't shown as unread while its read is on its way (the row and the tab's count treat the open chat, with napsack on screen, as read; pics still wait to be opened), and coming back to napsack with a chat open reads what came meanwhile. A mute for some hours ends by itself, by its time, without the list loading again (before, the next message's refetch ended it). A first tap on Leave in the list disarms when the row is swiped shut or the pointer or focus leaves it.
 - **Found, not changed:** two texts sent within a moment of each other go out side by side, and the server can store the second first (seen in a test that sent three in 20 ms); a slow first send overtaken by the next would do the same. The outbox could send one at a time per chat; Nate's call.
 - iOS: the same scroll rules are in [plan-ios.md](plan-ios.md#8-chats-native).
+#### X41. Open the latest waiting pics straight from the chat list
+- Nate (2026-11-02), for the iOS app: "we should be able to automatically start viewing the latest pic message in a chat from the chat list view (as long as the most recent message is a pic). When you're done viewing all latest pics (might be multiple in a row) from the sender, you should just stay on the list view." Built there ([plan-ios.md](plan-ios.md#7-the-chat-list-native)): a tap on a row whose newest message is a pic or video waiting from them shows that chat's waiting pics back to back over the list, each opened only once shown, and leaves you on the list; groups too.
+- **The web today:** a tap on a chat in the list always opens the chat (`openChat`); pics open only from a chat's "Tap to view pic" (`snap-chip`, `openPics`); a double tap opens the camera for that chat ([X12](#x12-double-tap-a-chat-to-send-a-pic)).
+- **For the web to match:** a single tap on such a row runs `openPics` for that chat's waiting pics without opening the chat, then returns to the list. The double tap must still be told apart (the phone's 150ms wait before a tap acts already does that). A text from them before the pics stays unread: the row keeps its marker, from the server's `unread` count (`chatStatus` looks only at the newest message today). A group is marked read after only if those pics were all that was unread. If they turn out opened elsewhere, the tap opens the chat.
+- iOS's own double tap (answer with a pic, as X12) is planned there, not built (Nate: "leave that as planned for now").
 
 ### Security
 

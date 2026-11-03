@@ -2,10 +2,16 @@ import SwiftUI
 
 /// Signing in, or creating an account. Like the web app's form: one screen,
 /// and a button to switch between the two. It signs in to the one server this
-/// build talks to (AppInfo.server); outside production it says which.
+/// build talks to (AppInfo.server); outside production it says which. Where
+/// passkeys work (Passkeys.swift), signing in can take one instead of the
+/// password, and a new account is offered one right after.
 struct SignInScreen: View {
     @Environment(Session.self) private var session
-    private let server = AppInfo.server
+    var server = AppInfo.server
+    var authenticator: any PasskeyAuthenticator = SystemPasskeys.shared
+    @State private var passkeys = PasskeySupport.shared
+    /// Signing in with a passkey: the sheet, then unlocking.
+    @State private var usingPasskey = false
     /// Which server, outside production (nothing in production).
     @State private var serverLabel: String?
     @State private var creating = false
@@ -63,14 +69,23 @@ struct SignInScreen: View {
                 }
                 Section {
                     Button(working ? (creating ? "Creating your keys…" : "Unlocking…") : (creating ? "Create account" : "Sign in"), action: submit)
-                        .disabled(working || username.isEmpty || password.isEmpty)
+                        .disabled(working || usingPasskey || username.isEmpty || password.isEmpty)
                     Button(creating ? "Have an account? Sign in" : "New here? Create an account") {
                         creating.toggle()
                         problem = nil
                     }
-                    .disabled(working)
+                    .disabled(working || usingPasskey)
                     if !creating {
-                        Button("Forgot your password?") { recovering = true }.disabled(working)
+                        Button("Forgot your password?") { recovering = true }.disabled(working || usingPasskey)
+                    }
+                }
+                // Below the rest, so nothing moves when the server's answer brings it.
+                if !creating && passkeys.offered == true {
+                    Section {
+                        Button(action: signInWithPasskey) {
+                            Label(usingPasskey ? "Unlocking…" : "Sign in with a passkey", systemImage: "person.badge.key")
+                        }
+                        .disabled(working || usingPasskey)
                     }
                 }
                 if let serverLabel {
@@ -82,17 +97,18 @@ struct SignInScreen: View {
             .navigationTitle("napsack")
             .sheet(isPresented: $recovering) { RecoverScreen(username: username) }
             .onChange(of: inviter, initial: true) { _, inviter in if inviter != nil { creating = true } }
-            // Whether to ask for an invite code depends on the server.
+            // Whether to ask for an invite code, and to offer passkeys, depends on the server.
             .task(id: creating) {
                 let config = try? await Server(server).config()
                 serverLabel = AppInfo.serverLabel(environment: config?.environment)
+                passkeys.learn(config)
                 if creating, let config { inviteRequired = config.inviteRequired }
             }
         }
     }
 
     private func submit() {
-        guard !working, !username.isEmpty, !password.isEmpty else { return }
+        guard !working, !usingPasskey, !username.isEmpty, !password.isEmpty else { return }
         working = true
         problem = nil
         Task {
@@ -100,11 +116,29 @@ struct SignInScreen: View {
             do {
                 if creating {
                     try await session.signUp(server: server, username: username, password: password,
-                                             inviteCode: inviteRequired ? inviteCode : nil, inviteToken: inviter != nil ? links.pending?.token : nil)
+                                             inviteCode: inviteRequired ? inviteCode : nil, inviteToken: inviter != nil ? links.pending?.token : nil,
+                                             offerPasskey: passkeys.offered == true)
                 } else {
                     try await session.signIn(server: server, username: username, password: password)
                 }
                 password = ""
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
+    }
+
+    /// Face ID instead of the password: no username needed, the passkey knows whose it is.
+    private func signInWithPasskey() {
+        guard !working, !usingPasskey else { return }
+        usingPasskey = true
+        problem = nil
+        Task {
+            defer { usingPasskey = false }
+            do {
+                try await session.signInWithPasskey(server: server, using: authenticator)
+            } catch PasskeyError.canceled {
+                // Closed the sheet: nothing to say.
             } catch {
                 problem = error.localizedDescription
             }

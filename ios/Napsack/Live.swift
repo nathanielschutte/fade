@@ -13,51 +13,71 @@ enum LiveEvent: Sendable {
     case message(DirectMessage)
     /// A group message, new or updated.
     case groupMessage(GroupMessage)
-    /// Friends, groups, or reads changed: the chat list refetches.
-    case listChanged
+    /// Friends or requests changed (a friendship, a name, a picture, a mark): the friends list refetches.
+    case friendsChanged
+    /// A group changed (its name, members, your marks, or your reads on another device): the groups list refetches.
+    case groupsChanged(Int64?)
     /// Someone's typing to you, or in a group (for a few seconds).
     case typing(from: Int64, group: Int64?)
     /// A friend came on screen or left (only friends who share it, and only if you do).
     case presence(user: Int64, active: Bool, lastSeenAt: Int64?)
-    /// A friend read your texts up to `at`.
+    /// A friend read your texts up to `at`, or (`by` you) you read a chat on another device.
     case read(by: Int64, at: Int64)
     /// Someone in a group read up to a message.
     case groupRead(group: Int64, user: Int64, last: Int64)
     /// The Admins' announcement changed: a new one, or none.
     case announcement(ChatList.Announcement?)
-    /// Typing, presence, announcements: not shown in the app yet.
+    /// Anything else (visibility changes): not acted on.
     case other
 
+    /// One pass over the frame, which can be a whole message with its ciphertext.
     static func decode(_ data: Data) -> LiveEvent {
-        struct Head: Decodable { let type: String }
-        struct Typing: Decodable { let from: Int64; let groupId: Int64? }
-        struct Presence: Decodable { let userId: Int64; let active: Bool; let lastSeenAt: Int64? }
-        struct Read: Decodable { let by: Int64; let at: Int64 }
-        struct Direct: Decodable { let message: DirectMessage }
-        struct Group: Decodable { let message: GroupMessage }
-        guard let head = try? Server.decoder.decode(Head.self, from: data) else { return .other }
-        switch head.type {
-        case "ready": return .ready
-        case "auth_failed": return .authFailed
-        case "pong": return .pong
-        case "message", "message_updated":
-            return (try? Server.decoder.decode(Direct.self, from: data)).map { .message($0.message) } ?? .other
-        case "group_message":
-            return (try? Server.decoder.decode(Group.self, from: data)).map { .groupMessage($0.message) } ?? .other
-        case "announcement":
-            struct Announced: Decodable { let announcement: ChatList.Announcement? }
-            return (try? Server.decoder.decode(Announced.self, from: data)).map { .announcement($0.announcement) } ?? .other
-        case "typing":
-            return (try? Server.decoder.decode(Typing.self, from: data)).map { .typing(from: $0.from, group: $0.groupId) } ?? .other
-        case "presence":
-            return (try? Server.decoder.decode(Presence.self, from: data)).map { .presence(user: $0.userId, active: $0.active, lastSeenAt: $0.lastSeenAt) } ?? .other
-        case "read":
-            return (try? Server.decoder.decode(Read.self, from: data)).map { .read(by: $0.by, at: $0.at) } ?? .listChanged
-        case "group_read":
-            struct GroupRead: Decodable { let groupId: Int64; let userId: Int64; let lastReadId: Int64 }
-            return (try? Server.decoder.decode(GroupRead.self, from: data)).map { .groupRead(group: $0.groupId, user: $0.userId, last: $0.lastReadId) } ?? .listChanged
-        case "friends_changed", "groups_changed": return .listChanged
-        default: return .other
+        (try? Server.decoder.decode(Frame.self, from: data))?.event ?? .other
+    }
+
+    private struct Frame: Decodable {
+        let event: LiveEvent
+
+        // As the decoder sees them: snake_case on the wire, camelCase here.
+        enum Keys: String, CodingKey { case type, message, groupId, from, userId, active, lastSeenAt, by, at, lastReadId, announcement }
+
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            switch try c.decode(String.self, forKey: .type) {
+            case "ready": event = .ready
+            case "auth_failed": event = .authFailed
+            case "pong": event = .pong
+            case "message", "message_updated":
+                event = (try? c.decode(DirectMessage.self, forKey: .message)).map { .message($0) } ?? .other
+            case "group_message":
+                event = (try? c.decode(GroupMessage.self, forKey: .message)).map { .groupMessage($0) } ?? .other
+            case "announcement":
+                do { event = .announcement(try c.decodeIfPresent(ChatList.Announcement.self, forKey: .announcement)) } catch { event = .other }
+            case "typing":
+                do { event = .typing(from: try c.decode(Int64.self, forKey: .from), group: try c.decodeIfPresent(Int64.self, forKey: .groupId)) } catch {
+                    event = .other
+                }
+            case "presence":
+                do {
+                    event = .presence(user: try c.decode(Int64.self, forKey: .userId), active: try c.decode(Bool.self, forKey: .active),
+                                      lastSeenAt: try c.decodeIfPresent(Int64.self, forKey: .lastSeenAt))
+                } catch {
+                    event = .other
+                }
+            case "read":
+                // Unreadable: refetch the list, which is never wrong.
+                do { event = .read(by: try c.decode(Int64.self, forKey: .by), at: try c.decode(Int64.self, forKey: .at)) } catch { event = .friendsChanged }
+            case "group_read":
+                do {
+                    event = .groupRead(group: try c.decode(Int64.self, forKey: .groupId), user: try c.decode(Int64.self, forKey: .userId),
+                                       last: try c.decode(Int64.self, forKey: .lastReadId))
+                } catch {
+                    event = .groupsChanged(nil)
+                }
+            case "friends_changed": event = .friendsChanged
+            case "groups_changed": event = .groupsChanged(try? c.decodeIfPresent(Int64.self, forKey: .groupId))
+            default: event = .other
+            }
         }
     }
 }
@@ -119,25 +139,37 @@ enum LiveEvent: Sendable {
         self.task = task
         task.resume()
         send(["type": "auth", "token": account.token], on: task)
-        Task { await receive(task) }
+        Task.detached { await Self.listen(task, for: self) }
     }
 
-    private func receive(_ task: URLSessionWebSocketTask) async {
+    /// Frames as they come, each decoded once off the main thread, then handled
+    /// on it in the order they came.
+    nonisolated private static func listen(_ task: URLSessionWebSocketTask, for live: Live) async {
         while true {
-            let frame: URLSessionWebSocketTask.Message
+            let event: LiveEvent
             do {
-                frame = try await task.receive()
+                switch try await task.receive() {
+                case .string(let text): event = LiveEvent.decode(Data(text.utf8))
+                case .data(let data): event = LiveEvent.decode(data)
+                @unknown default: continue
+                }
             } catch {
-                if self.task === task, running { closed() }
+                await live.ended(task)
                 return
             }
-            guard self.task === task else { return }  // replaced meanwhile
-            switch frame {
-            case .string(let text): handle(LiveEvent.decode(Data(text.utf8)))
-            case .data(let data): handle(LiveEvent.decode(data))
-            @unknown default: continue
-            }
+            guard await live.take(event, from: task) else { return }  // replaced meanwhile
         }
+    }
+
+    /// An event from `task`, handled if that's still the connection.
+    private func take(_ event: LiveEvent, from task: URLSessionWebSocketTask) -> Bool {
+        guard self.task === task else { return false }
+        handle(event)
+        return true
+    }
+
+    private func ended(_ task: URLSessionWebSocketTask) {
+        if self.task === task, running { closed() }
     }
 
     private func handle(_ event: LiveEvent) {

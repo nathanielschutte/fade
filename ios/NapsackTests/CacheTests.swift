@@ -19,7 +19,8 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         #expect(cache.read("friends") == nil)
         cache.write(Data("[1,2]".utf8), "friends")
-        #expect(cache.read("friends") == Data("[1,2]".utf8))
+        #expect(cache.read("friends") == Data("[1,2]".utf8))  // at once, though it's written in the background
+        ResponseCache.settle()
         let file = cache.directory.appending(path: "friends.json")
         let protection = try FileManager.default.attributesOfItem(atPath: file.path())[.protectionKey] as? FileProtectionType
         #expect(protection == nil || protection == .complete)  // (the Simulator may not report it)
@@ -59,6 +60,41 @@ import Testing
                                     cache: again.cache(for: account), transport: offline)
         await #expect(throws: (any Error).self) { try await reopened.loadNewest() }
         #expect(reopened.loaded && reopened.bubbles.map(\.content) == [.text(text["plaintext"] as! String, edited: false)])
+    }
+
+    /// Writes go in the background, in order, and not at all when the bytes
+    /// are the same as what's there (a chat opened again usually comes back the same).
+    @Test func writtenInTheBackgroundOnlyWhenChanged() throws {
+        let cache = ResponseCache(account: 3, root: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        cache.write(Data("[1]".utf8), "chat-d-7")
+        cache.write(Data("[1,2]".utf8), "chat-d-7")  // the newer of two waiting is what's kept
+        #expect(cache.read("chat-d-7") == Data("[1,2]".utf8))
+        ResponseCache.settle()
+        #expect(try Data(contentsOf: cache.file("chat-d-7")) == Data("[1,2]".utf8))
+        let written = try #require(cache.version("chat-d-7"))
+        cache.write(Data("[1,2]".utf8), "chat-d-7")
+        ResponseCache.settle()
+        #expect(cache.version("chat-d-7") == written, "the same bytes again weren't written")
+        cache.write(Data("[1,2,3]".utf8), "chat-d-7")
+        ResponseCache.settle()
+        #expect(cache.version("chat-d-7") != written && cache.read("chat-d-7") == Data("[1,2,3]".utf8))
+    }
+
+    /// A write asked for before a sign-out (a chat answering late) never lands after it.
+    @Test func nothingFromBeforeASignOutIsKeptAfterIt() throws {
+        let cache = ResponseCache(account: 3, root: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        cache.write(Data("[\"theirs\"]".utf8), "friends")
+        ResponseCache.wipeAll(root: root)
+        cache.write(Data("[\"late\"]".utf8), "chat-d-7")  // the old session's, after the wipe
+        ResponseCache.settle()
+        #expect(!FileManager.default.fileExists(atPath: root.path()) && cache.read("friends") == nil && cache.read("chat-d-7") == nil)
+        // The next session's are kept as usual.
+        let next = ResponseCache(account: 4, root: root)
+        next.write(Data("[]".utf8), "friends")
+        ResponseCache.settle()
+        #expect(next.read("friends") == Data("[]".utf8))
     }
 
     @Test func signingOutForgetsTheKeptChats() async throws {

@@ -9,9 +9,11 @@ DEVELOPMENT_TEAM = ABCDE12345
 // stays free for the Developer Program team. Delete the line once you're
 // signing with that team.
 NAPSACK_BUNDLE_ID = com.getattr.napsack.dev
-// And it can't have notifications or links that open the app (those
-// capabilities need the Program). Delete this line too with the other.
+// And it can't have notifications, links that open the app, or passkeys
+// (those capabilities need the Program): with no site to belong to, the app
+// doesn't offer passkeys. Delete these two lines too with the other.
 CODE_SIGN_ENTITLEMENTS =
+NAPSACK_LINK_HOST =
 
 // Where a fresh install points, for example your Mac running `cargo run` with
 // FADE_BIND=0.0.0.0:8080 (the phone reaches it by the Mac's name on your network).

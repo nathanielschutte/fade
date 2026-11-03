@@ -88,6 +88,14 @@ import Testing
         #expect(try snap(3, "expired") == ("Pic expired unopened", nil))
         #expect(try snap(7, "opened") == ("Pic viewed", nil))
         #expect(try snap(7, "expired", format: 4) == ("Video expired", nil))
+        // A text from before the pic still unread (the server's count): the row still says so,
+        // whether the pic was viewed from the list or I answered with one from the camera.
+        func unread(_ from: Int64, _ state: String) throws -> ChatRow.Waiting? {
+            reader.status(try direct(message(from: from, to: from == 3 ? 7 : 3, kind: "snap", format: 6, snap: state), extra: ["unread": 1])).1
+        }
+        #expect(try unread(7, "opened") == .text)
+        #expect(try unread(3, "pending") == .text)
+        #expect(try unread(7, "pending") == .snap)
     }
 
     @Test func emptyAndTurnedOffChats() throws {
@@ -157,6 +165,75 @@ import Testing
         guard case .announcement(let a) = LiveEvent.decode(json(["type": "announcement", "announcement": ["id": 3, "body": "Hi", "created_at": 1, "ends_at": now + 60]])),
               a?.id == 3, case .announcement(nil) = LiveEvent.decode(json(["type": "announcement", "announcement": NSNull()]))
         else { Issue.record("announcement events"); return }
+    }
+
+    /// What tapping a row does, decided by its data (Nate, 2026-11-02): the
+    /// newest message a pic or video from them, waiting, in a format this app
+    /// opens, shows the pics from the list; anything else opens the chat.
+    @Test func tappingARowDecidesByItsData() throws {
+        func opens(_ m: [String: Any], extra: [String: Any] = [:], changed: Bool = false) throws -> Bool {
+            var reader = reader
+            if changed { reader.changed = [7] }
+            return reader.row(try direct(m, extra: extra)).opensPics
+        }
+        #expect(try opens(message(from: 7, to: 3, kind: "snap", format: 6, snap: "pending")))  // a photo
+        #expect(try opens(message(from: 7, to: 3, kind: "snap", format: 4, snap: "pending")))  // a video
+        #expect(try opens(message(from: 7, to: 3, kind: "snap", format: 2, snap: "pending")))  // an older pic
+        #expect(try !opens(message(from: 3, to: 7, kind: "snap", format: 6, snap: "pending")))  // mine
+        #expect(try !opens(message(from: 7, to: 3, kind: "snap", format: 6, snap: "opened")))
+        #expect(try !opens(message(from: 7, to: 3, kind: "snap", format: 6, snap: "expired")))
+        #expect(try !opens(message(from: 7, to: 3, kind: "snap", format: 9, snap: "pending")))  // newer than this app: the chat says so
+        #expect(try !opens(message(from: 7, to: 3, ciphertext: (v["text"] as! [String: Any])["ciphertext"] as? String)))  // a text
+        #expect(try !opens(message(from: 7, to: 3, kind: "snap", format: 6, snap: "pending"), changed: true))  // safety code changed
+        #expect(try !opens(message(from: 7, to: 3, kind: "snap", format: 6, snap: "pending"), extra: ["deactivated": true]))
+        #expect(try !reader.row(Self.decode(Friend.self, Self.friendJSON(alice: alice, last: nil))).opensPics)
+
+        func groupOpens(_ format: Int, sender: Int64 = 7, viewers: [Int64] = [], discarded: String? = nil, key: String? = "wrap") throws -> Bool {
+            let pic: [String: Any] = ["id": 1, "bytes": 10, "expires_at": 0, "discard_reason": discarded ?? NSNull(), "viewers": viewers]
+            return reader.row(try group(groupMessage(format: format, sender: sender, extra: ["pic": pic, "key": key ?? NSNull()]))).opensPics
+        }
+        #expect(try groupOpens(7) && groupOpens(5) && groupOpens(3))
+        #expect(try !groupOpens(7, sender: 3))  // mine
+        #expect(try !groupOpens(7, viewers: [3]))  // seen already
+        #expect(try !groupOpens(7, discarded: "expired"))
+        #expect(try !groupOpens(0, key: nil))  // an old group pic, not sealed for me
+        #expect(try !groupOpens(7, key: nil))
+        #expect(try !reader.row(group(groupMessage(body: "a text"), unread: 1)).opensPics)
+    }
+
+    /// After a group's pics were shown from the list, it's read only if they
+    /// were all that was unread; otherwise a text nobody saw would show as seen.
+    @Test func aGroupIsReadAfterItsPicsOnlyIfNothingElseWasUnread() {
+        func bubble(_ id: Int64, mine: Bool = false, _ content: Bubble.Content = .media("New pic")) -> Bubble {
+            Bubble(id: id, mine: mine, sender: mine ? nil : "Al", content: content, replyTo: nil, time: .now, reactions: [])
+        }
+        let page = [bubble(1, .text("earlier", edited: false)), bubble(2, .text("unseen", edited: false)), bubble(3), bubble(4, .event("Al added you")),
+                    bubble(5, mine: true, .text("mine", edited: false)), bubble(6)]
+        #expect(Reader.readAfterShowing([3, 6], unread: 2, in: page))  // the two pics were all that was unread
+        #expect(!Reader.readAfterShowing([3, 6], unread: 3, in: page))  // a text before them too
+        #expect(!Reader.readAfterShowing([6], unread: 2, in: page))  // one wasn't shown (stopped halfway)
+        #expect(!Reader.readAfterShowing([3, 6], unread: 0, in: page))  // nothing to read
+        #expect(!Reader.readAfterShowing([1, 2, 3, 6], unread: 9, in: page))  // more unread than the page has
+    }
+
+    /// A reload doesn't do the work again: each chat key is worked out once,
+    /// and a row's newest message is opened once while its sealed bytes stay
+    /// the same (an edit opens it again). Only the rows' newest are kept.
+    @Test func keysAndPreviewsAreWorkedOutOnce() throws {
+        let sent = try E2E.encryptText2(pairKey, "first words", replyTo: nil, sender: 7, recipient: 3)
+        let friend = try direct(message(from: 7, to: 3, ciphertext: sent, format: 2, read: true))
+        #expect(reader.status(friend).0 == "first words")
+        #expect(reader.memo.keptPreviews == 1)
+        let key = try #require(reader.readingKeys(friend).first)
+        #expect(reader.readingKeys(friend).first == key)
+        // The same id with other bytes (an edit) is opened again, not taken from what was kept.
+        let edit = try E2E.encryptEdit(pairKey, "second words", sender: 7, recipient: 3, message: 100)
+        #expect(reader.status(try direct(message(from: 7, to: 3, ciphertext: sent, format: 2, read: true, edit: edit))).0 == "second words")
+        // Rows made: only their newest messages stay kept.
+        _ = reader.rows(friends: [try direct(message(from: 7, to: 3, ciphertext: sent, format: 2, read: true, id: 101))], groups: [])
+        #expect(reader.memo.keptPreviews == 1)
+        _ = reader.rows(friends: [], groups: [])
+        #expect(reader.memo.keptPreviews == 0)
     }
 
     @Test func newestFirstThenByName() throws {

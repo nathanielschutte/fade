@@ -80,8 +80,12 @@ enum SignInError: LocalizedError, Equatable {
     }
 
     private(set) var state: State = .starting {
-        // The app's reports go as whoever's signed in.
-        didSet { if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) } }
+        didSet {
+            // The app's reports go as whoever's signed in.
+            if let account { reporter.use(server: account.server, token: account.token) } else { reporter.use(server: lastServer, token: nil) }
+            // A notification tapped while signed out was for whoever was here before.
+            if case .signedOut = oldValue, account != nil { notifications.opened = nil }
+        }
     }
     /// Where sign-in last went, for reports while signed out.
     private var lastServer: String?
@@ -91,15 +95,30 @@ enum SignInError: LocalizedError, Equatable {
     private(set) var updateNeeded: String?
     /// A new account's recovery key, shown once until the person says they've saved it.
     var recoveryKeyToShow: String?
+    /// Right after sign-up, napsack recommends a passkey (Passkeys.swift): the
+    /// new account's keys, still in memory, so adding one doesn't ask for the
+    /// password again. Never kept anywhere; gone once the person decides, or
+    /// signs out.
+    var passkeyOffer: PasskeyOffer?
+
+    struct PasskeyOffer {
+        let keys: E2E.PasswordKeys
+        /// The private key as the server keeps it, wrapped by the password.
+        let wrapped: String
+    }
 
     private let transport: any Transport
     private let store: any AccountStore
     private let reporter: Reporter
+    /// This phone's notifications (tests give their own).
+    private let notifications: Notifications
 
-    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore(), reporter: Reporter? = nil) {
+    init(transport: any Transport = NetworkTransport(), store: any AccountStore = KeychainAccountStore(), reporter: Reporter? = nil,
+         notifications: Notifications? = nil) {
         self.transport = transport
         self.store = store
         self.reporter = reporter ?? .shared
+        self.notifications = notifications ?? .shared
     }
 
     var account: Account? {
@@ -229,7 +248,10 @@ enum SignInError: LocalizedError, Equatable {
     /// wrapped), then a recovery key, registered and shown once.
     /// With a friend's link (`inviteToken`, Links.swift) no invite code is
     /// needed, and the new account starts out friends with them.
-    func signUp(server address: String, username typed: String, password: String, inviteCode: String?, inviteToken: String? = nil) async throws {
+    /// `offerPasskey`: passkeys work with this server, so a passkey is
+    /// recommended right after (Nate, 2026-11-03: sign-up starts with a password).
+    func signUp(server address: String, username typed: String, password: String, inviteCode: String?, inviteToken: String? = nil,
+                offerPasskey: Bool = false) async throws {
         let username = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.contains("@") else { throw SignInError.emailAsUsername }
         guard password.count >= 8 else { throw SignInError.shortPassword }
@@ -254,6 +276,7 @@ enum SignInError: LocalizedError, Equatable {
         }
         try store.save(account)
         if inviteToken != nil { FriendLinks.shared.pending = nil }  // used: they're friends already
+        if offerPasskey { passkeyOffer = PasskeyOffer(keys: keys, wrapped: answer.wrappedPrivateKey) }
         state = .signedIn(account)
     }
 
@@ -434,6 +457,179 @@ enum SignInError: LocalizedError, Equatable {
         reporter.report(.info, "username changed")
     }
 
+    // ---------- passkeys (Passkeys.swift; docs/design/passkeys.md) ----------
+
+    /// The most an account has at once (the server's passkeys.rs, MAX_PASSKEYS).
+    static let maxPasskeys = 10
+
+    struct Passkey: Decodable, Identifiable, Equatable, Sendable {
+        let id: Int64
+        /// WebAuthn's id for it (base64url): how the phone's passkeys know it.
+        let credentialId: String
+        /// Where it's kept ("iCloud Keychain"), when its maker is a known one.
+        let provider: String?
+        let createdAt: Int64
+        let lastUsedAt: Int64?
+    }
+
+    struct PasskeyList: Decodable, Equatable, Sendable {
+        let passkeys: [Passkey]
+        /// The site they belong to (napsack.io).
+        let rpId: String
+    }
+
+    /// Signs in with a passkey: Face ID, then the server checks the passkey's
+    /// signature over its challenge and hands back the passkey's own copy of
+    /// the private key, which only that passkey's PRF secret opens. Kept in
+    /// the Keychain as a password sign-in is. A passkey that can't give the
+    /// secret signs nobody in: there'd be no key to read anything with.
+    func signInWithPasskey(server address: String, using authenticator: any PasskeyAuthenticator) async throws {
+        let server = try Server(address, transport: transport)
+        notice = nil
+        lastServer = server.address
+        reporter.use(server: server.address, token: nil)
+        struct Options: Decodable { let challenge: String; let rpId: String }
+        let options = try await watchingForUpdates {
+            try Server.decoder.decode(Options.self, from: await server.send("auth/passkey/options", method: "POST"))
+        }
+        guard authenticator.works(for: options.rpId), let challenge = Passkeys.data(b64url: options.challenge) else {
+            throw PasskeyError.unavailable
+        }
+        let signed = try await authenticator.sign(rpID: options.rpId, challenge: challenge, allowed: [], prfInput: E2E.passkeyPrfInput())
+        guard let secret = signed.prfSecret, let wrapKey = try? E2E.deriveFromPasskey(secret) else {
+            reporter.report(.warn, "passkey gave no PRF secret")
+            throw PasskeyError.cantUnlock  // and nothing's sent: a session with no key is no use
+        }
+        struct SignIn: Encodable { let credentialId, clientDataJson, authenticatorData, signature: String }
+        struct Answer: Decodable { let token: String; let user: Me; let publicKey: String; let passkeyWrappedKey: String }
+        let answer: Answer
+        do {
+            answer = try await watchingForUpdates {
+                try Server.decoder.decode(Answer.self, from: await server.send("auth/passkey", method: "POST", json: SignIn(
+                    credentialId: Passkeys.b64url(signed.credentialID), clientDataJson: Passkeys.b64url(signed.clientDataJSON),
+                    authenticatorData: Passkeys.b64url(signed.authenticatorData), signature: Passkeys.b64url(signed.signature))))
+            }
+        } catch {
+            reporter.report(.warn, "passkey sign-in failed", Reporter.fields(error))
+            // One the server doesn't know (removed elsewhere, or never added):
+            // the phone's told, so its sheet stops offering it.
+            if Self.unknownPasskey(error) { await authenticator.forget(rpID: options.rpId, credentialID: signed.credentialID) }
+            throw error
+        }
+        // Its copy has to open, and be the account's own key.
+        guard let identity = try? E2E.unwrapWithPasskey(passkeyWrapKey: wrapKey, wrapped: answer.passkeyWrappedKey),
+              let publicKey = try? P256.KeyAgreement.PublicKey(derRepresentation: E2E.fromB64(answer.publicKey)),
+              identity.publicKey.rawRepresentation == publicKey.rawRepresentation
+        else {
+            reporter.report(.error, "unlocking with a passkey failed")
+            try? await server.logout(token: answer.token)  // no key, no use: ended at once
+            throw PasskeyError.cantUnlock
+        }
+        let account = Account(server: server.address, token: answer.token, user: answer.user,
+                              publicKey: answer.publicKey, privateKey: identity.derRepresentation)
+        try store.save(account)
+        state = .signedIn(account)
+        reporter.report(.info, "signed in with a passkey")
+    }
+
+    /// Yours, oldest first, and the site they belong to.
+    func passkeys() async throws -> PasskeyList {
+        let account = try signedIn()
+        return try Server.decoder.decode(PasskeyList.self, from: await Server(account.server, transport: transport)
+            .send("me/passkeys", token: account.token))
+    }
+
+    /// Adds a passkey from Security: the password first (`/auth/unlock`, as
+    /// for a recovery key; a wrong one never gets as far as Face ID).
+    func addPasskey(password: String, using authenticator: any PasskeyAuthenticator) async throws -> Passkey {
+        let unlocked = try await unlock(password)
+        return try await addPasskey(keys: unlocked.keys, wrapped: unlocked.wrapped, using: authenticator)
+    }
+
+    /// The passkey recommended after sign-up, with the keys sign-up kept.
+    func addOfferedPasskey(using authenticator: any PasskeyAuthenticator) async throws -> Passkey {
+        // Already decided ("Not now"): nothing to add, and nothing to say.
+        guard let offer = passkeyOffer else { throw PasskeyError.canceled }
+        let added = try await addPasskey(keys: offer.keys, wrapped: offer.wrapped, using: authenticator)
+        passkeyOffer = nil
+        return added
+    }
+
+    /// The phone makes a passkey for the account (Face ID), its PRF secret
+    /// wraps a copy of the private key, and the server checks the new passkey
+    /// and keeps it with that copy. Not every passkey gives the secret as it's
+    /// made, so the new one alone is asked once more. One that can't give it
+    /// isn't added, and the phone is told to drop it.
+    private func addPasskey(keys: E2E.PasswordKeys, wrapped: String, using authenticator: any PasskeyAuthenticator) async throws -> Passkey {
+        let account = try signedIn()
+        let server = try Server(account.server, transport: transport)
+        struct Options: Decodable { let challenge: String; let rpId: String; let userId: String; let userName: String; let exclude: [String] }
+        let options = try Server.decoder.decode(Options.self, from: await server.send("me/passkeys/options", method: "POST", token: account.token))
+        guard authenticator.works(for: options.rpId), let challenge = Passkeys.data(b64url: options.challenge),
+              let userID = Passkeys.data(b64url: options.userId) else { throw PasskeyError.unavailable }
+        let prfInput = E2E.passkeyPrfInput()
+        let made = try await authenticator.create(rpID: options.rpId, challenge: challenge, userName: options.userName, userID: userID,
+                                                  excluding: options.exclude.compactMap { Passkeys.data(b64url: $0) }, prfInput: prfInput)
+        do {
+            var secret = made.prfSecret
+            if secret == nil, made.prfSupported != false {
+                // Nobody checks this signature: only the secret is wanted, and only the new passkey's.
+                let unchecked = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+                let signed = try await authenticator.sign(rpID: options.rpId, challenge: unchecked, allowed: [made.credentialID], prfInput: prfInput)
+                secret = signed.credentialID == made.credentialID ? signed.prfSecret : nil
+            }
+            guard let secret, let passkeyKey = try? E2E.deriveFromPasskey(secret) else {
+                reporter.report(.warn, "passkey refused: no PRF secret")
+                throw PasskeyError.cantUnlock
+            }
+            let copy = try E2E.wrapForPasskey(wrapKey: keys.wrapKey, wrapped: wrapped, passkeyWrapKey: passkeyKey)
+            struct Add: Encodable { let authKey, clientDataJson, attestationObject, wrappedKey: String }
+            struct Added: Decodable { let id: Int64; let provider: String?; let createdAt: Int64 }
+            let added = try Server.decoder.decode(Added.self, from: await server.send("me/passkeys", method: "POST", token: account.token, json: Add(
+                authKey: keys.authKey, clientDataJson: Passkeys.b64url(made.clientDataJSON),
+                attestationObject: Passkeys.b64url(made.attestationObject), wrappedKey: copy)))
+            reporter.report(.info, "passkey added")
+            return Passkey(id: added.id, credentialId: Passkeys.b64url(made.credentialID), provider: added.provider,
+                           createdAt: added.createdAt, lastUsedAt: nil)
+        } catch {
+            if Self.surelyNotKept(error) { await authenticator.forget(rpID: options.rpId, credentialID: made.credentialID) }
+            throw error
+        }
+    }
+
+    /// The server's answer for a passkey it doesn't know, as it was removed or
+    /// never added (passkeys.rs, `sign_in`). Only this answer: a passkey it
+    /// knows whose signature didn't check out is still the person's.
+    static func unknownPasskey(_ error: any Error) -> Bool {
+        guard case ServerError.refused(let words, status: 400) = error else { return false }
+        return words.contains("isn't set up for napsack any more")
+    }
+
+    /// Whether a passkey just made surely isn't on the server after this:
+    /// anything but a lost connection (it may have arrived) or "already added".
+    static func surelyNotKept(_ error: any Error) -> Bool {
+        guard let error = error as? ServerError else { return true }
+        if error.retryable { return false }
+        if case .refused(_, status: 409) = error { return false }
+        return true
+    }
+
+    /// It stops working, everywhere (the server marks it ended); the phone's
+    /// password managers are told so they can drop it too.
+    func removePasskey(_ passkey: Passkey, rpID: String, using authenticator: any PasskeyAuthenticator) async throws {
+        let account = try signedIn()
+        do {
+            _ = try await Server(account.server, transport: transport)
+                .send("me/passkeys/\(passkey.id)/remove", method: "POST", token: account.token)
+            reporter.report(.info, "passkey removed")
+        } catch ServerError.refused(_, status: 404) {
+            // Removed already, from another device: just as good.
+        }
+        if let credential = Passkeys.data(b64url: passkey.credentialId) {
+            await authenticator.forget(rpID: rpID, credentialID: credential)
+        }
+    }
+
     private func signedIn() throws -> Account {
         guard let account else { throw ServerError.sessionEnded }
         return account
@@ -474,9 +670,10 @@ enum SignInError: LocalizedError, Equatable {
     private func endLocally(notice: String?) {
         if notice != nil { reporter.report(.info, "session ended") }
         try? store.delete()
+        passkeyOffer = nil  // the new account's keys, if it was still offered
         UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
         ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
-        Notifications.shared.signedOut()  // delivered ones and the badge; the server stops with the session
+        notifications.signedOut()  // delivered ones and the badge; the server stops with the session
         AppLock.shared.signedOut()  // the lock was this account's choice
         self.notice = notice
         state = .signedOut

@@ -3,12 +3,13 @@ import SwiftUI
 /// Home: a tab bar with Chats, the Camera, and Profile, as the web app on a
 /// phone (Nate, 2026-10-30). Chats is the chat list: friends and groups
 /// together, newest first, favorites on top, each row with its newest
-/// message (decrypted here). Pull to refresh;
-/// tapping a row opens the chat, and coming back refreshes the list. Swipe a
-/// row (or hold it) to favorite, mute, hide, or leave; search finds chats by
-/// name or newest message. While
-/// the app is on screen the live connection (Live.swift) keeps the list and
-/// the open chat current.
+/// message (decrypted here). Pull to refresh. Tapping a row opens the chat,
+/// or, when its newest message is a pic or video waiting from them, shows
+/// the chat's waiting pics right there and comes back to the list (Nate,
+/// 2026-11-02). Swipe a row (or hold it) to favorite, mute, hide, or leave;
+/// search finds chats by name or newest message at once, and messages kept
+/// on the phone a moment later (Search.swift). While the app is on screen the
+/// live connection (Live.swift) keeps the list and the open chat current.
 struct ChatListScreen: View {
     @Environment(Session.self) private var session
     @Environment(\.scenePhase) private var scenePhase
@@ -17,7 +18,7 @@ struct ChatListScreen: View {
     @State private var live: Live
     /// Profile and group pictures, for this session only.
     @State private var pictures: Pictures
-    /// Every chat opened this session, kept: a text that hasn't gone yet keeps
+    /// The chats opened most recently, kept: a text that hasn't gone yet keeps
     /// trying after you leave its chat, and coming back is instant. (Only in
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
@@ -29,7 +30,7 @@ struct ChatListScreen: View {
     @State private var path: [ChatRow.Kind] = []
     @State private var showingFriends = false
     /// Notifications on this phone: a tapped one opens its chat here (Notifications.swift).
-    @State private var notifications = Notifications.shared
+    @State private var notifications: Notifications
     /// A friend's link opened or scanned (Links.swift), and the one being offered.
     @State private var links = FriendLinks.shared
     @State private var offer: FriendLinks.Invite?
@@ -37,16 +38,26 @@ struct ChatListScreen: View {
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
     @State private var search = ""
+    @State private var searching = false
+    /// Messages found by search (Search.swift).
+    @State private var finder = MessageFinder()
+    /// A search result opened its chat: there, at that message.
+    @State private var found: MessageHit.ID?
+    /// A chat's waiting pics, shown straight from the list.
+    @State private var viewing: PicsFromList?
+    /// Nothing was waiting after all (opened on another device): the chat, once the viewer's gone.
+    @State private var openAfterViewing: ChatRow.Kind?
     @State private var showingHidden = false
     @State private var muting: ChatRow?
     @State private var leaving: ChatRow?
     /// A short note at the bottom, with Undo where it can be undone (app.js, `showToast`).
     @State private var toast: Toast?
 
-    init(account: Account) {
+    init(account: Account, notifications: Notifications = .shared) {
         self.account = account
         _live = State(initialValue: Live(account: account))
         _pictures = State(initialValue: Pictures(account: account))
+        _notifications = State(initialValue: notifications)
     }
 
     var body: some View {
@@ -62,13 +73,7 @@ struct ChatListScreen: View {
                     CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
                                  send: .pick(sendable, { kind, ready in
                                      guard let chat = conversation(kind) else { throw SendError.cantOpen }
-                                     switch ready.media {
-                                     case .photo(let image):
-                                         guard let jpeg = Conversation.photoJPEG(image) else { throw SendError.tooLarge }
-                                         try await chat.sendPhoto(jpeg, caption: ready.caption, y: ready.y, maxBytes: limits?.snapMaxBytes)
-                                     case .video(let url):
-                                         try await chat.sendVideo(try Data(contentsOf: url), caption: ready.caption, y: ready.y, maxBytes: limits?.videoMaxBytes)
-                                     }
+                                     try await ready.send(to: chat, limits: limits)  // compressed once, sealed for each chat
                                  }, done: { words in
                                      toast = Toast(text: words, undo: nil)
                                      tab = .chats  // where it went, as on the web
@@ -92,9 +97,7 @@ struct ChatListScreen: View {
         .onChange(of: notifications.opened, initial: true) { _, destination in
             if destination != nil { Task { await openNotification() } }
         }
-        .onChange(of: unreadChats, initial: true) { _, count in
-            if list.loaded { notifications.setBadge(count) }
-        }
+        .modifier(AppBadge(notifications: notifications, count: list.loaded ? unreadChats : nil))
         .onChange(of: links.pending, initial: true) { _, invite in
             // Once the server has said whose it is (or that it doesn't work).
             guard let invite, invite.inviter != nil || invite.problem != nil else { return }
@@ -107,16 +110,96 @@ struct ChatListScreen: View {
         } message: { invite in
             Text("This is \(invite.inviter?.username ?? "someone")'s napsack link. Add them as a friend?")
         }
-        .onDisappear { live.stop() }  // signed out
+        .onDisappear {  // signed out
+            live.stop()
+            finder.forget()
+        }
     }
 
-    /// Chats with something unread or unopened, for the tab's badge (muted ones don't count).
-    private var unreadChats: Int {
-        list.rows.filter { $0.waiting != nil && !$0.muted && !$0.hidden }.count
+    /// Chats with something unread or unopened, for the tab's badge and the icon's (muted and hidden ones don't count).
+    private var unreadChats: Int { list.waitingCount }
+
+    /// Tapping a row whose newest message is a pic or video waiting from them
+    /// (`ChatRow.opensPics`, decided by the row's data) shows the chat's
+    /// waiting pics over the list instead of opening the chat, so you're still
+    /// on the list when they're done. Those rows are buttons, not links: a
+    /// binding that turned taps aside was made anew on every redraw, and the
+    /// stack then wrote over a chat opened from a notification.
+    private func openPics(_ row: ChatRow) {
+        guard let chat = conversation(row.kind) else { return path = [row.kind] }
+        found = nil
+        viewing = PicsFromList(kind: row.kind, conversation: chat, unread: row.kind.groupId.flatMap { list.groups[$0]?.unread } ?? 0)
+    }
+
+    @ViewBuilder private func rowLink(_ row: ChatRow) -> some View {
+        if row.opensPics {
+            Button { openPics(row) } label: {
+                HStack(spacing: 0) {
+                    ChatRowView(row: row)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")  // as the links' rows
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 2)
+                }
+                .contentShape(Rectangle())
+            }
+            .foregroundStyle(.primary)
+        } else {
+            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+        }
     }
 
     private var chats: some View {
         NavigationStack(path: $path) {
+            chatList
+            .sheet(isPresented: $makingGroup) {
+                let friends = (list.reader?.friends.values.map { $0 } ?? [])
+                    .filter { $0.system != true && $0.deactivated != true }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                NewGroupScreen(account: account, friends: friends) { id in
+                    Task {
+                        await load()
+                        path = [.group(id)]  // straight into it, as on the web
+                    }
+                }
+            }
+            .sheet(isPresented: $settingUpRecovery) {
+                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+            }
+            .navigationTitle("Chats")
+            .navigationDestination(isPresented: $showingFriends) {
+                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
+            }
+            .navigationDestination(for: ChatRow.Kind.self) { kind in
+                if let conversation = conversation(kind) {
+                    // No reload on the way back: what came while it was open came live, and
+                    // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
+                    ChatScreen(conversation: conversation)
+                        // Its own screen per chat: one chat swapped for another in place (a notification
+                        // or link opened while a chat is open) starts fresh, loading and reading it.
+                        .id(kind)
+                        .environment(live)
+                        .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
+                }
+            }
+            .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
+            .fullScreenCover(item: $viewing, onDismiss: {
+                if let kind = openAfterViewing {
+                    openAfterViewing = nil
+                    path = [kind]
+                }
+            }) { item in
+                PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
+            }
+            .toolbar { chatsToolbar }
+        }
+    }
+
+    /// The list itself, with what it does on its own (search, loading, the
+    /// row menus); split from `chats` so the compiler checks it in parts.
+    private var chatList: some View {
+        listMenus(
             List {
                 if !account.user.hasRecoveryKey {
                     // As the web app's nudge: until there's one, a forgotten password costs every message.
@@ -137,9 +220,8 @@ struct ChatListScreen: View {
                         Label("Loading…", systemImage: "ellipsis").foregroundStyle(.secondary)
                     }
                 } else if !search.isEmpty {
-                    let found = list.search(search)
-                    if found.isEmpty { ContentUnavailableView.search(text: search) } else { rows(found) }
-                } else if list.rows.filter({ !$0.hidden }).isEmpty && list.hiddenRows.isEmpty {
+                    SearchResults(text: search, chats: list.search(search), finder: finder, rows: { rows($0) }, open: openHit)
+                } else if list.rows.isEmpty {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.bubble.right",
                                            description: Text("Friends you add show up here."))
                 } else {
@@ -161,7 +243,13 @@ struct ChatListScreen: View {
                 }
             }
             .listStyle(.plain)
-            .searchable(text: $search, prompt: "Search")
+            .searchable(text: $search, isPresented: $searching, prompt: "Search")
+            .onChange(of: searching) { _, now in if now { prepareSearch() } }
+            .onChange(of: list.loaded) { _, loaded in if loaded && searching { prepareSearch() } }  // searched before the list was in
+            .onChange(of: search) { _, text in finder.find(text) }
+            // A key accepted in a chat: the list takes it at once (no event comes from the server for it).
+            .onChange(of: list.pinBook?.pins) { list.pinsChanged() }
+            .onChange(of: list.pinBook?.changed) { list.pinsChanged() }
             .safeAreaInset(edge: .bottom) {  // (above the search field, which sits at the bottom on newer iOS)
                 if let toast {
                     ToastView(toast: toast) { self.toast = nil }
@@ -170,6 +258,13 @@ struct ChatListScreen: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: toast?.id)
+        )
+    }
+
+    /// The rows' mute and leave questions, refreshing, loading, and the
+    /// reconnecting note, around the list.
+    private func listMenus(_ content: some View) -> some View {
+        content
             .confirmationDialog(muting.map { "Mute \($0.name)" } ?? "", isPresented: .init(get: { muting != nil }, set: { if !$0 { muting = nil } }),
                                 titleVisibility: .visible, presenting: muting) { row in
                 Button("For 8 hours") { mute(row, hours: 8) }
@@ -192,53 +287,28 @@ struct ChatListScreen: View {
                 await load()
             }
             .safeAreaInset(edge: .top) { ReconnectingNote(live: live) }
-            .sheet(isPresented: $makingGroup) {
-                let friends = (list.reader?.friends.values.map { $0 } ?? [])
-                    .filter { $0.system != true && $0.deactivated != true }
-                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                NewGroupScreen(account: account, friends: friends) { id in
-                    Task {
-                        await load()
-                        path = [.group(id)]  // straight into it, as on the web
+    }
+
+    @ToolbarContentBuilder private var chatsToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button { showingFriends = true } label: {
+                Image(systemName: "person.2")
+                    .overlay(alignment: .topTrailing) {
+                        if list.incoming > 0 {
+                            Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
+                                .offset(x: 10, y: -8)
+                        }
                     }
-                }
+                    .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
             }
-            .sheet(isPresented: $settingUpRecovery) {
-                PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            // A group of people, not "new message" (Nate, 2026-10-30; custom artwork later).
+            Button { makingGroup = true } label: {
+                Image(systemName: "person.3").accessibilityLabel("New group")
             }
-            .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showingFriends) {
-                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
-            }
-            .navigationDestination(for: ChatRow.Kind.self) { kind in
-                if let conversation = conversation(kind) {
-                    ChatScreen(conversation: conversation)
-                        .environment(live)
-                        .onDisappear { Task { await load() } }  // reads and new messages since
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showingFriends = true } label: {
-                        Image(systemName: "person.2")
-                            .overlay(alignment: .topTrailing) {
-                                if list.incoming > 0 {
-                                    Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
-                                        .padding(.horizontal, 5).padding(.vertical, 1).background(.red, in: Capsule())
-                                        .offset(x: 10, y: -8)
-                                }
-                            }
-                            .accessibilityLabel(list.incoming > 0 ? "Friends, \(list.incoming) new requests" : "Friends")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    // A group of people, not "new message" (Nate, 2026-10-30; custom artwork later).
-                    Button { makingGroup = true } label: {
-                        Image(systemName: "person.3").accessibilityLabel("New group")
-                    }
-                    .disabled(list.reader == nil)
-                }
-            }
+            .disabled(list.reader == nil)
         }
     }
 
@@ -259,7 +329,7 @@ struct ChatListScreen: View {
 
     private func rows(_ rows: [ChatRow]) -> some View {
         ForEach(rows) { row in
-            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+            rowLink(row)
                 .swipeActions(edge: .leading) {
                     Button(row.favorite ? "Unfavorite" : "Favorite", systemImage: row.favorite ? "star.slash" : "star") {
                         act(row) { try await list.setFavorite(row, !row.favorite, account: account) }
@@ -339,51 +409,83 @@ struct ChatListScreen: View {
             guard let group = list.groups[id] else { return nil }
             chat = .group(group)
         }
-        if let kept = opened.chats[kind] {
+        if let kept = opened.chat(kind) {
             kept.update(chat, reader: reader)
             return kept
         }
         let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook, cache: list.cache(for: account))
-        opened.chats[kind] = new
+        opened.keep(new, as: kind, busy: Set(path).union(viewing.map { [$0.kind] } ?? []), open: live.openChat)
         return new
     }
 
     /// What the live connection says: the open chat takes its own messages,
-    /// and the list refetches (the API is the truth).
+    /// and the list what's its (ChatList.heard: a message changes its own row,
+    /// and only what the server alone knows reloads).
     private func handle(_ event: LiveEvent) {
         let chat = live.openChat
         switch event {
         case .authFailed:
             session.noticed(ServerError.sessionEnded)
         case .ready:
-            // Anything could have happened while disconnected.
-            list.reloadSoon(account)
             if let chat { Task { try? await chat.catchUp() } }
             // Texts that couldn't go for the connection's sake, in every chat, go now.
-            for kept in opened.chats.values { Task { await kept.flush() } }
+            for kept in opened.waitingToSend { Task { await kept.flush() } }
         case .message(let m):
             if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
-            list.reloadSoon(account)
         case .groupMessage(let m):
             if chat?.arrived(m) == true, let chat { Task { await chat.markRead() } }
-            list.reloadSoon(account)
         case .typing(let from, let group):
             chat?.typing(from: from, group: group)
         case .presence(let user, let active, let lastSeenAt):
             chat?.presence(user: user, active: active, lastSeenAt: lastSeenAt)
         case .read(let by, let at):
             chat?.read(by: by, at: at)
-            list.reloadSoon(account)
         case .groupRead(let group, let user, let last):
-            chat?.groupRead(group: group, user: user, last: last)
-            list.reloadSoon(account)
-        case .announcement(let a):
-            list.announce(a)
-        case .listChanged:
-            list.reloadSoon(account)
-        case .pong, .other:
+            chat?.groupRead(group: group, user: user, last: last)  // "Seen by", in the chat only
+        case .announcement, .friendsChanged, .groupsChanged, .pong, .other:
             break
         }
+        list.heard(event, account: account)
+    }
+
+    /// Search opened: the chats to look through, newest first, with what's open of them already.
+    private func prepareSearch() {
+        guard let reader = list.reader else { return }
+        let sources = list.rows.compactMap { row -> SearchSource? in
+            let chat: Conversation.Chat
+            switch row.kind {
+            case .friend(let id):
+                guard let friend = reader.friends[id] else { return nil }
+                chat = .friend(friend)
+            case .group(let id):
+                guard let group = list.groups[id] else { return nil }
+                chat = .group(group)
+            }
+            return SearchSource(kind: row.kind, name: row.name, avatarId: row.avatarId, chat: chat,
+                                opened: opened.peek(row.kind).map(SearchSource.opened) ?? [])
+        }
+        finder.prepare(sources, reader: reader, cache: list.cache(for: account))
+    }
+
+    /// A message search found: its chat, at that message if it's loaded.
+    private func openHit(_ hit: MessageHit) {
+        guard conversation(hit.kind) != nil else { return }
+        found = hit.id
+        showingFriends = false
+        path = [hit.kind]
+    }
+
+    /// The pics shown from the list are opened (each as it was shown; the
+    /// server's `message_updated` changes the row, and reloads friends for
+    /// the unread count). A direct chat with a text still unread from before
+    /// them keeps its dot (`Reader.status`), and the text stays unread for when
+    /// you open the chat. A group whose only unread
+    /// messages were those pics is read now, as opening its chat would have
+    /// done (its `groups_changed` reloads the row); otherwise its texts stay
+    /// unread for when you open it.
+    private func shownFromList(_ item: PicsFromList, _ shown: Set<Int64>) {
+        guard case .group = item.kind, Reader.readAfterShowing(shown, unread: item.unread, in: item.conversation.bubbles) else { return }
+        Task { await item.conversation.markRead() }
     }
 
     /// A notification was tapped: its chat (or Friends), on the Chats tab.
@@ -395,7 +497,13 @@ struct ChatListScreen: View {
         tab = .chats
         switch destination {
         case .friends:
-            path = []
+            if !path.isEmpty {
+                // Out of the open chat first, without animation: a push asked for while the
+                // stack is still animating its pop is dropped (LiveNotificationTapTests).
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) { path = [] }
+            }
             showingFriends = true
         case .chat(let kind):
             if conversation(kind) == nil { await load() }
@@ -526,10 +634,64 @@ struct ReconnectingNote: View {
     }
 }
 
-/// The chats opened this session (ChatListScreen). A plain holder, not
-/// observed: opening a chat shouldn't redraw the list.
-final class OpenedChats {
-    var chats: [ChatRow.Kind: Conversation] = [:]
+/// The chats opened this session (ChatListScreen), the few most recent, with
+/// all they've loaded: coming back to one is instant. One with a text still
+/// waiting to go is never let go (it keeps trying after you leave it), nor
+/// one on screen. A plain holder, not observed: opening a chat shouldn't
+/// redraw the list.
+@MainActor final class OpenedChats {
+    /// How many are kept besides those (each holds its pages of messages).
+    static let kept = 6
+    private var chats: [ChatRow.Kind: Conversation] = [:]
+    /// Least recently opened first.
+    private var order: [ChatRow.Kind] = []
+
+    /// A kept chat, now the most recent.
+    func chat(_ kind: ChatRow.Kind) -> Conversation? {
+        guard let chat = chats[kind] else { return nil }
+        order.removeAll { $0 == kind }
+        order.append(kind)
+        return chat
+    }
+
+    /// A kept chat, left where it is in the order (search reading what's loaded).
+    func peek(_ kind: ChatRow.Kind) -> Conversation? { chats[kind] }
+
+    /// A chat just opened. Past the limit, the longest unopened goes, unless
+    /// it has texts waiting, is `busy` (shown, or in the stack), or is `open`.
+    func keep(_ chat: Conversation, as kind: ChatRow.Kind, busy: Set<ChatRow.Kind> = [], open: Conversation? = nil) {
+        chats[kind] = chat
+        order.removeAll { $0 == kind }
+        order.append(kind)
+        while chats.count > Self.kept, let old = order.first(where: { k in
+            guard let c = chats[k] else { return true }
+            return k != kind && c.outbox.isEmpty && !busy.contains(k) && c !== open
+        }) {
+            chats[old] = nil
+            order.removeAll { $0 == old }
+        }
+    }
+
+    /// Kept chats with texts still to send (on a reconnect, they go).
+    var waitingToSend: [Conversation] { chats.values.filter { !$0.outbox.isEmpty } }
+
+    var count: Int { chats.count }
+}
+
+/// A chat's waiting pics shown from the list (ChatListScreen).
+struct PicsFromList: Identifiable {
+    let kind: ChatRow.Kind
+    let conversation: Conversation
+    /// The group's unread count when it opened (whether it's read after; groups only).
+    let unread: Int
+    var id: ChatRow.Kind { kind }
+}
+
+extension ChatRow.Kind {
+    var groupId: Int64? {
+        if case .group(let id) = self { return id }
+        return nil
+    }
 }
 
 /// A note at the bottom of the list for a few seconds, with Undo when it can be undone.

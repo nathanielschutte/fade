@@ -52,4 +52,11 @@ enum Keychain {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure(status: status) }
     }
+
+    #if DEBUG
+    /// Every item of this app's (a UI test's fresh start, AppInfo.freshStartIfAsked).
+    static func deleteAll() {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+    }
+    #endif
 }

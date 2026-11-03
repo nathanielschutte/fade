@@ -46,8 +46,8 @@ While the web app is the only client, steps 1 to 4 collapse into one release: it
 Every release goes through staging first, as the exact binary that will reach production.
 
 ```
-branch + pull request ──▶ CI: tests ──▶ squash-merge to main ──▶ release candidate ──▶ staging
-                                                            releases/main/fade-server-<sha>
+branch + pull request ──▶ local tests ──▶ squash-merge to main ──▶ CI ──▶ release candidate ──▶ staging
+                                                                     releases/main/fade-server-<sha>
                                                                                     │ looks good
                      production ◀── backup, fade-update ◀── release ◀── tag server-v<version>
                                                             releases/tags/fade-server-<version>
@@ -59,7 +59,7 @@ Build the change, with its tests, on a branch (`<name>/<topic>`). Before opening
 
 ### 2. A pull request, then a release candidate on staging
 
-Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). The **CI** workflow (`.github/workflows/ci.yml`) runs everything on it (format, lints, all the tests, Terraform validation), and the owner reviews it. The owner squash-merges it into `main`, where CI runs again, and if it passes, its **Release candidate on staging** job:
+Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). Its description says which checks ran locally; CI doesn't run on pull requests (GitHub Actions is billed; Nate, 2026-11-03), so those local runs are the check, and the owner reviews it. The owner squash-merges it into `main`, where the **CI** workflow (`.github/workflows/ci.yml`) runs everything (format, lints, all the tests, Terraform validation), and if it passes, its **Release candidate on staging** job:
 1. builds the ARM server binary once, stamped with the commit (`build` = the short sha);
 2. uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
 3. deletes all but the newest ten candidates (releases are kept forever; see below);

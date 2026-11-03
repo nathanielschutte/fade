@@ -2,14 +2,17 @@ name: iOS app
 
 # The iOS app (ios/, docs/ios-onboarding.md): the Swift crypto against the
 # pinned vectors, then the app's build and unit tests on a simulator. The live
-# tests (a real server) skip here; they run on a Mac with a local server.
+# tests (a real server), the UI tests (NapsackUITests) among them, skip here;
+# they run on a Mac with a local server (scripts/test-ios.sh).
 #
-# Runs only when something the app depends on changes; ci.yml's server and
-# Terraform checks skip changes that are only in ios/ and the docs.
+# Runs only on main, once a pull request is merged, and only when something
+# the app depends on changes; or by hand (Actions › iOS app › Run workflow).
+# Not on pull requests: macOS minutes cost about ten times Linux's, so a pull
+# request is checked on a Mac first (make ios; Nate, 2026-11-03). ci.yml's
+# server and Terraform checks skip changes that are only in ios/ and the docs.
 
 on:
-  pull_request:
-    paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["ios/**", "tests/vectors/**", "shared/crypto/**", ".github/workflows/ios.yml"]
@@ -33,10 +36,12 @@ jobs:
       - name: Build and unit tests (simulator)
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
-          -destination "platform=iOS Simulator,name=iPhone 17"
-      # What ships: a Release build compiles, and carries no test data (App.xcconfig).
+          -destination "platform=iOS Simulator,name=iPhone 17" -collect-test-diagnostics never
+      # What ships: a Release build compiles, carries no test data (App.xcconfig),
+      # and never reads the UI tests' launch settings (AppInfo: Debug only).
       - name: Release build, without the vectors
         run: |
           xcodebuild build -project ios/Napsack.xcodeproj -scheme Napsack -configuration Release \
             -destination "generic/platform=iOS Simulator" -derivedDataPath build/release CODE_SIGNING_ALLOWED=NO -quiet
           ! ls build/release/Build/Products/Release-iphonesimulator/Napsack.app | grep -q vectors
+          ! grep -raqE "NAPSACK_UI_TEST_SERVER|NAPSACK_FRESH_START" build/release/Build/Products/Release-iphonesimulator/Napsack.app

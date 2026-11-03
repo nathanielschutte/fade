@@ -4,10 +4,18 @@ import SwiftUI
 struct NapsackApp: App {
     /// For notifications: the device token, and a tapped one (Notifications.swift).
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var session = Session()
+    @State private var session: Session
     /// Lock napsack with Face ID, if it's on (AppLock.swift).
-    @State private var lock = AppLock.shared
+    @State private var lock: AppLock
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        #if DEBUG
+        AppInfo.freshStartIfAsked()  // before anything saved is read (UI tests): the lock reads its setting as it's made
+        #endif
+        _session = State(initialValue: Session())
+        _lock = State(initialValue: AppLock.shared)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -30,8 +38,13 @@ struct NapsackApp: App {
                                     LockCover(lock: lock, active: scenePhase == .active)
                                 }
                             }
-                            .sheet(isPresented: .constant(session.recoveryKeyToShow != nil)) {
-                                RecoveryKeyScreen(key: session.recoveryKeyToShow ?? "") { session.recoveryKeyToShow = nil }
+                            .sheet(isPresented: .constant(session.recoveryKeyToShow != nil || session.passkeyOffer != nil)) {
+                                // A new account's recovery key, then the passkey napsack recommends (Passkeys.swift).
+                                if let key = session.recoveryKeyToShow {
+                                    RecoveryKeyScreen(key: key) { session.recoveryKeyToShow = nil }
+                                } else {
+                                    PasskeyOfferScreen()
+                                }
                             }
                     }
                 }

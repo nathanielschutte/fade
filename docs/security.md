@@ -76,6 +76,7 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Uploads stop when the data disk has less than | 150 MB free | |
 | All writes stop when the data disk has less than | 40 MB free (so the database can't fill the disk) | |
 | Client diagnostics | 300 entries per person per minute | |
+| Badge updates to iPhones (`apns.rs`) | one per person per second at most, and only when the number changed, to that person's own iPhones | |
 
 Per-address limits don't apply to the server's own machine (development and tests), or on staging to the test machines listed in `FADE_EXEMPT_ADDRESSES` (never set in production). In-memory limits and bans reset when the server restarts.
 
