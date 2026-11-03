@@ -66,7 +66,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
-| `FADE_APNS_KEY` · `FADE_APNS_KEY_ID` · `FADE_APNS_TEAM_ID` · `FADE_APNS_TOPIC` | unset · unset · unset · `com.getattr.napsack` | iPhone notifications ([below](#iphone-notifications-apns)): the APNs key's .p8 file base64-encoded, its Key ID, the Apple team. Without a key, iPhones get none |
+| `FADE_APNS_KEY` · `FADE_APNS_KEY_ID` · `FADE_APPLE_TEAM_ID` · `FADE_IOS_BUNDLE_ID` | unset · unset · unset · `com.getattr.napsack` | iPhone notifications ([below](#iphone-notifications-apns)): the APNs key's .p8 file base64-encoded, its Key ID, the Apple team. Without a key, iPhones get none |
 | `FADE_SESSION_DAYS` | `365` | How long a session lasts after it was last used: each use (noted at most hourly) pushes its end out again |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](../implementation/roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |

@@ -57,8 +57,8 @@ pub struct Apns {
 
 impl Apns {
     /// From `FADE_APNS_KEY` (the .p8 file Apple gives, base64-encoded so it
-    /// fits on one line), `FADE_APNS_KEY_ID`, `FADE_APNS_TEAM_ID`, and
-    /// `FADE_APNS_TOPIC`. None when there's no key: iPhones get no
+    /// fits on one line), `FADE_APNS_KEY_ID`, `FADE_APPLE_TEAM_ID`, and
+    /// `FADE_IOS_BUNDLE_ID`. None when there's no key: iPhones get no
     /// notifications, and everything else works as before.
     pub fn from_env() -> anyhow::Result<Option<Self>> {
         let var = |k: &str| {
@@ -74,11 +74,11 @@ impl Apns {
             String::from_utf8(B64.decode(key.as_bytes()).map_err(|_| {
                 anyhow::anyhow!("FADE_APNS_KEY must be the .p8 file, base64-encoded")
             })?)?;
-        let (Some(key_id), Some(team_id)) = (var("FADE_APNS_KEY_ID"), var("FADE_APNS_TEAM_ID"))
+        let (Some(key_id), Some(team_id)) = (var("FADE_APNS_KEY_ID"), var("FADE_APPLE_TEAM_ID"))
         else {
-            anyhow::bail!("FADE_APNS_KEY needs FADE_APNS_KEY_ID and FADE_APNS_TEAM_ID too");
+            anyhow::bail!("FADE_APNS_KEY needs FADE_APNS_KEY_ID and FADE_APPLE_TEAM_ID too");
         };
-        let topic = var("FADE_APNS_TOPIC").unwrap_or_else(|| "com.getattr.napsack".into());
+        let topic = var("FADE_IOS_BUNDLE_ID").unwrap_or_else(|| "com.getattr.napsack".into());
         Ok(Some(Self::new(&pem, key_id, team_id, topic)?))
     }
 

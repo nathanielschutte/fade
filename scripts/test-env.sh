@@ -65,7 +65,7 @@ print(ec.generate_private_key(ec.SECP256R1()).private_bytes(s.Encoding.PEM, s.Pr
   FADE_PUSH_ALLOW_LOCAL=true \
   FADE_APNS_KEY="$apns_key" \
   FADE_APNS_KEY_ID=TESTKEY001 \
-  FADE_APNS_TEAM_ID=TESTTEAM01 \
+  FADE_APPLE_TEAM_ID=TESTTEAM01 \
   FADE_MAX_ACCOUNTS=1000 \
   RUST_LOG="${RUST_LOG:-fade_server=warn}" \
     "$BIN" >> "$TMP/server.log" 2>&1 &

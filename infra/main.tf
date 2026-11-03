@@ -49,7 +49,7 @@ locals {
     # iPhone notifications (apns.rs); empty without a key.
     "FADE_APNS_KEY=${base64encode(var.apns_key)}",
     "FADE_APNS_KEY_ID=${var.apns_key_id}",
-    "FADE_APNS_TEAM_ID=${var.apple_team_id}",
+    "FADE_APPLE_TEAM_ID=${var.apple_team_id}",
     "",
   ])
 }
