@@ -39,6 +39,9 @@ struct ServerConfig: Decodable, Equatable {
     /// The site's address, for links people share (the app talks to the API
     /// on its own name, api.napsack.io). Null in development; servers before 0.47.0 don't say.
     let siteUrl: String?
+    /// The site passkeys are made for here (napsack.io; "localhost" in
+    /// development). Servers from before passkeys don't say (Passkeys.swift).
+    let passkeyRpId: String?
 
     static func decode(_ data: Data) throws -> ServerConfig {
         try Server.decoder.decode(ServerConfig.self, from: data)

@@ -85,6 +85,7 @@ struct SettingsScreen: View {
             Section {
                 Text(status).foregroundStyle(.secondary)
                 Button(account.user.hasRecoveryKey ? "Make a new recovery key" : "Make a recovery key") { asking = .recovery }
+                PasskeysLink(account: account)  // Passkeys.swift: where this server takes them
                 Button("Change password") { asking = .password }
                 Button("Sign out other devices") { confirmingEndOthers = true }
                     .disabled((security?.activeSessions ?? 2) <= 1)
