@@ -706,8 +706,15 @@ struct OpenedPic: Sendable {
         }
         let page = try await fetch(before: nil)
         noteUnreadable(page)
-        bubbles = page
-        reachedStart = page.count < Self.page
+        if loaded {
+            // Already on screen (the kept copy): change only what changed. Replacing
+            // the whole list moved the scroll view back to the bottom, stopping a
+            // scroll under way for a second or two as the chat opened (D17).
+            page.forEach(upsert)
+        } else {
+            bubbles = page
+            reachedStart = page.count < Self.page
+        }
         loaded = true
         problem = nil
     }
@@ -885,7 +892,7 @@ struct OpenedPic: Sendable {
 
     private func upsert(_ bubble: Bubble) {
         if let i = bubbles.firstIndex(where: { $0.id == bubble.id }) {
-            bubbles[i] = bubble
+            if bubbles[i] != bubble { bubbles[i] = bubble }  // the same again changes nothing on screen
         } else {
             bubbles.append(bubble)
             bubbles.sort { $0.id < $1.id }

@@ -86,4 +86,32 @@ import Testing
                          "https://napsack.test/api/chats/7/read"])
         #expect(chat.beginning == "This is the beginning of your chat with Al.")
     }
+
+    /// A page already on screen (the kept copy, then the server's answer) is
+    /// merged, not replaced: the same messages again change nothing, so a
+    /// scroll under way isn't stopped as the chat opens (D17); a new one is added.
+    @Test func thePageOnScreenIsMergedNotReplaced() async throws {
+        final class Newest: @unchecked Sendable { var id: Int64 = 60 }
+        let newest = Newest()
+        let all = (1...61).map { String(decoding: json(list.message(from: 7, to: 3, kind: "snap", snap: "opened", id: Int64($0))), as: UTF8.self) }
+        let server = StubServer { request in
+            if request.url!.path.hasSuffix("/read") { return (200, json(["ok": true])) }
+            let page = all[Int(newest.id) - 50..<Int(newest.id)]
+            return (200, Data("[\(page.joined(separator: ","))]".utf8))
+        }
+        let account = Account(server: "https://napsack.test", token: "t", user: reader.me, publicKey: "", privateKey: reader.identity.derRepresentation)
+        let chat = Conversation(.friend(alice), account: account, reader: reader, transport: server)
+        try await chat.loadNewest()
+        #expect(chat.bubbles.map(\.id) == Array(11...60))
+
+        let changed = Newest()  // (a box the observation can write to: 0 untouched, 1 changed)
+        changed.id = 0
+        withObservationTracking { _ = chat.bubbles } onChange: { changed.id = 1 }
+        try await chat.loadNewest()
+        #expect(changed.id == 0, "the same page again left the list alone")
+
+        newest.id = 61
+        try await chat.loadNewest()
+        #expect(chat.bubbles.map(\.id) == Array(11...61), "the new one added; what was shown stays")
+    }
 }
