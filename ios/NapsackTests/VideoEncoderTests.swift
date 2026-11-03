@@ -22,7 +22,7 @@ import Testing
 /// and run side by side they can use up the Simulator's video encoders
 /// (they stalled together on GitHub's smaller Simulator).
 /// Two minutes each: GitHub's Simulator runs them several times slower than a
-/// Mac (one passed at 60 seconds there, 2026-11-03).
+/// Mac (one ran out of its 60 seconds there, 2026-11-03).
 @Suite(.serialized) struct VideoEncoding {
     /// A recording as the camera makes it (1080p turned upright by its transform,
     /// with sound and a location) comes out 720p upright, H.264 High, AAC, under
