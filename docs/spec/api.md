@@ -51,6 +51,7 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `GET  /friend-link` | My add-a-friend link, `{path, created_at, uses}`: the same each time, no limit on uses, never expires. (One-time invite links, `POST`/`GET /invites` and `/invites/{id}/revoke`, and `POST /friend-link/reset` were removed in X39; any address the API doesn't have answers `404`) |
 | `PUT  /me/settings` | `{share_activity}`: friends see when you're active or typing (mutual) |
 | `POST /push/subscriptions` · `/remove` | This browser's `PushSubscription.toJSON()`, tied to the session · stop. Only known push services are accepted |
+| `POST /push/apns` · `/remove` | `{token, environment}`: this iPhone's APNs device token (lowercase hex) and which of Apple's servers knows it (`production` for TestFlight and the App Store, `sandbox` for Xcode builds), tied to the session; the app sends it on every launch · stop (`{token}`). Notifications go only to Apple's two servers, carrying the note, the badge (chats waiting, muted ones not counted), and the `url` to open |
 | `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, encrypted emoji; null takes it back. Comes back as `message_updated` |
 | `PUT  /groups/{id}/messages/{id}/reaction` | `{emoji}` from the fixed set; null takes it back |
 | `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |

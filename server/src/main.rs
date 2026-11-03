@@ -2,6 +2,7 @@ mod account;
 mod admin;
 mod admin_users;
 mod announcements;
+mod apns;
 mod auth;
 mod aws;
 mod birthdays;
@@ -221,6 +222,8 @@ pub struct AppState {
     pub write_limit: ratelimit::RateLimit,
     /// Signs Web Push requests (push.rs).
     pub vapid: push::Vapid,
+    /// Signs iPhone notifications (apns.rs); None without an APNs key.
+    pub apns: Option<apns::Apns>,
     /// Strikes and bans per address (guard.rs).
     pub bans: guard::Bans,
     /// Requests being handled right now (guard.rs).
@@ -234,7 +237,7 @@ pub struct AppState {
     /// New groups per person per day.
     pub group_create_limit: ratelimit::RateLimit,
     /// New invite links per person per day.
-    /// Talks to browsers' push services.
+    /// Talks to browsers' push services, and Apple's.
     pub http: reqwest::Client,
     /// Machine and server readings for the admin Metrics tab.
     pub metrics: metrics::Metrics,
@@ -276,6 +279,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let vapid = push::load_vapid(&db).await?;
+    let apns = apns::Apns::from_env()?;
+    if apns.is_none() {
+        tracing::info!("no apns key: iphones get no notifications");
+    }
     let limits = config.limits.clone();
 
     let admins = roles::Admins::new(config.admins.clone(), config.admins_param.clone());
@@ -293,6 +300,7 @@ async fn main() -> anyhow::Result<()> {
         image_upload_limit: ratelimit::RateLimit::new(60, Duration::from_secs(10 * 60)),
         write_limit: ratelimit::RateLimit::new(600, Duration::from_secs(10 * 60)),
         vapid,
+        apns,
         bans: guard::Bans::default(),
         in_flight: guard::in_flight_gate(&limits),
         request_limit: ratelimit::RateLimit::new(
@@ -396,6 +404,8 @@ fn router(state: SharedState) -> Router {
         .route("/invites/accept", post(invites::accept))
         .route("/push/subscriptions", post(push::subscribe))
         .route("/push/subscriptions/remove", post(push::unsubscribe))
+        .route("/push/apns", post(apns::register))
+        .route("/push/apns/remove", post(apns::unregister))
         .route(
             "/chats/{friend_id}/messages/{message_id}/reaction",
             axum::routing::put(reactions::react),

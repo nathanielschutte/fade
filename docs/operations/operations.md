@@ -66,6 +66,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
+| `FADE_APNS_KEY` · `FADE_APNS_KEY_ID` · `FADE_APPLE_TEAM_ID` · `FADE_IOS_BUNDLE_ID` | unset · unset · unset · `com.getattr.napsack` | iPhone notifications ([below](#iphone-notifications-apns)): the APNs key's .p8 file base64-encoded, its Key ID, the Apple team. Without a key, iPhones get none |
 | `FADE_SESSION_DAYS` | `365` | How long a session lasts after it was last used: each use (noted at most hourly) pushes its end out again |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](../implementation/roles.md)) |
 | `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
@@ -77,6 +78,28 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_MIN_CLIENT_VERSIONS` | unset | e.g. `ios=1.2.0`. Older native apps get `426` and an update prompt ([releasing.md](releasing.md)) |
 | `FADE_METRICS_RETENTION_HOURS` | `72` | How much history the admin Metrics tab keeps (up to 31 days). Changing it takes effect on restart |
 | `FADE_METRICS_DB` | `metrics.db` beside the database | The metrics store. Not user data: a fixed-size ring that overwrites itself |
+
+### iPhone notifications (APNs)
+
+The server sends iPhone notifications through Apple with a key from the Apple Developer account, one per stack: production's is a **Production** key (TestFlight and App Store builds), staging's a **Sandbox** key (Xcode builds), so staging never holds production's.
+
+1. developer.apple.com › Certificates, Identifiers & Profiles › Identifiers › `com.getattr.napsack`: Push Notifications on.
+2. Keys › +: Apple Push Notifications service (APNs), Configure: the environment (Production, or Sandbox for staging), topic `com.getattr.napsack`. Download the .p8 (it downloads only once; keep it outside the repository) and note its Key ID.
+3. In that stack's `terraform.tfvars` (never committed):
+
+   ```hcl
+   apns_key      = <<-EOT
+     -----BEGIN PRIVATE KEY-----
+     ...the .p8 file's lines...
+     -----END PRIVATE KEY-----
+   EOT
+   apns_key_id   = "ABC123DEFG"
+   apple_team_id = "TEAM123456"
+   ```
+
+4. `terraform plan` should change only `aws_ssm_parameter.env` (in place; the instance stays). Apply, then `scripts/ssh.sh "sudo systemctl restart fade"`. The journal no longer says "no apns key".
+
+A key that leaks is revoked in the same Keys page and replaced the same way.
 
 ## Metrics
 

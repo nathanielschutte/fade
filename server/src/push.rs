@@ -314,8 +314,9 @@ pub async fn unsubscribe(
     Ok(Json(json!({ "ended": ended })))
 }
 
-/// Signing out ends that session's notifications.
+/// Signing out ends that session's notifications, in a browser or on an iPhone.
 pub async fn end_for_session(db: &SqlitePool, session_hash: &str) -> sqlx::Result<()> {
+    crate::apns::end_for_session(db, session_hash).await?;
     sqlx::query(
         "UPDATE push_subscriptions SET ended_at = ?, end_reason = 'signed_out'
          WHERE session_hash = ? AND ended_at IS NULL",
@@ -340,7 +341,7 @@ pub struct Note {
     pub url: String,
 }
 
-/// Sends `note` to every browser `user` turned notifications on in, unless
+/// Sends `note` to every browser and iPhone `user` turned notifications on in, unless
 /// napsack is on their screen right now. Returns at once; delivery happens
 /// in the background.
 pub fn notify(state: &SharedState, user: i64, mut note: Note) {
@@ -365,6 +366,9 @@ pub fn notify(state: &SharedState, user: i64, mut note: Note) {
         if let Err(e) = deliver(&state, user, &note).await {
             tracing::warn!(user_id = user, error = %e, "push delivery failed");
         }
+        if let Err(e) = crate::apns::deliver(&state, user, &note).await {
+            tracing::warn!(user_id = user, error = %e, "apns delivery failed");
+        }
     });
 }
 
@@ -376,7 +380,7 @@ pub fn notify(state: &SharedState, user: i64, mut note: Note) {
 /// the server and that browser know: the same chat always gets the same
 /// topic, and the push service learns nothing from it. 18 bytes encode to
 /// exactly 24 characters, within the 32 allowed.
-fn topic(tag: &str, auth: &[u8]) -> String {
+pub(crate) fn topic(tag: &str, auth: &[u8]) -> String {
     use hkdf::Hkdf;
     let mut out = [0u8; 18];
     Hkdf::<Sha256>::new(Some(auth), tag.as_bytes())

@@ -46,6 +46,10 @@ locals {
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
     # The contact in push notification requests (VAPID); never hardcoded in the server.
     "FADE_PUBLIC_URL=https://${local.domain}",
+    # iPhone notifications (apns.rs); empty without a key.
+    "FADE_APNS_KEY=${base64encode(var.apns_key)}",
+    "FADE_APNS_KEY_ID=${var.apns_key_id}",
+    "FADE_APPLE_TEAM_ID=${var.apple_team_id}",
     "",
   ])
 }
