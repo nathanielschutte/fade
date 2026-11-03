@@ -6,9 +6,17 @@ import UIKit
 
 /// An open chat: its history, newest at the bottom, older pages loading as you
 /// scroll up. Opening it marks it read. A friend's changed key shows a warning
-/// at the top until it's accepted. Texts are written at the bottom. A long
-/// press on a message reacts, replies, copies, or (your own text, for 15
-/// minutes) edits it. New messages arrive live (Live.swift).
+/// at the top until it's accepted. Texts are written at the bottom. Holding a
+/// message (it gives a little under the finger, then its menu comes with a
+/// tap of haptics, before you let go) reacts, replies, copies, or (your own
+/// text, for 15 minutes) edits it. New messages arrive live (Live.swift).
+///
+/// Scrolling has few rules, so it does what a finger expects (Nate,
+/// 2026-11-03): the chat opens on the newest; while the newest is in sight,
+/// whatever grows below it (a message, the typing line, the composer, the
+/// keyboard) keeps it in sight; once you've scrolled up, nothing moves what
+/// you're reading, and a quiet note says when something new came below.
+/// Sending takes you to the newest. The rest is the scroll view's own.
 struct ChatScreen: View {
     @Environment(Session.self) private var session
     @Environment(Live.self) private var live
@@ -16,8 +24,13 @@ struct ChatScreen: View {
     /// Unfriended from their profile, or left the group: back to the list once that screen's gone.
     @State private var unfriended = false
     @State var conversation: Conversation
-    /// The message at the top of the screen, kept there while older ones load above it.
-    @State private var position: Int64?
+    /// Where the chat is scrolled: the scroll view keeps it. The app moves it
+    /// only to go to the newest (sending, or the note about new messages).
+    @State private var position = ScrollPosition(idType: Int64.self)
+    /// The newest is in sight, or nearly (ChatScreen.nearBottom).
+    @State private var atBottom = true
+    /// Something new came below while you were reading further up.
+    @State private var newBelow = false
     @State private var showingSafetyCode = false
     @State private var draft = ""
     @State private var replyingTo: Bubble?
@@ -25,6 +38,8 @@ struct ChatScreen: View {
     @State private var failure: String?
     /// The message being held: its reactions and actions show over the chat.
     @State private var held: Bubble?
+    /// The message under a finger, before its menu comes: it gives a little.
+    @State private var pressing: Int64?
     /// Counts what you've sent and reacted, for a light tap of haptics each time.
     @State private var tapped = 0
     /// A pic or video being opened (once).
@@ -40,12 +55,16 @@ struct ChatScreen: View {
     @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
 
+    /// How close to the bottom still counts as at it: a finger's slack, less than a line of text.
+    static let nearBottom: CGFloat = 24
+    /// How far from the oldest message shown the next page starts loading, so it's there before you are.
+    static let loadAhead = 10
+
     var body: some View {
         presentations(main)
     }
 
     private var main: some View {
-        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(spacing: 4) {
                 if case .group = conversation.chat {
@@ -62,8 +81,9 @@ struct ChatScreen: View {
                         ProgressView().padding(.vertical, 8).onAppear { Task { await older() } }
                     }
                 }
-                ForEach(Array(conversation.bubbles.enumerated()), id: \.element.id) { index, bubble in
-                    message(index, bubble)
+                let seenId = conversation.seenId
+                ForEach(conversation.bubbles) { bubble in
+                    message(bubble, seenId: seenId)
                 }
                 ForEach(conversation.outbox) { item in
                     OutgoingView(item: item, quote: item.replyTo.map(quote),
@@ -71,21 +91,54 @@ struct ChatScreen: View {
                                  remove: {
                                      if let text = conversation.discard(item.id), draft.isEmpty { draft = text }  // nothing lost
                                  })
-                        .id(item.id)
+                }
+                if let typing = conversation.typingLine {
+                    // Under the newest, where their message will be.
+                    Text(typing).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4).padding(.top, 2)
+                        .transition(.opacity)
                 }
             }
-            .scrollTargetLayout()
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
+        .accessibilityIdentifier("messages")
+        // The newest at the bottom when it opens; while the bottom's in sight,
+        // anything that changes size keeps it there. Away from the bottom the
+        // scroll view keeps what's on screen where it is.
         .defaultScrollAnchor(.bottom)
-        .scrollPosition(id: $position, anchor: .top)
-        .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom) { composer(proxy) }
-        .onChange(of: conversation.bubbles.last?.id) { before, after in
-            // A newer message came (older pages change the first, not the last).
-            if before != nil, let after { withAnimation { proxy.scrollTo(after, anchor: .bottom) } }
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.visibleRect.maxY >= geometry.contentSize.height - Self.nearBottom
+        } action: { _, now in
+            atBottom = now
+            if now { newBelow = false }
         }
+        .onChange(of: conversation.bubbles.last?.id) { before, after in
+            // Newer than what was there (older pages change the first, not the last), and you're reading further up.
+            if let before, let after, after > before, !atBottom { newBelow = true }
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollDisabled(held != nil)
+        .overlay(alignment: .bottom) {
+            if newBelow {
+                Button { goToNewest() } label: {
+                    Label("New messages", systemImage: "arrow.down")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(.regularMaterial, in: Capsule())
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 1)
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("new-messages")
+                .accessibilityHint("Goes to the newest message")
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: newBelow)
+        .safeAreaInset(edge: .bottom) { composer }
+        .animation(.easeOut(duration: 0.15), value: conversation.typingLine)
         .overlay {
             if !conversation.loaded {
                 if let problem = conversation.problem {
@@ -113,6 +166,7 @@ struct ChatScreen: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: held?.id)
+        // The menu's come: let go (it comes while the finger's still down).
         .sensoryFeedback(.impact(weight: .medium), trigger: held?.id) { _, now in now != nil }
         .sensoryFeedback(.impact(weight: .light), trigger: tapped)
         // A new message from them in the open chat: a light tap (only newer ones, not a page loading).
@@ -178,7 +232,6 @@ struct ChatScreen: View {
                 .presentationDetents([.medium, .large])
             }
         }
-        }
         .onAppear {
             if unfriended { return dismiss() }
             live.openChat = conversation
@@ -198,16 +251,18 @@ struct ChatScreen: View {
         }
     }
 
-    @ViewBuilder private func composer(_ proxy: ScrollViewProxy) -> some View {
+    /// To the newest message, as a scroll (sending, or the note about new messages).
+    private func goToNewest() {
+        newBelow = false
+        withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(edge: .bottom) }
+    }
+
+    @ViewBuilder private var composer: some View {
         if let note = conversation.blockedNote {
             Text(note).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity).padding(12).background(.bar)
         } else if conversation.loaded {
             VStack(spacing: 6) {
-                if let typing = conversation.typingLine {
-                    Text(typing).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                        .transition(.opacity)
-                }
                 if editing != nil || replyingTo != nil {
                     HStack {
                         Group {
@@ -248,7 +303,7 @@ struct ChatScreen: View {
                         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .disabled(!conversation.canSend)
                         .accessibilityIdentifier("composer")
-                    Button { send(proxy) } label: {
+                    Button { send() } label: {
                         Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
                     }
                     .disabled(!conversation.canSend || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -257,32 +312,49 @@ struct ChatScreen: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(.bar)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("composer-bar")
         }
     }
 
-    /// What a long press offers (app.js, the message actions).
     /// One message: its day header when the day changes, the bubble, and "Seen" under my newest text once read.
-    @ViewBuilder private func message(_ index: Int, _ bubble: Bubble) -> some View {
-        if index == 0 || !Calendar.current.isDate(bubble.time, inSameDayAs: conversation.bubbles[index - 1].time) {
+    @ViewBuilder private func message(_ bubble: Bubble, seenId: Int64?) -> some View {
+        let bubbles = conversation.bubbles
+        let index = bubbles.slot(of: bubble.id).index
+        let next = index + 1 < bubbles.count ? bubbles[index + 1] : nil
+        if index == 0 || !Calendar.current.isDate(bubble.time, inSameDayAs: bubbles[index - 1].time) {
             Text(bubble.time.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
                 .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
         }
-        BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(index),
+        BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(bubble, next),
                    react: conversation.canSend && bubble.repliable ? { react(bubble, $0) } : nil)
-            .id(bubble.id)
+            // Gives a little under the finger until the menu comes.
+            .scaleEffect(pressing == bubble.id ? 0.95 : 1)
+            .animation(.easeOut(duration: 0.2), value: pressing == bubble.id)
+            // Before the tap, so it isn't waiting on the tap: the menu comes at
+            // the moment, while the finger is still down, not when it lifts.
+            .onLongPressGesture(minimumDuration: 0.35) {
+                pressing = nil
+                if holdable(bubble) { held = bubble }
+            } onPressingChanged: { down in
+                if down { pressing = bubble.id } else if pressing == bubble.id { pressing = nil }
+            }
             .onTapGesture { if let pic = bubble.opening { viewing = pic } }
-            .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable) {
+            .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable && held == nil) {
                 editing = nil
                 replyingTo = bubble
                 composing = true
             })
-            .onLongPressGesture(minimumDuration: 0.35) { if holdable(bubble) { held = bubble } }
             .accessibilityAction(named: "Message actions") { if holdable(bubble) { held = bubble } }
-        if bubble.id == conversation.seenId {
+            .onAppear {
+                // Near the oldest shown: the page before starts coming now.
+                if index == Self.loadAhead && !conversation.reachedStart { Task { await older() } }
+            }
+        if bubble.id == seenId {
             Text("Seen").font(.caption2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 4)
         }
-        if index == conversation.bubbles.count - 1, let seenBy = conversation.seenBy {
+        if next == nil, let seenBy = conversation.seenBy {
             Text(seenBy).font(.caption2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading).padding(.horizontal, 4)
         }
@@ -334,7 +406,7 @@ struct ChatScreen: View {
         failure = error.localizedDescription
     }
 
-    private func send(_ proxy: ScrollViewProxy) {
+    private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, conversation.canSend else { return }
         draft = ""
@@ -356,11 +428,8 @@ struct ChatScreen: View {
         let reply = replyingTo?.id
         replyingTo = nil
         let id = conversation.queue(text, replyTo: reply)
-        withAnimation { proxy.scrollTo(id, anchor: .bottom) }
-        Task {
-            await conversation.retry(id)
-            if conversation.outbox.isEmpty, let last = conversation.bubbles.last?.id { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
-        }
+        goToNewest()  // what you sent, at the bottom (and it stays there as the server's copy replaces it)
+        Task { await conversation.retry(id) }
     }
 
     /// The sheets and covers a chat shows (picked photos, the camera, the viewer, edits, problems).
@@ -419,11 +488,10 @@ struct ChatScreen: View {
         }
     }
 
+    /// The page before the oldest shown, joining above what you're reading.
     private func older() async {
-        let top = conversation.bubbles.first?.id
         do {
             try await conversation.loadOlder()
-            position = top  // stay where you were, with the older messages above
         } catch {
             session.noticed(error)
         }
@@ -431,10 +499,8 @@ struct ChatScreen: View {
 
     /// The time shows under the last of a run: the next message is someone
     /// else's, or more than five minutes later.
-    private func endsARun(_ index: Int) -> Bool {
-        let bubbles = conversation.bubbles
-        guard index + 1 < bubbles.count else { return true }
-        let this = bubbles[index], next = bubbles[index + 1]
+    private func endsARun(_ this: Bubble, _ next: Bubble?) -> Bool {
+        guard let next else { return true }
         return next.mine != this.mine || next.sender != this.sender || next.time.timeIntervalSince(this.time) > 5 * 60
     }
 
