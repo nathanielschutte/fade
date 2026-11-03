@@ -2,7 +2,7 @@
 
 Building the napsack iPhone app: what's in `ios/`, setting up a Mac and an iPhone the first time, the daily loop, and how the pieces work. It assumes you know napsack ([onboarding.md](onboarding.md)) but not Xcode or iOS, so it explains the Xcode words as they come up. The plan for the app (why native Swift, milestones, TestFlight, releases) is in [mobile.md](design/mobile.md).
 
-Where things stand (2026-10-29): every encryption format is in Swift and passes the pinned vectors, on the Mac and on the phone. The app is still a development screen: it talks to a server and runs the encryption's checks on the phone. What's next is in [plan-ios.md](management/plan-ios.md).
+Where things stand (2026-11-03): the app has chats, friends, groups, pics and videos, notifications, and settings, and it's on TestFlight for the owner's own team. Next is TestFlight for friends outside it, which goes through Apple's review first ([the checklist](#external-testing-the-checklist)). What else is next is in [plan-ios.md](management/plan-ios.md).
 
 ## The pieces
 
@@ -149,6 +149,73 @@ A check that disagrees with a vector means the Swift is wrong. The vectors are n
 - **The app's CI** (`.github/workflows/ios.yml`) runs the same two steps on GitHub's Macs (free for this public repository) for every change to `ios/`, the vectors, or the shared crypto: the crypto package's tests, then the app's tests on a Simulator (the live ones skip there). Keep its commands matching the ones above. Its Simulator build is signed to run locally (no team): unsigned, the app gets no Keychain.
 - **Versions:** the app's version is `MARKETING_VERSION` and its build number `CURRENT_PROJECT_VERSION` (`Config/Base.xcconfig`). Releasing it (TestFlight, the App Store, `ios-v*` tags) comes later, with the paid Developer Program ([mobile.md](design/mobile.md)).
 
+## Screen sizes and shapes
+
+napsack runs on every iPhone that runs iOS 18 or later, and its testers already have a spread of them (a 12 Pro Max, a 14, a 15 Pro, a 16 Pro). Never write for particular models, and never design only for the phone on your desk. The app asks the phone what it has (its space, its safe area, its cameras, Face ID or Touch ID) and fits itself to that. Get the smallest and the largest right and everything in between follows.
+
+### The range
+
+Sizes are in **points**, the unit SwiftUI lays out in (a point is 2 or 3 pixels, depending on the screen). These come from Xcode's Simulator profiles (`/Library/Developer/CoreSimulator/Profiles/DeviceTypes`, November 2026). Look again when new iPhones come out.
+
+| Points (wide × tall) | iPhones | Top of the screen | Unlocks with |
+|---|---|---|---|
+| 320 wide | the small ones with **Display Zoom** on (Settings › Display & Brightness), which makes everything bigger: about 320 × 568 on an SE, 320 × 693 on a mini | | |
+| 375 × 667 | SE (2nd and 3rd generation): the shortest, and with the minis the narrowest without Display Zoom | a plain status bar, and a home button below the screen | Touch ID (the home button) |
+| 375 × 812 | XS, 11 Pro, 12 mini, 13 mini (a mini's panel has fewer pixels, but iOS lays it out at 375 × 812 and scales it down) | notch | Face ID |
+| 390 × 844 | 12, 12 Pro, 13, 13 Pro, 14, 16e, 17e | notch | Face ID |
+| 393 × 852 | 14 Pro, 15, 15 Pro, 16 | Dynamic Island | Face ID |
+| 402 × 874 | 16 Pro, 17, 17 Pro, 18 Pro | Dynamic Island | Face ID |
+| 414 × 896 | XR, XS Max, 11, 11 Pro Max | notch | Face ID |
+| 420 × 912 | Air | Dynamic Island | Face ID |
+| 428 × 926 | 12 Pro Max, 13 Pro Max, 14 Plus | notch | Face ID |
+| 430 × 932 | 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus | Dynamic Island | Face ID |
+| 440 × 956 | 16 Pro Max, 17 Pro Max, 18 Pro Max: the largest | Dynamic Island | Face ID |
+| 466 × 678, and 669 × 951 open | **Duo**, the foldable (2026): a short, wide outer screen folded, and a nearly square inner one open | Dynamic Island | Touch ID (the side button) |
+
+The **safe area** is the part of the screen nothing covers. On top it's 20 points (the SE's status bar) to about 62 (the Dynamic Island). At the bottom it's 0 on the SE, which has a home button, and 34 on the others, for the home indicator, the bar you swipe up on. The corners are rounded differently on each model; the Duo's outer screen even has two tight corners and two round ones.
+
+### What else differs
+
+- **Face ID or Touch ID.** The SE and the Duo have Touch ID; the others Face ID. `LAContext().biometryType` says which (`AppLock.method` turns it into "Face ID" or "Touch ID" for the screen), so text on screen never says "Face ID" by itself. `NSFaceIDUsageDescription` is the question iOS asks on Face ID phones only; Touch ID doesn't ask.
+- **Cameras.** The back of an iPhone has one camera (XR, SE, 16e, 17e, Air), two (a wide and an ultra wide (0.5×) on most; a wide and a 2× telephoto on the XS), or three on the Pros (adding a telephoto of 2×, 2.5×, 3×, 4×, or 5×). The front camera is the TrueDepth camera on Face ID phones. The camera finds the lenses itself (`CameraSession.Lenses`, from the device's own zoom factors, Camera.swift), so the lens buttons are whatever this phone has. The Simulator has no camera at all.
+- **Buttons.** Every iPhone has volume buttons. **Camera Control**, a button on the side that clicks and slides, is on the 16, 16 Pro, 17, 17 Pro, 18 Pro, and Air (not the 16e or 17e). An app's camera gets the volume buttons and Camera Control's click as the shutter through `AVCaptureEventInteraction`, and Camera Control's slider (zoom, for one) through `AVCaptureSession`'s controls (iOS 18; check `supportsControls`, which is false on phones without it). napsack's camera uses neither yet: there the volume buttons only change the volume, and Camera Control opens whichever camera app the person chose in Settings (plan-ios.md, section 10). The **Action button** (the 15 Pro and every iPhone from the 16 on, in place of the ring switch; the Duo has neither) does whatever the person picked; an app takes part only through App Intents or a Control Center control, never by reading the button.
+- **Screen speed.** Pro models from the 13 Pro on, and the 17 and Air, draw up to 120 times a second (ProMotion); the others 60. Animate with SwiftUI's animations or `TimelineView`, never with a timer that assumes 60.
+- **The Duo** changes size while napsack is open: folding or unfolding switches screens, and the inner screen can show two apps side by side. A layout that works from 320 to 669 points wide covers it, as long as nothing on screen is rebuilt (and its state lost) because the size changed. It also takes the Apple Pencil, which the drawing tool should treat like a finger. napsack is an iPhone-only, portrait-only app (`TARGETED_DEVICE_FAMILY = 1`, `UISupportedInterfaceOrientations`); how the inner screen shows such an app is to be checked on the Duo Simulator (it needs the iOS 27.1 runtime).
+- **iPads** run iPhone-only apps too, in a phone-sized window, and Apple's reviewers sometimes use one (guideline 2.4.1). It has to work there, even though it won't look its best.
+
+### The rules
+
+1. **Stay inside the safe area.** Only backgrounds and full-screen pictures go past it (`.ignoresSafeArea()` on that layer alone, as the camera's preview does); buttons and text stay inside. Bars pinned to an edge use `.safeAreaInset(edge:)`, which also keeps them above the keyboard. Never add a number for the status bar, the notch, the Dynamic Island, or the home indicator: it's different on every phone.
+2. **No screen sizes in code.** No `UIScreen.main.bounds` (it's the whole screen, not napsack's window, and wrong on the Duo or beside another app), no `if width > 400`, no model names. Let the container decide: stacks, `Spacer`, `.frame(maxWidth: .infinity)`, `containerRelativeFrame`, and `ViewThatFits` to pick a layout that fits. `GeometryReader` only where a real size is needed (the camera's caption, a pic filling the screen).
+3. **Fixed sizes only for small things**, like an icon, an avatar, or a button's tap area (at least 44 × 44 points). When it sits next to text, let it grow with the text (`@ScaledMetric var size = 32.0`). A fixed width on anything holding text (a menu, a row of buttons, a field) breaks at large text or on a 320-point screen.
+4. **Dynamic Type.** People choose their text size (Settings › Display & Brightness › Text Size, and much larger under Accessibility), and napsack follows it. Use text styles (`.body`, `.headline`, `.caption`), never `.font(.system(size:))` for words. Text wraps instead of cutting off a name or a button's label; at the accessibility sizes a row may need to stack (`ViewThatFits`, or `dynamicTypeSize.isAccessibilitySize`).
+5. **The keyboard.** On a 375 × 667 phone it leaves under 400 points. What you're typing and the button that sends it stay in sight.
+6. **Ask the phone, not the model.** Cameras: `AVCaptureDevice.DiscoverySession` and the device's zoom factors. Unlocking: `LAContext().biometryType`. Camera Control: `supportsControls` (once napsack's camera uses it). Space: the layout.
+7. **Check both ends** before calling something done: the SE (shortest, and 375 wide like the minis), the SE with Display Zoom (320 × 568, the narrowest), and a Pro Max (largest), once with large text, and the Duo's two screens for anything with a lot on it. A real phone for what the Simulator can't do (the camera, Face ID's feel, notifications).
+
+### How to check
+
+- **Simulators.** `xcrun simctl list devicetypes` lists every model; make one with `xcrun simctl create "SE" "iPhone SE (3rd generation)"`. The iOS 27 runtime here runs the 11 and later, the SE (2nd and 3rd generation), and the minis; the Duo needs iOS 27.1. The XS and XR stop at iOS 18, so seeing them needs an iOS 18 runtime (Xcode › Settings › Components), which is only worth it to check iOS 18 itself. The Simulator's Settings app has Display Zoom and Text Size too.
+- **While it runs from Xcode:** the Environment Overrides button in the bar above the console changes the text size, light or dark, and more, live.
+- **The canvas:** a `#Preview` shows one phone; pick the phone at its bottom, and its Variants button shows every text size at once.
+- **In a test**, a screen drawn at any size into a picture you can look at (and Claude can read), without a Simulator for each phone. Inside a test in `NapsackTests` (the app's code, signed in against the test server as the live tests are):
+  ```swift
+  @MainActor func picture(of view: some View, width: CGFloat, height: CGFloat, to path: String) async throws {
+      let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+      let window = UIWindow(windowScene: scene)
+      window.frame = CGRect(x: 0, y: 0, width: width, height: height)
+      window.rootViewController = UIHostingController(rootView: view)
+      window.makeKeyAndVisible()
+      try await Task.sleep(for: .seconds(2))  // until it has loaded and drawn
+      let png = UIGraphicsImageRenderer(bounds: window.bounds).pngData { _ in
+          window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      try png.write(to: URL(fileURLWithPath: path))
+      window.isHidden = true
+  }
+  ```
+  Call it with `ChatListScreen(account: account).environment(session)` (and `.environment(\.dynamicTypeSize, .accessibility3)` for large text) at 320 × 568 (the SE with Display Zoom), 375 × 667, 375 × 812, 440 × 956, and the Duo's 466 × 678 and 669 × 951. The window keeps the safe area of the Simulator it runs on, so check edges and the keyboard on a Simulator of that model. Pictures like these are for looking, not for committing.
+
 ## TestFlight
 
 TestFlight is how builds reach phones before the App Store: yours and up to 100 people on the App Store Connect team (**internal** testers, no review), then friends by email or a public link (**external**, up to 10,000; the first build of each version goes through Apple's Beta App Review, usually within a day or two). A build expires after 90 days. The plan for the App Store itself is in [plan-ios.md](management/plan-ios.md), section 12.
@@ -175,28 +242,56 @@ TestFlight is how builds reach phones before the App Store: yours and up to 100 
 
 1. `make ios` passes, and `ios/` is committed (the build number is the commit count, so it goes up with every commit; App Store Connect refuses a number it has seen).
 2. `scripts/ios-testflight.sh`: it checks the settings (the real bundle id, the team, the server: release builds always use `https://api.napsack.io`), runs the crypto checks, builds the Release archive signed for the App Store, checks no test data is in it, and uploads it. `make ios-archive` does everything but the upload.
-3. In App Store Connect → the app → TestFlight, the build appears after processing (minutes). The first time, and for each build until it's decided in the app's settings, it asks about **export compliance** (encryption): the owner's legal answer (plan-ios.md, section 12).
+3. In App Store Connect → the app → TestFlight, the build appears after processing (minutes). It doesn't ask about **export compliance** (encryption): the owner's answer (plan-ios.md, section 12) is in every build, `ITSAppUsesNonExemptEncryption` in `Config/App.xcconfig`.
 4. **Internal testing:** make a group, add yourself (and anyone on the team); TestFlight on the phone offers the build.
-5. **External testing:** make a group with a public link or emails, fill in the test information (what to test, a feedback email, a privacy policy URL, and a sign-in for Apple's reviewer: sign-up is invite-only, so make the reviewer an account on production), and submit the build for Beta App Review (below).
+5. **External testing:** once the checklist below is done, add the build to the external group and submit it for Beta App Review.
 
-### External testing: what Apple's review needs
+### External testing: the checklist
 
-The first build of each version goes through Beta App Review. In App Store Connect → the app → TestFlight → Test Information (filled in once, edited when it changes):
+External testers are anyone outside the App Store Connect team, invited by email or a public link. Before the first of them can install a build, Apple's **Beta App Review** looks at it: the first build of each version (`MARKETING_VERSION`), and sometimes later ones. It reviews against the whole of the [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/), since a TestFlight app "should be intended for public distribution and should comply with the App Review Guidelines" (2.2). So what the App Store will ask, the first external build mostly asks too; only the store's own page (screenshots, description, privacy labels, age rating) waits for the App Store. Where things stood on 2026-11-03:
 
-- **Beta App Description:** napsack is a private messenger for close friends: texts, and pics and videos that can be viewed once, all end-to-end encrypted. Sign-up is by invitation from a friend.
-- **Feedback Email:** the contact address on `/support`.
-- **Privacy Policy URL:** `https://napsack.io/privacy`. **Marketing URL:** none needed.
-- **Sign-in required:** yes, with the reviewer account (below). **Review notes:** "Sign in with the account above. Its friend, nate, will answer. Try a text, a reply (swipe a message), a reaction (hold a message), and a pic or video from the camera tab: the friend can open it once. Add-a-friend is by QR code or link (Friends)."
-- **What to Test** (each build): what's new in it, in a sentence or two.
+**Done**
+
+- [x] **Release builds talk to production** through `https://api.napsack.io` (`Config/Release.xcconfig`): a Release build's Info.plist says `NapsackServerURL = https://api.napsack.io`, with production notifications (`NapsackAPNsEnvironment = production`) and links on `napsack.io`, and `/api/config` answers there.
+- [x] **Export compliance:** `ITSAppUsesNonExemptEncryption = NO` is in the Release Info.plist (`Config/App.xcconfig`; Nate, 2026-11-02: all the app's encryption is Apple's own, CryptoKit, CommonCrypto, and HTTPS), so uploads don't ask.
+- [x] **Permissions say why** (5.1.1(ii)), in the Release Info.plist: the camera ("napsack uses the camera for the pics and videos you send."), the microphone ("napsack records sound with the videos you send."), photos ("napsack sends photos you choose."), and Face ID ("napsack uses Face ID to unlock, when you turn the lock on in Settings."). Each is asked only when it's first used; photos come through iOS's own picker, which needs no permission, so that one never shows. Notifications are asked once after signing in, in iOS's own words.
+- [x] **Deleting your account in the app** (5.1.1(v)): Settings › Delete account (server 0.49.0). It still needs a try on a phone.
+- [x] **The privacy policy and the support page are live** (5.1.1(i), 1.2's "published contact information"): `https://napsack.io/privacy` (what's kept, who sees it, how long, and how to delete your account) and `https://napsack.io/support` (the contact address).
+- [x] **Testers can sign up.** Sign-up is invite-only, but a friend's add-a-friend link signs anyone up with no invite code, as that person's friend (`invites.rs`: one link per person, never used up, never expiring). The site's `apple-app-site-association` names the app for `/i/*`, so once napsack is installed from TestFlight, the link opens it; opened before, it signs up on the website, and the account then signs in in the app.
+- [x] **Sign in with Apple isn't needed:** guideline 4.8 asks for it only from apps that offer another company's sign-in, and napsack has its own accounts only.
+
+**Still needed in the app** (code, with the area that owns it)
+
+- [ ] **Report and block** (1.2, plan-ios.md section 12, Planned): apps with what other people write must let you report it and block whoever sent it, and answer reports in good time. Only friends can message you and unfriending stops them, which helps, but an unfriended person can ask again, so it isn't a block. This is the likeliest reason for a rejection. A server change first (a block that stops requests and messages, and reports that reach the Admins), then the web and the app.
+- [ ] **The privacy policy and support inside the app** (5.1.1(i): "within the app in an easily accessible manner"): two links in Settings, to `/privacy` and `/support` on the server's `site_url`. Owner: iOS Settings.
+- [ ] **Works on an iPad** (2.1, 2.4.1): reviewers sometimes install iPhone apps on an iPad, where they run in a phone-sized window. Run it once on an iPad Simulator: signing in, a chat, the camera saying there's none.
+- [ ] **No crashes, nothing unfinished** (2.1): `make ios` passes, and a TestFlight build has been through signing up, a text, a pic, notifications, and deleting an account on a real phone. Hide anything that's half built.
+- [ ] *(Small)* The local network question (`NSLocalNetworkUsageDescription`, "napsack connects to a development server on your network") and `NSAllowsLocalNetworking` are in Release builds too. Release never reaches the local network, so iOS never asks, but they could move to Debug only. Owner: iOS build settings (`Config/App.xcconfig`, `App-Info.plist`).
+
+**Nate, in App Store Connect** (the app → TestFlight)
+
+1. **Test Information** (once; edit it when it changes):
+   - **Beta App Description** (required): "napsack is a private messenger for close friends: texts, and pics and videos that can be viewed once, all end-to-end encrypted. You join through a friend's link."
+   - **Feedback Email:** the address on `/support` (testers' feedback from the TestFlight app also comes to App Store Connect, with screenshots).
+   - **Privacy Policy URL:** `https://napsack.io/privacy`. **Marketing URL:** none.
+2. **Beta App Review Information** (once):
+   - **Contact:** your name, email, and phone, the phone in international form (`+1 ...`). Apple uses it if the review has a question.
+   - **Sign-in required:** on, with the reviewer account (below). It must keep working: never turn it off or change its password while a build is in review.
+   - **Review Notes** (up to 4,000 bytes): "Sign in with the account above. Its friend, nate, will answer. Try a text, a reply (swipe a message), a reaction (hold a message), and a pic or video from the camera: the friend can open it once. Settings has deleting your account. napsack is for friends: anyone can join through a friend's link (Friends › Share), and only friends can message each other." Add how to report and block once it's built.
+3. **Groups:** the internal group exists. Make an external group, add the build, and submit it for review. For a public link, set its **Tester Limit** to fit the account cap (below); for email invitations, invite no more than that.
+4. **Each build:** What to Test, in a sentence or two. Only one build per version is in review at a time, and up to six a day can be submitted.
+5. **The version:** the first external build is the first one Apple reviews, so it's a good time to decide what `MARKETING_VERSION` it carries (`0.1.0` now; the owner's, [mobile.md](design/mobile.md)).
 
 **The reviewer account** (Nate, 2026-11-02: a dedicated account, a User's permissions only; the one account on production made for testing). The owner makes it, so its password never passes through anyone else:
 
 1. In a private browser window, open your own add-a-friend link (Friends → Copy link), so the new account starts out your friend and needs no invite code.
 2. Sign up as `appreview` with a long password from your password manager. Save its recovery key there too.
 3. New accounts are Users: no PowerUser or Admin role (`/fade/admins` stays as it is).
-4. Put the username and password in the Test Information's sign-in fields, and nowhere else (never the repository, the plan, or a chat).
+4. Put the username and password in the Beta App Review Information's sign-in fields, and nowhere else (never the repository, the plan, or a chat).
 
 Answer its messages while a build is in review. Between reviews it can stay; turning it off (System → Users) also works, but turn it back on before the next submission.
+
+**The account cap.** Production takes at most 100 accounts (`FADE_MAX_ACCOUNTS`, `guard.rs`), counting every account that isn't turned off or deleted (Team Napsack doesn't count, and neither does a deleted account). Past it, sign-up says "napsack isn't taking new accounts right now." TestFlight allows 10,000 testers, and every tester new to napsack takes a place (a friend who already uses the website signs in and takes none), the reviewer account included. Before inviting anyone, look at how many accounts there are (System → Users) and either keep the invitations and the public link's Tester Limit under the room left, or raise the cap first ([security.md](security.md), the settings: a line in `infra/main.tf`, `terraform apply`, a restart).
 
 ## When it doesn't work
 
