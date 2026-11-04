@@ -2,11 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- A development server on your network, maybe plain http: Debug builds
+	     only (NAPSACK_LOCAL_NETWORK, App.xcconfig). Release reaches https alone. -->
+#if NAPSACK_LOCAL_NETWORK
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>napsack connects to a development server on your network.</string>
+#endif
 	<key>NapsackAPNsEnvironment</key>
 	<string>$(NAPSACK_APS_ENVIRONMENT)</string>
 	<key>NapsackLinkHost</key>
