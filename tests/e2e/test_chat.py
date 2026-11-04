@@ -168,7 +168,10 @@ async def main():
                 ...[...document.querySelectorAll('[aria-label],[alt],[title],[placeholder]')].flatMap(e =>
                     ['aria-label', 'alt', 'title', 'placeholder'].map(k => e.getAttribute(k) || ''))].join(' ')""")
             assert "snap" not in visible.lower(), [w for w in visible.split() if "snap" in w.lower()]
-        assert len(snap_uploads) == 2 and all(n <= 200 * 1024 + 28 for n in snap_uploads), snap_uploads
+        # Each photo is at most 200 KB; sealed, it gains the caption (its 2-byte
+        # length and its words, format 2) and 28 bytes (nonce and tag).
+        sealed_max = 200 * 1024 + 2 + len("first light over the lake".encode()) + 28
+        assert len(snap_uploads) == 2 and all(n <= sealed_max for n in snap_uploads), snap_uploads
         if DB:
             # The caption is sealed in with the photo: not in the database, not readable on disk.
             assert "first light over the lake".encode() not in open(DB, "rb").read()
