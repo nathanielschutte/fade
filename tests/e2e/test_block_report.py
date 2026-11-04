@@ -34,6 +34,8 @@ async def send(page, text):
     await page.fill("#composer-input", text)
     await page.click("#composer button[type=submit]")
     await expect(page.locator(".msg", has_text=text.splitlines()[0]).last).to_be_visible(timeout=10000)
+    # Stored, not still going: a message on its way has no menu of its own yet.
+    await expect(page.locator(".msg.pending")).to_have_count(0, timeout=10000)
 
 
 async def menu(page, text):
