@@ -666,13 +666,15 @@
 
 <!-- Pic viewer -->
 <div id="viewer" class="viewer" hidden role="dialog" aria-label="Pic">
-  <img id="viewer-image" alt="Pic" draggable="false">
-  <video id="viewer-video" playsinline hidden></video>
-  <div class="viewer-tint" aria-hidden="true"></div>
+  <div class="viewer-stage" id="viewer-stage">
+    <img id="viewer-image" alt="Pic" draggable="false">
+    <video id="viewer-video" playsinline hidden></video>
+    <div class="viewer-tint" aria-hidden="true"></div>
+    <p class="viewer-caption" id="viewer-caption" hidden></p>
+  </div>
   <div class="viewer-timer" aria-hidden="true"><span id="viewer-bar"></span></div>
   <p class="viewer-from" id="viewer-from"></p>
   <p class="viewer-count" id="viewer-count" hidden></p>
-  <p class="viewer-caption" id="viewer-caption" hidden></p>
   <p class="viewer-error" id="viewer-error" role="alert" hidden></p>
   <p class="viewer-hint" id="viewer-hint">Tap to close</p>
 </div>

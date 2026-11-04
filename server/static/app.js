@@ -6708,7 +6708,7 @@ function showOpening(m) {
   $("#viewer-from").textContent = personName(m.sender_id, m.sender_name ?? "");
   $("#viewer-caption").hidden = true;
   updateCount();
-  $("#viewer-hint").textContent = "Opening…";
+  setViewerHint("Opening…");
   v.hidden = false;
 }
 
@@ -6752,7 +6752,7 @@ async function showInViewer({ blob, video = false, from, caption = "", y = null 
   // Where the sender put it, on the picture itself (X33); else the lower third.
   placeViewerCaption(y);
   const left = updateCount();
-  $("#viewer-hint").textContent = left ? "Tap for the next one" : "Tap to close";
+  setViewerHint(left ? "Tap for the next one" : "Tap to close");
   v.style.setProperty("--view-ms", `${ms}ms`);
   v.classList.add("running");
   // A video moves on when it ends; this is the backstop if it stalls.
@@ -6800,7 +6800,7 @@ function showViewerProblem(text) {
   $("#viewer").classList.remove("opening");
   $("#viewer-error").textContent = text;
   $("#viewer-error").hidden = false;
-  $("#viewer-hint").textContent = "Tap to close";
+  setViewerHint("Tap to close");
   viewer.run = null;
 }
 
@@ -6819,6 +6819,7 @@ function clearViewer() {
   player.load();
   player.hidden = true;
   v.classList.remove("is-video");
+  resetZoom();
   placeViewerCaption(null);
   if (viewer.url) URL.revokeObjectURL(viewer.url);
   viewer.url = null;
@@ -6830,7 +6831,168 @@ function stopViewer() {
   $("#viewer").hidden = true;
 }
 
-$("#viewer").addEventListener("click", nextPic);
+/** What the viewer says at its foot; while zoomed in, how to zoom back out. */
+function setViewerHint(text) {
+  viewer.hint = text;
+  $("#viewer-hint").textContent = zoom.s > 1 ? "Tap to zoom out" : text;
+}
+
+// ---------- zooming into an opened pic ----------
+// Pinch to zoom and drag to pan; on a computer, the wheel or a trackpad pinch
+// zooms where the pointer is, and dragging pans. Let go, and it springs back
+// within bounds: never smaller than it opened, never more than ZOOM_MAX, and
+// no edge pulled in from the screen's. A pinch or a drag is never a tap, so
+// it doesn't move on to the next pic; a tap on a zoomed pic zooms back out.
+// The pic's timer runs on as it would: zooming doesn't keep it longer.
+const ZOOM_MAX = 4;
+// The stage's transform is translate(x, y) scale(s), about its center.
+const zoom = { s: 1, x: 0, y: 0, pointers: new Map(), from: null, moved: false, gesture: null };
+
+const zoomable = () => !!viewer.url && !$("#viewer").classList.contains("opening");
+
+/** A point on screen, from the viewer's center (where the stage scales from). */
+function fromCenter(clientX, clientY) {
+  const r = $("#viewer").getBoundingClientRect();
+  return { x: clientX - r.left - r.width / 2, y: clientY - r.top - r.height / 2 };
+}
+
+function applyZoom(settle = false) {
+  const stage = $("#viewer-stage");
+  stage.classList.toggle("settling", settle);
+  stage.style.transform = zoom.s === 1 && !zoom.x && !zoom.y ? "" : `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+  $("#viewer").classList.toggle("zoomed", zoom.s > 1);
+  $("#viewer-hint").textContent = zoom.s > 1 ? "Tap to zoom out" : viewer.hint ?? "";
+}
+
+/** Back within bounds (see above). */
+function boundZoom() {
+  zoom.s = Math.min(ZOOM_MAX, Math.max(1, zoom.s));
+  if (zoom.s < 1.02) zoom.s = 1; // all but out is out
+  const media = $("#viewer-video").hidden ? $("#viewer-image") : $("#viewer-video");
+  const v = $("#viewer");
+  const room = (size, view) => Math.max(0, (size * zoom.s - view) / 2);
+  const rx = room(media.offsetWidth, v.clientWidth);
+  const ry = room(media.offsetHeight, v.clientHeight);
+  zoom.x = Math.min(rx, Math.max(-rx, zoom.x));
+  zoom.y = Math.min(ry, Math.max(-ry, zoom.y));
+}
+
+/** Scales by `k` about `at` (from the center), keeping what's under it there. */
+function zoomAbout(at, k, from = zoom) {
+  const s = from.s * k;
+  zoom.x = at.x - ((at.x - from.x) / from.s) * s;
+  zoom.y = at.y - ((at.y - from.y) / from.s) * s;
+  zoom.s = s;
+}
+
+function resetZoom() {
+  zoom.s = 1;
+  zoom.x = zoom.y = 0;
+  zoom.pointers.clear();
+  zoom.from = zoom.gesture = null;
+  $("#viewer").classList.remove("dragging");
+  applyZoom();
+}
+
+/** Where every finger (or the mouse) is now, as the gesture's starting point. */
+function zoomBaseline() {
+  const pts = [...zoom.pointers.values()];
+  zoom.from = { s: zoom.s, x: zoom.x, y: zoom.y, pts: pts.map((p) => ({ ...p })) };
+}
+
+const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+const viewerEl = $("#viewer");
+viewerEl.addEventListener("pointerdown", (e) => {
+  if (!zoom.pointers.size) zoom.moved = false; // a new touch: a tap until it moves
+  if (!zoomable() || (e.pointerType === "mouse" && e.button !== 0)) return;
+  zoom.pointers.set(e.pointerId, fromCenter(e.clientX, e.clientY));
+  if (zoom.pointers.size > 1) zoom.moved = true; // a second finger is a pinch, never a tap
+  viewerEl.setPointerCapture?.(e.pointerId);
+  $("#viewer-stage").classList.remove("settling");
+  zoomBaseline();
+});
+viewerEl.addEventListener("pointermove", (e) => {
+  if (!zoom.pointers.has(e.pointerId) || !zoom.from) return;
+  zoom.pointers.set(e.pointerId, fromCenter(e.clientX, e.clientY));
+  const now = [...zoom.pointers.values()];
+  const was = zoom.from.pts;
+  if (now.length >= 2 && was.length >= 2) {
+    // Pinch: scaled by how far apart the fingers are, about where they are.
+    const k = distance(now[0], now[1]) / Math.max(1, distance(was[0], was[1]));
+    const mid = midpoint(now[0], now[1]);
+    const before = midpoint(was[0], was[1]);
+    zoomAbout(before, k, zoom.from);
+    zoom.x += mid.x - before.x;
+    zoom.y += mid.y - before.y;
+    // A little give past the limits while held; it springs back on letting go.
+    zoom.s = Math.min(ZOOM_MAX * 1.5, Math.max(0.6, zoom.s));
+  } else {
+    const dx = now[0].x - was[0].x;
+    const dy = now[0].y - was[0].y;
+    if (!zoom.moved && Math.hypot(dx, dy) < 8) return; // still a tap
+    zoom.moved = true;
+    if (zoom.from.s <= 1) return; // nothing to pan
+    viewerEl.classList.add("dragging");
+    zoom.x = zoom.from.x + dx;
+    zoom.y = zoom.from.y + dy;
+  }
+  applyZoom();
+});
+function zoomPointerEnd(e) {
+  if (!zoom.pointers.delete(e.pointerId)) return;
+  if (zoom.pointers.size) return zoomBaseline(); // fingers left: go on from here
+  viewerEl.classList.remove("dragging");
+  zoom.from = null;
+  boundZoom();
+  applyZoom(true);
+}
+viewerEl.addEventListener("pointerup", zoomPointerEnd);
+viewerEl.addEventListener("pointercancel", zoomPointerEnd);
+
+// The wheel, and a trackpad pinch (which browsers send as the wheel with Ctrl).
+viewerEl.addEventListener("wheel", (e) => {
+  if (viewerEl.hidden) return;
+  e.preventDefault(); // never the page's zoom or scroll behind
+  if (!zoomable() || zoom.pointers.size) return;
+  const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+  const k = Math.exp(-e.deltaY * lines * (e.ctrlKey ? 0.01 : 0.002));
+  $("#viewer-stage").classList.remove("settling");
+  zoomAbout(fromCenter(e.clientX, e.clientY), k);
+  boundZoom();
+  applyZoom();
+}, { passive: false });
+
+// Safari: a trackpad pinch comes as gesture events (and on an iPhone, a pinch
+// would zoom the page): the stage zooms instead. On a touch screen the
+// pointers above already do it.
+viewerEl.addEventListener("gesturestart", (e) => {
+  e.preventDefault();
+  zoom.gesture = zoom.pointers.size || !zoomable() ? null : { s: zoom.s, x: zoom.x, y: zoom.y, at: fromCenter(e.clientX, e.clientY) };
+});
+viewerEl.addEventListener("gesturechange", (e) => {
+  e.preventDefault();
+  if (!zoom.gesture || zoom.pointers.size) return;
+  zoomAbout(zoom.gesture.at, e.scale, zoom.gesture);
+  boundZoom();
+  applyZoom();
+});
+viewerEl.addEventListener("gestureend", (e) => {
+  e.preventDefault();
+  zoom.gesture = null;
+});
+
+viewerEl.addEventListener("click", () => {
+  if (zoom.moved) return; // the end of a pinch or a drag, not a tap
+  if (zoom.s > 1) {
+    zoom.s = 1;
+    zoom.x = zoom.y = 0;
+    applyZoom(true);
+    return;
+  }
+  nextPic();
+});
 $("#viewer").addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("#viewer").hidden) stopViewer();
