@@ -129,6 +129,7 @@
         System
       </a>
       <button type="button" class="account-link" id="sign-out">Sign out</button>
+      <p class="field-hint sign-out-note" id="sign-out-note" hidden>Signing out leaves nothing of your account in this browser. Your chats are here again when you sign back in.</p>
     </footer>
     <nav class="tabs" id="tabs" aria-label="napsack">
       <button type="button" class="tab" id="tab-chats" aria-current="page">
@@ -415,11 +416,6 @@
     </div>
     <label class="check activity-check"><input type="checkbox" id="share-activity"> Show friends when I'm active or typing</label>
     <p class="field-hint">Off means you won't see theirs either.</p>
-    <h3>Delete account</h3>
-    <p class="field-hint">Deletes everything of yours from napsack, for good.</p>
-    <div class="picture-row">
-      <button type="button" class="button danger" id="delete-account">Delete account</button>
-    </div>
   </section>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>
@@ -428,8 +424,18 @@
   </section>
   <footer class="profile-actions" id="profile-actions"></footer>
   <footer class="profile-account" id="profile-account" hidden>
-    <a class="button" id="profile-admin-link" href="/admin" hidden>System</a>
-    <button type="button" class="button" id="profile-sign-out">Sign out</button>
+    <div class="profile-account-row">
+      <a class="button" id="profile-admin-link" href="/admin" hidden>System</a>
+      <button type="button" class="button" id="profile-sign-out">Sign out</button>
+    </div>
+    <p class="field-hint sign-out-note" id="profile-sign-out-note" hidden>Signing out leaves nothing of your account in this browser. Your chats are here again when you sign back in.</p>
+    <section class="profile-delete">
+      <h3>Delete account</h3>
+      <p class="field-hint">Deletes everything of yours from napsack, for good.</p>
+      <div class="picture-row">
+        <button type="button" class="button danger" id="delete-account">Delete account</button>
+      </div>
+    </section>
   </footer>
 </dialog>
 

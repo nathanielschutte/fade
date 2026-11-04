@@ -1450,9 +1450,42 @@ async function forgetEverything(notice) {
   await new Promise(() => {}); // the page is going; nothing more runs here
 }
 
-$("#sign-out").addEventListener("click", async () => {
-  try { await api("/auth/logout", { method: "POST" }); } catch {}
-  await signOutLocally();
+// Signing out takes two taps, like leaving a group: the first says what it
+// does (everything of the account leaves this browser), the second does it.
+// Both Sign out buttons (the account bar's and the profile's) work this way;
+// a tap anywhere else, or the profile opening again, puts one back.
+const SIGN_OUTS = [["#sign-out", "#sign-out-note"], ["#profile-sign-out", "#profile-sign-out-note"]];
+
+function disarmSignOut(button) {
+  for (const [b, note] of SIGN_OUTS) {
+    if (button && b !== button) continue;
+    const btn = $(b);
+    if (!btn.dataset.confirm) continue;
+    delete btn.dataset.confirm;
+    btn.textContent = "Sign out";
+    btn.classList.remove("danger");
+    $(note).hidden = true;
+  }
+}
+
+for (const [b, note] of SIGN_OUTS) {
+  $(b).addEventListener("click", async () => {
+    const btn = $(b);
+    if (!btn.dataset.confirm) {
+      disarmSignOut(); // only one asks at a time
+      btn.dataset.confirm = "1";
+      btn.textContent = "Tap again to sign out";
+      btn.classList.add("danger");
+      $(note).hidden = false;
+      return;
+    }
+    btn.disabled = true;
+    try { await api("/auth/logout", { method: "POST" }); } catch {}
+    await signOutLocally();
+  });
+}
+document.addEventListener("pointerdown", (e) => {
+  for (const [b] of SIGN_OUTS) if (!$(b).contains(e.target)) disarmSignOut(b);
 });
 
 // ---------- app shell ----------
@@ -4955,6 +4988,7 @@ async function openProfile(userId) {
   hideProfileEdit();
   $("#profile-people-section").hidden = true;
   $("#profile-account").hidden = userId !== state.me?.id;
+  disarmSignOut("#profile-sign-out");
   msg.hidden = true;
   // Never the last person's name while this one loads (X23).
   const known = userId === state.me?.id ? state.me : chatById(userId);
@@ -6521,7 +6555,6 @@ $("#profile-dialog").addEventListener("close", () => {
 });
 // Grown to a computer's width: the profile goes back to being a sheet.
 wideLayout.addEventListener("change", () => { if (wideLayout.matches) closeProfileTab(); });
-$("#profile-sign-out").addEventListener("click", () => $("#sign-out").click());
 
 // ---------- snap viewer ----------
 

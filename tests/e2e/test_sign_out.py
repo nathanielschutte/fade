@@ -7,7 +7,7 @@ see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import befriend, launch, row, sign_in, sign_up
+from common import befriend, launch, row, shot, sign_in, sign_out, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -54,9 +54,38 @@ async def main():
         kept = await ana.evaluate(KEPT)
         assert kept["local"] and kept["cache"] and "identity" in kept["keys"], kept  # there was something to forget
 
+        # Signing out asks first, saying what it does; a tap elsewhere takes it back.
+        out, note = ana.locator("#sign-out"), ana.locator("#sign-out-note")
+        await out.click()
+        await expect(out).to_have_text("Tap again to sign out")
+        await expect(note).to_be_visible()
+        await expect(note).to_contain_text("leaves nothing of your account in this browser")
+        await shot(ana, "sign-out-confirm", full_page=False)
+        await ana.click("#chat-search")
+        await expect(out).to_have_text("Sign out")
+        await expect(note).to_be_hidden()
+        await expect(ana.locator("#app")).to_be_visible()
+        # The profile's Sign out asks the same way, with Delete account below it.
+        await ana.click("#my-profile")
+        p_out = ana.locator("#profile-sign-out")
+        await expect(p_out).to_be_visible(timeout=10000)
+        await p_out.click()
+        await expect(p_out).to_have_text("Tap again to sign out")
+        await expect(ana.locator("#profile-sign-out-note")).to_be_visible()
+        assert (await ana.locator("#delete-account").bounding_box())["y"] > (await p_out.bounding_box())["y"]
+        await ana.locator("#profile-sign-out-note").scroll_into_view_if_needed()
+        await shot(ana, "sign-out-confirm-profile", full_page=False)
+        await ana.click("#profile-dialog [data-close]")
+        await ana.click("#my-profile")
+        await expect(p_out).to_have_text("Sign out")  # opening it again starts over
+        await expect(ana.locator("#profile-sign-out-note")).to_be_hidden()
+        await ana.click("#profile-dialog [data-close]")
+        kept = await ana.evaluate(KEPT)
+        assert kept["local"] and "identity" in kept["keys"], kept  # nothing went on the first tap
+        print("sign out asks first, on the account bar and the profile")
+
         # Ana signs out: nothing of hers is left on the device.
-        await ana.click("#sign-out")
-        await expect(ana.locator("#auth")).to_be_visible(timeout=10000)
+        await sign_out(ana)
         nothing_of_theirs(await ana.evaluate(KEPT))
 
         # Ben signs in on the same tab while his chat list is slow to come:
@@ -78,8 +107,7 @@ async def main():
         print("signed out: nothing kept; the next account never sees the last one's chats")
 
         # A session the server ends (signed out elsewhere): the same, and it says why.
-        await ana.click("#sign-out")
-        await expect(ana.locator("#auth")).to_be_visible(timeout=10000)
+        await sign_out(ana)
         await sign_in(ana, ANA)
         await expect(row(ana, CAL)).to_be_visible(timeout=10000)
         await ana.evaluate("""() => fetch('/api/auth/logout', { method: 'POST',

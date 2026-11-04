@@ -8,15 +8,10 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, launch, save_recovery_key, shot, PASSWORD, befriend, open_page, fill_sign_up, sign_in, sign_up_or_in, PHONE
+from common import ADMIN, BASE, launch, save_recovery_key, shot, PASSWORD, befriend, open_page, fill_sign_up, sign_in, sign_out, sign_up_or_in, PHONE
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
-async def sign_out(page):
-    await page.click("#sign-out")
-    await expect(page.locator("#auth")).to_be_visible()
-
-
 async def recover(page, name, secret, password):
     await page.click("#auth-forgot")
     await page.fill("#recover-form input[name=recover_username]", name)

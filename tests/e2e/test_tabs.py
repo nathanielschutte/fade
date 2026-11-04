@@ -7,7 +7,7 @@ the rest. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import launch, shot, PHONE, befriend, row, sign_up
+from common import launch, shot, PHONE, befriend, row, sign_out, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -152,8 +152,7 @@ async def main():
         # Signing out from the Profile tab.
         await ana.click("#back-button")
         await ana.click("#tab-profile")
-        await ana.click("#profile-sign-out")
-        await expect(ana.locator("#auth")).to_be_visible(timeout=10000)
+        await sign_out(ana, "#profile-sign-out")
         await expect(ana.locator("#profile-dialog")).to_be_hidden()
 
         assert not errors, errors

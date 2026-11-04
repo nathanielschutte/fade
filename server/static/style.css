@@ -762,6 +762,11 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   text-decoration: none; cursor: pointer;
 }
 .account-link:hover { background: var(--wash); color: var(--paper); }
+.account-link.danger { color: var(--danger); }
+/* Above the bar, the width of it, while Sign out asks for a second tap. */
+.account-bar { flex-wrap: wrap; }
+.account-bar .sign-out-note { order: -1; flex-basis: 100%; margin: 0 0.5rem 0.25rem; }
+.sign-out-note[hidden] { display: none; }
 
 /* ---------- chat list text, avatars with pictures ---------- */
 
@@ -1478,10 +1483,15 @@ html[data-env] { --tabs-foot: 1.1rem; }
   .app.in-chat ~ #profile-dialog.as-tab { display: none; }
 }
 .profile-account {
-  display: flex; justify-content: flex-end; gap: 0.5rem;
   margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--rule);
 }
 .profile-account[hidden] { display: none; }
+.profile-account-row { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.profile-account .sign-out-note { margin-top: 0.5rem; text-align: right; }
+/* Below Sign out, apart from it: the one that can't be taken back. */
+.profile-delete { margin-top: 1.5rem; }
+.profile-delete h3 { font-size: var(--step-0); margin-bottom: 0.25rem; }
+.profile-delete .picture-row { margin-top: 0.5rem; }
 .profile-account a.button { text-decoration: none; }
 
 /* Plain blocks, not a flex column: Safari gave a `flex: 1` list no height

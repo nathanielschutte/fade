@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, base64, os, re, sqlite3, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, DB, launch, shot, PASSWORD, fill_sign_up, sign_in
+from common import BASE, DB, launch, shot, PASSWORD, fill_sign_up, sign_in, sign_out
 tag = uuid.uuid4().hex[:5]
 ALEX, SAM = f"alex_{tag}", f"sam_{tag}"
 SECRET = f"meet at the usual place {tag} 🌿"
@@ -221,8 +221,7 @@ async def main():
         print("fresh profile + password decrypts history")
 
         # Signing out clears the key; a wrong password can't sign in.
-        await c.click("#sign-out")  # on the main screen's account bar
-        await expect(c.locator("#auth")).to_be_visible()
+        await sign_out(c)  # on the main screen's account bar
         assert await c.evaluate("""() => new Promise((res) => {
             const r = indexedDB.open('napsack', 1);
             r.onsuccess = () => { const g = r.result.transaction('keys').objectStore('keys').get('identity');
