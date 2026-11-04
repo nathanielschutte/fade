@@ -172,7 +172,9 @@ struct ChatListScreen: View {
                 FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
             }
             .navigationDestination(for: ChatRow.Kind.self) { kind in
-                if let conversation = conversation(kind) {
+                // A chat whose friendship just ended (blocked, from this chat or by them) stays
+                // on screen as it was until you leave it, rather than going blank under you.
+                if let conversation = conversation(kind) ?? opened.peek(kind) {
                     // No reload on the way back: what came while it was open came live, and
                     // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
                     ChatScreen(conversation: conversation)
@@ -181,6 +183,7 @@ struct ChatListScreen: View {
                         .id(kind)
                         .environment(live)
                         .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
+                        .environment(\.openChatLink, OpenChatLink(run: openLink))
                 }
             }
             .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
@@ -473,6 +476,21 @@ struct ChatListScreen: View {
         found = hit.id
         showingFriends = false
         path = [hit.kind]
+    }
+
+    /// A link in a text to one of the app's own chats (ChatLink): that chat,
+    /// at its message, as a search result opens one. A chat you aren't in
+    /// (yet, or any more) says so.
+    private func openLink(_ link: ChatLink) async -> String? {
+        if conversation(link.kind) == nil { await load() }
+        guard conversation(link.kind) != nil else {
+            Reporter.shared.report(.info, "chat link to a chat not in the list")
+            return link.kind.groupId != nil ? "That group isn't one you're in." : "That chat isn't one you have."
+        }
+        found = link.message.map { MessageHit.ID(kind: link.kind, message: $0) }
+        showingFriends = false
+        if path != [link.kind] { path = [link.kind] }
+        return nil
     }
 
     /// The pics shown from the list are opened (each as it was shown; the

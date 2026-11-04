@@ -22,6 +22,74 @@ struct LinksTests {
     }
 }
 
+/// Links in texts to the app's own chats (ChatLink): only the app's own site's
+/// routes count, and only they become tappable.
+struct ChatLinkTests {
+    let site = "https://napsack.io"
+
+    func link(_ text: String, site: String? = "https://napsack.io") -> ChatLink? {
+        URL(string: text).flatMap { ChatLink($0, site: site) }
+    }
+
+    @Test func theOwnSitesRoutesOpen() {
+        #expect(link("https://napsack.io/#group=3&message=12") == ChatLink(kind: .group(3), message: 12))
+        #expect(link("https://napsack.io/#chat=7") == ChatLink(kind: .friend(7), message: nil))
+        #expect(link("https://napsack.io#chat=7&message=1") == ChatLink(kind: .friend(7), message: 1))
+        #expect(link("HTTPS://NapSack.IO/#group=3") == ChatLink(kind: .group(3), message: nil))
+        #expect(link("https://napsack.io/#chat=7", site: "https://napsack.io/") == ChatLink(kind: .friend(7), message: nil))
+        // Development: the server's own address, port and all.
+        #expect(link("http://127.0.0.1:8097/#group=2&message=5", site: "http://127.0.0.1:8097") == ChatLink(kind: .group(2), message: 5))
+    }
+
+    @Test func anythingElseDoesnt() {
+        for other in [
+            "https://evil.example/#group=1",
+            "https://napsack.io.evil.example/#group=1",
+            "https://evilnapsack.io/#group=1",
+            "https://napsack.io@evil.example/#group=1",
+            "https://user@napsack.io/#group=1",
+            "https://xn--npsack-3ve.io/#group=1",  // a lookalike, spelled for DNS
+            "http://napsack.io/#group=1",  // not the site's scheme
+            "https://napsack.io:8443/#group=1",
+            "https://napsack.io/admin#group=1",
+            "https://napsack.io/i/#group=1",
+            "https://napsack.io/?next=evil#group=1",
+            "javascript:alert(1)//napsack.io/#group=1",
+            "napsack://napsack.io/#group=1",
+            "https://napsack.io/#group=0",
+            "https://napsack.io/#group=-3",
+            "https://napsack.io/#group=3a",
+            "https://napsack.io/#group=",
+            "https://napsack.io/#group=99999999999999999999",
+            "https://napsack.io/#group=3&message=",
+            "https://napsack.io/#group=3&message=1&more=2",
+            "https://napsack.io/#group=3&reply=1",
+            "https://napsack.io/#friends",
+            "https://napsack.io/#admin=1",
+            "https://napsack.io/#group%3D3",
+            "https://napsack.io/",
+        ] {
+            #expect(link(other) == nil, "\(other)")
+        }
+        #expect(link("https://napsack.io/#group=3", site: nil) == nil)
+        #expect(link("https://napsack.io/#group=3", site: "javascript:alert(1)") == nil)
+    }
+
+    /// Only the own site's routes get a link, where they're written; every other link stays words.
+    @Test func onlyOwnLinksAreTappable() {
+        let text = "An Admin reviewed a report.\n\nOpen it: https://napsack.io/#group=3&message=12. Or https://evil.example/#group=3 or https://napsack.io.evil.example/#chat=1, javascript:alert(1)"
+        let linked = ChatLink.linked(text, site: site)
+        let links = linked.runs.compactMap { run in run.link.map { ($0, String(linked[run.range].characters)) } }
+        #expect(links.count == 1)
+        #expect(links.first?.0 == URL(string: "https://napsack.io/#group=3&message=12"))
+        #expect(links.first?.1 == "https://napsack.io/#group=3&message=12")  // the words shown are where it goes
+        #expect(String(linked.characters) == text)
+        #expect(ChatLink.linked(text, site: nil).runs.allSatisfy { $0.link == nil })
+        #expect(ChatLink.linked("(https://napsack.io/#chat=4)", site: site).runs.compactMap(\.link) == [URL(string: "https://napsack.io/#chat=4")!])
+        #expect(ChatLink.linked("see https://napsack.io/privacy and www.napsack.io", site: site).runs.allSatisfy { $0.link == nil })
+    }
+}
+
 /// Against a real server (a local one; it makes accounts): a link says whose
 /// it is, signs someone new up as their friend, and adds someone signed in.
 /// Runs only with NAPSACK_TEST_SERVER set.
