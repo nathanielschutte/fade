@@ -156,16 +156,20 @@ async def main():
         # Waits for what it checks, never a fixed time: on a busy machine audio
         # can start decoding well after the picture (it failed CI that way). What
         # the player reports is kept as it plays, since the viewer resets it at the end.
+        # A held shutter on a slow machine can record under a second, so a video that
+        # played to its end counts as played (it failed CI waiting for a second).
         WATCH = """() => {
-          window.__played = 0; window.__audio = 0;
+          window.__played = 0; window.__audio = 0; window.__ended = false;
           const v = document.querySelector('#viewer-video');
-          v.ontimeupdate = () => {
+          const note = () => {
             window.__played = Math.max(window.__played, v.currentTime);
             window.__audio = Math.max(window.__audio, v.webkitAudioDecodedByteCount || 0);
           };
+          v.ontimeupdate = note;
+          v.onended = () => { note(); window.__ended = true; };
         }"""
         async def no_sound_after_a_second(page):
-            await page.wait_for_function("() => window.__played >= 1", timeout=20000)
+            await page.wait_for_function("() => window.__played >= 1 || window.__ended", timeout=20000)
             return await page.evaluate("window.__audio") == 0
         async def some_sound(page):
             await page.wait_for_function("() => window.__audio > 0", timeout=20000)
