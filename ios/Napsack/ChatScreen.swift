@@ -33,6 +33,8 @@ struct ChatScreen: View {
     @State private var scrolling = false
     /// Said once per chat opened: it was left past its end (ChatScreen's own report).
     @State private var reportedPastEnd = false
+    /// Gone to the newest by its id: it's drawn, and the next move puts the end in its place.
+    @State private var placingEnd = false
     /// Something new came below while you were reading further up.
     @State private var newBelow = false
     @State private var showingSafetyCode = false
@@ -75,6 +77,36 @@ struct ChatScreen: View {
     static let nearBottom: CGFloat = 24
     /// How far from the oldest message shown the next page starts loading, so it's there before you are.
     static let loadAhead = 10
+
+    /// Left past its end with nothing moving it (a blank screen above the composer; Nate
+    /// saw it on his phone as the keyboard came up): back to the end, as a touch would do.
+    private func returnedFromPastEnd(_ now: BottomGap, before: BottomGap) -> Bool {
+        guard now.gap < -Self.nearBottom, now.height > now.visible else { return false }
+        if !reportedPastEnd {
+            reportedPastEnd = true
+            Reporter.shared.report(.warn, "chat left past its end", [
+                "gap": "\(Int(now.gap))", "height": "\(Int(now.height))", "visible": "\(Int(now.visible))",
+                "inset": "\(Int(now.inset))", "before_gap": "\(Int(before.gap))", "before_inset": "\(Int(before.inset))",
+            ])
+        }
+        position.scrollTo(edge: .bottom)
+        return true
+    }
+
+    /// Whether the list needs `drawEnd` when the keyboard or composer moves (D18): iOS 26 and older.
+    static var redrawsAtEnd: Bool {
+        if #available(iOS 27, *) { false } else { true }
+    }
+
+    /// To the newest message by its id, when it's the last row (no text still going or typing
+    /// line below it): a scroll to a row has the list lay the row out. Then `placingEnd`.
+    private func drawEnd() -> Bool {
+        guard conversation.outbox.isEmpty, conversation.typingLine == nil,
+              let newest = conversation.bubbles.last?.id else { return false }
+        position.scrollTo(id: newest, anchor: .bottom)
+        placingEnd = true
+        return true
+    }
 
     var body: some View {
         presentations(main)
@@ -137,24 +169,27 @@ struct ChatScreen: View {
             // nor a jump to a search result: those move the chat without changing its size.
             // Older pages grow above and leave the gap as it was. The end is a place, not a
             // distance, so going there can't add to a move the scroll view makes itself.
-            let resized = now.height > before.height || now.visible != before.visible || now.inset != before.inset
+            if placingEnd {
+                // The row is laid out now; a scroll to a row ignores the inset under the composer
+                // and keyboard, so the end goes where it belongs, above them.
+                placingEnd = false
+                if !scrolling, abs(now.gap) > Self.nearBottom {
+                    position.scrollTo(edge: .bottom)
+                    return
+                }
+            }
+            let reframed = now.visible != before.visible || now.inset != before.inset
+            let resized = now.height > before.height || reframed
             if !scrolling, resized, before.gap <= Self.nearBottom, now.gap > Self.nearBottom {
                 position.scrollTo(edge: .bottom)
                 return
             }
-            // Left past its end with nothing moving it (a blank screen above the composer, Nate
-            // saw it on his phone as the keyboard came up): back to the end, as a touch would do.
-            if !scrolling, now.gap < -Self.nearBottom, now.height > now.visible {
-                if !reportedPastEnd {
-                    reportedPastEnd = true
-                    Reporter.shared.report(.warn, "chat left past its end", [
-                        "gap": "\(Int(now.gap))", "height": "\(Int(now.height))", "visible": "\(Int(now.visible))",
-                        "inset": "\(Int(now.inset))", "before_gap": "\(Int(before.gap))", "before_inset": "\(Int(before.inset))",
-                    ])
-                }
-                position.scrollTo(edge: .bottom)
-                return
-            }
+            // Before iOS 27 the list can stay at its end by the numbers as the keyboard comes up
+            // yet draw none of its rows, a blank screen until a touch (D18; testReopenedThenKeyboard
+            // caught it, the numbers showing no gap). Going to the newest by its id has the list
+            // lay that row out.
+            if !scrolling, reframed, before.gap <= Self.nearBottom, Self.redrawsAtEnd, drawEnd() { return }
+            if !scrolling, returnedFromPastEnd(now, before: before) { return }
             atBottom = now.gap <= Self.nearBottom
             if atBottom { newBelow = false }
         }
