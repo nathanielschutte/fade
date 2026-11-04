@@ -17,6 +17,8 @@ import XCTest
         /// The newest text so far.
         var newest: String
         var sent = 60
+        /// Each of the first 60 texts' message id, by its words.
+        var ids: [String: Int64] = [:]
     }
     static var chat: Chat?
     /// The app has been launched fresh once this run.
@@ -34,12 +36,13 @@ import XCTest
         if Self.chat == nil {
             let me = try await server.newAccount("ui"), friend = try await server.newAccount("pal")
             try await server.befriend(me, friend)
+            var ids: [String: Int64] = [:]
             for n in 1...60 {
                 // Theirs and mine, a few of them longer, as a chat goes.
                 let text = n % 7 == 0 ? "Message \(n).\nA second line.\nAnd a third." : "Message \(n)."
-                if n % 3 == 0 { try await server.send(text, from: me, to: friend) } else { try await server.send(text, from: friend, to: me) }
+                ids[text] = n % 3 == 0 ? try await server.send(text, from: me, to: friend) : try await server.send(text, from: friend, to: me)
             }
-            Self.chat = Chat(server: server, me: me, friend: friend, newest: "Message 60.")
+            Self.chat = Chat(server: server, me: me, friend: friend, newest: "Message 60.", ids: ids)
         }
         app = XCUIApplication()
         app.launchEnvironment["NAPSACK_UI_TEST_SERVER"] = server.address
@@ -173,6 +176,33 @@ import XCTest
         let middle = message.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
         middle.press(forDuration: 0.05, thenDragTo: middle.withOffset(CGVector(dx: 140, dy: 0)), withVelocity: .default, thenHoldForDuration: 0)
         try require(app.buttons["Cancel reply"].waitForExistence(timeout: 3), "swiping replied")
+    }
+
+    // ---------- links in texts ----------
+
+    /// A link in a text to the app's own site, at a message (as Team Napsack's
+    /// warnings carry), is tappable and brings that message into view; a link
+    /// to anywhere else in the same text isn't a link at all.
+    func testALinkToAMessageOpensIt() async throws {
+        var chat = try XCTUnwrap(Self.chat)
+        let target = try XCTUnwrap(chat.ids["Message 30."])
+        let site = chat.server.address.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        try await chat.server.send("Open it: \(site)/#chat=\(chat.friend.id)&message=\(target) or https://evil.example/#chat=\(chat.friend.id)",
+                                   from: chat.friend, to: chat.me)
+        chat = try await friendSends(chat)  // a plain newest after it, as the other tests expect
+        try openChat(chat)
+        try expectInSight(chat.newest, "opening the chat")
+        let link = messages.links.firstMatch
+        try require(link.waitForExistence(timeout: 5), "the app's own link showed as a link")
+        try require(messages.links.count == 1, "only the app's own link is one (\(messages.links.count) links)")
+        try require(poll(1) { screen in
+            guard let m = screen.message("Message 30.") else { return true }
+            return m.frame.maxY < screen.top || m.frame.minY > screen.bottom
+        }, "Message 30. out of sight before the tap")
+        link.tap()
+        try expectInSight("Message 30.", "after tapping the link")
+        shot("chat-link-opened-message")
+        try require(!app.buttons["Reply"].exists, "a tap on a link doesn't bring the message's menu")
     }
 
     // ---------- Profile ----------

@@ -158,6 +158,8 @@ struct GroupInfoScreen: View {
     @State private var picked: PhotosPickerItem?
     @State private var note: String?
     @State private var confirmingLeave = false
+    @State private var reporting: ReportTarget?
+    @State private var blocking: Reportable?
 
     var body: some View {
         List {
@@ -190,12 +192,23 @@ struct GroupInfoScreen: View {
                                 Button("Remove", role: .destructive) { act { try await model.remove(member.id); note = "Removed \(display(member)). Everything they sent stays." } }
                             }
                         }
+                        .contextMenu {
+                            // Hold someone to report or block them (Moderation.swift).
+                            if member.id != account.user.id {
+                                let person = Reportable(id: member.id, name: display(member))
+                                Button("Report \(person.name)", systemImage: "exclamationmark.bubble") {
+                                    reporting = ReportTarget(what: .person, person: person)
+                                }
+                                Button("Block \(person.name)", systemImage: "hand.raised", role: .destructive) { blocking = person }
+                            }
+                        }
                     }
                 } header: {
                     Text("Members (\(detail.members.count))")
                 } footer: {
-                    Text(model.isOwner ? "You're the owner, so you can remove people (swipe). Everything they sent stays in the chat."
-                         : "Only \(detail.members.first { $0.role == "owner" }.map(display) ?? "the owner") can remove people. You can add your friends.")
+                    Text((model.isOwner ? "You're the owner, so you can remove people (swipe). Everything they sent stays in the chat."
+                          : "Only \(detail.members.first { $0.role == "owner" }.map(display) ?? "the owner") can remove people. You can add your friends.")
+                         + " Hold someone to report or block them.")
                 }
                 let addable = friends.values.filter { f in f.system != true && f.deactivated != true && !detail.members.contains { $0.id == f.id } }
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -254,6 +267,26 @@ struct GroupInfoScreen: View {
         } message: {
             Text("You won't get its new messages. Someone in it can add you back.")
         }
+        .sheet(item: $reporting) { target in
+            ReportSheet(target: target, account: account) { who in note = blockedNote(who) }
+        }
+        .blockQuestion($blocking) { who in
+            act {
+                do {
+                    try await Moderation.block(who.id, account: account)
+                } catch {
+                    Reporter.shared.report(.warn, "block failed", Reporter.fields(error, ["user_id": String(who.id)]))
+                    throw error
+                }
+                Reporter.shared.report(.info, "blocked", ["user_id": String(who.id), "group_id": String(model.id)])
+                note = blockedNote(who)
+            }
+        }
+    }
+
+    /// The group stays as it is (Nate's default: their messages here stay too).
+    private func blockedNote(_ who: Reportable) -> String {
+        "Blocked \(who.name). This group stays as it is; you can leave it."
     }
 
     private func display(_ member: GroupModel.Member) -> String {

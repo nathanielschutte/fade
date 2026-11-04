@@ -55,6 +55,11 @@ struct ChatScreen: View {
     @State private var camera: CameraOpening?
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
+    /// A message or the friend being reported, and someone being asked about blocking (Moderation.swift).
+    @State private var reporting: ReportTarget?
+    @State private var blocking: Reportable?
+    /// Opens a chat from a link in a text (the chat list's).
+    @Environment(\.openChatLink) private var openChatLink
     @FocusState private var composing: Bool
 
     /// The content's height, how far its end is below what's shown, and the
@@ -263,6 +268,20 @@ struct ChatScreen: View {
                     .accessibilityLabel("Encryption and safety code")
                 }
             }
+            if let friend = conversation.friend, friend.system != true {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        let person = Reportable(id: friend.id, name: friend.name)
+                        Button("Report \(friend.name)", systemImage: "exclamationmark.bubble") {
+                            reporting = ReportTarget(what: .person, person: person)
+                        }
+                        Button("Block \(friend.name)", systemImage: "hand.raised", role: .destructive) { blocking = person }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("More")
+                }
+            }
         }
         .sheet(isPresented: $showingSafetyCode) {
             if let friend = conversation.friend, let code = conversation.safetyCode {
@@ -415,7 +434,47 @@ struct ChatScreen: View {
                 composing = true
             })
         }
+        // Someone else's text, pic, or video (never Team Napsack's): ids only go (Moderation.swift).
+        if let target = ReportTarget.message(bubble, in: conversation.chat, friends: conversation.friendsById) {
+            actions.append(.init(title: "Report", icon: "exclamationmark.bubble") { reporting = target })
+        }
         return actions
+    }
+
+    /// Blocks them; a direct chat with them closes (the friendship's over), a group stays.
+    private func block(_ person: Reportable) async {
+        guard let account = session.account else { return }
+        do {
+            try await Moderation.block(person.id, account: account)
+            Reporter.shared.report(.info, "blocked", ["user_id": String(person.id)])
+            if conversation.friend?.id == person.id {
+                unfriended = true
+                dismiss()
+            }
+        } catch {
+            Reporter.shared.report(.warn, "block failed", Reporter.fields(error, ["user_id": String(person.id)]))
+            session.noticed(error)
+            failure = error.localizedDescription
+        }
+    }
+
+    /// A link in a text to one of the app's own chats: that chat, at its message.
+    private var openLinks: OpenURLAction {
+        let site = ownSite
+        return OpenURLAction { url in
+            // Only the app's own links are links at all (ChatLink.linked); anything else goes nowhere.
+            guard let link = ChatLink(url, site: site), let openChatLink else { return .discarded }
+            Task {
+                if let problem = await openChatLink(link) { failure = problem }
+            }
+            return .handled
+        }
+    }
+
+    /// The app's own site, for links in texts: the server's `site_url`, or its own address where there's none (development).
+    private var ownSite: String? {
+        guard let limits, let account = session.account else { return nil }
+        return limits.siteUrl ?? account.server
     }
 
     /// Whether holding this message offers anything at all.
@@ -499,6 +558,17 @@ struct ChatScreen: View {
             let from = waiting.firstIndex(of: item.pic) ?? 0
             PicViewer(pics: Array(waiting[from...]), conversation: conversation)
         }
+        .sheet(item: $reporting, onDismiss: { if unfriended { dismiss() } }) { target in
+            if let account = session.account {
+                ReportSheet(target: target, account: account) { who in
+                    // Blocked from the sheet: a direct chat with them closes once it's gone.
+                    if conversation.friend?.id == who.id { unfriended = true }
+                }
+            }
+        }
+        .blockQuestion($blocking) { who in Task { await block(who) } }
+        .environment(\.ownSite, ownSite)
+        .environment(\.openURL, openLinks)
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -575,6 +645,8 @@ struct OutgoingView: View {
 }
 
 struct BubbleView: View {
+    /// Links in texts to it are tappable (ChatLink); nothing else in a text is.
+    @Environment(\.ownSite) private var ownSite
     let bubble: Bubble
     let quote: String?
     var showTime = true
@@ -633,7 +705,7 @@ struct BubbleView: View {
         switch bubble.content {
         case .text(let text, let edited):
             VStack(alignment: .leading, spacing: 2) {
-                Text(text)
+                Text(ChatLink.linked(text, site: ownSite))
                 if edited { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
             }
         case .media(let words):
