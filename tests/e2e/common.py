@@ -126,6 +126,17 @@ async def sign_up_or_in(page, name, password=PASSWORD):
         await fill_sign_up(page, name, password)
 
 
+async def sign_out(page, button="#sign-out"):
+    """Signs out with `button` (the account bar's, or "#profile-sign-out" on
+    the profile): the first tap asks, saying what signing out does, and the
+    second signs out (app.js)."""
+    btn = page.locator(button)
+    await btn.click()
+    await expect(btn).to_have_text("Tap again to sign out")
+    await btn.click()
+    await expect(page.locator("#auth")).to_be_visible(timeout=10000)
+
+
 async def befriend(asker, asked, name_of_asked, name_of_asker):
     """`asker` sends a friend request from the Friends dialog; `asked` accepts it."""
     await asker.click("#friends-button")
