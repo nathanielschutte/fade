@@ -416,6 +416,10 @@
     </div>
     <label class="check activity-check"><input type="checkbox" id="share-activity"> Show friends when I'm active or typing</label>
     <p class="field-hint">Off means you won't see theirs either.</p>
+    <h3>Blocked</h3>
+    <p class="field-hint">People you block can't send you anything, ask to be friends, or add you to a group. Unblocking doesn't make you friends again.</p>
+    <ul class="people blocked-list" id="blocked-list"></ul>
+    <p class="form-note" id="blocked-note" role="status"></p>
   </section>
   <dl class="profile-stats" id="profile-stats"></dl>
   <section id="profile-people-section" hidden>
@@ -423,6 +427,7 @@
     <ul class="people" id="profile-people"></ul>
   </section>
   <footer class="profile-actions" id="profile-actions"></footer>
+  <footer class="profile-safety" id="profile-safety"></footer>
   <footer class="profile-account" id="profile-account" hidden>
     <div class="profile-account-row">
       <a class="button" id="profile-admin-link" href="/admin" hidden>System</a>
@@ -543,6 +548,58 @@
     <button type="button" class="button" data-hours="8">For 8 hours</button>
     <button type="button" class="button" data-hours="168">For a week</button>
     <button type="button" class="button" data-hours="0">Until I turn it back on</button>
+  </div>
+</dialog>
+
+<!-- Report a message or a person (reports.rs): ids only, never what it said -->
+<dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
+  <header class="sheet-head">
+    <h2 id="report-title">Report</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <form id="report-form" class="report-form" novalidate>
+    <p class="sheet-text" id="report-text"></p>
+    <fieldset class="report-reasons" id="report-reasons">
+      <legend>Why are you reporting it?</legend>
+    </fieldset>
+    <label class="field">
+      <span>Anything to add? (optional)</span>
+      <input name="note" id="report-note" maxlength="500" autocomplete="off">
+    </label>
+    <p class="field-hint">One line, in your own words. Please don't paste the message here.</p>
+    <p class="form-error" id="report-error" role="alert"></p>
+    <button type="submit" class="button primary" id="report-submit">Send report</button>
+  </form>
+  <div class="report-done" id="report-done" hidden>
+    <p class="sheet-text" id="report-done-text"></p>
+    <div class="picture-row">
+      <button type="button" class="button danger" id="report-block">Block</button>
+      <button type="button" class="button" data-close>Done</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Block someone (blocks.rs): asks first, says what it does -->
+<dialog id="block-dialog" class="sheet" aria-labelledby="block-title">
+  <header class="sheet-head">
+    <h2 id="block-title">Block</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <ul class="sheet-list">
+    <li>You stop being friends.</li>
+    <li>They can't send you anything, ask to be friends, or add you to a group.</li>
+    <li>They aren't told.</li>
+    <li>Groups you're both in stay as they are. You can leave them.</li>
+  </ul>
+  <p class="sheet-text">You can unblock them in your profile, under Blocked.</p>
+  <p class="form-error" id="block-error" role="alert"></p>
+  <div class="picture-row">
+    <button type="button" class="button danger-solid" id="block-confirm">Block</button>
+    <button type="button" class="button" data-close>Cancel</button>
   </div>
 </dialog>
 

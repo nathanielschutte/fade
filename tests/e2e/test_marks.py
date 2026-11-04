@@ -6,24 +6,11 @@ swiping it. Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, launch, shot, PHONE, befriend, row, sign_up
+from common import BASE, launch, shot, PHONE, befriend, row, sign_up, swipe
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}"
 GROUP = f"Cabin {tag}"
-async def swipe(page, locator, dx):
-    """A finger dragging sideways `dx` pixels across `locator`."""
-    box = await locator.bounding_box()
-    x, y = box["x"] + box["width"] - 30, box["y"] + box["height"] / 2
-    cdp = await page.context.new_cdp_session(page)
-    await cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
-    for i in range(1, 11):
-        await cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x + dx * i / 10, "y": y + i * 0.3}]})
-        await asyncio.sleep(0.02)
-    await cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
-    await asyncio.sleep(0.3)
-
-
 async def expect_section(page, heading, names):
     """Waits until the list's section under `heading` (None: before any
     heading) holds exactly `names`, in any order: the list redraws as its

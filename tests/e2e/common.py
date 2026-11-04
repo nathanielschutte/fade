@@ -8,7 +8,7 @@ NAPSACK_DB       optional: path to the server's SQLite file, for checks that rea
 NAPSACK_SHOTS    optional: directory to write screenshots into
 E2E_CHROME       "chrome" (default) uses installed Chrome; "bundled" uses Playwright's Chromium
 """
-import os, re
+import asyncio, os, re
 
 from playwright.async_api import expect
 
@@ -212,3 +212,34 @@ async def no_placeholders(page, scope="body"):
       return seen;
     }""", [scope, list(PLACEHOLDERS)])
     assert not left, f"still showing a loading placeholder in {scope}: {left}"
+
+
+# One API call with a page's own session, from inside the page: [status, JSON].
+_API = """async ([method, path, body]) => {
+  const r = await fetch('/api' + path, { method, headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token'),
+    'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return [r.status, await r.json()];
+}"""
+
+
+async def api(page, method, path, body=None):
+    """Calls the API as whoever is signed in on `page`, for what a test sets
+    up or checks without the UI (the UI for it is tested elsewhere). Expects
+    a 200 and returns the JSON."""
+    status, out = await page.evaluate(_API, [method, path, body])
+    assert status == 200, (method, path, status, out)
+    return out
+
+
+async def swipe(page, locator, dx):
+    """A finger dragging sideways `dx` pixels across `locator` (a chat row,
+    to show its actions on a phone)."""
+    box = await locator.bounding_box()
+    x, y = box["x"] + box["width"] - 30, box["y"] + box["height"] / 2
+    cdp = await page.context.new_cdp_session(page)
+    await cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+    for i in range(1, 11):
+        await cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x + dx * i / 10, "y": y + i * 0.3}]})
+        await asyncio.sleep(0.02)
+    await cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    await asyncio.sleep(0.3)

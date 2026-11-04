@@ -330,7 +330,7 @@ pub async fn create(
     Ok(Json(json!({ "id": id, "already": already })))
 }
 
-// ---------- the email (a seam, until the owner sets up SES) ----------
+// ---------- the email ----------
 
 /// The email to the support address for a new report: who reported whom and
 /// a link to it on System › Reports. Nothing else: no reason, no note, never
@@ -354,15 +354,22 @@ pub fn support_email(
     )
 }
 
-/// For each new report, the email to `FADE_REPORTS_EMAIL`
-/// (docs/design/report-and-block.md, The email). Sending it needs Amazon SES,
-/// which the owner sets up (an identity for the domain, permission for the
-/// instance to send); until then this does nothing but say so, and only once
-/// the address is set. The report is on the Reports page either way.
+/// Who the email is from: `noreply@` the site's own name, the domain infra
+/// verifies with SES (infra/email.tf).
+fn sender(site: &str) -> String {
+    let host = site.split("://").nth(1).unwrap_or(site);
+    let host = host.split(['/', ':']).next().unwrap_or(host);
+    format!("napsack <noreply@{host}>")
+}
+
+/// For each new report, the email to `FADE_REPORTS_EMAIL` through Amazon SES
+/// (docs/design/report-and-block.md, The email), sent in the background so
+/// the report doesn't wait on it. Without the setting, or off AWS
+/// (development), nothing is sent; the report is on the Reports page either way.
 async fn tell_support(state: &SharedState, id: i64) {
-    if state.config.reports_email.is_none() {
+    let Some(to) = state.config.reports_email.clone() else {
         return;
-    }
+    };
     let names: Option<(String, String, String)> = sqlx::query_as(
         "SELECT r.kind, a.username, b.username FROM reports r
          JOIN users a ON a.id = r.reporter_id JOIN users b ON b.id = r.reported_id WHERE r.id = ?",
@@ -372,13 +379,22 @@ async fn tell_support(state: &SharedState, id: i64) {
     .await
     .ok()
     .flatten();
-    if let Some((kind, reporter, reported)) = names {
-        let _email = support_email(id, &kind, &reporter, &reported, &state.config.public_url);
-        tracing::info!(
-            report_id = id,
-            "report email not sent: sending through SES isn't set up yet"
-        );
-    }
+    let Some((kind, reporter, reported)) = names else {
+        return;
+    };
+    let site = state.config.public_url.clone();
+    let state = state.clone();
+    tokio::spawn(async move {
+        let Some(aws) = state.metrics.aws() else {
+            tracing::info!(report_id = id, "report email not sent: not running on AWS");
+            return;
+        };
+        let (subject, body) = support_email(id, &kind, &reporter, &reported, &site);
+        match aws.ses_send(&sender(&site), &to, &subject, &body).await {
+            Ok(()) => tracing::info!(report_id = id, "report emailed to support"),
+            Err(e) => tracing::error!(report_id = id, error = %e, "report email not sent"),
+        }
+    });
 }
 
 // ---------- System › Reports (Admins only) ----------
@@ -1144,6 +1160,11 @@ mod tests {
         assert_eq!(
             body,
             "New report #42: a message, reported by @ana about @ben.\n\nhttps://napsack.io/admin#reports=42"
+        );
+        assert_eq!(sender("https://napsack.io"), "napsack <noreply@napsack.io>");
+        assert_eq!(
+            sender("https://localhost:8080/"),
+            "napsack <noreply@localhost>"
         );
     }
 }

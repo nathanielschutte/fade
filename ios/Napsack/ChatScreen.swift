@@ -33,6 +33,8 @@ struct ChatScreen: View {
     @State private var scrolling = false
     /// Said once per chat opened: it was left past its end (ChatScreen's own report).
     @State private var reportedPastEnd = false
+    /// Gone to the newest by its id: it's drawn, and the next move puts the end in its place.
+    @State private var placingEnd = false
     /// Something new came below while you were reading further up.
     @State private var newBelow = false
     @State private var showingSafetyCode = false
@@ -55,6 +57,11 @@ struct ChatScreen: View {
     @State private var camera: CameraOpening?
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
+    /// A message or the friend being reported, and someone being asked about blocking (Moderation.swift).
+    @State private var reporting: ReportTarget?
+    @State private var blocking: Reportable?
+    /// Opens a chat from a link in a text (the chat list's).
+    @Environment(\.openChatLink) private var openChatLink
     @FocusState private var composing: Bool
 
     /// The content's height, how far its end is below what's shown, and the
@@ -70,6 +77,36 @@ struct ChatScreen: View {
     static let nearBottom: CGFloat = 24
     /// How far from the oldest message shown the next page starts loading, so it's there before you are.
     static let loadAhead = 10
+
+    /// Left past its end with nothing moving it (a blank screen above the composer; Nate
+    /// saw it on his phone as the keyboard came up): back to the end, as a touch would do.
+    private func returnedFromPastEnd(_ now: BottomGap, before: BottomGap) -> Bool {
+        guard now.gap < -Self.nearBottom, now.height > now.visible else { return false }
+        if !reportedPastEnd {
+            reportedPastEnd = true
+            Reporter.shared.report(.warn, "chat left past its end", [
+                "gap": "\(Int(now.gap))", "height": "\(Int(now.height))", "visible": "\(Int(now.visible))",
+                "inset": "\(Int(now.inset))", "before_gap": "\(Int(before.gap))", "before_inset": "\(Int(before.inset))",
+            ])
+        }
+        position.scrollTo(edge: .bottom)
+        return true
+    }
+
+    /// Whether the list needs `drawEnd` when the keyboard or composer moves (D18): iOS 26 and older.
+    static var redrawsAtEnd: Bool {
+        if #available(iOS 27, *) { false } else { true }
+    }
+
+    /// To the newest message by its id, when it's the last row (no text still going or typing
+    /// line below it): a scroll to a row has the list lay the row out. Then `placingEnd`.
+    private func drawEnd() -> Bool {
+        guard conversation.outbox.isEmpty, conversation.typingLine == nil,
+              let newest = conversation.bubbles.last?.id else { return false }
+        position.scrollTo(id: newest, anchor: .bottom)
+        placingEnd = true
+        return true
+    }
 
     var body: some View {
         presentations(main)
@@ -132,24 +169,27 @@ struct ChatScreen: View {
             // nor a jump to a search result: those move the chat without changing its size.
             // Older pages grow above and leave the gap as it was. The end is a place, not a
             // distance, so going there can't add to a move the scroll view makes itself.
-            let resized = now.height > before.height || now.visible != before.visible || now.inset != before.inset
+            if placingEnd {
+                // The row is laid out now; a scroll to a row ignores the inset under the composer
+                // and keyboard, so the end goes where it belongs, above them.
+                placingEnd = false
+                if !scrolling, abs(now.gap) > Self.nearBottom {
+                    position.scrollTo(edge: .bottom)
+                    return
+                }
+            }
+            let reframed = now.visible != before.visible || now.inset != before.inset
+            let resized = now.height > before.height || reframed
             if !scrolling, resized, before.gap <= Self.nearBottom, now.gap > Self.nearBottom {
                 position.scrollTo(edge: .bottom)
                 return
             }
-            // Left past its end with nothing moving it (a blank screen above the composer, Nate
-            // saw it on his phone as the keyboard came up): back to the end, as a touch would do.
-            if !scrolling, now.gap < -Self.nearBottom, now.height > now.visible {
-                if !reportedPastEnd {
-                    reportedPastEnd = true
-                    Reporter.shared.report(.warn, "chat left past its end", [
-                        "gap": "\(Int(now.gap))", "height": "\(Int(now.height))", "visible": "\(Int(now.visible))",
-                        "inset": "\(Int(now.inset))", "before_gap": "\(Int(before.gap))", "before_inset": "\(Int(before.inset))",
-                    ])
-                }
-                position.scrollTo(edge: .bottom)
-                return
-            }
+            // Before iOS 27 the list can stay at its end by the numbers as the keyboard comes up
+            // yet draw none of its rows, a blank screen until a touch (D18; testReopenedThenKeyboard
+            // caught it, the numbers showing no gap). Going to the newest by its id has the list
+            // lay that row out.
+            if !scrolling, reframed, before.gap <= Self.nearBottom, Self.redrawsAtEnd, drawEnd() { return }
+            if !scrolling, returnedFromPastEnd(now, before: before) { return }
             atBottom = now.gap <= Self.nearBottom
             if atBottom { newBelow = false }
         }
@@ -261,6 +301,20 @@ struct ChatScreen: View {
                         Image(systemName: conversation.keyChanged ? "lock.trianglebadge.exclamationmark" : "lock")
                     }
                     .accessibilityLabel("Encryption and safety code")
+                }
+            }
+            if let friend = conversation.friend, friend.system != true {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        let person = Reportable(id: friend.id, name: friend.name)
+                        Button("Report \(friend.name)", systemImage: "exclamationmark.bubble") {
+                            reporting = ReportTarget(what: .person, person: person)
+                        }
+                        Button("Block \(friend.name)", systemImage: "hand.raised", role: .destructive) { blocking = person }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("More")
                 }
             }
         }
@@ -415,7 +469,47 @@ struct ChatScreen: View {
                 composing = true
             })
         }
+        // Someone else's text, pic, or video (never Team Napsack's): ids only go (Moderation.swift).
+        if let target = ReportTarget.message(bubble, in: conversation.chat, friends: conversation.friendsById) {
+            actions.append(.init(title: "Report", icon: "exclamationmark.bubble") { reporting = target })
+        }
         return actions
+    }
+
+    /// Blocks them; a direct chat with them closes (the friendship's over), a group stays.
+    private func block(_ person: Reportable) async {
+        guard let account = session.account else { return }
+        do {
+            try await Moderation.block(person.id, account: account)
+            Reporter.shared.report(.info, "blocked", ["user_id": String(person.id)])
+            if conversation.friend?.id == person.id {
+                unfriended = true
+                dismiss()
+            }
+        } catch {
+            Reporter.shared.report(.warn, "block failed", Reporter.fields(error, ["user_id": String(person.id)]))
+            session.noticed(error)
+            failure = error.localizedDescription
+        }
+    }
+
+    /// A link in a text to one of the app's own chats: that chat, at its message.
+    private var openLinks: OpenURLAction {
+        let site = ownSite
+        return OpenURLAction { url in
+            // Only the app's own links are links at all (ChatLink.linked); anything else goes nowhere.
+            guard let link = ChatLink(url, site: site), let openChatLink else { return .discarded }
+            Task {
+                if let problem = await openChatLink(link) { failure = problem }
+            }
+            return .handled
+        }
+    }
+
+    /// The app's own site, for links in texts: the server's `site_url`, or its own address where there's none (development).
+    private var ownSite: String? {
+        guard let limits, let account = session.account else { return nil }
+        return limits.siteUrl ?? account.server
     }
 
     /// Whether holding this message offers anything at all.
@@ -499,6 +593,17 @@ struct ChatScreen: View {
             let from = waiting.firstIndex(of: item.pic) ?? 0
             PicViewer(pics: Array(waiting[from...]), conversation: conversation)
         }
+        .sheet(item: $reporting, onDismiss: { if unfriended { dismiss() } }) { target in
+            if let account = session.account {
+                ReportSheet(target: target, account: account) { who in
+                    // Blocked from the sheet: a direct chat with them closes once it's gone.
+                    if conversation.friend?.id == who.id { unfriended = true }
+                }
+            }
+        }
+        .blockQuestion($blocking) { who in Task { await block(who) } }
+        .environment(\.ownSite, ownSite)
+        .environment(\.openURL, openLinks)
         .alert("Something went wrong", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -575,6 +680,8 @@ struct OutgoingView: View {
 }
 
 struct BubbleView: View {
+    /// Links in texts to it are tappable (ChatLink); nothing else in a text is.
+    @Environment(\.ownSite) private var ownSite
     let bubble: Bubble
     let quote: String?
     var showTime = true
@@ -633,7 +740,7 @@ struct BubbleView: View {
         switch bubble.content {
         case .text(let text, let edited):
             VStack(alignment: .leading, spacing: 2) {
-                Text(text)
+                Text(ChatLink.linked(text, site: ownSite))
                 if edited { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
             }
         case .media(let words):

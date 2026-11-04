@@ -27,8 +27,16 @@ struct ChatListScreen: View {
     @AppStorage(ChatList.dismissedAnnouncementKey) private var dismissedAnnouncement: Int = 0
     enum HomeTab: Hashable { case chats, camera, profile }
     @State private var tab = HomeTab.chats
-    @State private var path: [ChatRow.Kind] = []
-    @State private var showingFriends = false
+    /// What's open over the list: a chat, or Friends. One path for both: Friends
+    /// as its own destination, flipped on as a chat closed, came up blank on
+    /// iOS 26 (D19, LiveNotificationTapTests).
+    enum Screen: Hashable {
+        case chat(ChatRow.Kind)
+        case friends
+
+        var chat: ChatRow.Kind? { if case .chat(let kind) = self { kind } else { nil } }
+    }
+    @State private var path: [Screen] = []
     /// Notifications on this phone: a tapped one opens its chat here (Notifications.swift).
     @State private var notifications: Notifications
     /// A friend's link opened or scanned (Links.swift), and the one being offered.
@@ -126,7 +134,7 @@ struct ChatListScreen: View {
     /// binding that turned taps aside was made anew on every redraw, and the
     /// stack then wrote over a chat opened from a notification.
     private func openPics(_ row: ChatRow) {
-        guard let chat = conversation(row.kind) else { return path = [row.kind] }
+        guard let chat = conversation(row.kind) else { return path = [.chat(row.kind)] }
         found = nil
         viewing = PicsFromList(kind: row.kind, conversation: chat, unread: row.kind.groupId.flatMap { list.groups[$0]?.unread } ?? 0)
     }
@@ -146,7 +154,7 @@ struct ChatListScreen: View {
             }
             .foregroundStyle(.primary)
         } else {
-            NavigationLink(value: row.kind) { ChatRowView(row: row) }
+            NavigationLink(value: Screen.chat(row.kind)) { ChatRowView(row: row) }
         }
     }
 
@@ -160,7 +168,7 @@ struct ChatListScreen: View {
                 NewGroupScreen(account: account, friends: friends) { id in
                     Task {
                         await load()
-                        path = [.group(id)]  // straight into it, as on the web
+                        path = [.chat(.group(id))]  // straight into it, as on the web
                     }
                 }
             }
@@ -168,31 +176,40 @@ struct ChatListScreen: View {
                 PasswordSheet(purpose: .recovery, hasRecoveryKey: false) { _ in }
             }
             .navigationTitle("Chats")
-            .navigationDestination(isPresented: $showingFriends) {
-                FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
-            }
-            .navigationDestination(for: ChatRow.Kind.self) { kind in
-                if let conversation = conversation(kind) {
-                    // No reload on the way back: what came while it was open came live, and
-                    // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
-                    ChatScreen(conversation: conversation)
-                        // Its own screen per chat: one chat swapped for another in place (a notification
-                        // or link opened while a chat is open) starts fresh, loading and reading it.
-                        .id(kind)
-                        .environment(live)
-                        .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
+            .navigationDestination(for: Screen.self) { screen in
+                switch screen {
+                case .friends:
+                    FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
+                case .chat(let kind):
+                    chatScreen(kind)
                 }
             }
             .onChange(of: path) { _, now in if now.isEmpty { found = nil } }  // back on the list: a row opens its chat at the newest
             .fullScreenCover(item: $viewing, onDismiss: {
                 if let kind = openAfterViewing {
                     openAfterViewing = nil
-                    path = [kind]
+                    path = [.chat(kind)]
                 }
             }) { item in
                 PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
             }
             .toolbar { chatsToolbar }
+        }
+    }
+
+    @ViewBuilder private func chatScreen(_ kind: ChatRow.Kind) -> some View {
+        // A chat whose friendship just ended (blocked, from this chat or by them) stays
+        // on screen as it was until you leave it, rather than going blank under you.
+        if let conversation = conversation(kind) ?? opened.peek(kind) {
+            // No reload on the way back: what came while it was open came live, and
+            // reading it brings the server's `read` (or `groups_changed`), which reloads that list.
+            ChatScreen(conversation: conversation)
+                // Its own screen per chat: one chat swapped for another in place (a notification
+                // or link opened while a chat is open) starts fresh, loading and reading it.
+                .id(kind)
+                .environment(live)
+                .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
+                .environment(\.openChatLink, OpenChatLink(run: openLink))
         }
     }
 
@@ -291,7 +308,7 @@ struct ChatListScreen: View {
 
     @ToolbarContentBuilder private var chatsToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button { showingFriends = true } label: {
+            Button { path = [.friends] } label: {
                 Image(systemName: "person.2")
                     .overlay(alignment: .topTrailing) {
                         if list.incoming > 0 {
@@ -414,7 +431,7 @@ struct ChatListScreen: View {
             return kept
         }
         let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook, cache: list.cache(for: account))
-        opened.keep(new, as: kind, busy: Set(path).union(viewing.map { [$0.kind] } ?? []), open: live.openChat)
+        opened.keep(new, as: kind, busy: Set(path.compactMap(\.chat)).union(viewing.map { [$0.kind] } ?? []), open: live.openChat)
         return new
     }
 
@@ -471,8 +488,21 @@ struct ChatListScreen: View {
     private func openHit(_ hit: MessageHit) {
         guard conversation(hit.kind) != nil else { return }
         found = hit.id
-        showingFriends = false
-        path = [hit.kind]
+        path = [.chat(hit.kind)]
+    }
+
+    /// A link in a text to one of the app's own chats (ChatLink): that chat,
+    /// at its message, as a search result opens one. A chat you aren't in
+    /// (yet, or any more) says so.
+    private func openLink(_ link: ChatLink) async -> String? {
+        if conversation(link.kind) == nil { await load() }
+        guard conversation(link.kind) != nil else {
+            Reporter.shared.report(.info, "chat link to a chat not in the list")
+            return link.kind.groupId != nil ? "That group isn't one you're in." : "That chat isn't one you have."
+        }
+        found = link.message.map { MessageHit.ID(kind: link.kind, message: $0) }
+        if path != [.chat(link.kind)] { path = [.chat(link.kind)] }
+        return nil
     }
 
     /// The pics shown from the list are opened (each as it was shown; the
@@ -497,20 +527,10 @@ struct ChatListScreen: View {
         tab = .chats
         switch destination {
         case .friends:
-            if !path.isEmpty {
-                // Out of the open chat first, without animation: a push asked for while the
-                // stack is still animating its pop is dropped (LiveNotificationTapTests).
-                var instant = Transaction()
-                instant.disablesAnimations = true
-                withTransaction(instant) { path = [] }
-            }
-            showingFriends = true
+            path = [.friends]  // in place of an open chat, as a chat takes another's
         case .chat(let kind):
             if conversation(kind) == nil { await load() }
-            if conversation(kind) != nil {
-                showingFriends = false
-                path = [kind]
-            }
+            if conversation(kind) != nil { path = [.chat(kind)] }
         }
     }
 
@@ -528,8 +548,7 @@ struct ChatListScreen: View {
         }
         if !list.loaded { await load() }
         if conversation(.friend(inviter.id)) != nil {
-            showingFriends = false
-            path = [.friend(inviter.id)]
+            path = [.chat(.friend(inviter.id))]
         } else {
             offer = invite
         }
@@ -539,8 +558,7 @@ struct ChatListScreen: View {
         do {
             let friend = try await FriendLinks.accept(invite.token, account: account)
             await load()
-            showingFriends = false
-            if conversation(.friend(friend.id)) != nil { path = [.friend(friend.id)] }
+            if conversation(.friend(friend.id)) != nil { path = [.chat(.friend(friend.id))] }
             toast = Toast(text: "You and \(friend.username) are now friends.", undo: nil)
         } catch {
             toast = Toast(text: error.localizedDescription, undo: nil)

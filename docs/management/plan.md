@@ -23,10 +23,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Decided; design in report-and-block.md. The server and System › Reports live in 0.51.0; Report, Block, and Blocked in the apps next |
-| 3 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175). Fix in TestFlight build 183; waiting on a try on the phone |
+| 2 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Decided; design in report-and-block.md. The server and System › Reports live in 0.51.0; Report, Block, and Blocked built in the web app and the iPhone app (2026-11-04), and the report email, waiting on the SES apply |
+| 3 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175). Build 183's fix missed it; reproduced on iOS 26.4 and fixed (2026-11-04), in the next TestFlight build |
 | 4 | [Zoom and pan an opened pic](#x43-zoom-and-pan-an-opened-pic) | Experience/visual | Nate | In progress | Nate (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
-| 5 | [On iOS 26, a friend request's notification doesn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | Debug | – | Up next | Found by a test on iOS 26.4, 2026-11-03 |
+| 5 | [On iOS 26, a friend request's notification doesn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | Debug | Nate | In progress | Found by a test on iOS 26.4, 2026-11-03. Fixed (2026-11-04); in the next TestFlight build |
 | 6 | [Profile: Delete account under Sign out, and Sign out asks first](#x44-profile-delete-account-under-sign-out-and-sign-out-asks-first) | Experience/visual | Nate | In progress | Nate's intake (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
 | 7 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | Nate | In progress | Decided (Nate, 2026-11-03): texts in order live in 0.51.0 and build 183; pictures kept in build 183; the stats list tracked |
 | 8 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
@@ -34,16 +34,22 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 10 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
 | 11 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
 | 12 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 13 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 14 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 15 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 16 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 17 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 18 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 19 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 20 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 21 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 22 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
+| 13 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | Nate | In progress | Found in CI, 2026-11-02. The test's bound forgot the caption (2026-11-04); fixed with the next merge |
+| 14 | [Profile pictures beside every list of people](#x45-profile-pictures-beside-every-list-of-people) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
+| 15 | [Every list of people opens their profile](#x46-every-list-of-people-opens-their-profile) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
+| 16 | [One way of naming people, everywhere](#x47-one-way-of-naming-people-everywhere) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
+| 17 | [A chat's picture in the list opens the chat too](#x48-a-chats-picture-in-the-list-opens-the-chat-too) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
+| 18 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | – | Planned | Nate's intake (2026-11-04): more emoji, still one reaction each (decided). Groups' reactions need a server change |
+| 19 | [Camera flash where the device has one](#x50-camera-flash-where-the-device-has-one) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
+| 20 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 21 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 22 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 23 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 24 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 25 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 26 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 27 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
@@ -403,7 +409,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Today only friends can message you, and unfriending stops them, but they can ask again, so it isn't a block.
 - To build, server first: a block that ends the friendship, refuses their requests and messages (and group adds by them), and is undone only by you; a report (a message, a pic, or a person) that reaches the Admins (System, with what the reporter chose to include: the server can't read messages, so a report carries the decrypted text only if the reporter sends it); then the web and the iOS app. Every client says what blocking does.
 - **Decided (Nate, 2026-11-03):** a report never includes the message's text (that would break end-to-end encryption), only its id, so the reported person can know which message; Admins get a Reports page on the System page, with tools to warn, suspend, and block (turn off) people, each telling them why; and an email to the support address for each new report, linking to its record. Design: [report-and-block.md](../design/report-and-block.md), with three smaller questions left for Nate (defaults built).
-- **Live in 0.51.0 (2026-11-04):** reports and blocks on the server (migration 0029; `reports.rs`, `blocks.rs`), suspensions that end by themselves, the sign-in notice, Team Napsack's message telling the person why (a direct message's warning never says who reported it, nor when or where), and System › Reports. **Next:** Report, Block, and Blocked in the web app and the iPhone app (and the apps opening `#group=…&message=…`); then the email, once the owner sets up SES.
+- **Live in 0.51.0 (2026-11-04):** reports and blocks on the server (migration 0029; `reports.rs`, `blocks.rs`), suspensions that end by themselves, the sign-in notice, Team Napsack's message telling the person why (a direct message's warning never says who reported it, nor when or where), and System › Reports. **Built (2026-11-04):** Report, Block, and Profile › Blocked in the web app and the iPhone app, and links in texts to the app's own chats open them at the message (any other link stays text): `test_block_report.py`, `ModerationTests`, `LiveModerationTests`, `ChatLinkTests`. The email through SES (`aws::ses_send`), sent once the owner applies `infra/email.tf` with `reports_email`. Still Nate's: the three questions in the design.
 
 ### Debug
 
@@ -474,13 +480,16 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
+- **Found (2026-11-04): the test, not the compressor.** That pic had a caption, which is sealed in with the photo (its 2-byte length and its words, format 2), and the test's bound left it out: the JPEG was 204,785 bytes, under the 204,800 target. The bound now allows for the caption. The iPhone's `photoJPEG` aims for 500,000 bytes (under the server's 512 KB with room for the caption and sealing), so it can't miss the same way.
 
 #### D18. The iPhone chat scrolled off the top as the keyboard came up
 - Nate (2026-11-03, build 175, iPhone 16 Pro): open a chat, tap the message field, and the chat jumps so the conversation is off the top of the screen, blank above the composer, until a scroll puts it right.
 - Not seen on a Simulator (iOS 26.4 or 27, iPhone 16 Pro, a fresh chat or one reopened from its kept page). Fixed by rule rather than by a repro: at the bottom, the chat follows only changes of size, never your scrolling or a jump to a search hit, and goes to its end as a place, not by a distance (nothing can stack on the keyboard's own adjustment); and a chat left past its end with nothing moving it goes back, telling the log viewer once with the numbers ("chat left past its end", no content). Tests: `ChatScrollTests` (pushed past its end it returns; the keyboard and growth at once), `ChatUITests.testReopenedThenKeyboard`. Nate tries it on the next TestFlight build; if it still happens, the log line says what the phone did.
+- **Reproduced and fixed (2026-11-04).** On an iOS 26.4 Simulator, `testReopenedThenKeyboard` failed about three runs in four in the UI suite, showing exactly what Nate saw. The numbers (put on screen for the test to read) showed it isn't past its end at all: the chat stays exactly at its end, the keyboard's inset counted, while the list's estimate of its own height swings by a thousand points, and it draws none of its rows until a touch. The fix in build 183 watched those numbers, so it could never see it. Now, before iOS 27, when the keyboard or composer changes the visible area while the chat is at its end, it goes to the newest message by its id (a scroll to a row has the list lay the row out), then puts the end above the keyboard. Only before iOS 27: there the list keeps its end itself, and the jump fought it (the typing line went out of sight). With it, the UI suite on iOS 26.4 passed every run (four), and both full suites pass. In the next TestFlight build.
 
 #### D19. On iOS 26, a friend request's notification doesn't open Friends
 - Found 2026-11-03 by `LiveNotificationTapTests.aTapOpensItsChatAndReadsIt` on an iOS 26.4 Simulator (it passes on iOS 27): after a tap on a friend request's notification, Friends never opens. Chats' notifications open fine on both. Not yet looked into; it may be how iOS 26 handles a navigation destination pushed from a notification while another is shown.
+- **Fixed (2026-11-04):** Friends was its own destination, switched on as the open chat closed, and iOS 26 pushed a blank screen in its place (seen in a picture of the test's window). Friends is now a step in the same path as the chats, so its notification replaces an open chat as a chat's notification replaces another chat. The test passes on iOS 26.4 and 27; the UI tests too.
 
 ### Experience/visual
 
@@ -589,6 +598,26 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### X44. Profile: Delete account under Sign out, and Sign out asks first
 - From Nate's intake (2026-11-03): "have delete account appear below sign out"; "sign out should have a confirmation (it's instant right now)". Built (2026-11-03): the iPhone asks "Sign out?" in a dialog; the web takes two taps, as Leave group does, saying nothing of the account stays in the browser; Delete account below Sign out on both.
+
+#### X45. Profile pictures beside every list of people
+- From Nate's intake (2026-11-04): "User profile pic shows next to all friend list items (ex. list of who is in a group chat)." Every list of people shows each one's picture (or the initials stand-in), as the chat list does: a group's members, Friends, requests, the new-group and add-people pickers, Profile › Blocked. Pictures go only to friends (the server's rule, CLAUDE.md), so a group member who isn't your friend keeps the stand-in. The web and the iPhone.
+
+#### X46. Every list of people opens their profile
+- From Nate's intake (2026-11-04): "Able to click all friend list items to navigate to their profile page/view." A tap on a person in any list (a group's members, Friends, requests) opens their profile, as a tap on a chat's title does. Someone who isn't your friend gets what the server lets you see: their username, and Add or Report. The web and the iPhone.
+
+#### X47. One way of naming people, everywhere
+- From Nate's intake (2026-11-04): "Always display name shown where friend names render - order as we know is always: username, then user-set display name, then local nickname." The rule from [F5](#f5-profile-pic-and-nicknames): your nickname for them wins, else their display name, else their username, with `@username` beside it wherever they differ. The work is finding the places that still show a bare username (group members, reactions, "opened by", requests, notifications) and making each follow the rule, on the web and the iPhone.
+
+#### X48. A chat's picture in the list opens the chat too
+- From Nate's intake (2026-11-04): "Profile pics should be part of the clickable area of a chat in the chat list view." The whole row, picture included, opens the chat (or its waiting pics, [X41](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list)); the picture isn't a separate target there. Its big view stays on the profile. The web and the iPhone.
+
+#### X49. React with any emoji
+- From Nate's intake (2026-11-04): "Multi reactions - should be able to react with all emojis. Keep the current list as the hotbar, then have a + button where you can pick from any emoji." The six stay as the quick row; + opens a picker of every emoji (the system's own on the iPhone; on the web, a picker built in, no third-party scripts).
+- Direct chats' reactions are end-to-end encrypted, so only the apps check them. A group's are stored as plain text and the server allows only the six (`reactions.rs`, `EMOJI`): any emoji means checking that it's one emoji and nothing else (`text.rs`), or doing this with group reactions encrypted (Tracker: "Group chats: encrypt reactions"), when the server can't check at all. Every client must show an emoji it didn't offer.
+- **Decided (Nate, 2026-11-04):** "multi" means more emoji to choose from; still one reaction per person per message, replaced by the next.
+
+#### X50. Camera flash where the device has one
+- From Nate's intake (2026-11-04): "Camera flash where available." A flash button on the camera, off, on, or auto, shown only when the camera in use has a flash. The iPhone: the back camera's flash for photos, the light kept on while recording a video; the front camera may light the screen (as the system camera does). The web: the `torch` setting, where the browser offers it (Chrome on Android; not Safari on iPhone), otherwise no button.
 
 ### Security
 
