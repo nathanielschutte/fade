@@ -7,7 +7,7 @@ says it changed, and adding a friend by it finds you. Friends see "was
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import INVITE, launch, no_placeholders, shot, PASSWORD, befriend, row, fill_sign_up, open_page, sign_in
+from common import INVITE, launch, no_placeholders, shot, PASSWORD, befriend, row, fill_sign_up, open_page, sign_in, sign_out
 
 tag = uuid.uuid4().hex[:5]
 ANA, ANNA, BEN, CAL = f"ana_{tag}", f"anna_{tag}", f"ben_{tag}", f"cal_{tag}"
@@ -59,7 +59,7 @@ async def main():
         await shot(ben, "username-friend-sees", full_page=False)
 
         # Signing in: the old name says it changed; the new one opens everything.
-        await ana.click("#sign-out")
+        await sign_out(ana)
         await sign_in(ana, ANA, wait=False)
         await expect(ana.locator("#auth-error")).to_have_text("That username was changed. Sign in with the new one.", timeout=20000)
         await sign_in(ana, ANNA, wait=False)

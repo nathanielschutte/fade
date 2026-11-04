@@ -376,9 +376,9 @@ async fn check_recovery(
     if !verify_secret(hash, recovery_auth_key.to_owned()).await? {
         return Err(failed("wrong recovery key"));
     }
-    if crate::admin_users::is_deactivated(&state.db, id).await? {
+    if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "recovery refused: account turned off");
-        return Err(AppError::bad(auth::TURNED_OFF));
+        return Err(AppError::bad(why));
     }
     Ok((UserPublic { id, username: name }, wrapped, public_key))
 }
@@ -556,9 +556,9 @@ pub async fn reset_with_code(
     let Some((id, username, code_id)) = found else {
         return Err(failed("no matching code"));
     };
-    if crate::admin_users::is_deactivated(&state.db, id).await? {
+    if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "reset refused: account turned off");
-        return Err(AppError::bad(auth::TURNED_OFF));
+        return Err(AppError::bad(why));
     }
     let hash = hash_secret(req.new_auth_key).await?;
     let mut tx = crate::db::write_tx(&state.db).await?;

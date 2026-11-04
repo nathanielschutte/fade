@@ -21,7 +21,7 @@ import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
 from common import (BASE, PASSKEY_BASE, PASSWORD, PHONE, SIGN_IN_WAIT, befriend, fill_sign_up, launch,
-                    no_placeholders, open_page, row, save_recovery_key, shot, sign_in, sign_up)
+                    no_placeholders, open_page, row, save_recovery_key, shot, sign_in, sign_out, sign_up)
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN, CAL, DEE = f"ana_{tag}", f"ben_{tag}", f"cal_{tag}", f"dee_{tag}"
@@ -98,13 +98,10 @@ async def open_security(page, phone):
     await expect(page.locator("#profile-security")).to_be_visible(timeout=10000)
 
 
-async def sign_out(page, phone):
+async def sign_out_on(page, phone):
     if phone:
         await page.click("#tab-profile")
-        await page.click("#profile-sign-out")
-    else:
-        await page.click("#sign-out")
-    await expect(page.locator("#auth")).to_be_visible(timeout=10000)
+    await sign_out(page, "#profile-sign-out" if phone else "#sign-out")
 
 
 async def main():
@@ -178,7 +175,7 @@ async def main():
         await ben.click("#profile-dialog [data-close]")
 
         # She signs out, and back in with the passkey alone: the text opens.
-        await sign_out(ana, phone=True)
+        await sign_out_on(ana, phone=True)
         await ana.click("#passkey-sign-in")
         await expect(ana.locator("#app")).to_be_visible(timeout=SIGN_IN_WAIT)
         await expect(row(ana, BEN)).to_contain_text("for ana only", timeout=10000)
@@ -227,7 +224,7 @@ async def main():
 
         # The copy made from that later answer opens: the laptop signs in with its passkey.
         await laptop.click("#profile-dialog [data-close]")
-        await sign_out(laptop, phone=False)
+        await sign_out_on(laptop, phone=False)
         await laptop.click("#passkey-sign-in")
         await expect(laptop.locator("#app")).to_be_visible(timeout=SIGN_IN_WAIT)
         await expect(row(laptop, BEN)).to_contain_text("for ana only", timeout=10000)
@@ -258,7 +255,7 @@ async def main():
         await expect(listed.first).to_contain_text("last used")
 
         # The phone still has it, but the server refuses it, and says so.
-        await sign_out(ana, phone=True)
+        await sign_out_on(ana, phone=True)
         await ana.click("#passkey-sign-in")
         await expect(ana.locator("#auth-error")).to_have_text(REMOVED, timeout=SIGN_IN_WAIT)
         await expect(ana.locator("#app")).to_be_hidden()
@@ -311,7 +308,7 @@ async def main():
           authenticatorSelection: { residentKey: "required", userVerification: "required" } } })""")
         asked = []
         cal.on("request", lambda r: r.method == "POST" and r.url.endswith("/api/auth/passkey") and asked.append(r.url))
-        await sign_out(cal, phone=False)
+        await sign_out_on(cal, phone=False)
         await cal.click("#passkey-sign-in")
         await expect(cal.locator("#auth-error")).to_have_text(NO_PRF_SIGN_IN, timeout=SIGN_IN_WAIT)
         assert asked == [], asked

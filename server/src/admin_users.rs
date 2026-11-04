@@ -31,7 +31,7 @@ use crate::{
 /// The reason an Admin gives for turning an account off, at most this long.
 const MAX_REASON_CHARS: usize = 200;
 
-/// (id, reason, turned off by, at, turned back on by, at)
+/// (id, reason, turned off by, at, turned back on by, at, until, notice)
 type DeactivationRow = (
     i64,
     Option<String>,
@@ -39,6 +39,8 @@ type DeactivationRow = (
     i64,
     Option<String>,
     Option<i64>,
+    Option<i64>,
+    Option<String>,
 );
 /// (admin, action, target id, target username, detail JSON, at)
 type ActionRow = (
@@ -52,17 +54,106 @@ type ActionRow = (
 
 /// Whether `user`'s account is turned off now.
 pub async fn is_deactivated(db: &SqlitePool, user: i64) -> sqlx::Result<bool> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM deactivations WHERE user_id = ? AND reactivated_at IS NULL)",
+    Ok(refusal(db, user).await?.is_some())
+}
+
+/// What signing in says to someone whose account is turned off now (only
+/// ever after the right password or key), or None if it's on. A suspension
+/// whose time has come ends here, at once, as well as in the sweep.
+pub async fn refusal(db: &SqlitePool, user: i64) -> sqlx::Result<Option<String>> {
+    let current: Option<(i64, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT id, until, notice FROM deactivations WHERE user_id = ? AND reactivated_at IS NULL",
     )
     .bind(user)
-    .fetch_one(db)
-    .await
+    .fetch_optional(db)
+    .await?;
+    Ok(match current {
+        None => None,
+        Some((id, Some(until), _)) if until <= now() => {
+            end_suspension(db, id, until).await?;
+            None
+        }
+        Some((_, until, notice)) => Some(refusal_text(until, notice.as_deref())),
+    })
+}
+
+/// "This account is suspended until 10 Nov, 14:02 UTC: <the Admin's words>",
+/// or "This account has been turned off: ..." (auth.rs's words without any).
+pub fn refusal_text(until: Option<i64>, notice: Option<&str>) -> String {
+    match (until, notice) {
+        (Some(t), Some(n)) => format!(
+            "This account is suspended until {}: {n}",
+            crate::reports::moment(t)
+        ),
+        (Some(t), None) => format!(
+            "This account is suspended until {}.",
+            crate::reports::moment(t)
+        ),
+        (None, Some(n)) => format!("This account has been turned off: {n}"),
+        (None, None) => crate::auth::TURNED_OFF.to_owned(),
+    }
+}
+
+/// Marks a suspension ended, at its own end time, by nobody (it ended by
+/// itself). Returns whether this call ended it.
+async fn end_suspension(db: &SqlitePool, id: i64, until: i64) -> sqlx::Result<bool> {
+    let mut tx = crate::db::write_tx(db).await?;
+    let ended = sqlx::query(
+        "UPDATE deactivations SET reactivated_at = ? WHERE id = ? AND reactivated_at IS NULL",
+    )
+    .bind(until)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(ended > 0)
+}
+
+/// Suspensions whose time has come, ended (`reactivated_at` is their end
+/// time; `reactivated_by` stays empty). Returns whose. Every "is this account
+/// on" query reads `reactivated_at`, so ending the row is what turns the
+/// account back on everywhere; signing in doesn't wait for this (`refusal`).
+pub async fn end_expired(db: &SqlitePool) -> sqlx::Result<Vec<i64>> {
+    let due: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, user_id, until FROM deactivations
+         WHERE until IS NOT NULL AND until <= ? AND reactivated_at IS NULL",
+    )
+    .bind(now())
+    .fetch_all(db)
+    .await?;
+    let mut ended = vec![];
+    for (id, user, until) in due {
+        if end_suspension(db, id, until).await? {
+            ended.push(user);
+        }
+    }
+    Ok(ended)
+}
+
+/// Every minute: suspensions that are over end, and friends hear of it.
+pub fn spawn_sweeper(state: SharedState) {
+    tokio::spawn(async move {
+        loop {
+            match end_expired(&state.db).await {
+                Ok(users) => {
+                    for user in users {
+                        tracing::info!(user_id = user, "suspension ended");
+                        if let Err(e) = tell_friends(&state, user).await {
+                            tracing::warn!(user_id = user, error = %e, "friends not told a suspension ended");
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "suspensions not checked"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
 }
 
 /// Records an Admin's action on an account (append-only).
-pub async fn record(
-    db: &SqlitePool,
+pub async fn record<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
     admin: i64,
     action: &str,
     target: Option<i64>,
@@ -108,7 +199,7 @@ async fn person(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
 
 /// Friends see the account turned off or on in their chat list at once, and
 /// on their iPhones' icon (a turned-off account's chat doesn't count).
-async fn tell_friends(state: &SharedState, user: i64) -> sqlx::Result<()> {
+pub(crate) async fn tell_friends(state: &SharedState, user: i64) -> sqlx::Result<()> {
     let friends = crate::roles::friend_ids(&state.db, user).await?;
     state.hub.send_many(&friends, &Event::FriendsChanged);
     for friend in &friends {
@@ -220,7 +311,7 @@ pub async fn detail(
     .fetch_all(db)
     .await?;
     let history: Vec<DeactivationRow> = sqlx::query_as(
-        "SELECT d.id, d.reason, a.username, d.deactivated_at, b.username, d.reactivated_at
+        "SELECT d.id, d.reason, a.username, d.deactivated_at, b.username, d.reactivated_at, d.until, d.notice
          FROM deactivations d JOIN users a ON a.id = d.deactivated_by
          LEFT JOIN users b ON b.id = d.reactivated_by
          WHERE d.user_id = ? ORDER BY d.deactivated_at DESC",
@@ -269,8 +360,9 @@ pub async fn detail(
             "limit": state.login_fail_limit.limit(),
             "locked": state.login_fail_limit.exhausted(&account),
         },
-        "deactivations": history.iter().map(|(_, reason, by, at, back_by, back_at)| json!({
+        "deactivations": history.iter().map(|(_, reason, by, at, back_by, back_at, until, notice)| json!({
             "reason": reason, "by": by, "at": at, "reactivated_by": back_by, "reactivated_at": back_at,
+            "until": until, "notice": notice,
         })).collect::<Vec<_>>(),
         "actions": actions.iter().map(|(by, action, detail, at)| json!({
             "by": by, "action": action, "at": at,

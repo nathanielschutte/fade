@@ -16,7 +16,7 @@ struct ChatListScreen: View {
     let account: Account
     @State private var list = ChatList()
     @State private var live: Live
-    /// Profile and group pictures, for this session only.
+    /// Profile and group pictures, kept on the phone between launches (gone at sign-out).
     @State private var pictures: Pictures
     /// The chats opened most recently, kept: a text that hasn't gone yet keeps
     /// trying after you leave its chat, and coming back is instant. (Only in
@@ -56,7 +56,7 @@ struct ChatListScreen: View {
     init(account: Account, notifications: Notifications = .shared) {
         self.account = account
         _live = State(initialValue: Live(account: account))
-        _pictures = State(initialValue: Pictures(account: account))
+        _pictures = State(initialValue: Pictures(account: account, kept: ResponseCache(account: account.user.id).pictures))
         _notifications = State(initialValue: notifications)
     }
 

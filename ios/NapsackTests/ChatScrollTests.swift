@@ -151,5 +151,31 @@ extension OnScreen {
         #expect(abs(chat.belowBottom) < 1, "the typing line: \(chat.describe)")
         chat.shoot("chat-typing-\(name)")
     }
+
+    /// The keyboard coming up while the content grows (a phone measuring its
+    /// rows as it animates): the newest ends just above the keyboard, not a
+    /// keyboard's height further (Nate, 2026-11-03: the chat scrolled off the top).
+    @Test(arguments: [CGSize(width: 375, height: 667), CGSize(width: 440, height: 956)])
+    func theKeyboardAndGrowthTogetherDontOvershoot(size: CGSize) async throws {
+        let chat = try await ChatOnScreen(texts: 60, size: size)
+        defer { chat.close() }
+        let host = try #require(chat.window.rootViewController)
+        host.additionalSafeAreaInsets.bottom = 300  // a keyboard
+        try chat.theyNewMessage(61)
+        await chat.settle()
+        #expect(abs(chat.belowBottom) < 1, "the keyboard and a new message at once: \(chat.describe)")
+        chat.shoot("chat-keyboard-growth-\(Int(size.width))")
+    }
+
+    /// Left past its end (a blank screen above the composer, however it came
+    /// about), the chat goes back to its end as soon as nothing moves it.
+    @Test func leftPastItsEndItGoesBack() async throws {
+        let chat = try await ChatOnScreen(texts: 60)
+        defer { chat.close() }
+        let scroll = try #require(chat.scroll)
+        scroll.contentOffset.y += 400
+        await chat.settle()
+        #expect(abs(chat.belowBottom) < 1, "pushed 400 points past the end: \(chat.describe)")
+    }
 }
 }

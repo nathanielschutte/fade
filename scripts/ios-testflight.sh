@@ -64,6 +64,12 @@ xcodebuild archive -project ios/Napsack.xcodeproj -scheme Napsack -configuration
 if ls "$OUT/Napsack.xcarchive/Products/Applications/Napsack.app" | grep -q vectors; then
   echo "the archive has the test vectors in it"; exit 1
 fi
+# Nor development's local-network settings (plain http, and the question about it).
+for key in NSAppTransportSecurity NSLocalNetworkUsageDescription; do
+  if plutil -extract "$key" xml1 -o - "$OUT/Napsack.xcarchive/Products/Applications/Napsack.app/Info.plist" >/dev/null 2>&1; then
+    echo "the archive carries $key (development builds only)"; exit 1
+  fi
+done
 
 DESTINATION=$([ "$UPLOAD" = 1 ] && echo upload || echo export)
 cat >"$OUT/ExportOptions.plist" <<PLIST

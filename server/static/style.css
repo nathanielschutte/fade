@@ -404,7 +404,21 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
   cursor: pointer;
   user-select: none; -webkit-user-select: none;
   -webkit-touch-callout: none;
+  /* Pinches and drags here zoom and pan the pic (app.js), not the page. */
+  touch-action: none;
 }
+/* What zooms: the pic, and the caption written on it. app.js sets its transform. */
+.viewer-stage {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+}
+.viewer-stage.settling { transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.viewer.zoomed { cursor: grab; }
+/* Zoomed, the pic reaches the foot of the screen: the hint stays readable on it. */
+.viewer.zoomed .viewer-hint { color: var(--paper); text-shadow: 0 1px 6px rgba(12, 20, 16, 0.8); }
+.viewer.zoomed.dragging { cursor: grabbing; }
 .viewer img {
   max-width: 100%; max-height: 100%;
   object-fit: contain;
@@ -461,6 +475,7 @@ dialog::backdrop { background: rgba(12, 20, 16, 0.7); }
 @media (prefers-reduced-motion: reduce) {
   /* Keep the timer, drop the dissolve. */
   .viewer.running img, .viewer.running .viewer-tint { animation: none; }
+  .viewer-stage.settling { transition: none; }
 }
 
 /* ---------- pull to refresh (chat list) ----------
@@ -762,6 +777,11 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   text-decoration: none; cursor: pointer;
 }
 .account-link:hover { background: var(--wash); color: var(--paper); }
+.account-link.danger { color: var(--danger); }
+/* Above the bar, the width of it, while Sign out asks for a second tap. */
+.account-bar { flex-wrap: wrap; }
+.account-bar .sign-out-note { order: -1; flex-basis: 100%; margin: 0 0.5rem 0.25rem; }
+.sign-out-note[hidden] { display: none; }
 
 /* ---------- chat list text, avatars with pictures ---------- */
 
@@ -1478,10 +1498,15 @@ html[data-env] { --tabs-foot: 1.1rem; }
   .app.in-chat ~ #profile-dialog.as-tab { display: none; }
 }
 .profile-account {
-  display: flex; justify-content: flex-end; gap: 0.5rem;
   margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--rule);
 }
 .profile-account[hidden] { display: none; }
+.profile-account-row { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.profile-account .sign-out-note { margin-top: 0.5rem; text-align: right; }
+/* Below Sign out, apart from it: the one that can't be taken back. */
+.profile-delete { margin-top: 1.5rem; }
+.profile-delete h3 { font-size: var(--step-0); margin-bottom: 0.25rem; }
+.profile-delete .picture-row { margin-top: 0.5rem; }
 .profile-account a.button { text-decoration: none; }
 
 /* Plain blocks, not a flex column: Safari gave a `flex: 1` list no height
@@ -1613,3 +1638,33 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .video-sound[hidden] { display: none; }
 .video-sound .sound-off, .video-sound.muted .sound-on { display: none; }
 .video-sound.muted .sound-off { display: inline; }
+
+/* ---------- admin: System › Reports (F28; admin.js, section "reports") ----------
+   Kept in one block at the end, on its own, for the Reports page only. */
+.reports { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
+.report {
+  display: grid; gap: 0.5rem; min-width: 0; padding: 0.8rem 0.9rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--deep);
+  font-size: var(--step--1); overflow-wrap: anywhere;
+}
+.report:not(.open) { color: var(--fixer); }
+.report.focused { border-color: var(--sage); }
+.report-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.report-head .muted { margin-left: auto; }
+.report-who { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.report p { margin: 0; }
+.report .facts.report-facts { grid-template-columns: minmax(0, auto) minmax(0, 1fr); }
+.report .facts.report-facts dd { text-align: left; }
+.report .u-actions { margin: 0.25rem 0 0; }
+.report-form { display: grid; gap: 0.4rem; max-width: 34rem; color: var(--fixer); }
+.report-form input {
+  min-height: 2.4rem; padding: 0 0.75rem; border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--ink); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.report-form .segmented { justify-self: start; }
+.report-form .link { justify-self: start; }
+/* On a phone each fact's label sits above it, so the words get the width. */
+@media (max-width: 560px) {
+  .report .facts.report-facts { grid-template-columns: minmax(0, 1fr); row-gap: 0.1rem; }
+  .report .facts.report-facts dd { margin-bottom: 0.4rem; }
+}

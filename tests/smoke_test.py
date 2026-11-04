@@ -1057,8 +1057,9 @@ def check_roles(tag):
                          ("POST", f"/admin/users/{uid['friend']}/deactivate"), ("POST", f"/admin/users/{uid['friend']}/reactivate"),
                          ("POST", f"/admin/users/{uid['friend']}/sign-out"), ("POST", f"/admin/users/{uid['friend']}/unlock"),
                          ("GET", "/admin/actions"), ("GET", "/admin/announcements"), ("POST", "/admin/announcements"),
-                         ("POST", "/admin/announcements/1/withdraw")):
-        ok(call(method, path, tok["user"], json={"body": "x", "hours": 1}), 404)
+                         ("POST", "/admin/announcements/1/withdraw"),
+                         ("GET", "/admin/reports"), ("GET", "/admin/reports/1"), ("POST", "/admin/reports/1/outcome")):
+        ok(call(method, path, tok["user"], json={"body": "x", "hours": 1, "action": "dismiss"}), 404)
 
     # An Admin makes someone a PowerUser (once).
     ok(call("POST", f"/admin/roles/{uid['power']}", adm))
@@ -1086,8 +1087,10 @@ def check_roles(tag):
     for method, path in (("GET", "/admin/users"), ("GET", f"/admin/users/{uid['stranger']}"),
                          ("POST", f"/admin/users/{uid['stranger']}/deactivate"), ("POST", f"/admin/users/{uid['stranger']}/sign-out"),
                          ("POST", f"/admin/users/{uid['stranger']}/unlock"), ("GET", "/admin/actions"),
-                         ("POST", "/admin/announcements")):
-        ok(call(method, path, P, json={"body": "x", "hours": 1}), 404)
+                         ("POST", "/admin/announcements"),
+                         # Reports are Admins only (reports.rs): never a PowerUser.
+                         ("GET", "/admin/reports"), ("GET", "/admin/reports/1"), ("POST", "/admin/reports/1/outcome")):
+        ok(call(method, path, P, json={"body": "x", "hours": 1, "action": "dismiss"}), 404)
     ok(call("POST", "/admin/incidents/20261023T171000Z/resolve", P), 404)
 
     # The graph: friends by name; everyone else anonymous, in every form.
@@ -1311,6 +1314,214 @@ def check_admin_users(tag):
     recent = ok(call("GET", "/admin/announcements", adm)).json()["announcements"]
     assert {a["id"] for a in recent} >= {posted["id"], second["id"]}, "kept"
     print("  admin users: turned off and back on with nothing lost, signed out, unlocked, recorded; announcements")
+
+def check_reports(tag):
+    """Reports (reports.rs, F28): only of what the reporter was shown, with one
+    answer for anything else, so a report can't find out what exists; never
+    the content; once each, and capped. Admins (only) warn, suspend, or turn
+    the account off, each telling the person why through Team Napsack; a
+    suspension's notice is said at sign-in, only after the right password."""
+    adm = admin_token()
+    # Ben is reported; Team Napsack writes to him, so his key is a real one.
+    r = {n: ok(register(f"rp_{n}_{tag}", **({"public_key": real_public_key()} if n == "ben" else {}))).json()
+         for n in ("ana", "ben", "cat", "dee", "eve")}
+    tok = {n: r[n]["token"] for n in r}
+    user = {n: r[n]["user"] for n in r}
+    uid = {n: user[n]["id"] for n in r}
+    befriend(tok["ben"], user["ana"], tok["ana"], uid["ben"])
+    befriend(tok["ana"], user["dee"], tok["dee"], uid["ana"])
+    befriend(tok["ben"], user["eve"], tok["eve"], uid["ben"])
+    secret = b64(os.urandom(48))
+    text = ok(call("POST", f"/chats/{uid['ana']}/messages", tok["ben"], json={"ciphertext": secret, "format": 2})).json()
+    mine = ok(call("POST", f"/chats/{uid['ben']}/messages", tok["ana"], json={"ciphertext": b64(os.urandom(48)), "format": 2})).json()
+    g = ok(call("POST", "/groups", tok["ana"], json={"name": f"rp {tag}", "member_ids": [uid["ben"], uid["dee"]]})).json()
+    gm = ok(call("POST", f"/groups/{g['id']}/messages", tok["ben"], json={"text": "in the group"})).json()
+    event = ok(call("GET", f"/groups/{g['id']}/messages", tok["dee"])).json()[0]
+    assert event["kind"] == "event"
+
+    note = f"kept sending these {tag}"
+    report = lambda who, **body: call("POST", "/reports", tok[who], json={"reason": "harassment", **body})
+    # Refused plainly: no reason, a made-up kind, a note on two lines or too long, nothing named.
+    for bad in ({"kind": "message", "message_id": text["id"], "reason": "rude"},
+                {"kind": "message", "message_id": text["id"], "note": "two\nlines"},
+                {"kind": "message", "message_id": text["id"], "note": "x" * 501},
+                {"kind": "message", "message_id": text["id"], "note": "evil‮txt"},
+                {"kind": "everything"}, {"kind": "message"}, {"kind": "group_message", "message_id": gm["id"]}):
+        ok(report("ana", **bad), 400)
+    ok(call("POST", "/reports", json={"kind": "person", "user_id": uid["ben"], "reason": "spam"}), 401)
+
+    # Only what you were shown, and the same answer for what doesn't exist.
+    nope = ok(report("ana", kind="message", message_id=999_999_999), 404).json()
+    for who, body in (("cat", {"kind": "message", "message_id": text["id"]}),                      # not to her
+                      ("ana", {"kind": "message", "message_id": mine["id"]}),                     # her own
+                      ("cat", {"kind": "group_message", "message_id": gm["id"], "group_id": g["id"]}),  # not in it
+                      ("dee", {"kind": "group_message", "message_id": event["id"], "group_id": g["id"]}),  # an event
+                      ("dee", {"kind": "group_message", "message_id": gm["id"], "group_id": g["id"] + 999})):
+        assert ok(report(who, **body), 404).json() == nope, (who, body)
+    stranger = ok(report("cat", kind="person", user_id=uid["ben"]), 404).json()
+    assert ok(report("cat", kind="person", user_id=999_999_999), 404).json() == stranger
+    ok(report("ana", kind="person", user_id=uid["ana"]), 400)
+
+    # Reported: once per message (a retry finds the first).
+    first = ok(report("ana", kind="message", message_id=text["id"], note=note)).json()
+    assert first["already"] is False
+    assert ok(report("ana", kind="message", message_id=text["id"])).json() == {"id": first["id"], "already": True}
+    by_dee = ok(report("dee", kind="group_message", message_id=gm["id"], group_id=g["id"])).json()["id"]
+    about_ben = ok(report("ana", kind="person", user_id=uid["ben"], reason="spam")).json()["id"]
+
+    # Admins see who, about whom, what, and when: never what it said.
+    listed = ok(call("GET", "/admin/reports", adm)).json()
+    row = next(x for x in listed["reports"] if x["id"] == first["id"])
+    assert row["reporter"]["username"] == user["ana"]["username"] and row["reported"]["id"] == uid["ben"], row
+    assert row["note"] == note and row["reason"] == "harassment" and row["outcome"] is None
+    assert row["message"] == {"id": text["id"], "kind": "text", "sent_at": text["created_at"]}, row["message"]
+    assert row["others"] >= 2
+    assert secret not in json.dumps(listed), "never the content"
+    one = ok(call("GET", f"/admin/reports/{by_dee}", adm)).json()
+    assert one["report"]["group"] == {"id": g["id"], "name": f"rp {tag}"} and one["report"]["message"]["kind"] == "text"
+    assert {o["id"] for o in one["others"]} >= {first["id"], about_ben}
+    assert "in the group" not in json.dumps(one), "never the content"
+    ok(call("GET", "/admin/reports/999999999", adm), 404)
+    opened = [x["outcome"] is None for x in listed["reports"]]
+    assert opened == sorted(opened, reverse=True), "open ones first"
+
+    # Warn: words required; a Team Napsack message to Ben, about which message, not by whom.
+    out = lambda rid, **body: call("POST", f"/admin/reports/{rid}/outcome", adm, json=body)
+    ok(out(first["id"], action="warn"), 400)
+    ok(out(first["id"], action="shout", words="x"), 400)
+    ok(out(first["id"], action="suspend", days=3, words="x"), 400)
+    words = f"Please stop {tag}"
+    assert ok(out(first["id"], action="warn", words=words)).json() == {"action": "warned", "until": None, "told": True}
+    ok(out(first["id"], action="dismiss"), 409)
+    team = ok(call("GET", "/admin/occasions", adm)).json()["team_napsack"]
+    told = ok(call("GET", f"/chats/{team}/messages", tok["ben"])).json()
+    assert told and told[-1]["sender_id"] == team and told[-1]["format"] == 2, told
+    assert words not in json.dumps(told), "end-to-end encrypted, like any text"
+    done = next(x for x in ok(call("GET", "/admin/reports", adm)).json()["reports"] if x["id"] == first["id"])
+    assert done["outcome"]["action"] == "warned" and done["outcome"]["notice"] == words and done["outcome"]["told"] is True
+    ok(call("POST", f"/chats/{uid['ana']}/messages", tok["ben"], json={"ciphertext": b64(os.urandom(48)), "format": 2}))  # nothing else changed
+
+    # Suspend for a week: signed out; signing in says until when, and why, but only with the right password.
+    ok(out(about_ben, action="suspend", days=7, words=f"A week off {tag}"))
+    ok(call("GET", "/me", tok["ben"]), 401)
+    wrong = call("POST", "/auth/login", json={"username": user["ben"]["username"], "auth_key": b64(os.urandom(32))})
+    assert wrong.status_code == 400 and "suspended" not in wrong.text, wrong.text
+    said = ok(call("POST", "/auth/login", json={"username": user["ben"]["username"], "auth_key": AUTH_KEY}), 400).json()["error"]
+    assert said.startswith("This account is suspended until ") and said.endswith(f"UTC: A week off {tag}"), said
+    sent = call("POST", f"/chats/{uid['ben']}/messages", tok["ana"], json={"ciphertext": b64(os.urandom(48)), "format": 2})
+    assert sent.status_code == 400 and "turned off" in sent.json()["error"], sent.text
+    detail = ok(call("GET", f"/admin/users/{uid['ben']}", adm)).json()
+    current = next(d for d in detail["deactivations"] if d["reactivated_at"] is None)
+    assert current["notice"] == f"A week off {tag}" and current["until"] > time.time() + 6 * 86400, current
+    assert [a["action"] for a in detail["actions"]][:2] == ["report_suspended", "report_warned"], detail["actions"]
+    if DB:
+        # A week on: the suspension ends by itself (signing in doesn't wait for the sweep).
+        db = sqlite3.connect(DB)
+        db.execute("UPDATE deactivations SET until = ? WHERE user_id = ? AND reactivated_at IS NULL", (int(time.time()) - 1, uid["ben"]))
+        db.commit()
+        tok["ben"] = ok(call("POST", "/auth/login", json={"username": user["ben"]["username"], "auth_key": AUTH_KEY})).json()["token"]
+        assert len(ok(call("GET", f"/chats/{team}/messages", tok["ben"])).json()) == 2, "told of the suspension too"
+
+        # Turned off for good: said at sign-in, until an Admin turns it back on.
+        ok(out(by_dee, action="block", words=f"Not here {tag}"))
+        said = ok(call("POST", "/auth/login", json={"username": user["ben"]["username"], "auth_key": AUTH_KEY}), 400).json()["error"]
+        assert said == f"This account has been turned off: Not here {tag}", said
+        ok(call("POST", f"/admin/users/{uid['ben']}/reactivate", adm))
+        rows = db.execute("SELECT COUNT(*) FROM deactivations WHERE user_id = ?", (uid["ben"],)).fetchone()[0]
+        assert rows == 2, "each kept, marked ended"
+    else:
+        ok(out(by_dee, action="dismiss", words="dealt with already"))
+        ok(call("POST", f"/admin/users/{uid['ben']}/reactivate", adm))             # an Admin ends it early
+    tok["ben"] = ok(call("POST", "/auth/login", json={"username": user["ben"]["username"], "auth_key": AUTH_KEY})).json()["token"]
+
+    # Admins can't be suspended from a report (they come from settings), nor can you report napsack.
+    befriend(tok["eve"], ok(call("GET", "/me", adm)).json(), adm, uid["eve"])
+    adm_id = ok(call("GET", "/me", adm)).json()["id"]
+    about_admin = ok(report("eve", kind="person", user_id=adm_id)).json()["id"]
+    ok(out(about_admin, action="suspend", days=1, words="x"), 400)
+    ok(out(about_admin, action="dismiss", words="an Admin"))
+    ok(report("eve", kind="person", user_id=team), 404)
+
+    # Twenty a day.
+    texts = [ok(call("POST", f"/chats/{uid['eve']}/messages", tok["ben"], json={"ciphertext": b64(os.urandom(48)), "format": 2})).json()["id"]
+             for _ in range(20)]
+    codes = [report("eve", kind="message", message_id=m).status_code for m in texts]
+    assert codes[:19] == [200] * 19 and codes[19] == 429, codes          # (one went on the Admin)
+
+    # Never in the logs: the note, the Admin's words.
+    for needle in (note, words):
+        assert ok(call("GET", f"/admin/logs?level=debug&q={urllib.parse.quote(needle)}", adm)).json()["entries"] == [], needle
+
+    # A reporter deleting their account takes their reports with them.
+    gone = ok(report("dee", kind="person", user_id=uid["ana"], reason="other")).json()["id"]
+    ok(call("POST", "/me/delete", tok["dee"], json={"auth_key": AUTH_KEY, "username": user["dee"]["username"]}))
+    ok(call("GET", f"/admin/reports/{gone}", adm), 404)
+    ok(call("GET", f"/admin/reports/{by_dee}", adm), 404)
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM reports WHERE reporter_id = ? OR reported_id = ?", (uid["dee"], uid["dee"])).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM reports WHERE id = ?", (first["id"],)).fetchone()[0] == 1, "others' stay"
+    print("  reports: only what you were shown (one answer otherwise), never content, once each, 20 a day; warn, suspend, block tell why")
+
+def check_blocks(tag):
+    """Blocking (blocks.rs, F28): ends the friendship; their friend requests,
+    add-a-friend link, and adding to groups answer as for an unknown person;
+    listed for the blocker; unblocking is a mark, and nothing comes back."""
+    r = {n: ok(register(f"bk_{n}_{tag}")).json() for n in ("ana", "ben", "cat")}
+    tok = {n: r[n]["token"] for n in r}
+    user = {n: r[n]["user"] for n in r}
+    uid = {n: user[n]["id"] for n in r}
+    befriend(tok["ben"], user["ana"], tok["ana"], uid["ben"])
+    befriend(tok["ben"], user["cat"], tok["cat"], uid["ben"])
+    ok(call("POST", f"/chats/{uid['ana']}/messages", tok["ben"], json={"ciphertext": b64(os.urandom(48)), "format": 2}))
+    g = ok(call("POST", "/groups", tok["ben"], json={"name": f"bk {tag}", "member_ids": [uid["ana"], uid["cat"]]})).json()
+    link = ok(call("GET", "/friend-link", tok["ana"])).json()["path"].rsplit("/", 1)[-1]
+
+    # Only someone you know, with one answer for anyone else; not yourself, not napsack.
+    ok(call("POST", f"/blocks/{uid['cat']}", tok["ana"]))                              # in a group with her
+    ok(call("POST", f"/blocks/{uid['cat']}/remove", tok["ana"]))
+    ok(call("POST", f"/blocks/{uid['ana']}", tok["ana"]), 400)
+    stranger = ok(register(f"bk_x_{tag}")).json()["user"]["id"]
+    nobody = ok(call("POST", "/blocks/999999999", tok["ana"]), 404).json()
+    assert ok(call("POST", f"/blocks/{stranger}", tok["ana"]), 404).json() == nobody
+    ok(call("POST", f"/blocks/{uid['ben']}", None), 401)
+
+    # Ana blocks Ben: the friendship ends; the history stays (Rule 1).
+    b = ok(call("POST", f"/blocks/{uid['ben']}", tok["ana"])).json()
+    assert b["blocked"] is True and b["already"] is False and b["user"]["username"] == user["ben"]["username"], b
+    assert ok(call("POST", f"/blocks/{uid['ben']}", tok["ana"])).json()["already"] is True
+    assert uid["ana"] not in [f["id"] for f in ok(call("GET", "/friends", tok["ben"])).json()]
+    assert uid["ben"] not in [f["id"] for f in ok(call("GET", "/friends", tok["ana"])).json()]
+    ok(call("POST", f"/chats/{uid['ana']}/messages", tok["ben"], json={"ciphertext": b64(os.urandom(48)), "format": 2}), 404)
+    listed = ok(call("GET", "/blocks", tok["ana"])).json()["blocks"]
+    assert [x["id"] for x in listed] == [uid["ben"]] and listed[0]["username"] == user["ben"]["username"], listed
+    assert ok(call("GET", "/blocks", tok["ben"])).json()["blocks"] == []
+
+    # What Ben gets is what anyone gets for someone who isn't there.
+    no_one = ok(call("POST", "/friends/requests", tok["ben"], json={"username": f"nobody_{tag}"}), 404).json()
+    assert ok(call("POST", "/friends/requests", tok["ben"], json={"username": user["ana"]["username"]}), 404).json() == no_one
+    bad_link = ok(call("POST", "/invites/accept", tok["ben"], json={"token": "A" * 22}), 404).json()
+    assert ok(call("POST", "/invites/accept", tok["ben"], json={"token": link}), 404).json() == bad_link
+    assert ok(call("GET", f"/invites/lookup/{link}", tok["ben"]), 404).json() == ok(call("GET", f"/invites/lookup/{'A' * 22}", tok["ben"]), 404).json()
+    ok(call("GET", f"/invites/lookup/{link}", tok["cat"]))                              # anyone else: still works
+    ok(call("POST", "/groups", tok["ben"], json={"name": "again", "member_ids": [uid["ana"]]}), 400)
+    # The group they're both in stays as it was.
+    assert {m["id"] for m in ok(call("GET", f"/groups/{g['id']}", tok["ana"])).json()["members"]} >= {uid["ana"], uid["ben"]}
+    # Ana is told plainly she's the one who blocked.
+    assert "blocked" in ok(call("POST", "/friends/requests", tok["ana"], json={"username": user["ben"]["username"]}), 400).json()["error"]
+
+    # Unblocking: a mark; the friendship stays ended, and asking again works.
+    ok(call("POST", f"/blocks/{uid['ben']}/remove", tok["ana"]))
+    ok(call("POST", f"/blocks/{uid['ben']}/remove", tok["ana"]), 404)
+    assert ok(call("GET", "/blocks", tok["ana"])).json()["blocks"] == []
+    assert uid["ana"] not in [f["id"] for f in ok(call("GET", "/friends", tok["ben"])).json()]
+    befriend(tok["ben"], user["ana"], tok["ana"], uid["ben"])
+    history = ok(call("GET", f"/chats/{uid['ben']}/messages", tok["ana"])).json()
+    assert len(history) == 1, "nothing was deleted"
+    if DB:
+        db = sqlite3.connect(DB)
+        assert db.execute("SELECT COUNT(*) FROM blocks WHERE blocker_id = ?", (uid["ana"],)).fetchone()[0] == 2, "kept, marked ended"
+    print("  blocks: friendship ended; requests, links, and groups refused as for nobody; unblocking keeps the record")
 
 def check_team(tag):
     """Team Napsack (team.rs, occasions.rs): napsack's own account. It messages
@@ -1980,6 +2191,8 @@ async def main():
     check_graph(tag)
     check_roles(tag)
     check_admin_users(tag)
+    check_reports(tag)
+    check_blocks(tag)
     check_deletion(tag)
     check_team(tag)
     check_health()
