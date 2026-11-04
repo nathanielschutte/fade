@@ -23,23 +23,26 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Report and block](#f28-report-and-block) | Features | – | Up next | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03) |
-| 3 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | – | Needs decision | 2026-11-03: four of Nate's calls, each small |
-| 4 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 5 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone. Fixed in TestFlight build 175 (a chat opens from its kept page); waiting on a try on the phone |
-| 6 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 7 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
-| 8 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 9 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
-| 10 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 11 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 12 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 13 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 14 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 15 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 16 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 17 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 18 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
+| 2 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Decided; design in report-and-block.md |
+| 3 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175) |
+| 4 | [Zoom and pan an opened pic](#x43-zoom-and-pan-an-opened-pic) | Experience/visual | Nate | In progress | Nate (2026-11-03) |
+| 5 | [Profile: Delete account under Sign out, and Sign out asks first](#x44-profile-delete-account-under-sign-out-and-sign-out-asks-first) | Experience/visual | Nate | In progress | Nate's intake (2026-11-03) |
+| 6 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | Nate | In progress | Decided (Nate, 2026-11-03): pictures kept and texts in order being built; the stats list tracked |
+| 7 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 8 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone. Fixed in TestFlight build 175 (a chat opens from its kept page); waiting on a try on the phone |
+| 9 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 10 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
+| 11 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 12 | [A photo can come out just over its size target](#d16-a-photo-can-come-out-just-over-its-size-target) | Debug | – | Up next | Found in CI, 2026-11-02 |
+| 13 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 14 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 15 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 16 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 17 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 18 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 19 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 20 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 21 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
@@ -397,7 +400,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-11-02), queued: the App Store expects apps where people send each other things to let them report it and block whoever sent it, and to act on reports in good time (App Review Guideline 1.2). It's the likeliest reason the first external TestFlight build would be refused ([ios-onboarding.md](../ios-onboarding.md#external-testing-the-checklist)); the external group is the next milestone (Nate, 2026-11-03).
 - Today only friends can message you, and unfriending stops them, but they can ask again, so it isn't a block.
 - To build, server first: a block that ends the friendship, refuses their requests and messages (and group adds by them), and is undone only by you; a report (a message, a pic, or a person) that reaches the Admins (System, with what the reporter chose to include: the server can't read messages, so a report carries the decrypted text only if the reporter sends it); then the web and the iOS app. Every client says what blocking does.
-- **For Nate:** whether a report includes the reported message's text (the reporter's phone can decrypt it; the server never can on its own), and how Admins hear of reports (the System page, an email, a push).
+- **Decided (Nate, 2026-11-03):** a report never includes the message's text (that would break end-to-end encryption), only its id, so the reported person can know which message; Admins get a Reports page on the System page, with tools to warn, suspend, and block (turn off) people, each telling them why; and an email to the support address for each new report, linking to its record. Design: [report-and-block.md](../design/report-and-block.md), with three smaller questions left for Nate.
 
 ### Debug
 
@@ -468,6 +471,10 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### D16. A photo can come out just over its size target
 - Found 2026-11-02 (CI, `test_chat.py`): the web app compresses photos to 200 KB or less, but one came out at 204,840 bytes sealed, 12 over `200 * 1024 + 28`. The camera stub's picture varies with timing, so it's rare. Well under the server's 512 KB cap, so nothing is refused; the target is what's missed. Find where the compressor stops one step early, and check the iOS app's `photoJPEG` the same way.
+
+#### D18. The iPhone chat scrolled off the top as the keyboard came up
+- Nate (2026-11-03, build 175, iPhone 16 Pro): open a chat, tap the message field, and the chat jumps so the conversation is off the top of the screen, blank above the composer, until a scroll puts it right.
+- Not seen on a Simulator (iOS 26.4 or 27, iPhone 16 Pro, a fresh chat or one reopened from its kept page). Fixed by rule rather than by a repro: at the bottom, the chat follows only changes of size, never your scrolling or a jump to a search hit, and goes to its end as a place, not by a distance (nothing can stack on the keyboard's own adjustment); and a chat left past its end with nothing moving it goes back, telling the log viewer once with the numbers ("chat left past its end", no content). Tests: `ChatScrollTests` (pushed past its end it returns; the keyboard and growth at once), `ChatUITests.testReopenedThenKeyboard`. Nate tries it on the next TestFlight build; if it still happens, the log line says what the phone did.
 
 ### Experience/visual
 
@@ -569,6 +576,13 @@ Oldest first; newly shipped rows go at the bottom.
   2. **What web search covers.** Today it reads up to 200 recent messages per chat, fetching them if needed. The iPhone searches only what's already on the phone (nothing fetched). Should the web match (faster, finds less) or keep fetching?
   3. **The admin stats' users list.** System › Stats still loads the whole users list without showing it. Dropping it is safe; the users table has its own page.
   4. **Texts sent within a moment of each other** go out side by side, so the server can store the second first. Sending one at a time per chat keeps the order, at the cost of a slow first send holding the next.
+- **Decided (Nate, 2026-11-03):** 1, yes, still refreshed when a picture changes (being built for the iPhone); 2, not now (the iPhone's search is fine); 3, tracked, not now; 4, yes: each chat's texts reach the server in the order they were written (being built, web and iPhone).
+
+#### X43. Zoom and pan an opened pic
+- Nate (2026-11-03): "When you open a pic that someone has sent, it would be nice if you can use typical gestures to zoom and pan the image." Being built, the iPhone and the web: pinch to zoom, drag to pan, double-tap, back within bounds; taps that go to the next pic or close never fire while zooming.
+
+#### X44. Profile: Delete account under Sign out, and Sign out asks first
+- From Nate's intake (2026-11-03): "have delete account appear below sign out"; "sign out should have a confirmation (it's instant right now)". Being built, the iPhone and the web.
 
 ### Security
 
