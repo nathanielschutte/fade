@@ -6846,7 +6846,7 @@ function setViewerHint(text) {
 // The pic's timer runs on as it would: zooming doesn't keep it longer.
 const ZOOM_MAX = 4;
 // The stage's transform is translate(x, y) scale(s), about its center.
-const zoom = { s: 1, x: 0, y: 0, pointers: new Map(), from: null, moved: false, gesture: null };
+const zoom = { s: 1, x: 0, y: 0, pointers: new Map(), from: null, moved: false, gesture: null, tapped: false };
 
 const zoomable = () => !!viewer.url && !$("#viewer").classList.contains("opening");
 
@@ -6908,6 +6908,7 @@ viewerEl.addEventListener("pointerdown", (e) => {
   // The first finger of a new touch: any left from before lost their lift (a touch that
   // ended off the screen, an interruption), and would make this tap look like a pinch.
   if (e.isPrimary) zoom.pointers.clear();
+  zoom.tapped = false; // a click that never came for the last tap mustn't swallow this one's
   if (!zoom.pointers.size) zoom.moved = false; // a new touch: a tap until it moves
   if (!zoomable() || (e.pointerType === "mouse" && e.button !== 0)) return;
   zoom.pointers.set(e.pointerId, fromCenter(e.clientX, e.clientY));
@@ -6952,6 +6953,12 @@ function zoomPointerEnd(e) {
   zoom.from = null;
   boundZoom();
   applyZoom(true);
+  // A finger (or the mouse) let go where it came down: a tap, decided here rather than by
+  // the click a browser may or may not send after it (some don't, after a touch), which is then ignored.
+  if (e.type === "pointerup" && !zoom.moved) {
+    zoom.tapped = true;
+    viewerTap();
+  }
 }
 viewerEl.addEventListener("pointerup", zoomPointerEnd);
 viewerEl.addEventListener("pointercancel", zoomPointerEnd);
@@ -6988,8 +6995,8 @@ viewerEl.addEventListener("gestureend", (e) => {
   zoom.gesture = null;
 });
 
-viewerEl.addEventListener("click", () => {
-  if (zoom.moved) return; // the end of a pinch or a drag, not a tap
+/** A tap on the viewer: zoomed in, it zooms out; otherwise the next pic (or closing). */
+function viewerTap() {
   if (zoom.s > 1) {
     zoom.s = 1;
     zoom.x = zoom.y = 0;
@@ -6997,6 +7004,11 @@ viewerEl.addEventListener("click", () => {
     return;
   }
   nextPic();
+}
+viewerEl.addEventListener("click", () => {
+  if (zoom.tapped) return void (zoom.tapped = false); // already taken as a tap as the finger lifted
+  if (zoom.moved) return; // the end of a pinch or a drag, not a tap
+  viewerTap(); // a tap the pointer events didn't follow (a video, or a keyboard's click)
 });
 $("#viewer").addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
