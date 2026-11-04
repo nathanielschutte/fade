@@ -402,9 +402,9 @@ pub async fn login(
         return Err(failed("wrong password"));
     }
     // Said only after the right password, so it reveals nothing to a guesser.
-    if crate::admin_users::is_deactivated(&state.db, id).await? {
+    if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "sign-in refused: account turned off");
-        return Err(AppError::bad(TURNED_OFF));
+        return Err(AppError::bad(why));
     }
 
     // The wrapped key is only useful with the password, which the server never sees.

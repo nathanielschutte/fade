@@ -6,6 +6,7 @@ mod apns;
 mod auth;
 mod aws;
 mod birthdays;
+mod blocks;
 mod chats;
 mod db;
 mod deletion;
@@ -31,6 +32,7 @@ mod profiles;
 mod push;
 mod ratelimit;
 mod reactions;
+mod reports;
 mod roles;
 mod snaps;
 mod streaks;
@@ -99,6 +101,9 @@ pub struct Config {
     /// Production only (`FADE_DELETION_MARKERS`): each account deletion leaves a
     /// marker in the backups bucket, re-applied at start (deletion.rs).
     pub deletion_markers: bool,
+    /// Where each new report is emailed (`FADE_REPORTS_EMAIL`, the support
+    /// address; reports.rs). Sending needs SES, which isn't set up yet.
+    pub reports_email: Option<String>,
     /// Lets push go to http://127.0.0.1 receivers. Only the test suite sets it.
     pub push_allow_local: bool,
     /// Which non-production copy this is ("staging"), or None for production
@@ -208,6 +213,10 @@ impl Config {
                 &env_or("FADE_IOS_BUNDLE_ID", "com.getattr.napsack".to_string())?,
             )?,
             deletion_markers: env_or("FADE_DELETION_MARKERS", false)?,
+            reports_email: std::env::var("FADE_REPORTS_EMAIL")
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
             push_allow_local: env_or("FADE_PUSH_ALLOW_LOCAL", false)?,
             environment: environment(&std::env::var("FADE_ENVIRONMENT").unwrap_or_default())?,
             limits: {
@@ -374,6 +383,8 @@ async fn main() -> anyhow::Result<()> {
     // A database restored from a backup loses no deletion (production).
     deletion::reapply(&state).await;
     deletion::spawn_sweeper(state.clone());
+    // Suspensions end by themselves (admin_users.rs).
+    admin_users::spawn_sweeper(state.clone());
     snaps::spawn_sweeper(state.clone());
     group_pics::spawn_sweeper(state.clone());
 
@@ -569,6 +580,14 @@ fn router(state: SharedState) -> Router {
         )
         .route("/admin/users/{user_id}/unlock", post(admin_users::unlock))
         .route("/admin/actions", get(admin_users::actions))
+        // Report and block (reports.rs, blocks.rs; docs/design/report-and-block.md).
+        .route("/reports", post(reports::create))
+        .route("/blocks", get(blocks::list))
+        .route("/blocks/{user_id}", post(blocks::add))
+        .route("/blocks/{user_id}/remove", post(blocks::remove))
+        .route("/admin/reports", get(reports::list))
+        .route("/admin/reports/{id}", get(reports::get))
+        .route("/admin/reports/{id}/outcome", post(reports::decide))
         .route(
             "/admin/announcements",
             get(announcements::recent).post(announcements::post),

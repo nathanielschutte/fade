@@ -310,6 +310,12 @@ async fn account(tx: &mut SqliteConnection, user: i64) -> sqlx::Result<()> {
         "DELETE FROM user_role_upgrades WHERE user_id = ?1",
         "DELETE FROM deactivations WHERE user_id = ?1",
         "DELETE FROM admin_actions WHERE target_user_id = ?1",
+        // Reports they made and reports about them, with what was done
+        // about them, and blocks either way (reports.rs, blocks.rs).
+        "DELETE FROM report_outcomes WHERE report_id IN
+            (SELECT id FROM reports WHERE reporter_id = ?1 OR reported_id = ?1)",
+        "DELETE FROM reports WHERE reporter_id = ?1 OR reported_id = ?1",
+        "DELETE FROM blocks WHERE blocker_id = ?1 OR blocked_id = ?1",
     ] {
         sqlx::query(sql).bind(user).execute(&mut *tx).await?;
     }
@@ -453,6 +459,7 @@ mod tests {
         ("announcements", "created_by"),
         ("announcements", "withdrawn_by"),
         ("admin_actions", "admin_id"),
+        ("report_outcomes", "admin_id"),
         ("reset_codes", "created_by"),
         ("user_roles", "granted_by"),
         ("user_roles", "revoked_by"),
@@ -519,6 +526,10 @@ mod tests {
         INSERT INTO past_usernames (id, user_id, username, until) VALUES (1, 1, 'anna', 0);
         INSERT INTO apns_devices (id, user_id, session_hash, token, environment, created_at) VALUES (1, 1, 's1', 'ab', 'sandbox', 0);
         INSERT INTO passkeys (id, user_id, credential_id, public_key, wrapped_key, created_at) VALUES (1, 1, 'c1', x'04', 'w', 0), (2, 2, 'c2', x'04', 'w', 0);
+        INSERT INTO reports (id, reporter_id, reported_id, kind, message_id, group_id, reason, created_at) VALUES
+            (1, 1, 2, 'message', 2, NULL, 'spam', 0), (2, 3, 1, 'group_message', 1, 1, 'hate', 0), (3, 2, 3, 'person', NULL, NULL, 'other', 0);
+        INSERT INTO report_outcomes (id, report_id, action, admin_id, created_at) VALUES (1, 1, 'dismissed', 4, 0), (2, 2, 'warned', 4, 0), (3, 3, 'dismissed', 1, 0);
+        INSERT INTO blocks (id, blocker_id, blocked_id, created_at, ended_at) VALUES (1, 1, 3, 0, NULL), (2, 2, 1, 0, 5), (3, 2, 3, 0, NULL);
     ";
 
     /// Every (table, column) that refers to users.
@@ -653,6 +664,11 @@ mod tests {
             ("sessions", 1),
             ("group_avatars", 1),
             ("groups", 2),
+            // Ben's report about Cat, decided by Ana (still pointing at her
+            // hollow row, as admin_actions do), and Ben's block of Cat.
+            ("reports", 1),
+            ("report_outcomes", 1),
+            ("blocks", 1),
         ] {
             assert_eq!(rows(&db, table).await, left, "{table}");
         }
