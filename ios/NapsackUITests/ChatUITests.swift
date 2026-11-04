@@ -175,6 +175,25 @@ import XCTest
         try require(app.buttons["Cancel reply"].waitForExistence(timeout: 3), "swiping replied")
     }
 
+    // ---------- Profile ----------
+
+    /// Delete account sits below Sign out, and Sign out asks first: until
+    /// it's answered, you're still signed in (Nate: it was instant).
+    func testSigningOutAsksFirst() async throws {
+        let chat = try XCTUnwrap(Self.chat)
+        try openChat(chat)
+        app.tabBars.buttons["Profile"].tap()
+        let signOut = app.buttons["Sign out"], delete = app.buttons["Delete account"]
+        for _ in 0..<6 where !(delete.exists && delete.isHittable) { app.swipeUp() }
+        try require(signOut.isHittable && signOut.frame.maxY <= delete.frame.minY, "Delete account is below Sign out")
+        signOut.tap()
+        try require(app.staticTexts["Sign out?"].waitForExistence(timeout: 5), "signing out asks first")
+        shot("profile-sign-out-asks")
+        try require(!app.textFields["Username"].exists, "still signed in while it asks")
+        try confirmSignOut()
+        try require(app.textFields["Username"].waitForExistence(timeout: 10), "signed out once it's answered")
+    }
+
     // ---------- helpers ----------
 
     var composer: XCUIElement { app.descendants(matching: .any).matching(identifier: "composer").firstMatch }
@@ -190,10 +209,7 @@ import XCTest
         try require(waitUntil(20) { username.exists || row.exists || list.exists }, "the app started")
         if !username.exists && !waitUntil(5, { username.exists || row.exists }) {
             // Someone else from an earlier run, still signed in: out first.
-            app.tabBars.buttons["Profile"].tap()
-            let signOut = app.buttons["Sign out"]
-            for _ in 0..<6 where !(signOut.exists && signOut.isHittable) { app.swipeUp() }
-            signOut.tap()
+            try signOut()
             try require(username.waitForExistence(timeout: 10), "signed out of the other account")
         }
         if username.exists {
@@ -217,6 +233,22 @@ import XCTest
         }, "signed in, with the chat in the list")
         row.tap()
         try require(composer.waitForExistence(timeout: 10), "the chat opened")
+    }
+
+    /// Profile › Sign out, and yes to "Sign out?".
+    func signOut() throws {
+        app.tabBars.buttons["Profile"].tap()
+        let signOut = app.buttons["Sign out"]
+        for _ in 0..<6 where !(signOut.exists && signOut.isHittable) { app.swipeUp() }
+        signOut.tap()
+        try confirmSignOut()
+    }
+
+    /// Yes to "Sign out?": the question's own Sign out, not the row under it.
+    func confirmSignOut() throws {
+        try require(app.staticTexts["Sign out?"].waitForExistence(timeout: 5), "signing out asks first")
+        let inDialog = app.sheets.buttons["Sign out"]
+        if inDialog.exists { inDialog.tap() } else { app.buttons.matching(identifier: "Sign out").allElementsBoundByIndex.last?.tap() }
     }
 
     /// The friend sends the next text; returns the chat with it as the newest.
