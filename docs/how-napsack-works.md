@@ -307,6 +307,10 @@ Everyone is a **User**. Two roles see more of how napsack is doing, never more o
 
 Nothing on the System page shows message content: the server doesn't have any. Logs record events and ids (sign-ins, friendships, errors), never what anyone wrote, and the server redacts anything that looks like content or a secret.
 
+## Reporting and blocking
+
+You can report a message sent to you, a message in a group you're in, or a person you know, and block anyone you know. **A report never carries what a message said.** Messages stay end-to-end encrypted: the report sends the server the message's id, what kind it is (a text, a pic, a video), and when it was sent, which the server already knows, plus a reason and, if you like, a line in your own words. Admins see who reported whom and when on System › Reports, and can dismiss it, warn the person, suspend their account for a while, or turn it off; each tells them why through Team Napsack (encrypted to them like any of its messages) and, for a suspension, when they sign in. They're told which message, by its id, so their own app can show it to them; they're never told who reported it, though for a direct message, whom they sent it to is who did. Blocking someone ends the friendship, and from then on their friend requests and your add-a-friend link answer them as if you weren't there. [report-and-block.md](design/report-and-block.md)
+
 ## Deleting your account
 
 In your profile, **Delete account** deletes everything of yours from napsack, for good: every message, pic, and video you sent or got, in every chat and group; your friends, and their chats with you; your name, picture, and birthday; your account. It asks for your password and for your username typed again, then it's done at once. Your friends lose their chat with you; in groups, your messages are gone and the group says a member left. What's left is an empty placeholder others' records point at (who created a group), with nothing of you in it. Your username can't be taken by anyone for 30 days, so nobody can pose as you to the friends who just lost you; then it's free.

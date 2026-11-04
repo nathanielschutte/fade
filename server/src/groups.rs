@@ -731,6 +731,13 @@ pub struct NewGroup {
     member_ids: Vec<i64>,
 }
 
+/// Whether `me` may put `them` in a group: a friend, and neither blocks the
+/// other (blocks.rs). A block ends the friendship anyway; this keeps it so
+/// even if a friendship raced the block. Refused with the same words either way.
+async fn addable(db: &SqlitePool, me: i64, them: i64) -> sqlx::Result<bool> {
+    Ok(db::are_friends(db, me, them).await? && !crate::blocks::between(db, me, them).await?)
+}
+
 /// `POST /api/groups`: the caller becomes owner; everyone else must be their friend.
 pub async fn create(
     State(state): State<SharedState>,
@@ -753,7 +760,7 @@ pub async fn create(
         )));
     }
     for &id in &ids {
-        if !db::are_friends(&state.db, me.id, id).await? {
+        if !addable(&state.db, me.id, id).await? {
             return Err(AppError::bad("You can only add your friends to a group."));
         }
     }
@@ -869,7 +876,7 @@ pub async fn add_member(
 ) -> AppResult<Json<GroupDetail>> {
     let (role, _) = require_member(&state.db, group, me.id).await?;
     let target = req.user_id;
-    if !db::are_friends(&state.db, me.id, target).await? {
+    if !addable(&state.db, me.id, target).await? {
         return Err(AppError::bad("You can only add your friends to a group."));
     }
     if membership(&state.db, group, target).await?.is_some() {

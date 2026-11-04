@@ -1159,11 +1159,18 @@ const ACTION_WORDS = {
   announce: "posted an announcement",
   withdraw_announcement: "withdrew an announcement",
   try_occasion: "tried a Team Napsack occasion",
+  report_dismissed: "dismissed a report",
+  report_warned: "sent a warning over a report",
+  report_suspended: "suspended the account over a report",
+  report_blocked: "turned the account off over a report",
 };
+// "… for ben", except where another word reads better.
+const ACTION_TO = { report_warned: "to", report_dismissed: "about" };
 const longDate = (ts) => dateLabel(ts, { year: "numeric", month: "short", day: "numeric" });
 const when = (ts) => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-async function loadUsers() {
+// `scroll`: bring the open account into view (arriving from a link, #users=7).
+async function loadUsers(scroll = false) {
   try {
     usersView.list = await api("/admin/users");
   } catch (err) {
@@ -1173,7 +1180,7 @@ async function loadUsers() {
   $("#message").hidden = true;
   $("#admin").hidden = false;
   renderUsers();
-  if (usersView.open != null) openUser(usersView.open, false);
+  if (usersView.open != null) openUser(usersView.open, scroll);
   loadAnnouncements();
   loadActivity();
 }
@@ -1257,10 +1264,11 @@ function renderUser() {
 
   const history = [
     ...d.deactivations.flatMap((x) => [
-      { at: x.at, text: `Turned off by ${x.by}${x.reason ? `: “${x.reason}”` : ""}` },
-      x.reactivated_at ? { at: x.reactivated_at, text: `Turned back on by ${x.reactivated_by}` } : null,
+      { at: x.at, text: `${x.until ? `Suspended until ${when(x.until)}` : "Turned off"} by ${x.by}${x.reason ? `: “${x.reason}”` : ""}${x.notice ? `. They were told: “${x.notice}”` : ""}` },
+      // A suspension that ran its course ended by itself (nobody turned it back on).
+      x.reactivated_at ? { at: x.reactivated_at, text: x.reactivated_by ? `Turned back on by ${x.reactivated_by}` : "Suspension ended" } : null,
     ]).filter(Boolean),
-    ...d.actions.filter((a) => !["deactivate", "reactivate"].includes(a.action))
+    ...d.actions.filter((a) => !["deactivate", "reactivate", "report_suspended", "report_blocked"].includes(a.action))
       .map((a) => ({ at: a.at, text: `${a.by} ${ACTION_WORDS[a.action] ?? a.action}${actionDetail(a)}` })),
   ].sort((a, b) => b.at - a.at);
   $("#u-history").replaceChildren(...(history.length
@@ -1272,6 +1280,7 @@ function actionDetail(a) {
   const d = a.detail ?? {};
   if (d.sessions_ended != null) return ` (${d.sessions_ended} ${d.sessions_ended === 1 ? "device" : "devices"})`;
   if (d.failures_cleared != null) return ` (${d.failures_cleared} wrong ${d.failures_cleared === 1 ? "password" : "passwords"})`;
+  if (d.report_id != null) return ` (report #${d.report_id})`;
   return "";
 }
 
@@ -1365,7 +1374,7 @@ async function loadActivity() {
   $("#act-feed").replaceChildren(...(data.actions.length
     ? data.actions.slice(0, 30).map((a) => el("li", {},
       el("span", { class: "incident-time", text: when(a.at) }),
-      `${a.by} ${ACTION_WORDS[a.action] ?? a.action}${a.target ? ` for ${a.target}` : ""}${actionDetail(a)}`))
+      `${a.by} ${ACTION_WORDS[a.action] ?? a.action}${a.target ? ` ${ACTION_TO[a.action] ?? "for"} ${a.target}` : ""}${actionDetail(a)}`))
     : [el("li", { class: "muted", text: "Nothing yet." })]));
 }
 
@@ -1379,15 +1388,169 @@ $("#u-close").addEventListener("click", () => {
   renderUsers();
 });
 
+// ---------- reports (Admins only; docs/design/report-and-block.md) ----------
+// What people reported, and what an Admin does about it: dismiss, warn,
+// suspend, or turn the account off, each telling the person why (Team
+// Napsack, and at sign-in). Never a message's content: the server only
+// knows a message's id, kind, and time. Everything people typed (the note,
+// names) goes in as text, never as HTML.
+
+const reportsView = { data: null, confirm: null, days: 7, words: {}, focus: null, busy: false };
+const REASON_WORDS = {
+  spam: "Spam",
+  harassment: "Harassment or bullying",
+  nudity: "Nudity or sexual content",
+  violence: "Violence or threats",
+  hate: "Hate",
+  other: "Something else",
+};
+const OUTCOME_WORDS = { dismissed: "Dismissed", warned: "Warned", suspended: "Suspended", blocked: "Turned off" };
+const KIND_NOUN = { text: "a text", pic: "a pic", video: "a video" };
+// [button, second tap, what the words are for]
+const DECISIONS = {
+  dismiss: ["Dismiss", "Tap again: dismiss it", "A note for Admins (optional)"],
+  warn: ["Warn", "Tap again: warn them", "What they'll be told (Team Napsack sends it)"],
+  suspend: ["Suspend", "Tap again: suspend them", "What they'll be told, now and when they sign in"],
+  block: ["Turn off", "Tap again: turn the account off", "What they'll be told when they sign in"],
+};
+
+async function loadReports() {
+  try {
+    reportsView.data = await api("/admin/reports");
+  } catch (err) {
+    $("#rep-note").textContent = `Couldn't load reports: ${err.message}`;
+    return;
+  }
+  $("#message").hidden = true;
+  $("#admin").hidden = false;
+  // Arriving from a link (#reports=42, the support email): that one, marked and in view.
+  const { arg } = hashParts();
+  const arrived = arg != null && reportsView.focus !== arg;
+  reportsView.focus = arg;
+  renderReports();
+  if (arrived) document.getElementById(`report-${arg}`)?.scrollIntoView({ block: "start" });
+}
+
+/** "a text in their chat, sent Nov 3, 2:02 PM (message 1234)", "their profile". */
+function whatReported(r) {
+  if (r.kind === "person") return "their profile";
+  const noun = KIND_NOUN[r.message.kind] ?? "a message";
+  const where = r.kind === "group_message" ? `in ${r.group?.name ?? "a group"}` : "in their chat";
+  return `${noun} ${where}, sent ${when(r.message.sent_at)} (message ${r.message.id})`;
+}
+
+function outcomeText(o) {
+  const until = o.action === "suspended" && o.until ? ` until ${when(o.until)}` : "";
+  const words = o.notice ? `. They were told: “${o.notice}”` : o.note ? `: “${o.note}”` : "";
+  const unsent = o.action !== "dismissed" && !o.told ? ". The Team Napsack message didn't go (see the logs)" : "";
+  return `${OUTCOME_WORDS[o.action] ?? o.action}${until} by ${o.by}, ${when(o.at)}${words}${unsent}`;
+}
+
+function renderReports() {
+  const data = reportsView.data;
+  if (!data) return;
+  const done = data.reports.length - data.open;
+  $("#rep-note").textContent = `${data.open} open${done ? ` · ${done} dealt with` : ""}`;
+  $("#tab-reports").textContent = data.open ? `Reports (${data.open})` : "Reports";
+  if (!data.reports.length) {
+    $("#reports").replaceChildren(el("li", { class: "muted", text: "No reports. When someone reports a message or a person, it shows here." }));
+    return;
+  }
+  $("#reports").replaceChildren(...data.reports.map(reportCard));
+}
+
+function reportCard(r) {
+  const open = !r.outcome;
+  const reported = r.reported;
+  const person = el("a", { href: `#users=${reported.id}`, class: "link" }, reported.username);
+  const card = el("li", { class: `report${open ? " open" : ""}${reportsView.focus === r.id ? " focused" : ""}`, id: `report-${r.id}` },
+    el("div", { class: "report-head" },
+      el("strong", { text: `#${r.id} · ${REASON_WORDS[r.reason] ?? r.reason}` }),
+      el("span", { class: `status-chip${open ? " on" : ""}`, text: open ? "Open" : OUTCOME_WORDS[r.outcome.action] ?? r.outcome.action }),
+      el("span", { class: "muted", text: when(r.created_at) })),
+    el("p", { class: "report-who" }, `${r.reporter.username} reported `, person,
+      reported.deactivated ? el("span", { class: "status-chip off", text: "Turned off" }) : null),
+  );
+  const rows = [["What", whatReported(r)]];
+  if (r.note) rows.push(["Their note", `“${r.note}”`]);
+  rows.push(["Other reports about them", n(r.others)]);
+  card.append(el("dl", { class: "facts report-facts" }, ...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })])));
+  if (!open) {
+    card.append(el("p", { class: "panel-note", text: outcomeText(r.outcome) }));
+    return card;
+  }
+  const pending = reportsView.confirm?.id === r.id ? reportsView.confirm.action : null;
+  const actions = el("div", { class: "u-actions" }, ...Object.entries(DECISIONS).map(([key, [words, again]]) =>
+    el("button", {
+      type: "button", class: `button${key === "block" || key === "suspend" ? " danger" : ""}`,
+      "data-action": key, disabled: reportsView.busy ? "" : null,
+      onclick: () => decideReport(r, key),
+    }, pending === key ? again : words)));
+  card.append(actions);
+  if (pending) {
+    const [, , label] = DECISIONS[pending];
+    const input = el("input", {
+      type: "text", id: `rep-words-${r.id}`, maxlength: "500", autocomplete: "off",
+      placeholder: pending === "dismiss" ? "Optional" : "e.g. Please keep it friendly: this is a place for friends.",
+      oninput: (e) => { reportsView.words[r.id] = e.target.value; },
+    });
+    input.value = reportsView.words[r.id] ?? "";
+    const form = el("div", { class: "report-form" }, el("label", { for: input.id, text: label }), input);
+    if (pending === "suspend") {
+      form.append(el("div", { class: "segmented", role: "group", "aria-label": "How long" },
+        ...[1, 7, 30].map((d) => el("button", {
+          type: "button", class: "segment", "aria-pressed": String(reportsView.days === d),
+          onclick: () => { reportsView.days = d; renderReports(); document.getElementById(`rep-words-${r.id}`)?.focus(); },
+        }, d === 1 ? "1 day" : `${d} days`))));
+    }
+    form.append(el("button", { type: "button", class: "link", onclick: () => { reportsView.confirm = null; renderReports(); } }, "Cancel"));
+    card.append(form);
+  }
+  return card;
+}
+
+// Two taps, remembered by report and action (the list can redraw in between).
+async function decideReport(r, action) {
+  const pending = reportsView.confirm;
+  if (pending?.id !== r.id || pending.action !== action) {
+    reportsView.confirm = { id: r.id, action };
+    renderReports();
+    document.getElementById(`rep-words-${r.id}`)?.focus();
+    return;
+  }
+  const out = $("#rep-result");
+  reportsView.busy = true;
+  renderReports();
+  try {
+    const body = { action, words: reportsView.words[r.id] ?? "" };
+    if (action === "suspend") body.days = reportsView.days;
+    const res = await api(`/admin/reports/${r.id}/outcome`, "POST", body);
+    reportsView.confirm = null;
+    delete reportsView.words[r.id];
+    const told = action === "dismiss" ? "" : res.told ? " Team Napsack told them why." : " Recorded, but the Team Napsack message didn't go: see the logs.";
+    out.replaceChildren(el("p", { text: `Report #${r.id}: ${(OUTCOME_WORDS[res.action] ?? res.action).toLowerCase()}.${told}` }));
+  } catch (err) {
+    out.replaceChildren(el("p", { text: `Couldn't do that: ${err.message}` }));
+  }
+  out.hidden = false;
+  reportsView.busy = false;
+  await loadReports();
+}
+
 // ---------- tabs ----------
 
-const TABS = ["overview", "metrics", "graph", "users", "roles", "logs"];
+const TABS = ["overview", "metrics", "graph", "users", "reports", "roles", "logs"];
 // Which tabs each role gets (roles.md). The server enforces the same, endpoint by endpoint.
-const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", users: "admin", roles: "power", logs: "admin" };
+const TAB_ROLES = { overview: "power", metrics: "power", graph: "power", users: "admin", reports: "admin", roles: "power", logs: "admin" };
 const RANK = { user: 0, power: 1, powerxtreme: 2, admin: 3 };
 let viewer = null;
 const allowed = (tab) => viewer && RANK[viewer.role] >= RANK[TAB_ROLES[tab]];
-const currentTab = () => TABS.find((t) => location.hash === `#${t}` && allowed(t)) ?? "overview";
+/** `#users`, or `#users=7` and `#reports=42` (a link to one of them). */
+function hashParts() {
+  const [name, arg] = location.hash.slice(1).split("=");
+  return { name, arg: arg && /^\d+$/.test(arg) ? Number(arg) : null };
+}
+const currentTab = () => TABS.find((t) => hashParts().name === t && allowed(t)) ?? "overview";
 
 function showTab() {
   if (!viewer) return;
@@ -1404,7 +1567,11 @@ function showTab() {
   else if (tab === "metrics") loadMetrics();
   else if (tab === "graph") loadGraph();
   else if (tab === "roles") loadRoles();
-  else if (tab === "users") loadUsers();
+  else if (tab === "users") {
+    const { arg } = hashParts();
+    if (arg != null) usersView.open = arg;
+    loadUsers(arg != null);
+  } else if (tab === "reports") loadReports();
   else load();
 }
 
@@ -1428,6 +1595,10 @@ async function start() {
   viewer = { id: me.id, role: me.role ?? (me.is_admin ? "admin" : "user") };
   if (viewer.role === "user") return fail("This page isn't available.");
   showTab();
+  // Admins see how many reports are open from any tab.
+  if (viewer.role === "admin" && currentTab() !== "reports") {
+    api("/admin/reports").then((data) => { if (!reportsView.data) { reportsView.data = data; renderReports(); } }).catch(() => {});
+  }
 }
 window.addEventListener("hashchange", showTab);
 start();

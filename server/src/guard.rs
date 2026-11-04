@@ -9,8 +9,8 @@
 //!   an hour.
 //! - Floods: a request budget per address, writes per session, a ceiling on
 //!   requests in flight at once, and on live sockets.
-//! - Hard caps: accounts in total, sessions per person, friend requests and
-//!   new groups per day.
+//! - Hard caps: accounts in total, sessions per person, friend requests,
+//!   new groups, reports, and blocks per day, and people blocked at once.
 //! - Disk: uploads stop well before the data disk fills, and every write stops
 //!   before the database could run out of room.
 //!
@@ -61,6 +61,17 @@ impl Default for Limits {
         }
     }
 }
+
+/// Reports one person can send in a day (reports.rs), counted from the
+/// database, so a restart doesn't reset it. Far above what anyone needs; it
+/// stops a script filling the Reports page.
+pub const MAX_REPORTS_PER_DAY: i64 = 20;
+/// A report's note, and an Admin's words about it, at most this long.
+pub const MAX_REPORT_WORDS: usize = 500;
+/// People one person can have blocked at once (blocks.rs)...
+pub const MAX_BLOCKS: i64 = 500;
+/// ...and blocks they can make in a day (each adds a row, Rule 1).
+pub const MAX_BLOCKS_PER_DAY: i64 = 100;
 
 /// Uploads stop when the data disk has less than this free...
 pub const UPLOAD_FLOOR_BYTES: u64 = 150 * 1024 * 1024;

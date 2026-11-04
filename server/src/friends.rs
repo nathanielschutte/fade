@@ -280,7 +280,7 @@ pub async fn make_friends(db: &SqlitePool, accepter: i64, other: i64) -> sqlx::R
     sqlx::query(
         "INSERT INTO friendships (user_lo, user_hi, created_at) VALUES (?, ?, ?)
          ON CONFLICT (user_lo, user_hi) DO UPDATE
-           SET created_at = excluded.created_at, ended_at = NULL, ended_by = NULL
+           SET created_at = excluded.created_at, ended_at = NULL, ended_by = NULL, ended_reason = NULL
            WHERE friendships.ended_at IS NOT NULL",
     )
     .bind(lo)
@@ -304,18 +304,26 @@ pub async fn send_request(
     }
     // A turned-off account can't be found (admin_users.rs).
     // By their username, or one they had: an old name still finds them (usernames.rs).
+    // Nor can someone who blocked me (blocks.rs): the same answer as nobody.
     let target = sqlx::query_as::<_, UserPublic>(&format!(
         "SELECT id, username FROM users u
          WHERE (username = ?1 OR id IN (SELECT user_id FROM past_usernames WHERE username = ?1))
-           AND NOT {DEACTIVATED} AND NOT {SYSTEM}"
+           AND NOT {DEACTIVATED} AND NOT {SYSTEM} AND NOT {BLOCKS_ME}"
     ))
     .bind(req.username.trim())
+    .bind(me.id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::not_found("No one has that username."))?;
 
     if target.id == me.id {
         return Err(AppError::bad("That's you."));
+    }
+    if crate::blocks::blocks(&state.db, me.id, target.id).await? {
+        return Err(AppError::bad(format!(
+            "You've blocked {}. Unblock them first (Profile › Blocked).",
+            target.username
+        )));
     }
     if db::are_friends(&state.db, me.id, target.id).await? {
         return Err(AppError::Conflict(format!(
@@ -393,7 +401,8 @@ pub async fn accept(
     .bind(me.id)
     .fetch_optional(&state.db)
     .await?;
-    if exists.is_none() {
+    // (Blocking resolves requests; this covers one that raced it.)
+    if exists.is_none() || crate::blocks::between(&state.db, me.id, user_id).await? {
         return Err(AppError::not_found("That friend request no longer exists."));
     }
     make_friends(&state.db, me.id, user_id).await?;
@@ -479,6 +488,10 @@ pub async fn remove(
     state.hub.send_both(me.id, user_id, &Event::FriendsChanged);
     Ok(Json(json!({ "ok": true })))
 }
+
+/// `u` has blocked the person bound as `?2` (blocks.rs).
+const BLOCKS_ME: &str =
+    "EXISTS(SELECT 1 FROM blocks b WHERE b.blocker_id = u.id AND b.blocked_id = ?2 AND b.ended_at IS NULL)";
 
 /// `u` is an account the server speaks for, like Team Napsack (team.rs).
 const SYSTEM: &str = "EXISTS(SELECT 1 FROM system_accounts s WHERE s.user_id = u.id)";

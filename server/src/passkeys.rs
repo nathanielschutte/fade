@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    auth::{check_ip, create_session, AuthUser, Me, SessionResponse, TURNED_OFF},
+    auth::{check_ip, create_session, AuthUser, Me, SessionResponse},
     db::{is_base64, now, UserPublic},
     error::{AppError, AppResult},
     ratelimit::ClientInfo,
@@ -332,9 +332,9 @@ pub async fn sign_in(
     )
     .map_err(failed)?;
     // Said only after the passkey checked out, as with the password.
-    if crate::admin_users::is_deactivated(&state.db, id).await? {
+    if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "passkey sign-in refused: account turned off");
-        return Err(AppError::bad(TURNED_OFF));
+        return Err(AppError::bad(why));
     }
     sqlx::query(
         "UPDATE passkeys SET sign_count = MAX(sign_count, ?), last_used_at = ? WHERE id = ?",

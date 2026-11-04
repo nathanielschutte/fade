@@ -205,9 +205,20 @@ pub async fn lookup(
     State(state): State<SharedState>,
     Extension(who): Extension<ClientInfo>,
     Path(token): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<Value>> {
     check_ip(&state, &who, "invite lookup")?;
     let (_, inviter) = find_valid(&state.db, &token).await?.ok_or_else(gone)?;
+    // Signed in, and they blocked me: as a link that doesn't work (blocks.rs).
+    if let Some(token) = crate::auth::bearer_token(&headers) {
+        let viewer =
+            crate::auth::user_for_token(&state.db, token, state.config.session_days).await?;
+        if let Some(viewer) = viewer {
+            if crate::blocks::blocks(&state.db, inviter.id, viewer.id).await? {
+                return Err(gone());
+            }
+        }
+    }
     Ok(Json(
         json!({ "inviter": { "id": inviter.id, "username": inviter.username } }),
     ))
@@ -231,6 +242,16 @@ pub async fn accept(
         return Err(AppError::bad(
             "That's your own invite link. Send it to a friend.",
         ));
+    }
+    // Someone who blocked me: their link answers as a link that doesn't work.
+    if crate::blocks::blocks(&state.db, inviter.id, me.id).await? {
+        return Err(gone());
+    }
+    if crate::blocks::blocks(&state.db, me.id, inviter.id).await? {
+        return Err(AppError::bad(format!(
+            "You've blocked {}. Unblock them first (Profile › Blocked).",
+            inviter.username
+        )));
     }
     let already = crate::db::are_friends(&state.db, me.id, inviter.id).await?;
     if !already {
