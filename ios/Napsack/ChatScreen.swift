@@ -562,6 +562,13 @@ struct OutgoingView: View {
                     Button("Remove", action: remove)
                 }
                 .font(.caption2).foregroundStyle(.red).padding(.horizontal, 4)
+            case .held:
+                // In order: it goes once the one above is sent, or removed.
+                HStack(spacing: 4) {
+                    Text("Waiting for the text above.")
+                    Button("Remove", action: remove)
+                }
+                .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
             }
         }
     }

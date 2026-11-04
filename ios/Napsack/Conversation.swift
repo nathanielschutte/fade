@@ -240,6 +240,9 @@ struct Outgoing: Identifiable, Equatable, Sendable {
         case sending
         /// Why, in words ("Not sent: no connection.").
         case failed(String)
+        /// Behind one that wasn't sent: it goes once that one is sent or removed,
+        /// so the chat keeps the order they were written in.
+        case held
     }
 
     /// The message's `client_id`: the same on every try, so the server never stores it twice.
@@ -293,9 +296,11 @@ struct OpenedPic: Sendable {
 
 /// An open chat: its history, newest page first, older pages as you scroll
 /// back (plan F3: 50 at a time), each message opened on arrival. Texts you
-/// send wait in an outbox until the server has them (app.js, the outbox): a
-/// bad connection is tried again, and a text that still can't go waits as
-/// "Not sent" with Try again. Unsent texts are only in memory, never kept.
+/// send wait in an outbox until the server has them (app.js, the outbox),
+/// going one at a time in the order written: a bad connection is tried
+/// again, and a text that still can't go waits as "Not sent" with Try again,
+/// holding the ones after it. Unsent texts are only in memory, never kept.
+/// (Pics and videos go on their own, each as soon as it's ready.)
 @MainActor @Observable final class Conversation {
     enum Chat: Sendable {
         case friend(Friend)
@@ -593,19 +598,66 @@ struct OpenedPic: Sendable {
     func queue(_ text: String, replyTo: Int64?) -> String {
         let item = Outgoing(id: Self.newClientId(), text: text, replyTo: replyTo)
         outbox.append(item)
+        holdBehindUnsent()
         return item.id
     }
 
-    /// Sends a queued text, or tries one that wasn't sent again.
-    func retry(_ id: String) async { await attempt(id) }
+    /// Sends a queued text, or tries one that wasn't sent again (with the
+    /// texts held behind it). Returns once it's in, or can't go yet.
+    func retry(_ id: String) async {
+        guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
+        if case .failed = outbox[i].status {
+            outbox[i].status = .sending
+            offline.remove(id)
+        }
+        holdBehindUnsent()
+        await sendInOrder()
+    }
 
-    /// Gives up on a text; returns it, so it can go back in the box.
+    /// Gives up on a text; returns it, so it can go back in the box. The
+    /// texts held behind it go on.
     func discard(_ id: String) -> String? {
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return nil }
         sealedTexts[id] = nil
         sealedGroupTexts[id] = nil
         offline.remove(id)
-        return outbox.remove(at: i).text
+        let text = outbox.remove(at: i).text
+        holdBehindUnsent()
+        if sending == nil, outbox.first?.status == .sending { Task { await sendInOrder() } }
+        return text
+    }
+
+    /// The outbox sending, while it is.
+    @ObservationIgnored private var sending: Task<Void, Never>?
+
+    /// A chat's texts go one at a time, oldest first (Nate, 2026-11-03: texts
+    /// stay in order): each is posted only once the one before has its
+    /// answer, so the server stores them, and numbers them, in the order they
+    /// were written (every chat and page is in the server's order). Writing
+    /// stays instant: the outbox shows each at once. Returns when nothing
+    /// more can go now (all sent, or held behind one that wasn't).
+    private func sendInOrder() async {
+        if let sending { return await sending.value }
+        let task = Task {
+            while let next = outbox.first, next.status == .sending { await attempt(next.id) }
+            sending = nil  // with no wait since the check: a text queued meanwhile was seen by it
+        }
+        sending = task
+        await task.value
+    }
+
+    /// Texts behind one that wasn't sent wait for it ("held"); with none
+    /// unsent before them, they go.
+    private func holdBehindUnsent() {
+        var blocked = false
+        for i in outbox.indices {
+            switch outbox[i].status {
+            case .failed: blocked = true
+            case .sending where blocked: outbox[i].status = .held
+            case .held where !blocked: outbox[i].status = .sending
+            default: break
+            }
+        }
     }
 
     /// 16 random bytes, base64url, as the web app makes them.
@@ -637,6 +689,7 @@ struct OpenedPic: Sendable {
         Reporter.shared.report(.warn, "send failed", failure.map { Reporter.fields($0, ["group": groupFlag]) } ?? [:])
         let why = connection ? "no connection." : failure?.localizedDescription ?? "no connection."
         outbox[i].status = .failed("Not sent: \(why)")
+        holdBehindUnsent()  // the ones after it wait for it
     }
 
     /// It's in: the server's copy joins the chat, and the outbox lets it go.
@@ -1001,7 +1054,7 @@ struct OpenedPic: Sendable {
 
     /// Back online: texts that couldn't go for the connection's sake go now.
     func flush() async {
-        for id in outbox.map(\.id) where offline.contains(id) { await attempt(id) }
+        for id in outbox.map(\.id) where offline.contains(id) { await retry(id) }
     }
 
     private func upsert(_ bubble: Bubble) {

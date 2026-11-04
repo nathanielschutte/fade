@@ -172,3 +172,110 @@ final class Counter: @unchecked Sendable {
     /// Adds one; returns the count before.
     @discardableResult func add() -> Int { lock.withLock { defer { n += 1 }; return n } }
 }
+
+// ---------- texts stay in order ----------
+
+/// A chat's texts reach the server in the order they were written, one at a
+/// time, however its answers come (Nate, 2026-11-03): the server numbers
+/// messages as it stores them, and every chat shows them in that order.
+extension SendingTests {
+    func chat(_ kind: Conversation.Chat, transport: any Transport) -> Conversation {
+        let chat = Conversation(kind, account: account, reader: reader, transport: transport)
+        chat.retryDelays = [.zero, .zero]
+        return chat
+    }
+
+    /// Written quickly, sent as ChatScreen sends (each on its own), to a server
+    /// that's slowest with the first: each goes only once the one before has
+    /// its answer, so the server stores them in order.
+    @Test func textsWrittenTogetherAreStoredInOrder() async throws {
+        let server = SlowPosts { n in n == 0 ? .milliseconds(300) : .zero }
+        let chat = chat(.friend(alice), transport: server)
+        let ids = ["one", "two", "three"].map { chat.queue($0, replyTo: nil) }
+        #expect(chat.outbox.map(\.text) == ["one", "two", "three"] && chat.outbox.allSatisfy { $0.status == .sending })  // shown at once
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids { group.addTask { await chat.retry(id) } }
+        }
+        #expect(await server.stored == ids, "stored in the order written")
+        #expect(await server.most == 1, "one at a time")
+        #expect(chat.outbox.isEmpty)
+        #expect(chat.bubbles.map(\.content) == ["one", "two", "three"].map { .text($0, edited: false) })
+    }
+
+    /// One that can't go holds the ones after it (and says so) until it's sent
+    /// again, with the same client_id, and then they follow it in order.
+    @Test func aTextThatWasntSentHoldsTheOnesAfterIt() async throws {
+        let refusing = Counter()  // 0: the first is refused
+        let server = SlowPosts(refuse: { _ in refusing.value == 0 }) { _ in .zero }
+        let chat = chat(.friend(alice), transport: server)
+        let ids = ["one", "two", "three"].map { chat.queue($0, replyTo: nil) }
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids { group.addTask { await chat.retry(id) } }
+        }
+        #expect(chat.outbox.map(\.status) == [.failed("Not sent: That message is too long."), .held, .held])
+        #expect(await server.posted == [ids[0]], "nothing after it went")
+
+        // A later text waits behind it too.
+        let four = chat.queue("four", replyTo: nil)
+        await chat.retry(four)
+        #expect(chat.outbox.last?.status == .held)
+        #expect(await server.posted.count == 1)
+
+        refusing.add()
+        await chat.retry(ids[0])  // Try again
+        #expect(await server.posted == [ids[0], ids[0], ids[1], ids[2], four], "the same id again, then the rest in order")
+        #expect(chat.outbox.isEmpty && chat.bubbles.map(\.content) == ["one", "two", "three", "four"].map { .text($0, edited: false) })
+    }
+
+    /// Removing the one that wasn't sent lets the rest go, in order.
+    @Test func removingTheUnsentOneLetsTheRestGo() async throws {
+        let server = SlowPosts(refuse: { n in n == 0 }) { _ in .zero }
+        let chat = chat(.friend(alice), transport: server)
+        let ids = ["one", "two", "three"].map { chat.queue($0, replyTo: nil) }
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids { group.addTask { await chat.retry(id) } }
+        }
+        #expect(chat.outbox.map(\.status) == [.failed("Not sent: That message is too long."), .held, .held])
+        #expect(chat.discard(ids[0]) == "one")
+        let deadline = Date().addingTimeInterval(5)
+        while !chat.outbox.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await server.stored == [ids[1], ids[2]])
+        #expect(chat.bubbles.map(\.content) == ["two", "three"].map { .text($0, edited: false) })
+    }
+}
+
+/// A stand-in server for sent texts that stores each (giving it the next id)
+/// only after `delay` for that post, so with several on their way at once,
+/// a later one could be stored first. `refuse` turns a post away (400) by
+/// its number. It counts how many were on their way at most.
+actor SlowPosts: Transport {
+    private let refuse: @Sendable (Int) -> Bool
+    private let delay: @Sendable (Int) -> Duration
+    /// The client_ids posted, as they came, and as they were stored.
+    private(set) var posted: [String] = []
+    private(set) var stored: [String] = []
+    private var inFlight = 0
+    private(set) var most = 0
+
+    init(refuse: @escaping @Sendable (Int) -> Bool = { _ in false }, delay: @escaping @Sendable (Int) -> Duration) {
+        self.refuse = refuse
+        self.delay = delay
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let n = posted.count
+        posted.append(body(request)["client_id"] as? String ?? "")
+        inFlight += 1
+        most = max(most, inFlight)
+        defer { inFlight -= 1 }
+        try? await Task.sleep(for: delay(n))
+        let answer: (Int, Data)
+        if refuse(n) {
+            answer = (400, json(["error": "That message is too long."]))
+        } else {
+            stored.append(posted[n])
+            answer = (200, SendingTests.stored(request, id: Int64(100 + stored.count)))
+        }
+        return (answer.1, HTTPURLResponse(url: request.url!, statusCode: answer.0, httpVersion: nil, headerFields: nil)!)
+    }
+}
