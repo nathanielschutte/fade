@@ -3,32 +3,19 @@ reported whom, when, why, and what kind of message, never what it said;
 warns (Team Napsack tells the reported person, end-to-end encrypted, which
 message, and the web app opens it like any text); suspends for a day (they're
 signed out, and signing in says until when, and why); and follows the link
-to their System › Users entry. People report through the API here: the
-apps' Report buttons are the next step. Settings come from the environment;
-see common.py."""
+to their System › Users entry. People report through the API here (the
+web app's Report and Block are test_block_report.py's). Settings come from
+the environment; see common.py."""
 import asyncio, re, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import ADMIN, BASE, PHONE, befriend, fill_sign_up, launch, open_page, row, shot, sign_in, sign_up_or_in
+from common import ADMIN, BASE, PHONE, api, befriend, fill_sign_up, launch, open_page, row, shot, sign_in, sign_up_or_in
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"rep_ana_{tag}", f"rep_ben_{tag}"
 # The reporter's note is shown as text, never as HTML.
 NOTE = f"<img src=x onerror=window.pwned=1> kept at it {tag}"
 errors = []
-
-API = """async ([method, path, body]) => {
-  const r = await fetch('/api' + path, { method, headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token'),
-    'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-  return [r.status, await r.json()];
-}"""
-
-
-async def api(page, method, path, body=None):
-    status, out = await page.evaluate(API, [method, path, body])
-    assert status == 200, (method, path, status, out)
-    return out
-
 
 def card(page, text):
     return page.locator("#reports .report", has_text=text)

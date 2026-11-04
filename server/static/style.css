@@ -1123,6 +1123,27 @@ html[data-env] { --tabs-foot: 1.1rem; }
 @media (prefers-reduced-motion: reduce) { .flash { animation: none; outline: 1px solid var(--sage); } }
 .mute-options { display: grid; gap: 0.5rem; margin-bottom: 0.5rem; }
 
+/* ---------- report and block ---------- */
+.report-form { display: grid; gap: 0.6rem; }
+.report-form .sheet-text { margin-bottom: 0.25rem; }
+.report-form .field-hint { margin-top: -0.3rem; }
+.report-form .button.primary { justify-self: start; }
+.report-reasons { border: 0; padding: 0; margin: 0; display: grid; gap: 0.15rem; min-width: 0; }
+.report-reasons legend { font-size: var(--step--1); color: var(--fixer); padding: 0; margin-bottom: 0.25rem; }
+.report-reason { min-height: 2.25rem; font-size: var(--step-0); }
+.report-done .picture-row, #block-dialog .picture-row { flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+.profile-safety { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
+.profile-safety:empty { display: none; }
+.profile-safety .button { min-height: 2.25rem; padding: 0 0.85rem; font-size: var(--step--1); }
+.blocked-list { margin-top: 0.25rem; }
+.blocked-list .person { gap: 0.75rem; }
+.blocked-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
+.blocked-text .person-name { overflow-wrap: anywhere; }
+.blocked-none { padding: 0.35rem 0; color: var(--fixer); font-size: var(--step--1); }
+/* A link to one of napsack's own chats or groups, in a text: the only kind
+   that's ever a link (app.js, textNodes). */
+.in-app-link { color: var(--sage); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+
 /* ---------- a bad connection ---------- */
 .conn-banner {
   position: fixed; z-index: 22;

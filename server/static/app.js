@@ -1306,6 +1306,9 @@ async function renderSecurity() {
   renderPushStatus();
   renderPasskeys(); // what's known at once, then the server's answer
   loadPasskeys();
+  $("#blocked-list").replaceChildren(); // reopened: no "Tap again" left armed from before
+  renderBlocks(); // what's known at once, then the server's answer
+  loadBlocks();
   $("#security-status").textContent = state.me.has_recovery_key ? "Recovery key saved." : "No recovery key yet.";
   try {
     const s = await getJSON("/me/security");
@@ -2193,6 +2196,7 @@ const ROW_ICONS = {
   archive: "M4 6.5h16v3.5H4zM5.5 10v8.5h13V10M10 13.5h4",
   leave: "M14 4.5h4.5v15H14M10 8l-4 4 4 4M6 12h9",
   bell: "M6.5 16.5V11a5.5 5.5 0 0 1 9-4.25M17.5 10.5v6l1.5 1.5H8.5M10 20.5a2 2 0 0 0 4 0M4 4l16 16",
+  block: "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17zM6 6l12 12",
 };
 function rowIcon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2295,7 +2299,10 @@ function chatRowProps(chat) {
       ? [{ label: "Unhide", icon: "archive", aria: `Show your chat with ${name} again`, run: () => unhideChat(id) }]
       : [favoriteAction(chat, name, () => { const c = chatById(id); if (c) setFavorite("chats", id, !c.favorite); }),
         muteAction("chats", chat, name),
-        { label: "Hide", icon: "archive", aria: `Hide your chat with ${name}`, run: () => hideChat(id) }],
+        { label: "Hide", icon: "archive", aria: `Hide your chat with ${name}`, run: () => hideChat(id) },
+        // Team Napsack only sends, and can't be blocked (blocks.rs).
+        ...(chat.system ? [] : [{ label: "Block", icon: "block", cls: "danger", aria: `Block ${name}`,
+          run: () => { closeSwipedRow(); openBlock({ id, username: chat.username }); } }])],
   };
 }
 
@@ -2654,11 +2661,33 @@ function searchResults(q, keep) {
   }));
 }
 
-/** Opens the chat and, if the message is in what's loaded, brings it into view. */
+/** Opens the chat at the message. */
 async function openHit(h) {
   await h.src.open();
-  const li = $(`#messages [data-key="${h.src.key[0]}:${h.m.id}"]`);
-  if (!li) return;
+  showMessage(h.src.key[0], Number(h.src.key.slice(2)), h.m.id);
+}
+
+/**
+ * In the open chat ("d", a friend's id) or group ("g"), brings one message
+ * into view and flashes it: a search hit, or a link to a message (Team
+ * Napsack's warnings). Loads earlier pages until it's there, or the history
+ * begins. Says so when it isn't there to show (not in your history, or gone).
+ */
+async function showMessage(kind, ownerId, messageId) {
+  const group = kind === "g";
+  const open = () => (group ? state.activeGroupId : state.activeId) === ownerId;
+  for (let pages = 0; pages < 100 && open(); pages++) {
+    const msgs = (group ? state.groupMessages : state.messages).get(ownerId);
+    const h = (group ? state.groupHistory : state.history).get(ownerId);
+    if (!msgs?.length || msgs[0].id <= messageId || !h?.hasMore) break;
+    await (group ? loadOlderGroup(ownerId) : loadOlder(ownerId));
+  }
+  if (!open()) return;
+  const li = $(`#messages [data-key="${kind}:${messageId}"]`);
+  if (!li) {
+    showToast("That message isn't in this chat any more, or it's from before you joined.");
+    return;
+  }
   showInChat(li);
   li.classList.add("flash");
   setTimeout(() => li.classList.remove("flash"), 1700);
@@ -2986,21 +3015,25 @@ $("#safety-button").addEventListener("click", async () => {
 async function loadOlder(friendId) {
   const msgs = state.messages.get(friendId);
   const h = state.history.get(friendId);
-  if (!msgs?.length || !h?.hasMore || h.loading) return;
+  if (h?.loading) return h.running; // a second caller (showMessage) waits for the same page
+  if (!msgs?.length || !h?.hasMore) return;
   h.loading = true;
   renderMessages();
-  try {
-    const size = pageSize();
-    const page = await getJSON(`/chats/${friendId}/messages?before=${msgs[0].id}&limit=${size}`);
-    await Promise.all(page.map(decrypt));
-    const have = new Set(msgs.map((m) => m.id));
-    msgs.unshift(...page.filter((m) => !have.has(m.id)));
-    h.hasMore = page.length === size;
-  } catch (err) {
-    report("warn", "loading older messages failed", { friend_id: friendId, ...errorFields(err) });
-  } finally {
-    h.loading = false;
-  }
+  h.running = (async () => {
+    try {
+      const size = pageSize();
+      const page = await getJSON(`/chats/${friendId}/messages?before=${msgs[0].id}&limit=${size}`);
+      await Promise.all(page.map(decrypt));
+      const have = new Set(msgs.map((m) => m.id));
+      msgs.unshift(...page.filter((m) => !have.has(m.id)));
+      h.hasMore = page.length === size;
+    } catch (err) {
+      report("warn", "loading older messages failed", { friend_id: friendId, ...errorFields(err) });
+    } finally {
+      h.loading = false;
+    }
+  })();
+  await h.running;
   if (state.activeId !== friendId) return;
   renderMessages();
   fillViewport(friendId);
@@ -3096,7 +3129,7 @@ function renderMessages() {
 }
 
 /** A text's words, for bubbleItems. */
-const bodyContent = (text) => ({ sig: `body|${text}`, make: () => [el("span", { class: "msg-body", text })] });
+const bodyContent = (text) => ({ sig: `body|${text}`, make: () => [el("span", { class: "msg-body" }, textNodes(text))] });
 
 /** A direct pic or video: tap to view it, or what became of it. */
 function snapContent(m, mine) {
@@ -3429,9 +3462,10 @@ function bubbleItems(m, mine, content, byId) {
     const me = myReaction(m);
     const copy = textOf(m) != null;
     const edit = canEdit(m);
+    const reportable = canReport(m);
     items.push({
       key: `a:${key}`,
-      sig: JSON.stringify([mine, me, copy, edit]),
+      sig: JSON.stringify([mine, me, copy, edit, reportable]),
       make: () => el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
         ...e2e.REACTIONS.map((emoji) => el("button", {
           type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
@@ -3439,7 +3473,8 @@ function bubbleItems(m, mine, content, byId) {
         }, emoji)),
         el("button", { type: "button", class: "reply-button", onclick: () => startReply(liveMessage(m)) }, "Reply"),
         copy ? el("button", { type: "button", class: "text-action", onclick: () => copyText(liveMessage(m)) }, "Copy") : null,
-        edit ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(liveMessage(m)) }, "Edit") : null),
+        edit ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(liveMessage(m)) }, "Edit") : null,
+        reportable ? el("button", { type: "button", class: "text-action", onclick: () => reportMessage(liveMessage(m)) }, "Report") : null),
     });
   }
   return items;
@@ -3818,20 +3853,23 @@ $("#push-toggle").addEventListener("click", async () => {
   renderPushNudge();
 });
 
-/** `#chat=7`, `#group=3`, `#friends`: where a notification tap leads. */
+/** `#chat=7`, `#group=3`, `#friends`: where a notification tap leads; a
+ * chat or group with `&message=9` (Team Napsack's warnings, a link in a
+ * text) opens at that message. */
 async function openFromLink(hash) {
-  const m = /^#(chat|group)=(\d+)$/.exec(hash) || /^#(friends)$/.exec(hash);
+  const m = IN_APP_ROUTE.exec(hash) || /^#(friends)$/.exec(hash);
   if (!m) return;
-  if (m[1] === "chat") {
-    if (!chatById(Number(m[2]))) await refreshChats();
-    openChat(Number(m[2]));
-  } else if (m[1] === "group") {
-    if (!groupById(Number(m[2]))) await refreshGroups();
-    openGroup(Number(m[2]));
-  } else {
-    openFriends();
-  }
   history.replaceState(null, "", location.pathname);
+  if (m[1] === "friends") return openFriends();
+  const id = Number(m[2]);
+  const group = m[1] === "group";
+  if (!(group ? groupById(id) : chatById(id))) await (group ? refreshGroups() : refreshChats());
+  if (!(group ? groupById(id) : chatById(id))) {
+    showToast(group ? "That link is to a group you're not in." : "That link is to a chat you don't have.");
+    return;
+  }
+  await (group ? openGroup(id) : openChat(id));
+  if (m[3]) showMessage(group ? "g" : "d", id, Number(m[3]));
 }
 
 // A link to #chat=... on an open page only changes the hash.
@@ -4106,6 +4144,11 @@ async function friendsChanged() {
   groupMemberKeys.clear(); // a friend's key may have changed (an admin reset): groups ask again before sending
   await Promise.all([refreshChats(), refreshRequests(), refreshMe()]);
   if ($("#group-dialog").open && state.groupDetail) drawGroupInfo();
+  // A friend's profile, of someone no longer a friend (they blocked me, or I
+  // them on another device), has nothing to show; my own lists who I block.
+  const shown = $("#profile-dialog").open ? profileEdit.profile : null;
+  if (shown?.kind === "friend" && !chatById(shown.id)) $("#profile-dialog").close();
+  if (shown?.kind === "me") loadBlocks();
   if (state.activeGroupId) renderMessages(); // names in group chats come from the friends list
 }
 
@@ -4441,21 +4484,25 @@ function upsertGroupMessage(m) {
 async function loadOlderGroup(groupId) {
   const msgs = state.groupMessages.get(groupId);
   const h = state.groupHistory.get(groupId);
-  if (!msgs?.length || !h?.hasMore || h.loading) return;
+  if (h?.loading) return h.running; // as loadOlder's
+  if (!msgs?.length || !h?.hasMore) return;
   h.loading = true;
   renderMessages();
-  try {
-    const size = pageSize();
-    const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${size}`);
-    await Promise.all(page.map(openGroupMessage));
-    const have = new Set(msgs.map((m) => m.id));
-    msgs.unshift(...page.filter((m) => !have.has(m.id)));
-    h.hasMore = page.length === size;
-  } catch (err) {
-    report("warn", "loading older group messages failed", { group_id: groupId, ...errorFields(err) });
-  } finally {
-    h.loading = false;
-  }
+  h.running = (async () => {
+    try {
+      const size = pageSize();
+      const page = await getJSON(`/groups/${groupId}/messages?before=${msgs[0].id}&limit=${size}`);
+      await Promise.all(page.map(openGroupMessage));
+      const have = new Set(msgs.map((m) => m.id));
+      msgs.unshift(...page.filter((m) => !have.has(m.id)));
+      h.hasMore = page.length === size;
+    } catch (err) {
+      report("warn", "loading older group messages failed", { group_id: groupId, ...errorFields(err) });
+    } finally {
+      h.loading = false;
+    }
+  })();
+  await h.running;
   if (state.activeGroupId !== groupId) return;
   renderMessages(); // above what's in view, which stays where it is (drawConversation)
   fillGroupViewport(groupId);
@@ -4553,7 +4600,7 @@ function groupContent(m, mine) {
         ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(liveMessage(m)) },
           el("span", { class: "marker snap", "aria-hidden": "true" }), chip.label)
         : el("span", { class: "snap-chip done" }, el("span", { class: "marker", "aria-hidden": "true" }), chip.label)),
-      m.body ? el("span", { class: "msg-body", text: m.body }) : null,
+      m.body ? el("span", { class: "msg-body" }, textNodes(m.body)) : null,
     ].filter(Boolean),
   };
 }
@@ -5006,7 +5053,7 @@ function stat(label, value) {
 async function openProfile(userId) {
   const dialog = $("#profile-dialog");
   const msg = $("#profile-message");
-  for (const id of ["#profile-stats", "#profile-people", "#profile-actions"]) $(id).replaceChildren();
+  for (const id of ["#profile-stats", "#profile-people", "#profile-actions", "#profile-safety"]) $(id).replaceChildren();
   hideProfileEdit();
   $("#profile-people-section").hidden = true;
   $("#profile-account").hidden = userId !== state.me?.id;
@@ -5075,6 +5122,10 @@ async function openProfile(userId) {
       type: "button", class: "button primary",
       onclick: () => { dialog.close(); openChat(p.id); },
     }, `Message ${shown}`));
+    const who = { id: p.id, username: p.username };
+    $("#profile-safety").append(
+      el("button", { type: "button", class: "button", onclick: () => reportPerson(who) }, "Report"),
+      el("button", { type: "button", class: "button danger", onclick: () => openBlock(who) }, "Block"));
   }
 
   $("#profile-people-section").hidden = people.length === 0 && p.kind !== "me";
@@ -5108,6 +5159,7 @@ function renderProfileEdit(p) {
   $("#profile-security").hidden = !mine;
   $("#security-note").textContent = "";
   $("#passkey-note").textContent = "";
+  $("#blocked-note").textContent = "";
   if (mine) renderSecurity();
   if (mine) renderUsername(p);
   $("#profile-picture-clear").hidden = !p.avatar_id;
@@ -5226,6 +5278,236 @@ $("#chat-title").addEventListener("click", () => {
   if (state.activeId && !chatById(state.activeId)?.system) openProfile(state.activeId);
   else if (state.activeGroupId) openGroupInfo(state.activeGroupId);
 });
+
+// ---------- report and block (F28; reports.rs, blocks.rs) ----------
+// docs/design/report-and-block.md. A report carries ids only (whose message,
+// which one, in which group), never what it said, decrypted or not: Admins
+// see who sent it and when. Blocking ends the friendship and stops them
+// reaching you; they aren't told. Group messages from someone you block stay.
+
+const REPORT_REASONS = [
+  ["spam", "Spam"], ["harassment", "Harassment or bullying"], ["nudity", "Nudity or sexual content"],
+  ["violence", "Violence or threats"], ["hate", "Hate"], ["other", "Something else"],
+];
+$("#report-reasons").append(...REPORT_REASONS.map(([value, label]) =>
+  el("label", { class: "check report-reason" }, el("input", { type: "radio", name: "reason", value }), label)));
+
+/** Someone else's stored message, not Team Napsack's and not a group event: what Report is for. */
+function canReport(m) {
+  return m.id != null && m.sender_id !== state.me.id && !chatById(m.sender_id)?.system && m.kind !== "event";
+}
+
+let reportTarget = null; // { body: what the server is sent (ids only), who: { id, username }, noun }
+
+function reportMessage(m) {
+  state.actionFor = null;
+  renderMessages();
+  const media = m.group_id ? Boolean(m.pic) : m.kind === "snap";
+  openReport({
+    body: m.group_id ? { kind: "group_message", group_id: m.group_id, message_id: m.id } : { kind: "message", message_id: m.id },
+    who: { id: m.sender_id, username: chatById(m.sender_id)?.username ?? m.sender_name ?? "" },
+    noun: media ? mediaWord(m) : "text",
+  });
+}
+
+function reportPerson(who) {
+  openReport({ body: { kind: "person", user_id: who.id }, who, noun: null });
+}
+
+function openReport(target) {
+  reportTarget = target;
+  const { who, noun } = target;
+  $("#report-title").textContent = noun ? `Report this ${noun}` : `Report @${who.username}`;
+  $("#report-text").textContent = noun
+    ? "An Admin will look at it. They'll see who sent it and when, but never what it said."
+    : "An Admin will look at it. They'll see who you reported, but never your messages.";
+  $("#report-reasons legend").textContent = noun ? "Why are you reporting it?" : "Why are you reporting them?";
+  $("#report-form").reset();
+  $("#report-form").hidden = false;
+  $("#report-done").hidden = true;
+  $("#report-error").textContent = "";
+  $("#report-submit").disabled = false;
+  $("#report-dialog").showModal();
+}
+
+$("#report-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = reportTarget;
+  if (!t) return;
+  const reason = $("#report-form").elements.reason.value;
+  if (!reason) {
+    $("#report-error").textContent = t.noun ? "Choose why you're reporting it." : "Choose why you're reporting them.";
+    return;
+  }
+  const note = $("#report-note").value.trim();
+  $("#report-error").textContent = "";
+  $("#report-submit").disabled = true;
+  let res;
+  try {
+    res = await getJSON("/reports", { method: "POST", json: { ...t.body, reason, ...(note ? { note } : {}) } });
+  } catch (err) {
+    report("warn", "report failed", { ...t.body, ...errorFields(err) }); // ids only: never the note
+    $("#report-error").textContent = err.message;
+    $("#report-submit").disabled = false;
+    return;
+  }
+  if (reportTarget !== t) return;
+  $("#report-form").hidden = true;
+  $("#report-done").hidden = false;
+  $("#report-done-text").textContent = res.already
+    ? `You've reported this already. An Admin will look at it. Would you like to block @${t.who.username} too?`
+    : `Report sent. Thank you for telling us. Would you like to block @${t.who.username} too?`;
+  $("#report-block").textContent = `Block @${t.who.username}`;
+});
+
+$("#report-block").addEventListener("click", () => {
+  const who = reportTarget?.who;
+  $("#report-dialog").close();
+  if (who) openBlock(who);
+});
+
+let blockTarget = null; // { id, username }
+
+function openBlock(who) {
+  blockTarget = who;
+  $("#block-title").textContent = `Block @${who.username}?`;
+  $("#block-error").textContent = "";
+  $("#block-confirm").disabled = false;
+  $("#block-dialog").showModal();
+}
+
+$("#block-confirm").addEventListener("click", async () => {
+  const who = blockTarget;
+  if (!who) return;
+  $("#block-error").textContent = "";
+  $("#block-confirm").disabled = true;
+  let res;
+  try {
+    res = await getJSON(`/blocks/${who.id}`, { method: "POST" });
+  } catch (err) {
+    report("warn", "blocking failed", { user_id: who.id, ...errorFields(err) });
+    $("#block-error").textContent = err.message;
+    $("#block-confirm").disabled = false;
+    return;
+  }
+  if (blockTarget !== who) return;
+  $("#block-dialog").close();
+  // Their profile and chat close; the socket's friends_changed takes their row
+  // out of the list on every device, and this does at once.
+  if ($("#profile-dialog").open && profileEdit.profile?.id === who.id) $("#profile-dialog").close();
+  if (state.activeId === who.id) closeChat();
+  forgetChat(who.id);
+  showToast(res.already ? `You'd already blocked @${res.user.username}.` : `Blocked @${res.user.username}.`);
+  refreshChats();
+  refreshRequests();
+});
+
+// Profile › Blocked: who you block, newest first, each with Unblock.
+const blockedList = { items: null, loads: 0 };
+const BLOCKS_UNLOADED = "Couldn't load who you've blocked. Check your connection and open this again.";
+
+async function loadBlocks() {
+  const asked = ++blockedList.loads;
+  let res;
+  try {
+    res = await getJSON("/blocks");
+  } catch (err) {
+    report("warn", "loading blocks failed", errorFields(err));
+    if (asked === blockedList.loads && !blockedList.items) $("#blocked-note").textContent = BLOCKS_UNLOADED;
+    return;
+  }
+  if (asked !== blockedList.loads) return; // a newer answer is on its way
+  if ($("#blocked-note").textContent === BLOCKS_UNLOADED) $("#blocked-note").textContent = "";
+  blockedList.items = res.blocks;
+  renderBlocks();
+}
+
+function renderBlocks() {
+  const list = $("#blocked-list");
+  const items = blockedList.items;
+  if (!items) {
+    list.replaceChildren(); // nothing claimed before the server answers
+    return;
+  }
+  if (!items.length) {
+    list.replaceChildren(el("li", { class: "blocked-none", text: "You haven't blocked anyone." }));
+    return;
+  }
+  // Merged into what's shown, so a "Tap again" already showing stays.
+  const shown = new Map([...list.querySelectorAll("li[data-id]")].map((li) => [li.dataset.id, li]));
+  list.replaceChildren(...items.map((b) => shown.get(String(b.id)) ?? blockedRow(b)));
+}
+
+function blockedRow(b) {
+  const unblockButton = el("button", { type: "button", class: "button", onclick: () => unblock(unblockButton, b) }, "Unblock");
+  return el("li", { class: "person", "data-id": String(b.id) },
+    el("span", { class: "blocked-text" },
+      el("span", { class: "person-name", text: `@${b.username}` }),
+      el("span", { class: "person-meta", text: `Blocked ${dayName(b.blocked_at)}` })),
+    unblockButton);
+}
+
+/** Two taps: the first says what unblocking does (and doesn't). */
+async function unblock(btn, b) {
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = "1";
+    btn.textContent = "Tap again to unblock";
+    $("#blocked-note").textContent = `Unblocking @${b.username} lets them reach you again. You stay unfriended: either of you can send a friend request.`;
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api(`/blocks/${b.id}/remove`, { method: "POST" });
+  } catch (err) {
+    report("warn", "unblocking failed", { user_id: b.id, ...errorFields(err) });
+    $("#blocked-note").textContent = err.message;
+    btn.disabled = false;
+    loadBlocks(); // it may be gone already
+    return;
+  }
+  blockedList.items = blockedList.items?.filter((x) => x.id !== b.id) ?? null;
+  renderBlocks();
+  $("#blocked-note").textContent = `Unblocked @${b.username}. You're not friends: send a friend request if you'd like to be.`;
+  loadBlocks();
+}
+
+// ---------- links in texts ----------
+// Texts are shown as text, never as HTML. The one exception: a link to this
+// site that opens one of its own chats or groups (Team Napsack's warnings
+// link to the message they're about) becomes an in-app link. No other link
+// is ever made clickable.
+const IN_APP_ROUTE = /^#(chat|group)=(\d+)(?:&message=(\d+))?$/;
+
+/** The site's own addresses: this page's, and the one the server names (`site_url`). */
+function ownOrigins() {
+  const out = new Set([location.origin]);
+  try { if (state.config?.site_url) out.add(new URL(state.config.site_url).origin); } catch {}
+  return out;
+}
+
+/** `#group=3&message=9` if `word` is a link to this site's chat or group, else null. */
+function inAppRoute(word) {
+  let url;
+  try { url = new URL(word); } catch { return null; }
+  if (!ownOrigins().has(url.origin) || url.pathname !== "/" || url.search || url.username || url.password) return null;
+  return IN_APP_ROUTE.test(url.hash) ? url.hash : null;
+}
+
+/** A text as nodes: its words as text, with links to this site's chats and groups made in-app links. */
+function textNodes(text) {
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+    const word = match[0].replace(/[.,!?;:)\]]+$/, ""); // the sentence's end isn't the link's
+    const route = inAppRoute(word);
+    if (!route) continue;
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(el("a", { class: "in-app-link", href: route, onclick: (e) => { e.preventDefault(); openFromLink(route); } }, word));
+    last = match.index + word.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
 
 // ---------- friends ----------
 
