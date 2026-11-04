@@ -111,11 +111,15 @@ async def main():
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2")
 
         # A tap zooms back out; the next tap moves on, and the next pic opens unzoomed.
-        await ben.locator("#viewer").tap()
+        # Taps go the way the pinches and drags did (the same touch stream as the
+        # rest of this test), so the viewer sees one finger, down and up in place.
+        await touch(cdp, "touchStart", [(cx, cy)])
+        await touch(cdp, "touchEnd", [])
         await zoom_is(ben, "s === 1 && x === 0 && y === 0")
         await expect(ben.locator("#viewer-hint")).to_have_text("Tap for the next one")
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2")
-        await ben.locator("#viewer").tap()
+        await touch(cdp, "touchStart", [(cx, cy)])
+        await touch(cdp, "touchEnd", [])
         await expect(ben.locator("#viewer-count")).to_have_text("2 of 2", timeout=20000)
         await expect(ben.locator("#viewer-image")).to_be_visible(timeout=20000)
         await expect(ben.locator("#viewer-hint")).to_have_text("Tap to close")
