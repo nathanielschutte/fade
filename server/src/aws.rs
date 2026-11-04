@@ -1,7 +1,8 @@
 //! The few AWS calls the server makes, all for the System pages: which
 //! instance this is (instance metadata), its CPU credits (CloudWatch), what
-//! the app has cost (Cost Explorer), the admin list (SSM), and the health
-//! monitor's incident records (S3, incidents.rs). Requests are signed here with
+//! the app has cost (Cost Explorer), the admin list (SSM), the health
+//! monitor's incident records (S3, incidents.rs), and the support address's
+//! note of each new report (SES, reports.rs). Requests are signed here with
 //! Signature Version 4 rather than pulling in the AWS SDK.
 //!
 //! Every address is fixed in this file; nothing from a request ever chooses
@@ -183,9 +184,24 @@ impl Aws {
         }
         let res = req.header("authorization", auth).send().await?;
         let status = res.status();
+        // REST APIs (SES) name the error in a header, and their message can
+        // hold an address; only the name is kept.
+        let kind = res
+            .headers()
+            .get("x-amzn-errortype")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| {
+                v.split(':')
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
+            });
         let text = res.text().await?;
         if !status.is_success() {
-            anyhow::bail!("{service} answered {status}: {}", aws_error_code(&text));
+            let code = kind.unwrap_or_else(|| aws_error_code(&text));
+            anyhow::bail!("{service} answered {status}: {code}");
         }
         Ok(text)
     }
@@ -297,6 +313,30 @@ impl Aws {
             .as_str()
             .map(str::to_owned)
             .ok_or_else(|| anyhow::anyhow!("parameter {name} has no value"))
+    }
+
+    /// Sends a plain-text email through SES, in this instance's region. Who
+    /// it's from and to come from settings, never a request (reports.rs).
+    pub async fn ses_send(
+        &self,
+        from: &str,
+        to: &str,
+        subject: &str,
+        body: &str,
+    ) -> anyhow::Result<()> {
+        let host = format!("email.{}.amazonaws.com", self.instance.region);
+        self.call_at(
+            reqwest::Method::POST,
+            &host,
+            "/v2/email/outbound-emails",
+            "ses",
+            &self.instance.region,
+            &[],
+            &[("content-type", "application/json")],
+            serde_json::to_vec(&ses_email(from, to, subject, body))?,
+        )
+        .await?;
+        Ok(())
     }
 
     /// An S3 object's text, or None if there's no such object.
@@ -589,6 +629,18 @@ pub fn iso(t: i64) -> String {
     )
 }
 
+/// SES's SendEmail request: one recipient, a plain-text body.
+fn ses_email(from: &str, to: &str, subject: &str, body: &str) -> Value {
+    json!({
+        "FromEmailAddress": from,
+        "Destination": { "ToAddresses": [to] },
+        "Content": { "Simple": {
+            "Subject": { "Data": subject, "Charset": "UTF-8" },
+            "Body": { "Text": { "Data": body, "Charset": "UTF-8" } },
+        } },
+    })
+}
+
 /// "2026-10-22"
 pub fn ymd(t: i64) -> String {
     iso(t)[..10].to_owned()
@@ -791,5 +843,18 @@ mod tests {
             aws_error_code(r#"{"__type":"AccessDeniedException","Message":"no"}"#),
             "AccessDeniedException"
         );
+    }
+
+    #[test]
+    fn an_email_is_one_recipient_and_plain_text() {
+        let e = ses_email(
+            "napsack <noreply@napsack.io>",
+            "help@example.com",
+            "New report #4",
+            "body",
+        );
+        assert_eq!(e["Destination"]["ToAddresses"], json!(["help@example.com"]));
+        assert_eq!(e["Content"]["Simple"]["Body"]["Text"]["Data"], "body");
+        assert!(e["Content"]["Simple"]["Body"].get("Html").is_none());
     }
 }

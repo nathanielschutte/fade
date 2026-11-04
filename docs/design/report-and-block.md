@@ -1,6 +1,6 @@
 # Report and block
 
-Status: decided in outline (Nate, 2026-11-03). Step 1 (the server) and System › Reports are built (`reports.rs`, `blocks.rs`, migration `0029`; [api.md](../spec/api.md), [admin-users.md](../implementation/admin-users.md#reports)); reporting and blocking in the apps, and the email, are next. Plan: [F28](../management/plan.md#f28-report-and-block). Why now: App Review guideline 1.2 asks apps where people send each other things to let them report it and block whoever sent it, and to act on reports in good time. It's the likeliest reason the first external TestFlight build would be refused, and the external group is the next milestone.
+Status: decided in outline (Nate, 2026-11-03). Step 1 (the server) and System › Reports are built (`reports.rs`, `blocks.rs`, migration `0029`; [api.md](../spec/api.md), [admin-users.md](../implementation/admin-users.md#reports)); the email is built and waits on the owner's apply of [email.tf](../../infra/email.tf); reporting and blocking in the apps are next. Plan: [F28](../management/plan.md#f28-report-and-block). Why now: App Review guideline 1.2 asks apps where people send each other things to let them report it and block whoever sent it, and to act on reports in good time. It's the likeliest reason the first external TestFlight build would be refused, and the external group is the next milestone.
 
 ## Decided (Nate, 2026-11-03)
 
@@ -70,7 +70,7 @@ The server sends it through Amazon SES (an AWS endpoint fixed in the code, as `a
 - Dates in what the reported person is told are UTC, and say so ("on 3 Nov (UTC)", "until 10 Nov, 14:02 UTC"): the server doesn't know their time zone.
 - For a direct message, the warning names neither whom it was sent to nor when, and has no link: only the recipient can report a direct message, so any of that would say who reported it. A group message's warning names the group and day and links to it.
 - The link in a group message's warning is the message text (`<site>/#group=<id>&message=<id>`): the apps don't make links in texts tappable yet, and don't read `&message=` in a link yet (both are next, with Report in the apps). The notification itself opens Team Napsack's chat (`/#chat=<team>`), which every app already understands.
-- The email: `reports::tell_support` is called for each new report and does nothing until `FADE_REPORTS_EMAIL` is set; then it composes the email (`support_email`) and logs that SES isn't set up. Sending it is step 4.
+- The email: `reports::tell_support` sends it for each new report in the background (the report doesn't wait), through SES's API (`aws::ses_send`, signed as the other AWS calls), from `napsack <noreply@<domain>>`. Without `FADE_REPORTS_EMAIL`, or off AWS, nothing is sent. `infra/email.tf` makes the domain identity with its DKIM records, verifies the one recipient (SES's sandbox, which is enough), and lets the instance send from that address only. A failure is logged with SES's error name only (its message can hold an address).
 
 ## Open questions for Nate
 
