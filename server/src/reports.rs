@@ -617,7 +617,11 @@ fn about(r: &ReportRow) -> String {
         Some("video") => "video",
         _ => "message",
     };
-    let on = r.message_at.map(day).unwrap_or_default();
+    // The day in UTC, and it says so: the server doesn't know their time zone.
+    let on = r
+        .message_at
+        .map(|t| format!("{} (UTC)", day(t)))
+        .unwrap_or_default();
     match r.kind.as_str() {
         "message" => format!("a {noun} you sent to @{} on {on}", r.reporter),
         "group_message" => format!(
@@ -1086,7 +1090,7 @@ mod tests {
             until: None,
         };
         let text = telling(&load(&db, a).await.unwrap(), &warn, "https://napsack.io");
-        assert!(text.starts_with("An Admin reviewed a report about a video you sent to @ana on 1 Jan 1970: Please don't."), "{text}");
+        assert!(text.starts_with("An Admin reviewed a report about a video you sent to @ana on 1 Jan 1970 (UTC): Please don't."), "{text}");
         assert!(
             text.ends_with("Open it: https://napsack.io/#chat=1&message=2"),
             "{text}"
@@ -1094,7 +1098,7 @@ mod tests {
         assert!(!text.contains("not ok"), "never the note");
         let text = telling(&load(&db, b).await.unwrap(), &warn, "https://napsack.io");
         assert!(
-            text.contains("a message you sent in trip on 1 Jan 1970"),
+            text.contains("a message you sent in trip on 1 Jan 1970 (UTC)"),
             "{text}"
         );
         assert!(

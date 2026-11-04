@@ -1613,3 +1613,33 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .video-sound[hidden] { display: none; }
 .video-sound .sound-off, .video-sound.muted .sound-on { display: none; }
 .video-sound.muted .sound-off { display: inline; }
+
+/* ---------- admin: System › Reports (F28; admin.js, section "reports") ----------
+   Kept in one block at the end, on its own, for the Reports page only. */
+.reports { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
+.report {
+  display: grid; gap: 0.5rem; min-width: 0; padding: 0.8rem 0.9rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--deep);
+  font-size: var(--step--1); overflow-wrap: anywhere;
+}
+.report:not(.open) { color: var(--fixer); }
+.report.focused { border-color: var(--sage); }
+.report-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.report-head .muted { margin-left: auto; }
+.report-who { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.report p { margin: 0; }
+.report .facts.report-facts { grid-template-columns: minmax(0, auto) minmax(0, 1fr); }
+.report .facts.report-facts dd { text-align: left; }
+.report .u-actions { margin: 0.25rem 0 0; }
+.report-form { display: grid; gap: 0.4rem; max-width: 34rem; color: var(--fixer); }
+.report-form input {
+  min-height: 2.4rem; padding: 0 0.75rem; border: 1px solid var(--rule); border-radius: var(--radius-s);
+  background: var(--ink); color: var(--paper); font: inherit; font-size: var(--step--1);
+}
+.report-form .segmented { justify-self: start; }
+.report-form .link { justify-self: start; }
+/* On a phone each fact's label sits above it, so the words get the width. */
+@media (max-width: 560px) {
+  .report .facts.report-facts { grid-template-columns: minmax(0, 1fr); row-gap: 0.1rem; }
+  .report .facts.report-facts dd { margin-bottom: 0.4rem; }
+}

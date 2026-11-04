@@ -18,6 +18,7 @@
     <a href="#metrics" id="tab-metrics">Metrics</a>
     <a href="#graph" id="tab-graph">Graph</a>
     <a href="#users" id="tab-users" hidden>Users</a>
+    <a href="#reports" id="tab-reports" hidden>Reports</a>
     <a href="#roles" id="tab-roles">Roles</a>
     <a href="#logs" id="tab-logs" hidden>Logs</a>
   </nav>
@@ -196,6 +197,18 @@
       <ul class="u-history" id="act-feed"></ul>
     </section>
   </div>
+</div>
+
+<div class="admin-view" id="view-reports" hidden>
+  <section class="panel" aria-labelledby="rep-title">
+    <header class="panel-head">
+      <h2 id="rep-title">Reports</h2>
+      <span class="panel-note" id="rep-note"></span>
+    </header>
+    <p class="panel-note">Who reported whom, when, and why. Never what a message said: messages are end-to-end encrypted, so a report carries only its id, kind, and time. Nobody is told who reported them. Open reports first, newest first.</p>
+    <div class="reset-result" id="rep-result" role="status" hidden></div>
+    <ul class="reports" id="reports"></ul>
+  </section>
 </div>
 
 <div class="admin-view" id="view-roles" hidden>
