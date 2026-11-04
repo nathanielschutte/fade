@@ -17,6 +17,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - **Passwords never reach the server.** The app turns the password into a sign-in key and a separate key that unlocks your messages; the server only ever sees the first, and stores only a slow hash (Argon2) of it.
 - **Neither does a passkey's secret.** Signing in with a passkey (F26) also has to unlock your private key, so each passkey keeps a copy of it, wrapped by a secret only that passkey can produce (WebAuthn's PRF extension). The server stores the passkey's public key (to check its signatures), its id, a signature count, where it's kept ("iCloud Keychain", from its authenticator's well-known id) and when it was added and last used, and the wrapped copy, which it can't open. A passkey that can't produce the secret isn't used at all ([passkeys.md](design/passkeys.md)).
 - **Safety codes** let two friends check nobody is in the middle. A changed key blocks sending until you've decided, and old keys stay on your device so history stays readable.
+- **Reports never carry content.** Reporting a message sends the server its id, kind, and time, which it already has, never what it said ([report-and-block.md](design/report-and-block.md)). You can only report what you were shown, and anything else gets the same answer whether it exists or not. A report's note is the reporter's own words, for Admins.
 - **Not end-to-end encrypted yet:** group chats, profile names and pictures. The server can read those (they're friends-only, enforced by the server). The app says so in every group.
 
 ### Accounts and sign-in
@@ -27,6 +28,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Deleting an account takes the password (wrong tries count toward the sign-in lock above) and the username typed again, and only ever deletes your own; nobody else, Admins included, can delete an account. A deleted account's username is held for 30 days (as a keyed hash), so nobody can sign up as it and pose as the person ([account-deletion.md](design/account-deletion.md)).
 - **Passkeys** sign in without the password. Adding one needs the password (wrong tries count toward the sign-in lock above), so a stolen session can't plant a way in. The server checks every passkey itself (`webauthn.rs`): ES256 signatures only, the person verified by Face ID, a fingerprint, or a PIN, its own site and origin (staging's passkeys are staging's), each challenge answered once within 5 minutes, and a signature count that only goes up. Removing one marks it ended, at once; an admin's reset code ends all of an account's passkeys (their copies are of the old key); a turned-off account can't sign in with one either.
 - Session tokens are stored only as hashes. Admin pages answer "not found" to anyone who isn't an admin.
+- **Blocking** someone ends the friendship, and from then on their friend requests, your add-a-friend link, and adding you to a group answer them exactly as for someone who isn't there, so a block can't be detected. Admins can suspend an account (1, 7, or 30 days) or turn it off over a report; the person is told why at sign-in (only after the right password) and by Team Napsack, and never who reported them.
 
 ### Everything people type or upload
 - Every value goes into the database as a bound parameter, never pasted into SQL; a test fails the build otherwise.
@@ -67,6 +69,8 @@ All far above normal use. Hitting one usually means a script, not a person. The 
 | Wrong passwords | 10 per username per 15 minutes | |
 | Image uploads | 60 per person per 10 minutes, decoded one at a time | |
 | Friend requests | 50 per person per day | |
+| Reports | 20 per person per day (counted in the database, so a restart doesn't reset it); a note, and an Admin's words, up to 500 characters, one line | `guard.rs` `MAX_REPORTS_PER_DAY`, `MAX_REPORT_WORDS` |
+| Blocks | 500 people blocked at once; 100 blocks made per day (each adds a row, Rule 1) | `guard.rs` `MAX_BLOCKS`, `MAX_BLOCKS_PER_DAY` |
 | New groups | 20 per person per day; 32 people per group | |
 | Favorites | 10 per person (direct chats and groups together) | Turning one on or off adds a row (Rule 1); writes are capped by the write budgets |
 | Edits | 20 per text, within 15 minutes of sending | Every version is kept (Rule 1) |
@@ -102,4 +106,4 @@ Being honest about the gaps:
 
 The settings in the table are environment variables. Add the line to `local.env_file` in `infra/main.tf` (for example `"FADE_MAX_ACCOUNTS=150",`), run `terraform plan` and `apply` (it only updates the settings parameter), then restart: `scripts/ssh.sh "sudo systemctl restart fade"`. The rest are constants in `server/src/` (`guard.rs`, `main.rs`), changed with a release.
 
-Every limit has a test: `server/src/guard.rs` (unit tests) and `tests/smoke_test.py` (`check_guard`, `check_rate_limits`, and `check_passkeys` for passkeys per person).
+Every limit has a test: `server/src/guard.rs` (unit tests) and `tests/smoke_test.py` (`check_guard`, `check_rate_limits`, `check_passkeys` for passkeys per person, and `check_reports` for reports per day); blocks per person in `blocks::tests`.
