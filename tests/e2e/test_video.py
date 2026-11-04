@@ -165,8 +165,10 @@ async def main():
             window.__played = Math.max(window.__played, v.currentTime);
             window.__audio = Math.max(window.__audio, v.webkitAudioDecodedByteCount || 0);
           };
-          v.ontimeupdate = note;
-          v.onended = () => { note(); window.__ended = true; };
+          // Listeners, not on* properties: the viewer sets its own onended.
+          // Pausing counts as done too: the viewer may close on its timer first.
+          v.addEventListener('timeupdate', note);
+          for (const e of ['ended', 'pause']) v.addEventListener(e, () => { note(); window.__ended = true; });
         }"""
         async def no_sound_after_a_second(page):
             await page.wait_for_function("() => window.__played >= 1 || window.__ended", timeout=20000)

@@ -27,9 +27,9 @@ use crate::{
     SharedState,
 };
 
-/// The reactions clients offer. Groups are checked against it; direct-chat
-/// reactions are encrypted, so clients check them when they decrypt.
-pub const EMOJI: &[&str] = &["❤️", "😂", "😮", "😢", "👍", "👎"];
+/// A reaction is any one emoji (X49): groups are checked here with
+/// `text::is_one_emoji`; direct-chat reactions are encrypted, so clients
+/// check them the same way when they decrypt.
 /// Encryption format of direct-chat reactions (shared/crypto/crypto.js).
 const REACTION_FORMAT: i64 = 2;
 /// An emoji is a few bytes; with IV and tag, base64'd, well under this.
@@ -196,7 +196,7 @@ pub async fn react(
 
 #[derive(Deserialize)]
 pub struct SetGroupReaction {
-    /// One of EMOJI, or absent/null to take it back.
+    /// One emoji, or absent/null to take it back.
     emoji: Option<String>,
 }
 
@@ -209,8 +209,8 @@ pub async fn react_group(
 ) -> AppResult<Json<GroupMessage>> {
     let (_, visible_after) = groups::require_member(&state.db, group, me.id).await?;
     if let Some(e) = &req.emoji {
-        if !EMOJI.contains(&e.as_str()) {
-            return Err(AppError::bad("That reaction isn't one of the choices."));
+        if !crate::text::is_one_emoji(e) {
+            return Err(AppError::bad("A reaction is one emoji."));
         }
     }
     let target: Option<(i64, String)> = sqlx::query_as(

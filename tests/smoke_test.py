@@ -797,7 +797,7 @@ async def check_live(tag):
     ok(call("PUT", f"/chats/{a['id']}/messages/999999/reaction", b_tok, json={"ciphertext": first}), 404)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 3}), 400)
 
-    # Groups: plain reactions from the fixed set, replies within the group.
+    # Groups: plain reactions, any one emoji (X49), replies within the group.
     g = ok(call("POST", "/groups", a_tok, json={"name": f"live {tag}", "member_ids": [b["id"]]})).json()
     other = ok(call("POST", "/groups", a_tok, json={"name": f"other {tag}", "member_ids": []})).json()
     gm = ok(call("POST", f"/groups/{g['id']}/messages", a_tok, json={"text": "first"})).json()
@@ -806,12 +806,16 @@ async def check_live(tag):
     reply = ok(call("POST", f"/groups/{g['id']}/messages", b_tok, json={"text": "reply", "reply_to": gm["id"]})).json()
     assert reply["reply_to"] == gm["id"]
     gurl = f"/groups/{g['id']}/messages/{gm['id']}/reaction"
-    ok(call("PUT", gurl, b_tok, json={"emoji": "💩"}), 400)
+    for bad in ["lol", "😂😂", "😂\u202e", "<b>", "", "\u200b"]:
+        ok(call("PUT", gurl, b_tok, json={"emoji": bad}), 400)
     ok(call("PUT", gurl, c_tok, json={"emoji": "👍"}), 404)                   # not a member
     events = ok(call("GET", f"/groups/{g['id']}/messages", b_tok)).json()
     ok(call("PUT", f"/groups/{g['id']}/messages/{events[0]['id']}/reaction", b_tok, json={"emoji": "👍"}), 400)  # an event
     reacted = ok(call("PUT", gurl, b_tok, json={"emoji": "😂"})).json()
     assert [(r["user_id"], r["emoji"]) for r in reacted["reactions"]] == [(b["id"], "😂")]
+    for any_one in ["💩", "👍🏽", "🇳🇿", "🧑\u200d🚀"]:                      # replaced each time: one each
+        reacted = ok(call("PUT", gurl, b_tok, json={"emoji": any_one})).json()
+        assert [(r["user_id"], r["emoji"]) for r in reacted["reactions"]] == [(b["id"], any_one)]
     assert ok(call("PUT", gurl, b_tok, json={"emoji": None})).json()["reactions"] == []
 
     for ws in (wa, wb, wc):
