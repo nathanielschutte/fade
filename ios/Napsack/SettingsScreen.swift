@@ -106,6 +106,11 @@ struct SettingsScreen: View {
                 Button("Change username") { asking = .username }
             }
             Section {
+                NavigationLink("Blocked") { BlockedScreen(model: BlockedModel(account: account)) }
+            } footer: {
+                Text("People you've blocked can't send you anything or add you to groups.")
+            }
+            Section {
                 Button("Change password") { asking = .password }
                 Button(account.user.hasRecoveryKey ? "Make a new recovery key" : "Make a recovery key") { asking = .recovery }
                 PasskeysLink(account: account)  // Passkeys.swift: where this server takes them

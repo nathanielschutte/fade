@@ -358,6 +358,13 @@ struct FriendProfileScreen: View {
     @State private var problem: String?
     @State private var confirmingUnfriend = false
     @State private var showingCode = false
+    /// Reporting them, and asking about blocking them (Moderation.swift).
+    @State private var reporting: ReportTarget?
+    @State private var blocking: Reportable?
+    /// Blocked from the report sheet: back to the list once it's gone.
+    @State private var blockedThem = false
+
+    private var person: Reportable { Reportable(id: friend.id, name: friend.name) }
 
     var body: some View {
         List {
@@ -402,8 +409,32 @@ struct FriendProfileScreen: View {
             Section {
                 Button("Compare safety codes", systemImage: "lock") { showingCode = true }
                 Button("Unfriend", role: .destructive) { confirmingUnfriend = true }
+            }
+            Section {
+                Button("Report \(friend.name)", systemImage: "exclamationmark.bubble") {
+                    reporting = ReportTarget(what: .person, person: person)
+                }
+                Button("Block \(friend.name)", systemImage: "hand.raised", role: .destructive) { blocking = person }
             } footer: {
                 if let problem { Text(problem).foregroundStyle(.red) }
+            }
+        }
+        .sheet(item: $reporting, onDismiss: {
+            if blockedThem { leave() }
+        }) { target in
+            ReportSheet(target: target, account: account) { _ in blockedThem = true }
+        }
+        .blockQuestion($blocking) { who in
+            Task {
+                do {
+                    try await Moderation.block(who.id, account: account)
+                    Reporter.shared.report(.info, "blocked", ["user_id": String(who.id)])
+                    leave()
+                } catch {
+                    Reporter.shared.report(.warn, "block failed", Reporter.fields(error, ["user_id": String(who.id)]))
+                    problem = error.localizedDescription
+                    session.noticed(error)
+                }
             }
         }
         .navigationTitle(friend.name)
@@ -442,6 +473,12 @@ struct FriendProfileScreen: View {
 
     private func date(_ t: Int64) -> String {
         Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .long, time: .omitted)
+    }
+
+    /// The friendship's over (blocked): this and their chat close.
+    private func leave() {
+        unfriended()
+        dismiss()
     }
 
     private func saveNickname() {
