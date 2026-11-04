@@ -1,13 +1,17 @@
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
 
-/// Profile and group pictures for this session: fetched with the session's
-/// token, kept in memory only (gone with the session; Nate: not kept on the
-/// phone across launches), each fetched once even when several rows ask at
-/// the same time. Each is decoded off the main thread, at the size it's shown,
-/// and each Avatar watches only its own picture, so one arriving redraws just
-/// the rows that show it.
+/// Profile and group pictures: fetched with the session's token, each once
+/// even when several rows ask at the same time, and kept on the phone between
+/// launches (Nate, 2026-11-03), so the list shows them at once. They're kept
+/// as the chats are (ResponseCache: protected while locked, not backed up,
+/// gone at sign-out), by the picture's id: a friend who changes theirs has a
+/// new id in the list, so the new one is fetched, and it replaces the old
+/// one on the phone. Each is decoded off the main thread, at the size it's
+/// shown, and each Avatar watches only its own picture, so one arriving
+/// redraws just the rows that show it.
 @MainActor @Observable final class Pictures {
     /// One picture: the sizes made from it so far (what avatars watch).
     @MainActor @Observable final class Picture {
@@ -26,10 +30,23 @@ import UIKit
     @ObservationIgnored private var fetching: [String: Task<Data?, Never>] = [:]
     private let account: Account
     private let transport: any Transport
+    /// Where they're kept between launches (ResponseCache.pictures); nil keeps them in memory only.
+    private let kept: ResponseCache?
+    /// The most kept on the phone: each friend's and group's newest, and a few
+    /// of people no longer in the list, until they're the oldest.
+    static let keptAtMost = 300
 
-    init(account: Account, transport: any Transport = NetworkTransport()) {
+    init(account: Account, transport: any Transport = NetworkTransport(), kept: ResponseCache? = nil) {
         self.account = account
         self.transport = transport
+        self.kept = kept
+    }
+
+    /// The file a picture is kept as (`users-7-avatar-12`), and what every
+    /// picture of the same person or group starts with (`users-7-avatar-`).
+    static func keptName(_ path: String) -> (name: String, owner: String) {
+        let parts = path.split(separator: "/")
+        return (parts.joined(separator: "-"), parts.dropLast().joined(separator: "-") + "-")
     }
 
     static func path(_ kind: ChatRow.Kind, avatar: Int64) -> String {
@@ -77,8 +94,15 @@ import UIKit
     private func data(_ path: String) async -> Data? {
         if let data = bytes[path] { return data }
         if let pending = fetching[path] { return await pending.value }
-        let account = account, transport = transport
-        let task = Task<Data?, Never> { try? await Server(account.server, transport: transport).send(path, token: account.token) }
+        let account = account, transport = transport, kept = kept
+        let task = Task<Data?, Never> {
+            let file = Self.keptName(path)
+            // Kept from before: the same id is the same picture.
+            if let kept, let data = await kept.load(file.name), Self.isImage(data) { return data }
+            guard let data = try? await Server(account.server, transport: transport).send(path, token: account.token) else { return nil }
+            kept?.write(data, file.name, replacing: file.owner, limit: Self.keptAtMost)  // in place of their older one
+            return data
+        }
         fetching[path] = task
         let data = await task.value
         fetching[path] = nil
@@ -95,10 +119,17 @@ import UIKit
         return await image.byPreparingThumbnail(ofSize: CGSize(width: (width * factor).rounded(), height: (height * factor).rounded()))
     }
 
+    /// Whether kept bytes are a picture at all (if not, it's fetched again).
+    nonisolated static func isImage(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceGetCount(source) > 0
+    }
+
     /// A picture just changed: fetch it again next time.
     func forget(_ path: String) {
         pictures[path] = nil
         bytes[path] = nil
+        kept?.remove(Self.keptName(path).name)
     }
 }
 

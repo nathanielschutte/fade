@@ -97,6 +97,22 @@ import Testing
         #expect(next.read("friends") == Data("[]".utf8))
     }
 
+    /// The same when the session began before anything was kept (a first
+    /// sign-in): its caches were made before the folder existed, and the
+    /// wipe comes once it does. (A folder that's there named itself with a
+    /// "/" on the end, so the wipe missed them.)
+    @Test func nothingFromBeforeASignOutIsKeptAfterItOnAFirstSignIn() throws {
+        let cache = ResponseCache(account: 3, root: root)  // no folder yet
+        defer { try? FileManager.default.removeItem(at: root) }
+        cache.write(Data("[]".utf8), "friends")
+        ResponseCache.settle()  // now there is
+        ResponseCache.wipeAll(root: root)
+        cache.write(Data("[\"late\"]".utf8), "chat-d-7")
+        cache.pictures.write(Data([1]), "users-7-avatar-1", replacing: "users-7-avatar-", limit: 10)
+        ResponseCache.settle()
+        #expect(!FileManager.default.fileExists(atPath: root.path()))
+    }
+
     @Test func signingOutForgetsTheKeptChats() async throws {
         let cache = ResponseCache(account: 3)  // the real place
         cache.write(Data("[]".utf8), "friends")

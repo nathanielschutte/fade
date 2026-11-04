@@ -8,8 +8,12 @@ INFOPLIST_KEY_CFBundleDisplayName = napsack
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
 INFOPLIST_KEY_UILaunchScreen_Generation = YES
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
-// Asked the first time the app reaches a development server on your network.
-INFOPLIST_KEY_NSLocalNetworkUsageDescription = napsack connects to a development server on your network.
+// Development builds only: the question asked the first time the app reaches
+// a development server on your network, and plain http there (both in
+// App-Info.plist, under NAPSACK_LOCAL_NETWORK). Release builds only ever
+// reach https, so they carry neither (scripts/test-ios.sh checks).
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREPROCESSOR_DEFINITIONS[config=Debug] = NAPSACK_LOCAL_NETWORK=1
 INFOPLIST_KEY_NSCameraUsageDescription = napsack uses the camera for the pics and videos you send.
 INFOPLIST_KEY_NSMicrophoneUsageDescription = napsack records sound with the videos you send.
 INFOPLIST_KEY_NSPhotoLibraryUsageDescription = napsack sends photos you choose.

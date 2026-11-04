@@ -672,7 +672,7 @@ enum SignInError: LocalizedError, Equatable {
         try? store.delete()
         passkeyOffer = nil  // the new account's keys, if it was still offered
         UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
-        ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs)
+        ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs) and friends' pictures
         notifications.signedOut()  // delivered ones and the badge; the server stops with the session
         AppLock.shared.signedOut()  // the lock was this account's choice
         self.notice = notice

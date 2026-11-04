@@ -14,6 +14,9 @@ struct SettingsScreen: View {
     @State private var confirmingEndOthers = false
     @State private var deleting = false
     @State private var signingOut = false
+    @State private var confirmingSignOut = false
+    /// The privacy policy and support pages, on the server's site.
+    @State private var site: SiteLinks?
     @State private var profile: ProfileModel?
     @State private var name = ""
     @State private var picked: PhotosPickerItem?
@@ -122,23 +125,31 @@ struct SettingsScreen: View {
                     NavigationLink("Developer") { DeveloperScreen() }
                 }
             }
+            if let site {  // on the server's site (a local server has none)
+                Section {
+                    Link("Privacy policy", destination: site.privacy)
+                    Link("Support", destination: site.support)
+                }
+            }
+            Section {
+                // Asks first: signing out leaves nothing of the account here.
+                Button("Sign out", role: .destructive) { confirmingSignOut = true }
+                    .disabled(signingOut)
+            }
             Section {
                 Button("Delete account", role: .destructive) { deleting = true }
             } footer: {
                 Text("Deletes everything of yours from napsack, for good.")
             }
-            Section {
-                Button("Sign out", role: .destructive) {
-                    signingOut = true
-                    Task { await session.signOut() }
-                }
-                .disabled(signingOut)
-            }
         }
         .navigationTitle("Profile")
         .task { await loadSecurity() }
         .task { await loadProfile() }
-        .task { serverLabel = AppInfo.serverLabel(environment: (try? await Server(AppInfo.server).config())?.environment) }
+        .task {
+            let config = try? await Server(AppInfo.server).config()
+            serverLabel = AppInfo.serverLabel(environment: config?.environment)
+            site = SiteLinks(siteUrl: config?.siteUrl)
+        }
         .onChange(of: picked) { _, item in
             guard let item else { return }
             Task {
@@ -154,6 +165,14 @@ struct SettingsScreen: View {
             PasswordSheet(purpose: purpose, hasRecoveryKey: account.user.hasRecoveryKey) { note = $0; Task { await loadSecurity() } }
         }
         .sheet(isPresented: $deleting) { DeleteAccountSheet(username: account.user.username) }
+        .confirmationDialog("Sign out?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) {
+                signingOut = true
+                Task { await session.signOut() }
+            }
+        } message: {
+            Text(Self.signOutWords)
+        }
         .confirmationDialog("Sign out every other device?", isPresented: $confirmingEndOthers, titleVisibility: .visible) {
             Button("Sign out other devices", role: .destructive) { Task { await endOthers() } }
         } message: {
@@ -165,6 +184,9 @@ struct SettingsScreen: View {
             Text("Friends see your initial instead, until you choose another.")
         }
     }
+
+    /// Under "Sign out?": nothing of the account stays here, so coming back takes a way in.
+    static let signOutWords = "Nothing of your account stays on this phone. To sign in again, you'll need your password, a passkey, or your recovery key."
 
     /// "Recovery key saved October 29, 2026. Signed in on 1 other device."
     private var status: String {
@@ -253,6 +275,21 @@ struct SettingsScreen: View {
             note = error.localizedDescription
             session.noticed(error)
         }
+    }
+}
+
+/// The privacy policy and support pages, reachable in the app (App Review
+/// 5.1.1(i)), on the site the server names (`site_url` in /api/config, never
+/// a domain written here). A local server names none, so none show.
+struct SiteLinks: Equatable {
+    let privacy: URL
+    let support: URL
+
+    init?(siteUrl: String?) {
+        guard let siteUrl, let site = URL(string: siteUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))),
+              site.scheme == "https", site.host() != nil else { return nil }
+        privacy = site.appending(path: "privacy")
+        support = site.appending(path: "support")
     }
 }
 

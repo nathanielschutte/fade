@@ -81,6 +81,12 @@ if ls "$REL/Build/Products/Release-iphonesimulator/Napsack.app" | grep -q vector
 if grep -raqE "NAPSACK_UI_TEST_SERVER|NAPSACK_FRESH_START" "$REL/Build/Products/Release-iphonesimulator/Napsack.app"; then
   echo "a release build reads the UI tests' launch settings"; exit 1
 fi
+# Plain http to the local network and the question about it are for development servers: Debug builds only (App.xcconfig).
+PLIST="$REL/Build/Products/Release-iphonesimulator/Napsack.app/Info.plist"
+for key in NSAppTransportSecurity NSLocalNetworkUsageDescription; do
+  if plutil -extract "$key" xml1 -o - "$PLIST" >/dev/null 2>&1; then echo "a release build carries $key (development builds only)"; exit 1; fi
+done
+plutil -extract NapsackServerURL raw -o - "$PLIST" | grep -q '^https://' || { echo "a release build's server isn't https"; exit 1; }
 
 section "app tests on the $SIMULATOR Simulator$([ "$LIVE" = 1 ] && echo ", live against $NAPSACK_URL")"
 LOG="$TMP/ios-test.log"

@@ -6,7 +6,9 @@ import Synchronization
 /// working on a bad connection (the web app's cache.js): the chat list, groups,
 /// and the newest page of each chat. What's kept is exactly what the server
 /// sent, so messages stay end-to-end encrypted here and are decrypted only when
-/// shown. Pics are never kept: they're view-once. The files are readable only
+/// shown. Friends' and groups' pictures are kept too (`pictures`, Pictures),
+/// by their id, so a new picture is a new file. Pics are never kept: they're
+/// view-once. The files are readable only
 /// while the phone is unlocked (complete file protection), aren't backed up,
 /// and signing out deletes all of them (Session). Everything here is optional:
 /// if a file can't be read or written, napsack loads from the server as before.
@@ -21,6 +23,8 @@ struct ResponseCache: Sendable {
     private let root: URL
     /// Which wipe of the root this was made after: writes from before a sign-out are dropped.
     private let generation: Int
+    /// What its files end in: the server's answers are JSON.
+    private let fileExtension: String
 
     /// Where every account's kept answers live.
     static var root: URL {
@@ -31,10 +35,27 @@ struct ResponseCache: Sendable {
         self.root = root
         directory = root.appending(path: String(account), directoryHint: .isDirectory)
         generation = Self.writer.generation(root)
+        fileExtension = "json"
+    }
+
+    private init(_ directory: URL, root: URL, generation: Int, fileExtension: String) {
+        self.directory = directory
+        self.root = root
+        self.generation = generation
+        self.fileExtension = fileExtension
+    }
+
+    /// The account's kept pictures (images, as the server sent them), beside its answers.
+    var pictures: ResponseCache {
+        ResponseCache(directory.appending(path: "pictures", directoryHint: .isDirectory), root: root, generation: generation, fileExtension: "img")
     }
 
     func file(_ key: String) -> URL {
-        directory.appending(path: key.filter { $0.isLetter || $0.isNumber || $0 == "-" } + ".json")
+        directory.appending(path: Self.name(key) + "." + fileExtension)
+    }
+
+    private static func name(_ key: String) -> String {
+        key.filter { $0.isLetter || $0.isNumber || $0 == "-" }
     }
 
     /// What's kept (or about to be), or nil.
@@ -69,6 +90,29 @@ struct ResponseCache: Sendable {
         Self.writer.write(data, to: file(key), in: directory, root: root, generation: generation)
     }
 
+    /// Keeps it in place of any other kept under a key starting `replacing`
+    /// (an older picture of the same person), and keeps at most `limit`
+    /// files here, letting the longest unchanged go. In the background.
+    func write(_ data: Data, _ key: String, replacing prefix: String, limit: Int) {
+        let keep = file(key).lastPathComponent, prefix = Self.name(prefix)
+        Self.writer.write(data, to: file(key), in: directory, root: root, generation: generation) { directory in
+            let keys: [URLResourceKey] = [.contentModificationDateKey]
+            guard var files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else { return }
+            let older = { (url: URL) in url.lastPathComponent != keep && url.lastPathComponent.hasPrefix(prefix) }
+            for old in files where older(old) { try? FileManager.default.removeItem(at: old) }
+            files.removeAll(where: older)
+            guard files.count > limit else { return }
+            let changed = { (url: URL) in (try? url.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast }
+            let others = files.filter { $0.lastPathComponent != keep }.sorted { changed($0) < changed($1) }
+            for old in others.prefix(files.count - limit) { try? FileManager.default.removeItem(at: old) }
+        }
+    }
+
+    /// No longer kept (in the background, after any write asked for before).
+    func remove(_ key: String) {
+        Self.writer.remove(file(key))
+    }
+
     /// Every account's kept answers, gone (signing out). Writes still waiting go too.
     static func wipeAll(root: URL = ResponseCache.root) {
         writer.wipe(root)
@@ -94,7 +138,14 @@ struct ResponseCache: Sendable {
         private let state = Mutex(State())
         private let queue = DispatchQueue(label: "napsack.response-cache", qos: .utility)
 
-        private static func name(_ root: URL) -> String { root.standardizedFileURL.path() }
+        /// The same whether or not the folder is there yet: a URL to one that
+        /// is ends in "/" once standardized, which would make a wipe and the
+        /// caches made before the folder existed disagree on whose it is.
+        private static func name(_ root: URL) -> String {
+            var path = root.standardizedFileURL.path(percentEncoded: false)
+            while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+            return path
+        }
 
         func generation(_ root: URL) -> Int {
             state.withLock { $0.generations[Self.name(root)] ?? 0 }
@@ -104,7 +155,9 @@ struct ResponseCache: Sendable {
             state.withLock { $0.waiting[url] }
         }
 
-        func write(_ data: Data, to url: URL, in directory: URL, root: URL, generation: Int) {
+        /// `tidy` runs on the queue after the write, given the directory, unless a wipe came between.
+        func write(_ data: Data, to url: URL, in directory: URL, root: URL, generation: Int,
+                   tidy: (@Sendable (URL) -> Void)? = nil) {
             let name = Self.name(root)
             let current = state.withLock { s -> Bool in
                 guard (s.generations[name] ?? 0) == generation else { return false }
@@ -119,20 +172,29 @@ struct ResponseCache: Sendable {
                     ((s.generations[name] ?? 0) == generation && s.waiting[url] == data, s.written[url] == digest)
                 }
                 let go = wanted && (!same || !FileManager.default.fileExists(atPath: url.path()))
-                if go { Self.save(data, to: url, in: directory) }
+                if go { Self.save(data, to: url, in: directory, root: root) }
                 state.withLock { s in
                     if go { s.written[url] = digest }
                     if s.waiting[url] == data { s.waiting[url] = nil }
                 }
+                if go, let tidy, state.withLock({ ($0.generations[name] ?? 0) == generation }) { tidy(directory) }
             }
         }
 
-        private static func save(_ data: Data, to url: URL, in directory: URL) {
+        func remove(_ url: URL) {
+            state.withLock { s in
+                s.waiting[url] = nil
+                s.written[url] = nil
+            }
+            queue.async { try? FileManager.default.removeItem(at: url) }
+        }
+
+        private static func save(_ data: Data, to url: URL, in directory: URL, root: URL) {
             do {
                 if !FileManager.default.fileExists(atPath: directory.path()) {
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                             attributes: [.protectionKey: FileProtectionType.complete])
-                    var root = directory.deletingLastPathComponent()
+                    var root = root
                     var values = URLResourceValues()
                     values.isExcludedFromBackup = true
                     try? root.setResourceValues(values)
@@ -147,8 +209,8 @@ struct ResponseCache: Sendable {
             let name = Self.name(root)
             state.withLock { s in
                 s.generations[name, default: 0] += 1
-                s.waiting = s.waiting.filter { !Self.name($0.key).hasPrefix(name) }
-                s.written = s.written.filter { !Self.name($0.key).hasPrefix(name) }
+                s.waiting = s.waiting.filter { !Self.name($0.key).hasPrefix(name + "/") }
+                s.written = s.written.filter { !Self.name($0.key).hasPrefix(name + "/") }
             }
             // After any write under way, which then finds nothing of it kept.
             queue.sync { try? FileManager.default.removeItem(at: root) }

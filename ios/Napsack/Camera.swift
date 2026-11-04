@@ -658,6 +658,7 @@ struct CameraScreen: View {
             HStack {
                 Button { camera.stop(); if let close { close() } else { dismiss() } } label: { Self.round("xmark") }
                     .accessibilityLabel("Close")
+                    .clearOfWindowControls()
                 Spacer()
             }
             .padding(.horizontal, 12).padding(.top, 8)
@@ -943,6 +944,7 @@ struct CameraScreen: View {
             HStack(alignment: .top) {
                 Button { retake() } label: { Self.round("xmark") }
                     .accessibilityLabel("Retake")
+                    .clearOfWindowControls()
                 Spacer()
                 // Big and well apart, so Aa and the pen aren't hit for each other (Nate, 2026-11-03).
                 VStack(alignment: .trailing, spacing: Self.buttonSpacing) {
