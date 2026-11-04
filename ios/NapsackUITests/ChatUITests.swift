@@ -81,6 +81,26 @@ import XCTest
         try require(poll(0) { !$0.has(identifier: "new-messages") }, "no note about new messages: it's in sight")
     }
 
+    /// A chat opened before (from its kept page, with what came since joining
+    /// it), then the keyboard: the newest sits just above the composer, never
+    /// scrolled off the top (Nate, 2026-11-03, on his phone).
+    func testReopenedThenKeyboard() async throws {
+        let chat = try XCTUnwrap(Self.chat)
+        try openChat(chat)
+        try expectInSight(chat.newest, "opening the chat")
+        app.navigationBars.buttons.firstMatch.tap()  // back to the list
+        let later = try await friendSends(chat)
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", chat.friend.username)).firstMatch
+        try require(row.waitForExistence(timeout: 10), "back on the list")
+        row.tap()
+        try require(composer.waitForExistence(timeout: 10), "the chat opened again")
+        try expectInSight(later.newest, "opened again")
+        composer.tap()
+        try require(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard came up")
+        shot("chat-reopened-keyboard")
+        try expectInSight(later.newest, "opened again, with the keyboard up")
+    }
+
     // ---------- scrolled up, nothing moves ----------
 
     /// Scrolled up to read, a new message doesn't move what you're reading;

@@ -29,6 +29,10 @@ struct ChatScreen: View {
     @State private var position = ScrollPosition(idType: Int64.self)
     /// The newest is in sight, or nearly (ChatScreen.nearBottom).
     @State private var atBottom = true
+    /// Whether a finger or a fling is moving the chat (`onScrollPhaseChange`).
+    @State private var scrolling = false
+    /// Said once per chat opened: it was left past its end (ChatScreen's own report).
+    @State private var reportedPastEnd = false
     /// Something new came below while you were reading further up.
     @State private var newBelow = false
     @State private var showingSafetyCode = false
@@ -53,10 +57,13 @@ struct ChatScreen: View {
     @State private var limits: ServerConfig?
     @FocusState private var composing: Bool
 
-    /// The content's height and how far its end is below what's shown.
+    /// The content's height, how far its end is below what's shown, and the
+    /// window it's shown in (the visible height, and the inset under the composer and keyboard).
     struct BottomGap: Equatable {
         let height: CGFloat
         let gap: CGFloat
+        let visible: CGFloat
+        let inset: CGFloat
     }
 
     /// How close to the bottom still counts as at it: a finger's slack, less than a line of text.
@@ -116,18 +123,37 @@ struct ChatScreen: View {
         .onScrollGeometryChange(for: BottomGap.self) { geometry in
             // The visible rect reaches under the composer (the bottom inset), so the end counts from there.
             BottomGap(height: geometry.contentSize.height,
-                      gap: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY)
+                      gap: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY,
+                      visible: geometry.visibleRect.height, inset: geometry.contentInsets.bottom)
         } action: { before, now in
-            // What came below while you were at the bottom (a message, the typing line) keeps the
-            // newest in sight. iOS 27's anchor does that itself; iOS 26 and older leave it below
-            // the screen (ChatScrollTests). Older pages grow above and leave the gap as it was.
-            if now.height > before.height, before.gap <= Self.nearBottom, now.gap > Self.nearBottom {
+            // At the bottom, what changes size under you (a message, the typing line, the keyboard,
+            // the composer growing) keeps the newest in sight. iOS 27's anchor does that itself;
+            // iOS 26 and older leave it below the screen (ChatScrollTests). Not your own scrolling,
+            // nor a jump to a search result: those move the chat without changing its size.
+            // Older pages grow above and leave the gap as it was. The end is a place, not a
+            // distance, so going there can't add to a move the scroll view makes itself.
+            let resized = now.height > before.height || now.visible != before.visible || now.inset != before.inset
+            if !scrolling, resized, before.gap <= Self.nearBottom, now.gap > Self.nearBottom {
+                position.scrollTo(edge: .bottom)
+                return
+            }
+            // Left past its end with nothing moving it (a blank screen above the composer, Nate
+            // saw it on his phone as the keyboard came up): back to the end, as a touch would do.
+            if !scrolling, now.gap < -Self.nearBottom, now.height > now.visible {
+                if !reportedPastEnd {
+                    reportedPastEnd = true
+                    Reporter.shared.report(.warn, "chat left past its end", [
+                        "gap": "\(Int(now.gap))", "height": "\(Int(now.height))", "visible": "\(Int(now.visible))",
+                        "inset": "\(Int(now.inset))", "before_gap": "\(Int(before.gap))", "before_inset": "\(Int(before.inset))",
+                    ])
+                }
                 position.scrollTo(edge: .bottom)
                 return
             }
             atBottom = now.gap <= Self.nearBottom
             if atBottom { newBelow = false }
         }
+        .onScrollPhaseChange { _, phase in scrolling = phase.isScrolling }
         .onChange(of: conversation.bubbles.last?.id) { before, after in
             // Newer than what was there (older pages change the first, not the last), and you're reading further up.
             if let before, let after, after > before, !atBottom { newBelow = true }
