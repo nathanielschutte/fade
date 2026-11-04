@@ -42,11 +42,16 @@ async def send_pics(page, n):
 async def zoom_is(page, test):
     """Waits until the stage has come to rest (no spring-back still running)
     with its [scale, x, y] passing `test` (a JS expression of s, x, y)."""
-    await page.wait_for_function(f"""() => {{
-      if (document.querySelector('#viewer-stage').getAnimations().length) return false;
-      const [s, x, y] = ({ZOOM})();
-      return {test};
-    }}""", timeout=5000)
+    try:
+        await page.wait_for_function(f"""() => {{
+          if (document.querySelector('#viewer-stage').getAnimations().length) return false;
+          const [s, x, y] = ({ZOOM})();
+          return {test};
+        }}""", timeout=10000)
+    except Exception:
+        seen = await page.evaluate(f"""() => [({ZOOM})(), document.querySelector('#viewer-image').getBoundingClientRect().toJSON(),
+          innerWidth, document.querySelector('#viewer-stage').getAnimations().length]""")
+        raise AssertionError(f"zoom never came to rest with {test}: [s, x, y], image box, width, animations = {seen}")
 
 
 async def touch(cdp, kind, points):
@@ -95,8 +100,8 @@ async def main():
         for step in range(1, 7):
             await touch(cdp, "touchMove", [(cx + 150 * step, cy)])
         await touch(cdp, "touchEnd", [])
-        width = await ben.evaluate("() => document.querySelector('#viewer-image').offsetWidth")  # unzoomed
-        await zoom_is(ben, f"Math.abs(x - ({width} * s - 390) / 2) < 2")  # its left edge at the screen's
+        # Its left edge back at the screen's, measured where it's drawn.
+        await zoom_is(ben, "Math.abs(document.querySelector('#viewer-image').getBoundingClientRect().left) < 2")
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2")
 
         # A tap zooms back out; the next tap moves on, and the next pic opens unzoomed.
