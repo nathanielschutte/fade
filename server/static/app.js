@@ -6905,11 +6905,16 @@ const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 const viewerEl = $("#viewer");
 viewerEl.addEventListener("pointerdown", (e) => {
+  // The first finger of a new touch: any left from before lost their lift (a touch that
+  // ended off the screen, an interruption), and would make this tap look like a pinch.
+  if (e.isPrimary) zoom.pointers.clear();
   if (!zoom.pointers.size) zoom.moved = false; // a new touch: a tap until it moves
   if (!zoomable() || (e.pointerType === "mouse" && e.button !== 0)) return;
   zoom.pointers.set(e.pointerId, fromCenter(e.clientX, e.clientY));
   if (zoom.pointers.size > 1) zoom.moved = true; // a second finger is a pinch, never a tap
-  viewerEl.setPointerCapture?.(e.pointerId);
+  try {
+    viewerEl.setPointerCapture?.(e.pointerId);
+  } catch { /* a pointer the browser no longer tracks: nothing to capture */ }
   $("#viewer-stage").classList.remove("settling");
   zoomBaseline();
 });

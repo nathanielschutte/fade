@@ -110,6 +110,10 @@ async def main():
         await zoom_is(ben, "Math.abs(document.querySelector('#viewer-image').getBoundingClientRect().left) < 2")
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2")
 
+        # A finger whose lift never came (a touch that ended off the screen, say)
+        # doesn't make the next tap look like a pinch.
+        await ben.evaluate("""() => document.querySelector('#viewer').dispatchEvent(new PointerEvent('pointerdown',
+          {pointerId: 77, isPrimary: true, pointerType: 'touch', clientX: 195, clientY: 422, bubbles: true}))""")
         # A tap zooms back out; the next tap moves on, and the next pic opens unzoomed.
         # Taps go the way the pinches and drags did (the same touch stream as the
         # rest of this test), so the viewer sees one finger, down and up in place.
