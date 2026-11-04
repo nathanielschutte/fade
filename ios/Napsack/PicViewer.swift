@@ -2,7 +2,8 @@ import AVKit
 import SwiftUI
 
 /// A pic or video sent to you, shown once (app.js, the viewer): full screen,
-/// its caption where the sender put it. It counts as opened only once it's
+/// its caption where the sender put it; a photo zooms and pans (OpenedPhoto).
+/// Tapping goes on to the next or closes. It counts as opened only once it's
 /// been shown; closing it before then leaves it unopened. Nothing is saved:
 /// a video plays from a temporary file that's deleted when it closes.
 struct PicPage: View {
@@ -18,6 +19,8 @@ struct PicPage: View {
     /// Shown, and tapped past (or a video's end): on to the next, or closed.
     let next: () -> Void
     @State private var opened: OpenedPic?
+    /// A photo's picture, decoded once it's opened.
+    @State private var photo: UIImage?
     @State private var problem: String?
     @State private var player: AVPlayer?
     @State private var shownAt: Date?
@@ -26,19 +29,10 @@ struct PicPage: View {
     /// shouldn't skip past a pic nobody saw (app.js, TAP_GUARD_MS).
     static let tapGuard: TimeInterval = 0.6
 
-    /// The caption where the sender put it on the picture (0 top, 1 bottom).
-    @ViewBuilder private func caption(_ opened: OpenedPic) -> some View {
-        if !opened.caption.isEmpty {
-            GeometryReader { geo in
-                Text(opened.caption)
-                    .font(.title3).foregroundStyle(.white).multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 16)
-                    .frame(width: geo.size.width)
-                    .position(x: geo.size.width / 2, y: geo.size.height * CGFloat(opened.y ?? 0.8))
-            }
-        }
+    /// A tap (once it's been on screen a moment): on to the next, or closed.
+    private func tap() {
+        if let shownAt, Date().timeIntervalSince(shownAt) < Self.tapGuard { return }
+        if opened != nil || problem != nil { next() }
     }
 
     var body: some View {
@@ -46,12 +40,12 @@ struct PicPage: View {
             Color.black.ignoresSafeArea()
             if let opened {
                 Group {
-                    if let data = opened.image, let image = UIImage(data: data) {
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .overlay { caption(opened) }  // placed on the picture, as the sender saw it
+                    if let photo {
+                        OpenedPhoto(photo: photo, caption: opened.caption, y: opened.y, tapped: tap)
                     } else if let player {
+                        // Videos don't zoom: they're short, and close at their end.
                         VideoPlayer(player: player).disabled(true)
-                            .overlay { caption(opened) }
+                            .overlay { PicCaption(text: opened.caption, y: opened.y) }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -67,16 +61,18 @@ struct PicPage: View {
         }
         .overlay(alignment: .top) { PicHeader(from: from, place: place) }
         .contentShape(Rectangle())
-        .onTapGesture {
-            if let shownAt, Date().timeIntervalSince(shownAt) < Self.tapGuard { return }
-            if opened != nil || problem != nil { next() }
-        }
+        // A photo takes its own taps (a double tap zooms, so a single one waits to be sure).
+        .gesture(TapGesture().onEnded { tap() }, isEnabled: photo == nil)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Tap for the next one, or to close. It can't be opened again.")
+        .accessibilityAction { tap() }
         .statusBarHidden()
         .task {
             do {
                 let pic = try await conversation.open(pic)
+                if let data = pic.image, let image = UIImage(data: data) {
+                    photo = await image.byPreparingForDisplay() ?? image  // decoded off the main thread, before it shows
+                }
                 opened = pic
                 shownAt = Date()
                 onShown()
@@ -102,6 +98,50 @@ struct PicPage: View {
             player?.pause()
             if let url = opened?.video { try? FileManager.default.removeItem(at: url) }
             if shownAt != nil { Task { await conversation.confirmOpened(pic) } }
+        }
+    }
+}
+
+/// An opened photo, to look at closely (ZoomablePhoto: pinch, drag, double
+/// tap), with its caption where the sender put it on the picture. The
+/// caption hides while it's zoomed in: it would cover what you're looking
+/// at, and no longer sit where they put it.
+struct OpenedPhoto: View {
+    let photo: UIImage
+    let caption: String
+    let y: Double?
+    /// A tap at the usual size (zoomed in, a tap zooms back out instead).
+    let tapped: () -> Void
+    @State private var zoomed = false
+
+    var body: some View {
+        ZoomablePhoto(image: photo, zoomed: $zoomed, tapped: tapped)
+            .overlay {
+                Color.clear.aspectRatio(photo.size, contentMode: .fit)  // the picture's own place
+                    .overlay { PicCaption(text: caption, y: y) }
+                    .opacity(zoomed ? 0 : 1)
+                    .animation(.easeOut(duration: 0.15), value: zoomed)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+/// A pic's caption where the sender put it (0 top, 1 bottom; the usual place if nil).
+struct PicCaption: View {
+    let text: String
+    let y: Double?
+
+    var body: some View {
+        if !text.isEmpty {
+            GeometryReader { geo in
+                Text(text)
+                    .font(.title3).foregroundStyle(.white).multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 16)
+                    .frame(width: geo.size.width)
+                    .position(x: geo.size.width / 2, y: geo.size.height * CGFloat(y ?? 0.8))
+            }
         }
     }
 }
