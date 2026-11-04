@@ -5320,7 +5320,7 @@ function openReport(target) {
   $("#report-title").textContent = noun ? `Report this ${noun}` : `Report @${who.username}`;
   $("#report-text").textContent = noun
     ? "An Admin will look at it. They'll see who sent it and when, but never what it said."
-    : "An Admin will look at it. They'll see who you reported, but never your messages.";
+    : "An Admin will look at it. They'll see who you reported, but never what either of you said.";
   $("#report-reasons legend").textContent = noun ? "Why are you reporting it?" : "Why are you reporting them?";
   $("#report-form").reset();
   $("#report-form").hidden = false;
