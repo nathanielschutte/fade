@@ -50,7 +50,7 @@ async def zoom_is(page, test):
         }}""", timeout=10000)
     except Exception:
         seen = await page.evaluate(f"""() => [({ZOOM})(), document.querySelector('#viewer-image').getBoundingClientRect().toJSON(),
-          innerWidth, document.querySelector('#viewer-stage').getAnimations().length]""")
+          innerWidth, document.querySelector('#viewer-stage').getAnimations().length, (window.__events || []).slice(-12)]""")
         raise AssertionError(f"zoom never came to rest with {test}: [s, x, y], image box, width, animations = {seen}")
 
 
@@ -83,6 +83,10 @@ async def main():
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2")
         await expect(ben.locator("#viewer-hint")).to_have_text("Tap for the next one")
         cdp = await ben.context.new_cdp_session(ben)
+        # What the viewer hears, said if a check fails (CI's Chrome differs from a Mac's).
+        await ben.evaluate("""() => { window.__events = []; const v = document.querySelector('#viewer');
+          for (const t of ['pointerdown', 'pointerup', 'pointercancel', 'click', 'touchstart', 'touchend', 'touchcancel'])
+            v.addEventListener(t, (e) => window.__events.push(`${t}:${e.pointerId ?? ''}:${e.isPrimary ?? ''}`), true); }""")
         cx, cy = 195, 422
         await touch(cdp, "touchStart", [(cx - 40, cy), (cx + 40, cy)])
         for step in range(1, 9):
