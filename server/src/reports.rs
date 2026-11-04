@@ -609,8 +609,10 @@ async fn apply(db: &SqlitePool, report: &ReportRow, admin: i64, ruling: &Ruling)
     Ok(())
 }
 
-/// "a message you sent to @ana on 3 Nov", "a pic you sent in Road trip on
-/// 3 Nov", or "you": what the report was about, as the reported person sees it.
+/// "a message you sent", "a pic you sent in Road trip on 3 Nov", or "you":
+/// what the report was about, as the reported person sees it. A direct
+/// message names neither whom it went to nor when: only they could have
+/// reported it, and the reporter is never told (Nate, 2026-11-03).
 fn about(r: &ReportRow) -> String {
     let noun = match r.message_kind.as_deref() {
         Some("pic") => "pic",
@@ -623,7 +625,7 @@ fn about(r: &ReportRow) -> String {
         .map(|t| format!("{} (UTC)", day(t)))
         .unwrap_or_default();
     match r.kind.as_str() {
-        "message" => format!("a {noun} you sent to @{} on {on}", r.reporter),
+        "message" => format!("a {noun} you sent"),
         "group_message" => format!(
             "a {noun} you sent in {} on {on}",
             r.group_name.as_deref().unwrap_or("a group")
@@ -632,20 +634,18 @@ fn about(r: &ReportRow) -> String {
     }
 }
 
-/// Where the app opens that chat at that message: `/#chat=<friend>&message=<id>`
-/// (the chat with whoever it was sent to) or `/#group=<id>&message=<id>`.
+/// Where the app opens that group at that message: `/#group=<id>&message=<id>`.
+/// Never a direct chat's: it would say who reported it (`about`).
 fn link(r: &ReportRow, site: &str) -> Option<String> {
     let id = r.message_id?;
     match r.kind.as_str() {
-        "message" => Some(format!("{site}/#chat={}&message={id}", r.reporter_id)),
         "group_message" => Some(format!("{site}/#group={}&message={}", r.group_id?, id)),
         _ => None,
     }
 }
 
-/// What Team Napsack tells the reported person. It names the message (for a
-/// direct message, whom it was sent to), never who reported it, and never
-/// what it said: the server doesn't know.
+/// What Team Napsack tells the reported person. It names a group message,
+/// never who reported it, and never what it said: the server doesn't know.
 fn telling(r: &ReportRow, ruling: &Ruling, site: &str) -> String {
     let words = ruling.words.as_deref().unwrap_or_default();
     let reviewed = format!("An Admin reviewed a report about {}: {words}", about(r));
@@ -1090,10 +1090,13 @@ mod tests {
             until: None,
         };
         let text = telling(&load(&db, a).await.unwrap(), &warn, "https://napsack.io");
-        assert!(text.starts_with("An Admin reviewed a report about a video you sent to @ana on 1 Jan 1970 (UTC): Please don't."), "{text}");
         assert!(
-            text.ends_with("Open it: https://napsack.io/#chat=1&message=2"),
+            text.starts_with("An Admin reviewed a report about a video you sent: Please don't."),
             "{text}"
+        );
+        assert!(
+            !text.contains("ana") && !text.contains("#chat=") && !text.contains("1970"),
+            "a direct message says neither whom, nor when, nor where: only they could have reported it. {text}"
         );
         assert!(!text.contains("not ok"), "never the note");
         let text = telling(&load(&db, b).await.unwrap(), &warn, "https://napsack.io");

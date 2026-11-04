@@ -92,16 +92,16 @@ async def main():
         await expect(one).to_contain_text(f"They were told: “Please keep it friendly {tag}”")
         await expect(one.locator("button")).to_have_count(0)
 
-        # Ben's app opens Team Napsack's message like any text: which message, and whom
-        # it went to; never the note, and never what it said (the server doesn't know).
+        # Ben's app opens Team Napsack's message like any text: the Admin's words, and
+        # never the note, what it said (the server doesn't know), or anything that says who reported it.
         await ben.click("#back-button")
         await expect(row(ben, "Team Napsack")).to_be_visible(timeout=10000)
         await row(ben, "Team Napsack").locator(".chat-item").click()
-        told = ben.locator(".msg", has_text="An Admin reviewed a report about a message you sent to")
-        await expect(told).to_contain_text(f"@{ANA}", timeout=10000)
-        await expect(told).to_contain_text(f"Please keep it friendly {tag}")
-        await expect(told).to_contain_text(f"#chat=")
-        await expect(told).to_contain_text(f"&message={text['id']}")
+        told = ben.locator(".msg", has_text="An Admin reviewed a report about a message you sent")
+        await expect(told).to_contain_text(f"Please keep it friendly {tag}", timeout=10000)
+        # A direct message names neither whom it went to nor where: only Ana could have reported it.
+        await expect(told).not_to_contain_text(ANA)
+        await expect(told).not_to_contain_text("#chat=")
         await expect(told).not_to_contain_text("kept at it")
         await shot(ben, "reports-warned-phone", full_page=False)
 

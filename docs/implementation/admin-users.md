@@ -54,7 +54,7 @@ The **Reports** tab (Admins only; PowerUsers never see it, and every endpoint an
 What an Admin can do about a report, once, two taps each, with their own words (one line, up to 500 characters):
 
 - **Dismiss**, with an optional note for Admins.
-- **Warn**: Team Napsack writes to the reported person, end-to-end encrypted like its other messages (team.rs): "An Admin reviewed a report about a message you sent to @ana on 3 Nov (UTC): <words>", with a link that opens it (`/#chat=<friend>&message=<id>`, or `/#group=<id>&message=<id>`). Nothing else changes.
+- **Warn**: Team Napsack writes to the reported person, end-to-end encrypted like its other messages (team.rs): "An Admin reviewed a report about a message you sent in Road trip on 3 Nov (UTC): <words>", with a link that opens it (`/#group=<id>&message=<id>`). For a direct message, only "a message you sent", with no date or link: only the person it went to could have reported it, and the reporter is never named. Nothing else changes.
 - **Suspend** for 1, 7, or 30 days: turned off (above) until then, with the words as the notice; one already running is replaced.
 - **Turn off**: until an Admin turns it back on, with the words as the notice. An account already off for good is left to the Users tab.
 

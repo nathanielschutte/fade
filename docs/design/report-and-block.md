@@ -33,7 +33,7 @@ Actions on a report, each two taps, each recorded in `admin_actions` (append-onl
 
 ## What the reported person is told
 
-- **Warned:** a Team Napsack message, end-to-end encrypted to them as Team Napsack's messages are ([team-napsack.md](../implementation/team-napsack.md)): "An Admin reviewed a report about a message you sent to @ana on 3 Nov: <the Admin's words>", with a link that opens that chat at that message (`/#chat=<friend>&message=<id>`; the apps already open a chat at a message for search). The server writes this message itself, so it knows what it says; it never knows what the reported message said.
+- **Warned:** a Team Napsack message, end-to-end encrypted to them as Team Napsack's messages are ([team-napsack.md](../implementation/team-napsack.md)): "An Admin reviewed a report about a message you sent in Road trip on 3 Nov: <the Admin's words>", with a link that opens that group at that message (`/#group=<id>&message=<id>`; the apps already open a chat at a message for search). For a direct message it says only "a message you sent", with no date and no link: only the person it went to could have reported it, so naming it would name the reporter (Nate, 2026-11-03: never who reported). The server writes this message itself, so it knows what it says; it never knows what the reported message said.
 - **Suspended or blocked:** signing in (after the right password or key, as today, so it tells a guesser nothing) says "This account is suspended until 10 Nov: <the Admin's words>" or "This account has been turned off: <the Admin's words>". A Team Napsack message says the same, for when they're back.
 - **Never** who reported them.
 
@@ -68,8 +68,8 @@ The server sends it through Amazon SES (an AWS endpoint fixed in the code, as `a
 - An expired suspension ends by itself: a sweep every minute marks `reactivated_at` (at `until`), and signing in ends a due one on the spot. Every "is this account on" query already reads `reactivated_at`, so a mark keeps them all right without changing each one.
 - "Someone you know", whom you can report or block: a friend now or before, someone in a group with you now, someone with a friend request either way, or someone you block. Anyone else, and an id that doesn't exist, get the same answer.
 - Dates in what the reported person is told are UTC, and say so ("on 3 Nov (UTC)", "until 10 Nov, 14:02 UTC"): the server doesn't know their time zone.
-- For a direct message, the warning names whom it was sent to, as decided above; only the recipient can report a direct message, so that is who reported it. Group messages and people don't reveal the reporter.
-- The link in the warning is the message text (`<site>/#chat=<friend>&message=<id>`): the apps don't make links in texts tappable yet, and don't read `&message=` in a link yet (both are next, with Report in the apps). The notification itself opens Team Napsack's chat (`/#chat=<team>`), which every app already understands.
+- For a direct message, the warning names neither whom it was sent to nor when, and has no link: only the recipient can report a direct message, so any of that would say who reported it. A group message's warning names the group and day and links to it.
+- The link in a group message's warning is the message text (`<site>/#group=<id>&message=<id>`): the apps don't make links in texts tappable yet, and don't read `&message=` in a link yet (both are next, with Report in the apps). The notification itself opens Team Napsack's chat (`/#chat=<team>`), which every app already understands.
 - The email: `reports::tell_support` is called for each new report and does nothing until `FADE_REPORTS_EMAIL` is set; then it composes the email (`support_email`) and logs that SES isn't set up. Sending it is step 4.
 
 ## Open questions for Nate
