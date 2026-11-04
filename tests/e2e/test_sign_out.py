@@ -72,7 +72,9 @@ async def main():
         await p_out.click()
         await expect(p_out).to_have_text("Tap again to sign out")
         await expect(ana.locator("#profile-sign-out-note")).to_be_visible()
-        assert (await ana.locator("#delete-account").bounding_box())["y"] > (await p_out.bounding_box())["y"]
+        # Waited for, not read once: the profile is still filling in (Blocked loads on its own).
+        await ana.wait_for_function("""() => document.querySelector('#delete-account').getBoundingClientRect().top
+          > document.querySelector('#profile-sign-out').getBoundingClientRect().top""", timeout=10000)
         await ana.locator("#profile-sign-out-note").scroll_into_view_if_needed()
         await shot(ana, "sign-out-confirm-profile", full_page=False)
         await ana.click("#profile-dialog [data-close]")
