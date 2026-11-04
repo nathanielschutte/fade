@@ -34,6 +34,9 @@ jobs:
       # Signed for the Simulator only ("Sign to Run Locally", no team needed):
       # unsigned, the app gets no Keychain, and KeychainTests fail.
       - name: Build and unit tests (simulator)
+        # Tests see CI=1 (xcodebuild hands them TEST_RUNNER_ variables): timing bounds loosen there.
+        env:
+          TEST_RUNNER_CI: "1"
         run: >
           xcodebuild test -project ios/Napsack.xcodeproj -scheme Napsack
           -destination "platform=iOS Simulator,name=iPhone 17" -collect-test-diagnostics never
