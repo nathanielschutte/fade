@@ -39,7 +39,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 15 | [Every list of people opens their profile](#x46-every-list-of-people-opens-their-profile) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
 | 16 | [One way of naming people, everywhere](#x47-one-way-of-naming-people-everywhere) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
 | 17 | [A chat's picture in the list opens the chat too](#x48-a-chats-picture-in-the-list-opens-the-chat-too) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
-| 18 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | – | Needs decision | Nate's intake (2026-11-04). Whether "multi" also means several reactions per person; groups' reactions need a server change |
+| 18 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | – | Planned | Nate's intake (2026-11-04): more emoji, still one reaction each (decided). Groups' reactions need a server change |
 | 19 | [Camera flash where the device has one](#x50-camera-flash-where-the-device-has-one) | Experience/visual | – | Planned | Nate's intake (2026-11-04) |
 | 20 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
 | 21 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
@@ -613,7 +613,7 @@ Oldest first; newly shipped rows go at the bottom.
 #### X49. React with any emoji
 - From Nate's intake (2026-11-04): "Multi reactions - should be able to react with all emojis. Keep the current list as the hotbar, then have a + button where you can pick from any emoji." The six stay as the quick row; + opens a picker of every emoji (the system's own on the iPhone; on the web, a picker built in, no third-party scripts).
 - Direct chats' reactions are end-to-end encrypted, so only the apps check them. A group's are stored as plain text and the server allows only the six (`reactions.rs`, `EMOJI`): any emoji means checking that it's one emoji and nothing else (`text.rs`), or doing this with group reactions encrypted (Tracker: "Group chats: encrypt reactions"), when the server can't check at all. Every client must show an emoji it didn't offer.
-- "Multi reactions" may also mean more than one reaction per person on a message (today one each, replaced by the next): Nate's call.
+- **Decided (Nate, 2026-11-04):** "multi" means more emoji to choose from; still one reaction per person per message, replaced by the next.
 
 #### X50. Camera flash where the device has one
 - From Nate's intake (2026-11-04): "Camera flash where available." A flash button on the camera, off, on, or auto, shown only when the camera in use has a flash. The iPhone: the back camera's flash for photos, the light kept on while recording a video; the front camera may light the screen (as the system camera does). The web: the `torch` setting, where the browser offers it (Chrome on Android; not Safari on iPhone), otherwise no button.
