@@ -173,6 +173,7 @@ struct PicHeader: View {
                 Spacer(minLength: 12)
                 if let place { Text(place).font(.subheadline.monospacedDigit()) }
             }
+            .clearOfWindowControls(sizeToFit: true)  // the name moves over; "2 of 3" stays at the edge
             .foregroundStyle(.white)
             .shadow(color: .black.opacity(0.6), radius: 3)
             .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 24)
@@ -276,6 +277,21 @@ struct PicViewer: View {
         switch pic {
         case .direct: conversation.title
         case .group(let m): conversation.friendsById[m.senderId]?.name ?? m.senderName
+        }
+    }
+}
+
+extension View {
+    /// Out from under iPadOS's window controls: the dots at a window's top
+    /// leading corner, which an iPhone app run on an iPad has too (App Review
+    /// uses iPads sometimes). Toolbars move by themselves; buttons and words
+    /// placed there by hand need this. Elsewhere, and before iOS 26, nothing.
+    /// `sizeToFit` narrows the view by as much instead of moving all of it.
+    @ViewBuilder func clearOfWindowControls(sizeToFit: Bool = false) -> some View {
+        if #available(iOS 26.0, *) {
+            containerCornerOffset(.leading, sizeToFit: sizeToFit)
+        } else {
+            self
         }
     }
 }
