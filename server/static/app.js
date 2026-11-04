@@ -3200,16 +3200,31 @@ $("#composer").addEventListener("submit", async (e) => {
 // go, it waits as "Not sent" with Try again, and goes by itself as soon as
 // napsack is back online. (Unsent texts live only in this page: they're
 // never written to the device unencrypted.)
+//
+// Each chat's texts reach the server in the order they were written, since
+// the server's ids are the order everywhere (X40): a text goes only once the
+// one before it in the same chat has its answer. Writing stays instant, and
+// different chats still send side by side. One that fails holds the ones
+// after it until it's sent again or removed. (Pics go on their own.)
 const outbox = []; // { key: "d:<friend>" | "g:<group>", n, clientId, text, replyTo, status, error, send, done }
 let outboxCount = 0; // each item's `n`, which names its rows on screen
 
 function queueSend(item) {
   item.n = ++outboxCount;
+  item.status = "queued";
   outbox.push(item);
-  attemptSend(item);
+  redrawOutbox(item);
+  pumpOutbox(item.key);
+}
+
+/** Starts a chat's oldest text if it's waiting its turn; the rest wait for it. */
+function pumpOutbox(key) {
+  const first = outbox.find((x) => x.key === key);
+  if (first?.status === "queued") attemptSend(first);
 }
 
 async function attemptSend(item) {
+  if (item.status === "sending" || !outbox.includes(item)) return;
   item.status = "sending";
   item.error = null;
   redrawOutbox(item);
@@ -3232,10 +3247,13 @@ async function attemptSend(item) {
   redrawOutbox(item);
 }
 
+/** It's stored (or given up on): out of the outbox, and the chat's next one goes. */
 function settleSend(item) {
   const i = outbox.indexOf(item);
-  if (i >= 0) outbox.splice(i, 1);
+  if (i < 0) return;
+  outbox.splice(i, 1);
   redrawOutbox(item);
+  pumpOutbox(item.key);
 }
 
 /** One of mine arrived over the socket: if it's still in the outbox, it went through. */
@@ -3262,16 +3280,20 @@ function outboxItems(key, prevSender) {
   const waiting = outbox.filter((x) => x.key === key);
   const out = [];
   if (waiting.length && prevSender !== state.me.id) out.push(chatLine("sending-me", "sender mine", "Me"));
+  let held = false; // behind one that didn't send
   for (const item of waiting) {
     out.push({ key: `sending:${item.n}`, sig: item.text,
       make: () => el("li", { class: "msg mine pending" }, el("span", { class: "msg-body", text: item.text })) });
-    if (item.status === "sending") {
-      out.push(chatLine(`sending:${item.n}:status`, "msg-meta", "Sending…"));
+    if (item.status !== "failed") {
+      out.push(chatLine(`sending:${item.n}:status`, "msg-meta", held ? "Waiting for the text above." : "Sending…"));
       continue;
     }
+    held = true;
     const why = retryable(item.error) || !item.error?.message ? "Not sent: no connection." : `Not sent: ${item.error.message}`;
-    out.push({ key: `sending:${item.n}:status`, sig: `failed|${why}`,
-      make: () => el("li", { class: "msg-meta send-failed" }, `${why} `,
+    const after = waiting.length - waiting.indexOf(item) - 1;
+    const hold = after ? ` ${after === 1 ? "The text after it waits" : `The ${after} texts after it wait`} for it.` : "";
+    out.push({ key: `sending:${item.n}:status`, sig: `failed|${why}|${hold}`,
+      make: () => el("li", { class: "msg-meta send-failed" }, `${why}${hold} `,
         el("button", { type: "button", class: "link", onclick: () => attemptSend(item) }, "Try again"),
         " · ",
         el("button", { type: "button", class: "link", onclick: () => discardSend(item) }, "Remove")) });
