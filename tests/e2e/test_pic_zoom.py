@@ -69,6 +69,12 @@ async def main():
         await row(ben, ANA).click()
         await send_pics(ana, 2)
         await send_pics(ben, 2)
+        # A pic moves on by itself after its seconds (zoomed or not, on purpose), and
+        # on a slow machine these checks can take longer than that: long timers are
+        # stretched here, so the pic on screen is the one being checked.
+        for page in (ana, ben):
+            await page.evaluate("""() => { const real = window.setTimeout;
+              window.setTimeout = (fn, ms, ...rest) => real(fn, ms >= 5000 ? ms * 20 : ms, ...rest); }""")
 
         # Ben's phone: a pinch zooms in, about where the fingers are.
         await expect(ben.locator("button.snap-chip")).to_have_count(2, timeout=15000)
