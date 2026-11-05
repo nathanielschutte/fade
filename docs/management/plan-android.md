@@ -47,13 +47,14 @@ Every format producing exactly the web client's bytes, before anything leans on 
 | Live updates over the WebSocket (OkHttp), catching up after a reconnect | – | Planned | Mirrors iOS section 2, "Live updates" |
 | Reactions and edits; typing, "Seen" | – | Planned | Mirrors iOS section 2, "Reactions and edits", and section 8 |
 | Keeping chats on the phone, encrypted, for an instant list and offline | – | Planned | Mirrors iOS section 3, "Keeping chats on the phone" (`ResponseCache`) |
+| Texts of only emoji (one to four) large, without a bubble | – | Planned | Mirrors iOS section 8 ([X53](plan.md#x53-texts-of-only-emoji-large-and-without-a-bubble)) |
 
 ## 5. Pics and videos
 
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | The camera with CameraX: photos, holding to record video, zoom, flip, the front camera first | – | Planned | Mirrors iOS section 10, "The camera with AVFoundation", "Zoom", "The front camera first". Wants a real phone |
-| Review in place, captions anywhere, drawing | – | Planned | Mirrors iOS section 10, "Review in place", "Drawing and stickers" ([ios-drawing.md](../implementation/ios-drawing.md)) |
+| Review in place, captions anywhere, drawing | – | Planned | Mirrors iOS section 10, "Review in place", "Drawing and stickers" ([ios-drawing.md](../implementation/ios-drawing.md)); what's on screen is what's sent, and the caption's one look ([pic-framing.md](../implementation/pic-framing.md), X52, X54) |
 | Send to… several friends and groups at once | – | Planned | Mirrors iOS section 10, "Sending a pic or video to several" |
 | Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone; zoom and pan | – | Planned | Mirrors iOS section 10, "Opening pics and videos once", "Zoom and pan" |
 | Video encoded as the other apps send it (H.264/AAC MP4, Media3 Transformer) | – | Planned | Mirrors iOS section 10, "Video at 720p" ([video-quality.md](../design/video-quality.md)) |

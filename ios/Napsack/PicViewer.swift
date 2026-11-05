@@ -23,6 +23,8 @@ struct PicPage: View {
     @State private var photo: UIImage?
     @State private var problem: String?
     @State private var player: AVPlayer?
+    /// A video's picture size, upright: its caption sits on the video, not the screen.
+    @State private var videoSize: CGSize?
     @State private var shownAt: Date?
 
     /// Taps this soon after a pic appears don't count: a quick double tap
@@ -45,7 +47,12 @@ struct PicPage: View {
                     } else if let player {
                         // Videos don't zoom: they're short, and close at their end.
                         VideoPlayer(player: player).disabled(true)
-                            .overlay { PicCaption(text: opened.caption, y: opened.y) }
+                            .overlay {
+                                if let videoSize {
+                                    Color.clear.aspectRatio(videoSize, contentMode: .fit)  // the video's own place
+                                        .overlay { PicCaption(text: opened.caption, y: opened.y) }
+                                }
+                            }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -77,6 +84,7 @@ struct PicPage: View {
                 shownAt = Date()
                 onShown()
                 if let url = pic.video {
+                    videoSize = await VideoEncoder.uprightSize(url)
                     let player = AVPlayer(url: url)
                     self.player = player
                     player.play()
@@ -126,7 +134,9 @@ struct OpenedPhoto: View {
     }
 }
 
-/// A pic's caption where the sender put it (0 top, 1 bottom; the usual place if nil).
+/// A pic's caption where the sender put it (0 top, 1 bottom; CaptionLook's
+/// place if nil), drawn as it was written (CaptionLook), in a box the
+/// picture's size.
 struct PicCaption: View {
     let text: String
     let y: Double?
@@ -135,12 +145,8 @@ struct PicCaption: View {
         if !text.isEmpty {
             GeometryReader { geo in
                 Text(text)
-                    .font(.title3).foregroundStyle(.white).multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 16)
-                    .frame(width: geo.size.width)
-                    .position(x: geo.size.width / 2, y: geo.size.height * CGFloat(y ?? 0.8))
+                    .captionStrip(width: geo.size.width)
+                    .position(x: geo.size.width / 2, y: CaptionLook.middle(y ?? CaptionLook.unplaced, text: text, picture: geo.size))
             }
         }
     }

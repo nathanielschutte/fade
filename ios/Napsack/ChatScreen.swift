@@ -775,6 +775,25 @@ struct BubbleView: View {
     /// letters a line, however wide the screen (the Duo's open one is 669
     /// points). It grows with the text, so a line holds about as many words.
     @ScaledMetric(relativeTo: .body) private var readable = 480.0
+    /// A text of only emoji (X53): one at this size, two to four a little smaller.
+    @ScaledMetric(relativeTo: .body) private var bigEmoji = 48.0
+
+    /// How many emoji a text is, if it's nothing but one to four of them
+    /// (spaces between are fine): shown large, without a bubble. Anything
+    /// else in it, or more of them, and it's an ordinary text. Each is held
+    /// to the reactions' rule (E2E.isReaction), and one that's usually shown
+    /// as a plain symbol (©, ™, an arrow) only with its emoji form (U+FE0F).
+    static func emojiOnly(_ text: String) -> Int? {
+        var count = 0
+        for c in text where !c.isWhitespace {
+            let scalars = c.unicodeScalars
+            guard E2E.isReaction(String(c)),
+                  scalars.count > 1 || scalars.first?.properties.isEmojiPresentation == true else { return nil }
+            count += 1
+            if count > 4 { return nil }
+        }
+        return count > 0 ? count : nil
+    }
 
     var body: some View {
         switch bubble.content {
@@ -790,7 +809,7 @@ struct BubbleView: View {
                     if let sender = bubble.sender {
                         Text(sender).font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.horizontal, 4)
                     }
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: emoji != nil && bubble.mine ? .trailing : .leading, spacing: 4) {
                         if let quote {
                             Text(quote).font(.caption).lineLimit(2).foregroundStyle(.secondary)
                                 .padding(.leading, 8)
@@ -798,8 +817,8 @@ struct BubbleView: View {
                         }
                         content
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(bubble.mine ? Color.accentColor.opacity(0.3) : Color(.secondarySystemBackground),
+                    .padding(.horizontal, emoji == nil ? 12 : 4).padding(.vertical, emoji == nil ? 8 : 2)
+                    .background(emoji != nil ? Color.clear : bubble.mine ? Color.accentColor.opacity(0.3) : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if showTime || !bubble.reactions.isEmpty {
                         HStack(spacing: 4) {
@@ -830,11 +849,20 @@ struct BubbleView: View {
         }
     }
 
+    /// How many emoji the text is, when it's shown large (emojiOnly).
+    private var emoji: Int? {
+        if case .text(let text, _) = bubble.content { Self.emojiOnly(text) } else { nil }
+    }
+
     @ViewBuilder private var content: some View {
         switch bubble.content {
         case .text(let text, let edited):
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ChatLink.linked(text, site: ownSite))
+            VStack(alignment: emoji != nil && bubble.mine ? .trailing : .leading, spacing: 2) {
+                if let emoji {
+                    Text(text).font(.system(size: emoji == 1 ? bigEmoji : bigEmoji * 0.75))
+                } else {
+                    Text(ChatLink.linked(text, site: ownSite))
+                }
                 if edited { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
             }
         case .media(let words):

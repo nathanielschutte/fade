@@ -142,7 +142,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 **Web app** (`server/static/`):
 - `index.html` (every screen and dialog, mostly hidden until used), `style.css`, and `app.js`, one file split into sections marked `// ---------- name ----------` (auth, conversation, groups, profiles, friends, notifications, ...). Search for the section, not the line number. `el(...)` builds elements, `$(...)` finds one, `api`/`getJSON` call the server, `report(...)` sends a diagnostic to the log viewer.
 - `admin.html` and `admin.js`: the System page.
-- Smaller modules: `keystore.js` (keys in IndexedDB), `draw.js` (drawing on pics), `qr.js` (invite QR codes), `emoji.js` (the reaction picker's list of every emoji, made from Unicode's `emoji-test.txt`), `graph-view.js` (drawing the friend map), `sw.js` (the service worker: notifications).
+- Smaller modules: `keystore.js` (keys in IndexedDB), `draw.js` (drawing on pics), `qr.js` (invite QR codes), `emoji.js` (the reaction picker's list of every emoji, made from Unicode's `emoji-test.txt`), `emoji-only.js` (which texts are only emoji, shown large), `graph-view.js` (drawing the friend map), `sw.js` (the service worker: notifications).
 
 **Shared** (`shared/`): `crypto/crypto.js` is the whole encryption scheme as the web app runs it, and the reference the native apps' own implementations are held to; `vector-checks.js` proves a client gets the pinned bytes right. `graph/graph.js` is the friend map's math (clusters, layout).
 

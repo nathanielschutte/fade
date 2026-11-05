@@ -190,10 +190,11 @@ import UIKit
         for changed in [MadeReady.Content(strokes: [], caption: "hello", y: 0.75, muted: false),
                         MadeReady.Content(strokes: [line], caption: "hi", y: 0.75, muted: false),
                         MadeReady.Content(strokes: [], caption: "hi", y: 0.3, muted: false),
-                        MadeReady.Content(strokes: [], caption: "hi", y: 0.75, muted: true)] {
+                        MadeReady.Content(strokes: [], caption: "hi", y: 0.75, muted: true),
+                        MadeReady.Content(strokes: [], caption: "hi", y: 0.75, muted: false, crop: CGRect(x: 0, y: 0, width: 10, height: 10))] {
             #expect(MadeReady.reusing(first, for: changed, make: make).ready != first.ready)
         }
-        #expect(made == 5)
+        #expect(made == 6)
     }
 
     /// From a chat's camera, "To Ben +" is there while the chat is one a pic
