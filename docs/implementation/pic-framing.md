@@ -11,7 +11,7 @@ Recipients see the whole photo they're sent, as large as it fits (letterboxed on
 - **A photo just taken** is shown as the camera showed it. Where that's the photo filling the screen (the iPhone: aspect fill), it's cropped to the screen's shape, centered, before it's sent. Where the camera shows the whole frame (the web: `object-fit: contain`), nothing's cut. It can't be zoomed or moved (Nate).
 - **A photo from the library** starts whole, as large as it fits. A pinch zooms it, 1× to 4× (on a computer, the trackpad's pinch or Ctrl/⌘ with the scroll wheel), and once zoomed, a drag moves it, kept so no gap opens where the photo is larger than the screen. What's sent is the part of the photo on screen: where the photo and the screen overlap. Zoomed all the way out, that's the whole photo.
 - **Drawing** (and stickers on the web) are kept in the photo's pixels, so they move with it as it's zoomed. They're flattened into the photo first, then it's cropped.
-- What's sent is still at most 1280 pixels on its longest side; a crop is never scaled up.
+- What's sent is still at most 1280 pixels on its longest side; a crop is never scaled up. On the web it's cut from the picked file itself, not the smaller copy made when it was picked, so a zoomed-in crop stays sharp.
 - **Videos** aren't cropped yet: the iPhone shows a video filling the screen but sends the whole frame (X55).
 
 ## The caption

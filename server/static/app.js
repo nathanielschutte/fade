@@ -9,6 +9,7 @@ import * as cache from "/cache.js";
 import { qrSvg } from "/qr.js";
 import { markEnvironment, withEnvironment } from "/env.js";
 import { createDrawing } from "/draw.js";
+import { emojiOnly } from "/emoji-only.js";
 import { chatName as mapChatName, chatSummary, drawGraph, groupLetter, isChat, widthChanged } from "/graph-view.js";
 
 // "napsack (staging)" on a non-production copy (env.js), set at boot.
@@ -3185,7 +3186,13 @@ function renderMessages() {
 }
 
 /** A text's words, for bubbleItems. */
-const bodyContent = (text) => ({ sig: `body|${text}`, make: () => [el("span", { class: "msg-body" }, textNodes(text))] });
+const bodyContent = (text) => ({ sig: `body|${text}`, look: emojiLook(text), make: () => [el("span", { class: "msg-body" }, textNodes(text))] });
+
+/** A text of only one to four emoji shows them large, without the bubble (X53); else nothing special. */
+function emojiLook(text) {
+  const n = emojiOnly(text, e2e.isReaction);
+  return n === 1 ? "emoji-only one" : n ? "emoji-only" : "";
+}
 
 /** A direct pic or video: tap to view it, or what became of it. */
 function snapContent(m, mine) {
@@ -3372,7 +3379,7 @@ function outboxItems(key, prevSender) {
   let held = false; // behind one that didn't send
   for (const item of waiting) {
     out.push({ key: `sending:${item.n}`, sig: item.text,
-      make: () => el("li", { class: "msg mine pending" }, el("span", { class: "msg-body", text: item.text })) });
+      make: () => el("li", { class: `msg mine pending ${emojiLook(item.text)}` }, el("span", { class: "msg-body", text: item.text })) });
     if (item.status !== "failed") {
       out.push(chatLine(`sending:${item.n}:status`, "msg-meta", held ? "Waiting for the text above." : "Sending…"));
       continue;
@@ -3512,7 +3519,7 @@ function bubbleItems(m, mine, content, byId) {
         parts.push(el("button", { type: "button", class: "edited-mark", "aria-label": "Edited. See every version", onclick: () => showEdits(liveMessage(m)) }, "Edited"));
       }
       return el("li", {
-        class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""}`,
+        class: `msg ${mine ? "mine" : ""} ${open ? "has-actions" : ""} ${content.look ?? ""}`,
         "data-key": key,
         onclick: (e) => {
           if (e.target.closest("button, a")) return;
@@ -4882,6 +4889,7 @@ function groupContent(m, mine) {
   const chip = m.pic ? groupPicLabel(m, mine) : null;
   return {
     sig: JSON.stringify(["group", chip, m.body ?? ""]),
+    look: chip ? "" : emojiLook(m.body),
     make: () => [
       chip && (chip.canOpen
         ? el("button", { type: "button", class: "snap-chip", onclick: () => openPics(liveMessage(m)) },
@@ -6642,19 +6650,25 @@ const drawing = createDrawing({
   penButton: $("#draw-pen"), colors: $("#draw-colors"), sizeButton: $("#draw-size"),
   stickerButton: $("#draw-sticker"), stickerTray: $("#sticker-tray"),
   bigger: $("#sticker-bigger"), smaller: $("#sticker-smaller"), undoButton: $("#draw-undo"),
+  onView: () => layoutCaption(), // zoomed, moved, or resized: the caption spans what's on screen
 });
 
-function showDrawing(on) {
+/** `zoomable`: a photo from the library, which can be zoomed and moved before it's sent (X52). */
+function showDrawing(on, zoomable = false) {
   for (const id of ["#draw-layer", "#sticker-layer", "#draw-tools"]) $(id).hidden = !on;
-  drawing.reset();
+  drawing.reset({ zoomable });
 }
 
-/** The photo to send: as taken, or with the drawing flattened into it and compressed again. */
+/**
+ * The photo to send: as taken, or (drawn on, or zoomed in) the part on
+ * screen with the drawing flattened into it, compressed again. What's sent
+ * is what the sender saw (docs/implementation/pic-framing.md).
+ */
 async function finalPhoto() {
-  if (!drawing.hasMarks()) return new Uint8Array(await camera.blob.arrayBuffer());
-  const flat = drawing.flatten();
+  if (!drawing.hasMarks() && !drawing.cropped()) return new Uint8Array(await camera.blob.arrayBuffer());
+  const flat = drawing.flatten(MAX_EDGE);
   const blob = await compressPhoto(flat, flat.width, flat.height);
-  report("debug", "pic drawn on", { bytes: blob.size });
+  report("debug", "pic drawn on or cropped", { bytes: blob.size, size: `${flat.width}x${flat.height}` });
   return new Uint8Array(await blob.arrayBuffer());
 }
 
@@ -6696,11 +6710,16 @@ function clearPreview() {
   showDrawing(false);
 }
 
-function showPreview(blob, videoType = null) {
+/**
+ * What was taken or picked, ready to send. `original`: a photo from the
+ * library, shown from its own file (sharper when zoomed in, and what a crop
+ * is cut from); `blob` is it made small, what's sent when it isn't cropped.
+ */
+function showPreview(blob, videoType = null, original = null) {
   clearPreview();
   camera.blob = blob;
   camera.videoType = videoType;
-  camera.previewUrl = URL.createObjectURL(blob);
+  camera.previewUrl = URL.createObjectURL(original ?? blob);
   if (videoType) {
     // Drawing and stickers are for photos; a video loops, with its sound.
     const played = $("#camera-preview-video");
@@ -6709,9 +6728,9 @@ function showPreview(blob, videoType = null) {
     played.play().catch(() => { played.muted = true; played.play().catch(() => {}); });
   } else {
     const img = $("#camera-preview");
+    showDrawing(true, Boolean(original)); // only a photo from the library zooms: one just taken shows as the camera did
     img.src = camera.previewUrl;
     img.hidden = false;
-    showDrawing(true);
   }
   $("#camera-video").hidden = true;
   cameraMessage("");
@@ -6880,7 +6899,7 @@ $("#file-input").addEventListener("change", async (e) => {
     return;
   }
   try {
-    showPreview(await compressPhoto(bitmap, bitmap.width, bitmap.height));
+    showPreview(await compressPhoto(bitmap, bitmap.width, bitmap.height), null, file);
   } catch (err) {
     cameraMessage(err.message);
   } finally {
@@ -6888,23 +6907,42 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
-// The caption box grows with what's typed (style.css caps it at four lines),
-// and says how much room is left once there's little.
+// The caption grows with what's typed, up to five lines at its size on the
+// picture (anything that would make a sixth is refused), and says how much
+// room is left of its 200 characters once there's little.
 const CAPTION_MAX = 200;
+const CAPTION_LINES = 5;
+let captionKept = { value: "", at: 0 }; // the last caption that fit, and where the cursor was
 function fitCaption() {
   const input = $("#snap-caption");
-  // Enter sends, so a caption is one paragraph: pasted line breaks become spaces.
-  if (/[\r\n]/.test(input.value)) input.value = input.value.replace(/[\r\n]+/g, " ");
+  // Enter finishes it, so a caption is one paragraph: pasted line breaks become spaces.
+  if (/[\r\n]/.test(input.value)) {
+    const at = input.value.slice(0, input.selectionStart).replace(/[\r\n]+/g, " ").length;
+    input.value = input.value.replace(/[\r\n]+/g, " ");
+    input.setSelectionRange(at, at);
+  }
   input.style.height = "auto";
-  input.style.height = `${input.scrollHeight + 2}px`; // + the borders (border-box)
+  if (input.offsetParent && captionLines(input) > CAPTION_LINES) {
+    input.value = captionKept.value;
+    input.setSelectionRange(captionKept.at, captionKept.at);
+  }
+  captionKept = { value: input.value, at: input.selectionStart };
+  input.style.height = `${input.scrollHeight}px`;
   const used = [...input.value].length;
   const count = $("#snap-caption-count");
   count.hidden = used < CAPTION_MAX - 40;
   count.textContent = `${used}/${CAPTION_MAX}`;
   count.classList.toggle("full", used >= CAPTION_MAX);
 }
+/** How many lines the caption takes as it's drawn now (its height is "auto": one line, scrolling). */
+function captionLines(input) {
+  const css = getComputedStyle(input);
+  const line = parseFloat(css.fontSize) * 1.25;
+  return Math.round((input.scrollHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom)) / line);
+}
 function clearCaption() {
   $("#snap-caption").value = "";
+  captionKept = { value: "", at: 0 };
   $("#snap-caption-box").hidden = true;
   $("#snap-caption-box").classList.remove("editing");
   $("#caption-hint").hidden = true;
@@ -6920,30 +6958,67 @@ $("#snap-caption").addEventListener("input", fitCaption);
 // it sits travels with the picture, sealed in with it (formats 4 to 7).
 const CAPTION_EDGE = 0.08; // never so close to an edge it's cut off
 
-/** Where the picture is drawn in the stage (it's letterboxed): `y` is a fraction of that, as the viewer shows it. */
+/**
+ * The picture as it shows on the stage, on screen: a video letterboxed, a
+ * photo letterboxed and perhaps zoomed (then just the part on screen, which is
+ * what's sent). `y` is a fraction of its height, as the viewer shows it.
+ */
 function previewRect() {
-  const media = camera.videoType ? $("#camera-preview-video") : $("#camera-preview");
+  const stage = $(".camera-stage").getBoundingClientRect();
+  if (!camera.videoType) {
+    const v = drawing.visible();
+    return { left: stage.left + v.left, top: stage.top + v.top, width: v.width, height: v.height };
+  }
+  const media = $("#camera-preview-video");
   const box = media.getBoundingClientRect();
-  const w = media.naturalWidth || media.videoWidth || box.width, h = media.naturalHeight || media.videoHeight || box.height;
-  const scale = Math.min(box.width / w, box.height / h);
-  return { top: box.top + (box.height - h * scale) / 2, height: h * scale };
+  const r = containedRect(media, box.width, box.height);
+  return { left: box.left + r.left, top: box.top + r.top, width: r.width, height: r.height };
+}
+
+/** Where a letterboxed (object-fit: contain) picture or video is drawn in its box of `w` x `h`. */
+function containedRect(media, w, h) {
+  const nw = media.naturalWidth || media.videoWidth || w, nh = media.naturalHeight || media.videoHeight || h;
+  const scale = Math.min(w / nw, h / nh);
+  return { left: (w - nw * scale) / 2, top: (h - nh * scale) / 2, width: nw * scale, height: nh * scale };
+}
+
+/**
+ * Draws a caption strip by the one rule every client follows
+ * (docs/implementation/pic-framing.md, "The caption"): across the picture's
+ * whole width, its middle at `y` of the picture's height, its text sized by
+ * that width (style.css reads --pic-w). `pic` is in `el`'s parent's coordinates.
+ */
+function stripOnPicture(el, pic, y) {
+  el.style.left = `${pic.left}px`;
+  el.style.width = `${pic.width}px`;
+  el.style.top = `${pic.top + y * pic.height}px`;
+  el.style.setProperty("--pic-w", `${pic.width}px`);
 }
 
 function placeCaption(y) {
   camera.captionY = Math.min(1 - CAPTION_EDGE, Math.max(CAPTION_EDGE, y));
+  layoutCaption();
+}
+
+/** The caption on the stage, where it sits on the picture; again whenever the picture moves or changes size. */
+function layoutCaption() {
+  if (camera.captionY == null || $("#snap-caption-box").hidden) return;
   const pic = previewRect();
   const stage = $(".camera-stage").getBoundingClientRect();
-  $("#snap-caption-box").style.top = `${pic.top - stage.top + camera.captionY * pic.height}px`;
+  stripOnPicture($("#snap-caption-box"), { ...pic, left: pic.left - stage.left, top: pic.top - stage.top }, camera.captionY);
+  fitCaption();
 }
+// A video's size, or the window's, can change while its caption is on it (a photo's is drawing's onView).
+new ResizeObserver(() => { if (camera.videoType) layoutCaption(); }).observe($(".camera-stage"));
+$("#camera-preview-video").addEventListener("loadedmetadata", () => layoutCaption());
 
 function editCaption() {
   const box = $("#snap-caption-box");
   box.hidden = false;
   box.classList.add("editing");
   $("#caption-hint").hidden = true;
-  const input = $("#snap-caption");
-  input.focus();
-  fitCaption();
+  layoutCaption();
+  $("#snap-caption").focus();
 }
 
 /** Typing's done: the caption stays where it is, or goes away if it's empty. */
@@ -7286,7 +7361,7 @@ wideLayout.addEventListener("change", () => { if (wideLayout.matches) closeProfi
 // decode, or a tap before it appears never loses one; it stays unopened, to
 // try again. Stopping halfway (Escape, or leaving the app) leaves the rest
 // unopened too.
-const viewer = { url: null, timer: null, run: null, loading: false, shownAt: 0, after: null };
+const viewer = { url: null, timer: null, run: null, loading: false, shownAt: 0, after: null, captionY: null };
 // Taps this soon after a pic appears don't count: a quick double tap
 // shouldn't skip past a pic nobody saw.
 const TAP_GUARD_MS = 600;
@@ -7559,24 +7634,23 @@ async function showInViewer({ blob, video = false, from, caption = "", y = null 
   return true;
 }
 
-/** Puts the caption at `y` (0 top to 1 bottom) of the picture as shown, or the default place. */
+/**
+ * Puts the caption on the picture as shown, at `y` (0 top to 1 bottom); a
+ * pic sent before there was a `y` has it at 0.8. The strip is drawn by the
+ * rule every client follows (stripOnPicture), in the stage's own coordinates,
+ * so it zooms with the picture.
+ */
+const CAPTION_Y = 0.8;
 function placeViewerCaption(y) {
+  viewer.captionY = y;
   const cap = $("#viewer-caption");
-  cap.classList.toggle("placed", y != null);
-  if (y == null) {
-    cap.style.top = "";
-    return;
-  }
+  if (cap.hidden) return;
   const media = $("#viewer-video").hidden ? $("#viewer-image") : $("#viewer-video");
-  const box = media.getBoundingClientRect();
-  const stage = $("#viewer").getBoundingClientRect();
-  // The picture is letterboxed (object-fit: contain): find where it's drawn.
-  const natW = media.naturalWidth || media.videoWidth || box.width;
-  const natH = media.naturalHeight || media.videoHeight || box.height;
-  const scale = Math.min(box.width / natW, box.height / natH);
-  const drawnTop = box.top + (box.height - natH * scale) / 2;
-  cap.style.top = `${drawnTop - stage.top + y * natH * scale}px`;
+  // The stage's layout before its zoom: offsets, not on-screen rects.
+  const r = containedRect(media, media.offsetWidth, media.offsetHeight);
+  stripOnPicture(cap, { ...r, left: media.offsetLeft + r.left, top: media.offsetTop + r.top }, y ?? CAPTION_Y);
 }
+window.addEventListener("resize", () => { if (viewer.url) placeViewerCaption(viewer.captionY); });
 
 /** Loads a video far enough to play. False if it can't be played here. */
 function loadVideo(player, url) {
