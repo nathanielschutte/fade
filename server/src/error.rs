@@ -11,7 +11,8 @@ pub enum AppError {
     BadRequest(String),
     Unauthorized,
     /// Signed in, and the request is understood, but this account may never
-    /// do it (an Admin deleting their account: deletion.rs).
+    /// do it, or not to that account: an Admin deleting their own account
+    /// (deletion.rs), or acting on another Admin (admin_users.rs).
     Forbidden(String),
     NotFound(String),
     Conflict(String),

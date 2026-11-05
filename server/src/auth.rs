@@ -364,6 +364,13 @@ pub async fn register(
     {
         return Err(AppError::bad("That username is taken."));
     }
+    // A name on the admin list that nobody has yet would make whoever took it
+    // an Admin. Only development, tests, and staging's test machines (local)
+    // make their listed Admins by signing up (usernames.rs).
+    if crate::usernames::reserved_for_admin(&state.admins, &username, who.local) {
+        tracing::warn!(ip = %who.ip, ?username, "sign-up refused: username is on the admin list");
+        return Err(AppError::bad("That username is taken."));
+    }
     if crate::guard::accounts_full(&state.db, state.config.limits.max_accounts).await? {
         tracing::warn!(ip = %who.ip, max = state.config.limits.max_accounts, "sign-up refused: account cap reached");
         return Err(AppError::Unavailable(

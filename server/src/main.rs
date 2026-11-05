@@ -810,12 +810,17 @@ async fn load_admins(state: SharedState) {
         match state.admins.reload().await {
             Ok(count) => tracing::info!(admins = count, "admin list loaded"),
             Err(e) => {
-                tracing::error!(error = %e, admins = state.admins.count(), "loading the admin list failed; using FADE_ADMINS only")
+                tracing::error!(error = %e, admins = state.admins.count(), "loading the admin list failed; using FADE_ADMINS only");
+                state.admins.warn_about_names();
             }
         }
     }
     if state.admins.count() == 0 {
         tracing::info!("no admins set; the System pages are off for everyone but PowerUsers");
+    }
+    // A reload warns by itself; without a parameter, FADE_ADMINS is all there is.
+    if !state.admins.has_param() {
+        state.admins.warn_about_names();
     }
     #[cfg(unix)]
     tokio::spawn(async move {

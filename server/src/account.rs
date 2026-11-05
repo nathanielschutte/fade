@@ -224,6 +224,14 @@ pub async fn rename(
     if !usernames::available_to(&state.db, me.id, &username).await? {
         return Err(AppError::bad("That username is taken."));
     }
+    // A name on the admin list would make its taker an Admin, unless it's
+    // their own old name (and so already theirs).
+    if state.admins.contains(&username)
+        && usernames::past_holder(&state.db, &username).await? != Some(me.id)
+    {
+        tracing::warn!(user_id = me.id, to = ?username, "rename refused: username is on the admin list");
+        return Err(AppError::bad("That username is taken."));
+    }
     let hash = hash_secret(req.new_auth_key).await?;
     let mut tx = crate::db::write_tx(&state.db).await?;
     // The credentials change exactly as in a password change (the username
@@ -492,6 +500,10 @@ pub async fn issue_reset_code(
             "That's napsack's own account: it has no password.",
         ));
     }
+    // A reset code is a way into the account, handed to whoever asks for it,
+    // so never for an Admin's: one Admin's session (stolen, say) can't take
+    // over another Admin, or keep its own account after a password change.
+    crate::admin_users::refuse_if_admin(&state, &me, user, &username, "reset_code").await?;
     let code = new_code();
     let at = now();
     let mut tx = crate::db::write_tx(&state.db).await?;
