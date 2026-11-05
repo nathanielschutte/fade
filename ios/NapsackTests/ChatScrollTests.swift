@@ -21,13 +21,15 @@ import UIKit
         var all: [[String: Any]] = []
     }
 
-    init(texts: Int, size: CGSize = CGSize(width: 402, height: 874)) async throws {
+    /// `text`: the text size it's drawn at; `words`: each text's words, by its number (from 1).
+    init(texts: Int, size: CGSize = CGSize(width: 402, height: 874), insets: UIEdgeInsets? = nil, text: DynamicTypeSize = .large,
+         words: ((Int) -> String)? = nil) async throws {
         let list = self.list
         let key = try list.pairKey
         messages = Messages()
         for n in 1...texts {
             let mine = n % 3 == 0
-            let words = n % 7 == 0 ? "Message \(n).\nA second line.\nAnd a third." : "Message \(n)."
+            let words = words?(n) ?? (n % 7 == 0 ? "Message \(n).\nA second line.\nAnd a third." : "Message \(n).")
             let sealed = try E2E.encryptText2(key, words, replyTo: nil, sender: mine ? 3 : 7, recipient: mine ? 7 : 3)
             var m = list.message(from: mine ? 3 : 7, to: mine ? 7 : 3, ciphertext: sealed, format: 2, id: Int64(n))
             m["created_at"] = 1_793_300_000 + n
@@ -54,8 +56,16 @@ import UIKit
         window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         let screen = NavigationStack { ChatScreen(conversation: conversation) }.environment(session).environment(live)
-        window.rootViewController = UIHostingController(rootView: screen)
+            .environment(\.dynamicTypeSize, text)
+        let host = UIHostingController(rootView: screen)
+        window.rootViewController = host
         window.makeKeyAndVisible()
+        if let insets {  // as Hosted does: a phone's safe area, past the Simulator's own
+            window.layoutIfNeeded()
+            let own = window.safeAreaInsets
+            host.additionalSafeAreaInsets = UIEdgeInsets(top: max(0, insets.top - own.top), left: 0,
+                                                         bottom: max(0, insets.bottom - own.bottom), right: 0)
+        }
         try await until("the chat loaded") { self.conversation.loaded && self.scroll != nil }
         await settle()
     }

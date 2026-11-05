@@ -102,8 +102,7 @@ async def main():
         print("drew a line, undid another, placed and resized a sticker, sent")
 
         # Ben opens it: the red line is in the photo itself; the undone one isn't.
-        await ben.locator(".chat-item", has_text=ANA).click()
-        await ben.locator("button.snap-chip").first.click()
+        await ben.locator(".chat-item", has_text=ANA).click()  # from the list (X41)
         for _ in range(100):  # (the page's CSP forbids wait_for_function's eval)
             if await ben.evaluate("(() => { const i = document.querySelector('#viewer-image'); return i.complete && i.naturalWidth > 0; })()"):
                 break
@@ -114,6 +113,10 @@ async def main():
         assert abs(r2 - g2) < 20 and abs(g2 - b2) < 20 and 90 < r2 < 170, f"undone, so still gray: {(r2, g2, b2)}"
         await asyncio.sleep(0.7)  # past the tap guard
         await ben.click("#viewer")
+        await expect(ben.locator("#viewer")).to_be_hidden()
+        await expect(ben.locator(".chat-item", has_text=ANA).locator(".chat-status")).to_have_text("Pic viewed", timeout=10000)
+        await ben.locator(".chat-item", has_text=ANA).click()  # now it opens the chat
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)
         print("the friend's photo has the drawing flattened in")
 
         # On a phone the toolbar fits and nothing scrolls sideways.

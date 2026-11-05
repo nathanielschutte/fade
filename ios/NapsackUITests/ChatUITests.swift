@@ -69,6 +69,11 @@ import XCTest
         var chat = try XCTUnwrap(Self.chat)
         try openChat(chat)
         try expectInSight(chat.newest, "opening the chat")
+        // The composer's buttons are a finger's worth to tap (ios-onboarding.md, screen sizes: 44 × 44 at least).
+        for name in ["Camera", "Send a photo", "Send"] {
+            let frame = app.buttons[name].firstMatch.frame
+            try require(frame.width >= 44 && frame.height >= 44, "\(name) is at least 44 × 44 points: \(frame.size)")
+        }
 
         composer.tap()
         try require(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard came up")

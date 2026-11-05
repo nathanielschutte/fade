@@ -2042,7 +2042,9 @@ function chatStatus(chat) {
     const label = mine
       ? { pending: `Sent a ${w}`, opened: `${W} opened`, expired: `${W} expired unopened` }
       : { opened: `${W} viewed`, expired: `${W} expired` };
-    return { text: label[m.snap_state] || W };
+    // A text from before it can still be unread (the server's count): its
+    // pics viewed from the list (X41), say, or a pic sent from the camera.
+    return { text: label[m.snap_state] || W, marker: chatUnreadShown(chat) > 0 ? "text" : null };
   }
   const body = m.text ?? "Encrypted message";
   if (!mine && !m.read_at && !readingNow("d", chat.id)) return { text: body, marker: "text" };
@@ -2063,7 +2065,8 @@ function preview(text) {
 // answer with a pic. On a computer the first click opens the chat at once (the
 // list stays in view); a second click on the same spot within DOUBLE_TAP_MS
 // opens the camera instead of doing anything else there. A click elsewhere is
-// just a click. Phones wait a moment first (`tapOnPhone`).
+// just a click. Phones wait a moment first (`tapOnPhone`). A row whose newest
+// message is a pic waiting from them shows the pics instead (`tapPics`).
 const DOUBLE_TAP_MS = 350;
 const DOUBLE_TAP_PX = 40;
 const cameraTap = { up: null, click: null, timer: null };
@@ -2135,6 +2138,31 @@ function clearPendingTap() {
   pendingTap.key = pendingTap.button = null;
 }
 
+/**
+ * A tap on a row whose newest message is a pic or video waiting from them
+ * (X41): the chat's waiting pics, shown over the list, which is where you are
+ * after. Seeing one opens it for good, so on a computer as on a phone this
+ * waits out a double tap first (the chat with the camera up, as any row's),
+ * and nothing is fetched but the chat's newest messages meanwhile. The
+ * keyboard has no second tap to wait for.
+ */
+function tapPics(button, key, p, e) {
+  disarmCameraTap();
+  if (e.detail === 0) return p.showPics();
+  const second = pendingTap.key === key;
+  clearPendingTap();
+  if (second) return cameraAfter(p.onclick());
+  button.classList.add("tapped");
+  pendingTap.key = key;
+  pendingTap.button = button;
+  const page = p.loadPics();
+  page.catch(() => {}); // a double tap after all: nobody waits for it
+  pendingTap.timer = setTimeout(() => {
+    clearPendingTap();
+    p.showPics(page);
+  }, DOUBLE_TAP_MS);
+}
+
 function disarmCameraTap() {
   clearTimeout(cameraTap.timer);
   if (cameraTap.up) document.removeEventListener("pointerup", cameraTap.up, true);
@@ -2148,10 +2176,18 @@ function chatRow(p) {
   const { onclick, group, avatar, actions = [], muted = false } = p;
   // Muted: no unread dot or bold (paintRow), and a 🔕 by the name.
   const name = muted ? `${p.name} 🔕` : p.name;
+  const key = `${group ? "g" : "d"}:${name}`;
   // While a row is swiped open, a tap anywhere on the list just closes it.
   const open = (e) => {
     if (rowSwipe.open) return closeSwipedRow();
-    if (e.detail > 0 && !wideLayout.matches) return tapOnPhone(e.currentTarget, `${group ? "g" : "d"}:${name}`, onclick, e);
+    // Decided by what the row holds now, not when it was drawn.
+    if (p.opensPics?.()) return tapPics(e.currentTarget, key, p, e);
+    if (e.detail > 0 && !wideLayout.matches) return tapOnPhone(e.currentTarget, key, onclick, e);
+    if (e.detail > 0 && pendingTap.key === key) { // the second tap, the pic gone meanwhile: still a double tap
+      clearPendingTap();
+      return cameraAfter(onclick());
+    }
+    clearPendingTap();
     const opening = onclick();
     if (e.detail > 0) armCameraTap(opening, e); // a tap or click, not the keyboard
   };
@@ -2162,7 +2198,8 @@ function chatRow(p) {
       el("span", { class: "chat-text" },
         group ? el("span", { class: "visually-hidden", text: "Group: " }) : null,
         el("span", { class: "chat-name", text: name }),
-        el("span", { class: "chat-status" })),
+        el("span", { class: "chat-status" }),
+        el("span", { class: "chat-hint" })),
       el("span", { class: "chat-time" }),
     ),
     actions.length ? el("div", { class: "row-actions" }, ...actions.map((a) =>
@@ -2177,7 +2214,7 @@ function chatRow(p) {
 }
 
 /** Brings a row up to date in place: its latest message, time, unread marker, and whether it's the open chat. */
-function paintRow(li, { status, time, current, group, muted = false }) {
+function paintRow(li, { status, time, current, group, muted = false, picsHint = "" }) {
   const marker = muted ? null : status.marker;
   const button = li.firstElementChild;
   button.classList.toggle("is-muted", Boolean(muted));
@@ -2190,6 +2227,8 @@ function paintRow(li, { status, time, current, group, muted = false }) {
   set(button.querySelector(".marker"), "className", `marker ${marker || ""}`);
   set(button.querySelector(".chat-status"), "textContent", preview(status.text));
   set(button.querySelector(".chat-time"), "textContent", time ? relTime(time) : "");
+  // For screen readers: what a tap does when it isn't opening the chat (X41).
+  set(button.querySelector(".chat-hint"), "textContent", picsHint);
 }
 
 // Row action icons. A computer shows just these (small, over the time); a
@@ -2294,6 +2333,10 @@ function chatRowProps(chat) {
     time: chat.last_message?.created_at,
     current: id === state.activeId,
     onclick: () => openChat(id),
+    opensPics: () => chatOpensPics(chatById(id)),
+    loadPics: () => getJSON(`/chats/${id}/messages?limit=${pageSize()}`),
+    showPics: (page) => picsFromList("d", id, page),
+    picsHint: chatOpensPics(chat) ? picsHint(chat.last_message) : "",
     avatar: () => el("span", { class: `avatar-wrap ${chat.active_now ? "online" : ""}` },
       paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), chat)),
     avatarSig: [Boolean(chat.active_now), name, chat.avatar_id ?? null],
@@ -2315,6 +2358,10 @@ function groupRowProps(g) {
     name: g.name, status: groupStatus(g), time: g.last_message?.created_at, group: true,
     current: id === state.activeGroupId,
     onclick: () => openGroup(id),
+    opensPics: () => groupOpensPics(groupById(id)),
+    loadPics: () => getJSON(`/groups/${id}/messages?limit=${pageSize()}`),
+    showPics: (page) => picsFromList("g", id, page),
+    picsHint: groupOpensPics(g) ? picsHint(g.last_message) : "",
     avatar: () => el("span", { class: "avatar-wrap" },
       paintGroupAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), g)),
     avatarSig: [g.name, g.avatar_id ?? null],
@@ -7111,26 +7158,114 @@ wideLayout.addEventListener("change", () => { if (wideLayout.matches) closeProfi
 // decode, or a tap before it appears never loses one; it stays unopened, to
 // try again. Stopping halfway (Escape, or leaving the app) leaves the rest
 // unopened too.
-const viewer = { url: null, timer: null, run: null, loading: false, shownAt: 0 };
+const viewer = { url: null, timer: null, run: null, loading: false, shownAt: 0, after: null };
 // Taps this soon after a pic appears don't count: a quick double tap
 // shouldn't skip past a pic nobody saw.
 const TAP_GUARD_MS = 600;
 
-/** Unopened pics in the open chat, oldest first. */
+/** Whether a group message is a pic or video from someone else I haven't opened. */
+const groupPicWaiting = (m) => Boolean(m.pic) && m.sender_id !== state.me.id
+  && !m.pic.viewers.includes(state.me.id) && !m.pic.discard_reason;
+/** Whether a direct message is a pic or video from them, unopened. */
+const directPicWaiting = (m) => m.kind === "snap" && m.sender_id !== state.me.id && m.snap_state === "pending";
+
+/** Unopened pics in the open chat (or, from the list, the chat they're in), oldest first. */
 function waitingPics() {
-  if (state.activeGroupId) {
-    return (state.groupMessages.get(state.activeGroupId) || []).filter((m) => m.pic
-      && m.sender_id !== state.me.id && !m.pic.viewers.includes(state.me.id) && !m.pic.discard_reason);
-  }
-  return (state.messages.get(state.activeId) || []).filter((m) => m.kind === "snap"
-    && m.sender_id !== state.me.id && m.snap_state === "pending");
+  if (viewer.run?.fromList) return viewer.run.pics;
+  if (state.activeGroupId) return (state.groupMessages.get(state.activeGroupId) || []).filter(groupPicWaiting);
+  return (state.messages.get(state.activeId) || []).filter(directPicWaiting);
 }
 
 /** Tapping a pic opens it, then the others waiting in the chat, one by one. */
 function openPics(first) {
   if (viewer.loading) return;
-  viewer.run = { seen: new Set() };
+  viewer.run = { seen: new Set(), shown: new Set() };
+  viewer.after = null;
   openPic(first);
+}
+
+// ---------- pics straight from the chat list (X41) ----------
+// A tap on a chat whose newest message is a pic or video waiting from them
+// shows that chat's waiting pics, back to back, without opening the chat; you
+// are on the list after, as before. Which pics are the server's say, asked as
+// the tap lands (the list may be out of date: opened on another device). Only
+// pics are opened: a text of theirs from before stays unread for the chat, and
+// the row keeps its dot (the server's count). If none was waiting after all,
+// the tap opens the chat, as any other row's.
+
+/** Formats of pics and videos this app opens (loadSnap, loadGroupPic). */
+const DIRECT_PIC_FORMATS = [1, 2, e2e.VIDEO_FORMAT, e2e.IMAGE_FORMAT];
+const GROUP_PIC_FORMATS = [e2e.GROUP_FORMAT, e2e.GROUP_VIDEO_FORMAT, e2e.GROUP_IMAGE_FORMAT];
+
+/** Whether a tap on this chat's row shows its pics: its newest message is one waiting from them, that this app opens. */
+function chatOpensPics(chat) {
+  const m = chat?.last_message;
+  // chatStatus says "New pic" only for one that can be opened (not a changed key, not a turned-off account).
+  return Boolean(m) && chatStatus(chat).marker === "snap" && DIRECT_PIC_FORMATS.includes(m.format ?? 1);
+}
+
+/** The same for a group: its newest message a pic from someone else, not opened by me. */
+function groupOpensPics(g) {
+  const m = g?.last_message;
+  if (!m || !groupPicWaiting(m)) return false;
+  return m.format === groupsPlainFormat || (GROUP_PIC_FORMATS.includes(m.format) && Boolean(m.key));
+}
+
+/** What a screen reader hears of such a row, after its name and newest message. */
+const picsHint = (m) => `Opens the ${mediaWord(m)}, not the chat`;
+
+/**
+ * Shows the pics waiting in a chat ("d") or group ("g") from the list.
+ * `page` is the chat's newest messages, asked for as the tap landed.
+ */
+async function picsFromList(kind, id, page = null) {
+  if (viewer.loading || !$("#viewer").hidden) return;
+  const group = kind === "g";
+  const chat = group ? groupById(id) : chatById(id);
+  if (!chat) return;
+  page ??= getJSON(`/${group ? "groups" : "chats"}/${id}/messages?limit=${pageSize()}`);
+  const unread = chat.unread; // as the tap saw it: whether the group is read after
+  const run = { seen: new Set(), shown: new Set(), fromList: true, pics: [], gone: false, openChat: false };
+  viewer.run = run;
+  viewer.after = () => afterPicsFromList(kind, id, run, unread);
+  showOpening(group ? chat.name : chatName(chat));
+  try {
+    run.messages = await page;
+  } catch (err) {
+    if (viewer.run !== run) return; // closed meanwhile: nothing was opened
+    report("warn", "opening pics from the list failed", { [group ? "group_id" : "friend_id"]: id, ...errorFields(err) });
+    return showViewerProblem("Couldn't load this pic. It's still unopened: try again when your connection is better.");
+  }
+  if (viewer.run !== run) return;
+  run.pics = run.messages.filter(group ? groupPicWaiting : directPicWaiting);
+  if (!run.pics.length) { // opened elsewhere meanwhile
+    run.openChat = true;
+    return stopViewer();
+  }
+  openPic(run.pics[0]);
+}
+
+/** Once the viewer has closed: the chat, if nothing was waiting after all; a group read, if its pics were all that was unread. */
+function afterPicsFromList(kind, id, run, unread) {
+  if (run.openChat) return kind === "g" ? openGroup(id) : openChat(id);
+  // A direct chat's pics are counted read as they're opened (the server's
+  // `unread` counts them); its texts wait for the chat.
+  if (kind !== "g" || !readAfterShowing(run.shown, unread, run.messages || [])) return;
+  // Anything newer than what was asked for came while viewing, unseen.
+  const newest = run.messages[run.messages.length - 1]?.id ?? 0;
+  if ((groupById(id)?.last_message?.id ?? 0) <= newest) markGroupRead(id);
+}
+
+/**
+ * Whether a group counts as read after its pics were shown from the list:
+ * only if they were all that was unread, its newest `unread` messages from
+ * others (groups.rs counts the same). Otherwise a text nobody saw would show
+ * as seen ("Seen by"), so it stays unread. As the iPhone's (`readAfterShowing`).
+ */
+function readAfterShowing(shown, unread, messages) {
+  if (!unread) return false;
+  const theirs = messages.filter((m) => m.sender_id !== state.me.id && m.kind !== "event");
+  return theirs.length >= unread && theirs.slice(-unread).every((m) => shown.has(m.id));
 }
 
 /** A pic that can't be shown for a reason other than the connection. */
@@ -7140,7 +7275,7 @@ async function openPic(m) {
   const run = viewer.run;
   run.seen.add(m.id);
   viewer.loading = true;
-  showOpening(m);
+  showOpening(personName(m.sender_id, m.sender_name ?? ""));
   let pic;
   try {
     pic = await (m.pic ? loadGroupPic(m) : loadSnap(m));
@@ -7148,7 +7283,10 @@ async function openPic(m) {
     viewer.loading = false;
     if (viewer.run !== run) return;
     // Opened on another device, or expired: on to the next.
-    if (err.status === 410 || err.status === 404) return nextPic();
+    if (err.status === 410 || err.status === 404) {
+      run.gone = true;
+      return nextPic();
+    }
     report("warn", "opening a pic failed", { message_id: m.id, ...errorFields(err) });
     return showViewerProblem(err instanceof PicProblem ? err.message
       : "Couldn't load this pic. It's still unopened: try again when your connection is better.");
@@ -7159,7 +7297,10 @@ async function openPic(m) {
   }
   const shown = await showInViewer(pic);
   viewer.loading = false;
-  if (shown) confirmOpened(m);
+  if (shown) {
+    run.shown.add(m.id);
+    confirmOpened(m);
+  }
   else if (viewer.run === run) showViewerProblem("This pic couldn't be shown. It's still unopened.");
 }
 
@@ -7168,7 +7309,11 @@ function nextPic() {
   if (viewer.url && Date.now() - viewer.shownAt < TAP_GUARD_MS) return;
   const run = viewer.run;
   const next = run && waitingPics().find((m) => !run.seen.has(m.id));
-  if (!next) return stopViewer();
+  if (!next) {
+    // From the list, every one opened elsewhere before it showed: the chat instead.
+    if (run?.fromList && run.gone && !run.shown.size) run.openChat = true;
+    return stopViewer();
+  }
   clearViewer(); // the viewer stays up, saying "Opening…", while the next one loads
   openPic(next);
 }
@@ -7226,11 +7371,11 @@ function updateCount() {
 }
 
 /** The viewer is up straight away, saying it's opening, so a slow connection doesn't look like nothing happened. */
-function showOpening(m) {
+function showOpening(from) {
   const v = $("#viewer");
   v.classList.add("opening");
   $("#viewer-error").hidden = true;
-  $("#viewer-from").textContent = personName(m.sender_id, m.sender_name ?? "");
+  $("#viewer-from").textContent = from;
   $("#viewer-caption").hidden = true;
   updateCount();
   setViewerHint("Opening…");
@@ -7354,6 +7499,9 @@ function stopViewer() {
   viewer.run = null;
   clearViewer();
   $("#viewer").hidden = true;
+  const after = viewer.after; // pics shown from the list: what follows (afterPicsFromList)
+  viewer.after = null;
+  after?.();
 }
 
 /** What the viewer says at its foot; while zoomed in, how to zoom back out. */

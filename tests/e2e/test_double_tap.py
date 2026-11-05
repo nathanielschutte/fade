@@ -4,7 +4,7 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import launch, shot, PHONE, befriend, row, sign_up
+from common import launch, shot, PHONE, befriend, double_tap, row, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
@@ -18,14 +18,6 @@ navigator.mediaDevices.getUserMedia = async (want) => {
   setInterval(() => { g.fillStyle = '#3a6'; g.fillRect(0, 0, 1280, 720); }, 30);
   return c.captureStream(30);
 };"""
-
-
-async def double_tap(page, locator, gap=0.12):
-    box = await locator.bounding_box()
-    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-    await page.touchscreen.tap(x, y)
-    await asyncio.sleep(gap)
-    await page.touchscreen.tap(x, y)
 
 
 async def until(page, js, timeout=10):

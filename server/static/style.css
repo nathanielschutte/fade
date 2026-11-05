@@ -847,7 +847,8 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   font-size: var(--step-1); letter-spacing: 0.06em; user-select: all;
 }
 
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* .chat-hint: a chat row's words for screen readers when a tap shows its pics (app.js, paintRow). */
+.visually-hidden, .chat-hint { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---------- reactions, replies, typing, active now ---------- */
 .msg { cursor: default; }

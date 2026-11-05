@@ -63,6 +63,13 @@ struct ChatScreen: View {
     /// Opens a chat from a link in a text (the chat list's).
     @Environment(\.openChatLink) private var openChatLink
     @FocusState private var composing: Bool
+    @Environment(\.dynamicTypeSize) private var textSize
+    /// The composer's buttons: a finger's worth (44 points) at the usual text
+    /// size, growing with the text up to half as big again (any more and they
+    /// crowd out the field).
+    @ScaledMetric(relativeTo: .body) private var tapSize = 44.0
+    @ScaledMetric(relativeTo: .body) private var iconSize = 22.0
+    @ScaledMetric(relativeTo: .body) private var sendSize = 32.0
 
     /// The content's height, how far its end is below what's shown, and the
     /// window it's shown in (the visible height, and the inset under the composer and keyboard).
@@ -356,7 +363,7 @@ struct ChatScreen: View {
             Text(note).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity).padding(12).background(.bar)
         } else if conversation.loaded {
-            VStack(spacing: 6) {
+            VStack(spacing: 0) {
                 if editing != nil || replyingTo != nil {
                     HStack {
                         Group {
@@ -374,41 +381,72 @@ struct ChatScreen: View {
                             replyingTo = nil
                         }
                         .labelStyle(.iconOnly).font(.caption)
+                        .frame(minWidth: 44, minHeight: 44)  // a finger's worth around the small x
+                        .contentShape(Rectangle())
                     }
+                    .padding(.leading, 6)
                 }
-                HStack(alignment: .bottom, spacing: 8) {
-                    if editing == nil {
-                        Button { camera = CameraOpening() } label: {
-                            Image(systemName: "camera").font(.system(size: 22)).frame(width: 32, height: 36)
+                if textSize.isAccessibilitySize {
+                    // The largest text: the field gets the whole width, and its buttons a row under it.
+                    VStack(spacing: 2) {
+                        field.padding(.horizontal, 6).padding(.top, 3)
+                        HStack(spacing: 0) {
+                            mediaButtons
+                            Spacer(minLength: 0)
+                            sendButton
                         }
-                        .disabled(!conversation.canSend)
-                        .accessibilityLabel("Camera")
-                        PhotosPicker(selection: $pickedPhoto, matching: .images) {
-                            Image(systemName: "photo.on.rectangle").font(.system(size: 22)).frame(width: 32, height: 36)
-                        }
-                        .disabled(!conversation.canSend)
-                        .accessibilityLabel("Send a photo")
                     }
-                    TextField("Message", text: $draft, axis: .vertical)
-                        .onChange(of: draft) { _, text in if !text.isEmpty { conversation.noteTyping(live) } }
-                        .lineLimit(1...5)
-                        .focused($composing)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .disabled(!conversation.canSend)
-                        .accessibilityIdentifier("composer")
-                    Button { send() } label: {
-                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                } else {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        mediaButtons
+                        field.padding(.horizontal, 4)
+                        sendButton
                     }
-                    .disabled(!conversation.canSend || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel("Send")
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.horizontal, 6).padding(.vertical, 5)  // less than around the words: the buttons' tap areas reach past their icons
             .background(.bar)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("composer-bar")
         }
+    }
+
+    /// The camera, and a photo from the library, beside the composer (not while editing).
+    @ViewBuilder private var mediaButtons: some View {
+        if editing == nil {
+            let icon = min(iconSize, 33), tap = min(tapSize, 66)
+            Button { camera = CameraOpening() } label: { Self.composerButton("camera", size: icon, tap: tap) }
+                .disabled(!conversation.canSend)
+                .accessibilityLabel("Camera")
+            PhotosPicker(selection: $pickedPhoto, matching: .images) { Self.composerButton("photo.on.rectangle", size: icon, tap: tap) }
+                .disabled(!conversation.canSend)
+                .accessibilityLabel("Send a photo")
+        }
+    }
+
+    private var field: some View {
+        TextField("Message", text: $draft, axis: .vertical)
+            .onChange(of: draft) { _, text in if !text.isEmpty { conversation.noteTyping(live) } }
+            .lineLimit(1...5)
+            .focused($composing)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(minHeight: min(tapSize, 66))  // as tall as the buttons beside it, its words in the middle
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .disabled(!conversation.canSend)
+            .accessibilityIdentifier("composer")
+    }
+
+    private var sendButton: some View {
+        Button { send() } label: { Self.composerButton("arrow.up.circle.fill", size: min(sendSize, 48), tap: min(tapSize, 66)) }
+            .disabled(!conversation.canSend || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Send")
+    }
+
+    /// An icon in its tap area (`tap` × `tap`, at least 44 points).
+    nonisolated private static func composerButton(_ icon: String, size: CGFloat, tap: CGFloat) -> some View {
+        Image(systemName: icon).font(.system(size: size))
+            .frame(width: tap, height: tap)
+            .contentShape(Rectangle())
     }
 
     /// One message: its day header when the day changes, the bubble, and "Seen" under my newest text once read.
@@ -687,6 +725,11 @@ struct BubbleView: View {
     var showTime = true
     /// Tapping a reaction under the message adds the same one (or takes yours back).
     var react: ((String) -> Void)? = nil
+    @Environment(\.dynamicTypeSize) private var textSize
+    /// The widest a message's row gets, at the usual text size: about 60
+    /// letters a line, however wide the screen (the Duo's open one is 669
+    /// points). It grows with the text, so a line holds about as many words.
+    @ScaledMetric(relativeTo: .body) private var readable = 480.0
 
     var body: some View {
         switch bubble.content {
@@ -694,8 +737,10 @@ struct BubbleView: View {
             Text(words).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity).padding(.vertical, 4)
         default:
+            // The gap on the other side shows whose it is; with the largest text it gives the words more room.
+            let gap: CGFloat = textSize.isAccessibilitySize ? 24 : 48
             HStack {
-                if bubble.mine { Spacer(minLength: 48) }
+                if bubble.mine { Spacer(minLength: gap) }
                 VStack(alignment: bubble.mine ? .trailing : .leading, spacing: 2) {
                     if let sender = bubble.sender {
                         Text(sender).font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.horizontal, 4)
@@ -731,8 +776,10 @@ struct BubbleView: View {
                         .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
                     }
                 }
-                if !bubble.mine { Spacer(minLength: 48) }
+                if !bubble.mine { Spacer(minLength: gap) }
             }
+            .frame(maxWidth: readable, alignment: bubble.mine ? .trailing : .leading)
+            .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
         }
     }
 
@@ -778,90 +825,110 @@ struct MessageActions: View {
     let dismiss: () -> Void
     /// The emoji keyboard is up, for any emoji.
     @State private var pickingAny = false
+    /// The reactions: about the size of the message's words, a touch bigger,
+    /// each in a finger's worth (44 points). Both grow with the text, up to
+    /// half as big again, and the row scrolls sideways past what fits.
+    @ScaledMetric(relativeTo: .body) private var emojiSize = 26.0
+    @ScaledMetric(relativeTo: .body) private var circle = 44.0
+    @ScaledMetric(relativeTo: .body) private var plusSize = 20.0
+    /// The actions' width at the usual text size; with larger text, up to the whole width.
+    @ScaledMetric(relativeTo: .body) private var menuWidth = 230.0
 
     var body: some View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
                 .onTapGesture(perform: dismiss)
                 .accessibilityAddTraits(.isButton).accessibilityLabel("Close")
-            VStack(alignment: bubble.mine ? .trailing : .leading, spacing: 10) {
-                if !reactions.isEmpty {
-                    // Your own first if it's another emoji (so it can be taken back here too), then the quick row.
-                    let row = (bubble.myReaction.map { reactions.contains($0) ? [] : [$0] } ?? []) + reactions
-                    HStack(spacing: 0) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(row, id: \.self) { emoji in
-                                    let mine = bubble.myReaction == emoji
-                                    Button {
-                                        react(emoji)
-                                        dismiss()
-                                    } label: {
-                                        // About the size of the message's words, a touch bigger.
-                                        Text(emoji).font(.system(size: 26))
-                                            .frame(width: 44, height: 44)
-                                            .background(mine ? Color.accentColor.opacity(0.35) : .clear, in: Circle())
-                                    }
-                                    .accessibilityLabel(mine ? "Take back \(emoji)" : "React \(emoji)")
-                                }
-                            }
-                            .padding(.leading, 8).padding(.vertical, 4)
-                        }
-                        .frame(maxWidth: CGFloat(row.count) * 48 + 8)  // hugs them; scrolls past that
-                        // Always in sight, past the row: any other emoji.
-                        Button { pickingAny = true } label: {
-                            Image(systemName: "plus").font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(Color.primary.opacity(0.6))
-                                .frame(width: 44, height: 44)
-                                .background(pickingAny ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.08), in: Circle())
-                        }
-                        .accessibilityLabel("React with another emoji")
-                        .padding(.horizontal, 6)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background {
-                        // The system's emoji keyboard, unseen: the first emoji typed is the reaction.
-                        EmojiField(active: $pickingAny) { emoji in
-                            react(emoji)
-                            dismiss()
-                        }
-                        .frame(width: 1, height: 1)
-                        .opacity(0.01)
-                        .accessibilityIdentifier("any-emoji")
-                    }
-                    .background(.regularMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
-                    .frame(maxWidth: 420)
+            // In the middle of the screen; taller than the screen (a long message, the largest
+            // text, a small phone), it scrolls instead of cutting the message short.
+            GeometryReader { space in
+                ScrollView {
+                    held
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: space.size.height, alignment: bubble.mine ? .trailing : .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: dismiss)  // around it, as on the dimmed chat
                 }
-                BubbleView(bubble: bubble, quote: quote, showTime: false)
-                    .allowsHitTesting(false)
-                    .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
-                if !actions.isEmpty {
-                    VStack(spacing: 0) {
-                        ForEach(actions) { action in
-                            Button {
-                                dismiss()
-                                action.run()
-                            } label: {
-                                HStack {
-                                    Text(action.title)
-                                    Spacer()
-                                    Image(systemName: action.icon)
-                                }
-                                .padding(.horizontal, 16).padding(.vertical, 12)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            if action.id != actions.last?.id { Divider() }
-                        }
-                    }
-                    .frame(width: 230)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
-                }
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
+        }
+    }
+
+    private var held: some View {
+        VStack(alignment: bubble.mine ? .trailing : .leading, spacing: 10) {
+            if !reactions.isEmpty {
+                // Your own first if it's another emoji (so it can be taken back here too), then the quick row.
+                let row = (bubble.myReaction.map { reactions.contains($0) ? [] : [$0] } ?? []) + reactions
+                HStack(spacing: 0) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(row, id: \.self) { emoji in
+                                let mine = bubble.myReaction == emoji
+                                Button {
+                                    react(emoji)
+                                    dismiss()
+                                } label: {
+                                    Text(emoji).font(.system(size: min(emojiSize, 39)))
+                                        .frame(width: min(circle, 66), height: min(circle, 66))
+                                        .background(mine ? Color.accentColor.opacity(0.35) : .clear, in: Circle())
+                                }
+                                .accessibilityLabel(mine ? "Take back \(emoji)" : "React \(emoji)")
+                            }
+                        }
+                        .padding(.leading, 8).padding(.vertical, 4)
+                    }
+                    .frame(maxWidth: CGFloat(row.count) * (min(circle, 66) + 4) + 8)  // hugs them; scrolls past that
+                    // Always in sight, past the row: any other emoji.
+                    Button { pickingAny = true } label: {
+                        Image(systemName: "plus").font(.system(size: min(plusSize, 30), weight: .semibold))
+                            .foregroundStyle(Color.primary.opacity(0.6))
+                            .frame(width: min(circle, 66), height: min(circle, 66))
+                            .background(pickingAny ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.08), in: Circle())
+                    }
+                    .accessibilityLabel("React with another emoji")
+                    .padding(.horizontal, 6)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    // The system's emoji keyboard, unseen: the first emoji typed is the reaction.
+                    EmojiField(active: $pickingAny) { emoji in
+                        react(emoji)
+                        dismiss()
+                    }
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                    .accessibilityIdentifier("any-emoji")
+                }
+                .background(.regularMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
+                .frame(maxWidth: 420)
+            }
+            BubbleView(bubble: bubble, quote: quote, showTime: false)
+                .allowsHitTesting(false)
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+            if !actions.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(actions) { action in
+                        Button {
+                            dismiss()
+                            action.run()
+                        } label: {
+                            HStack {
+                                Text(action.title)
+                                Spacer()
+                                Image(systemName: action.icon)
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if action.id != actions.last?.id { Divider() }
+                    }
+                }
+                .frame(maxWidth: menuWidth)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
+            }
         }
     }
 }

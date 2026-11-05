@@ -97,8 +97,7 @@ async def main():
 
         # Ben sees the caption where Ana put it, on the picture itself.
         for page in (ben, cal):
-            await row(page, ANA).click()
-            await page.locator("button.snap-chip", has_text="Tap to view pic").click()
+            await row(page, ANA).click()  # the newest is the pic: it opens from the list (X41)
             await expect(page.locator("#viewer-caption")).to_have_text("up top", timeout=15000)
             seen_at = await page.evaluate(CAPTION_AT, ["#viewer-caption", "#viewer-image"])
             assert abs(seen_at - sent_at) < 0.03, (sent_at, seen_at)
