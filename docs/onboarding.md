@@ -159,7 +159,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 - `restart_test.py` (unopened pics survive a restart) and `health_monitor_test.py` (the monitor's decisions, with AWS faked).
 - `load_test.py` load tests staging, never production.
 
-**Scripts** (`scripts/`): `test.sh` (everything), `test-one.sh` (one browser test, or `smoke`), `deploy.sh` and `ssh.sh` (production by default; `FADE_STACK=staging` for staging), `rollback.sh` (production's previous release), `check-migrations.sh` and `restore-drill.sh` (backups), `db-copy.sh` (a copy of the database without its secrets, to look around in), `set-admins.sh` and `reload-admins.sh` (who's an Admin), `test-staging.sh` and `load-staging.sh`.
+**Scripts** (`scripts/`): `test.sh` (everything), `test-one.sh` (one browser test, or `smoke`), `deploy.sh` and `ssh.sh` (production by default; `FADE_STACK=staging` for staging), `rollback.sh` (production's previous release), `check-migrations.sh` and `restore-drill.sh` (backups), `set-admins.sh` and `reload-admins.sh` (who's an Admin), `test-staging.sh` and `load-staging.sh`.
 
 **Docs** (`docs/`), lowercase names, grouped by what they're for:
 

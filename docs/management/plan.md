@@ -141,7 +141,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [Admins by user id](#s5-admins-by-user-id): production's list switched | 0.45.0; setting (2026-11-05) | Nate |
 | napsack 1.0.0: [who reacted](#f21-see-who-reacted) on the web, [Admins can't delete](#s6-admins-cant-delete-their-own-account), [the security audit's fixes](#s7-security-audit-2026-11-05), the release checked byte for byte against main's CI | 1.0.0 | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
-| [A copy of the database to look around in](#i14-a-copy-of-the-database-to-look-around-in): `scripts/db-copy.sh`, secrets removed on the server | scripts (2026-11-05) | Nate |
+| [A copy of the database to look around in](#i14-a-copy-of-the-database-to-look-around-in): the owner's own tool, secrets removed on the server | process (2026-11-05) | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -909,8 +909,8 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 
 #### I14. A copy of the database to look around in
 - Nate (2026-11-05): a local database client on production's data, ideally over the SSH tunnel so nothing new is opened.
-- SQLite is a file, not a server, so there's no port to tunnel, and opening the live file over the network (a mounted drive) could block or damage it. Instead, `scripts/db-copy.sh` (owner only; `FADE_STACK=staging` for staging) takes a consistent snapshot over SSH from the live file opened read-only, into memory on the server (`/dev/shm`). There, before anything is sent, every secret is replaced with a placeholder (password and recovery hashes, wrapped private keys, session, invite, and reset hashes, push and passkey secrets, the server's own keys) and every message's contents with its size, then the file is rewritten (VACUUM) so no trace is left. The copy lands outside the repository (`~/.napsack-db-copies/`, private and read-only), and copies older than 7 days are deleted on the next run, since account deletion promises to reach every copy within 30 days.
-- A new table or column holding a secret or message contents goes into the script's lists.
+- SQLite is a file, not a server, so there's no port to tunnel, and opening the live file over the network (a mounted drive) could block or damage it. Instead, the owner's own script (`scripts/db-copy.sh`, git-ignored: kept out of the public repository, Nate 2026-11-05) takes a consistent snapshot over SSH from the live file opened read-only, into memory on the server (`/dev/shm`). There, before anything is sent, every secret is replaced with a placeholder (password and recovery hashes, wrapped private keys, session, invite, and reset hashes, push and passkey secrets, the server's own keys) and every message's contents with its size, then the file is rewritten (VACUUM) so no trace is left. The copy lands outside the repository (`~/.napsack-db-copies/`, private and read-only), and copies older than 7 days are deleted on the next run, since account deletion promises to reach every copy within 30 days.
+- A new table or column holding a secret or message contents goes into the script's lists (the owner's copy).
 - Done (2026-11-05): checked against staging (secrets and contents replaced, no password hash left anywhere in the file).
 
 #### I3. Auto Scaling group
