@@ -17,6 +17,13 @@ extension OnScreen {
                 try await Task.sleep(for: .milliseconds(500))  // pictures only: let it draw
                 try review.save("camera-review-\(name)")
                 review.close()
+                // A wide photo from the library, shown whole (X52).
+                let wide = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat("Ben") { _ in },
+                                                   start: .photo(TestPicture.photo(size: CGSize(width: 1600, height: 900)))),
+                                      size: phone.size, insets: phone.insets)
+                try await Task.sleep(for: .milliseconds(500))
+                try wide.save("camera-review-wide-\(name)")
+                wide.close()
                 let live = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .pick([], { _, _ in }, done: { _ in })),
                                       size: phone.size, insets: phone.insets)
                 try await Task.sleep(for: .milliseconds(500))

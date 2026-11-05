@@ -834,6 +834,9 @@ struct CameraScreen: View {
     @State private var holdTask: Task<Void, Never>?
     // After a capture.
     @State private var shot: Captured?
+    /// A photo from the library is shown whole, as it's sent (X52); one just
+    /// taken fills the screen, as the camera showed it.
+    @State private var whole = false
     @State private var files = CaptureFiles()
     @State private var caption = ""
     @State private var captionY = 0.75
@@ -865,6 +868,7 @@ struct CameraScreen: View {
         self.send = send
         self.close = close
         _shot = State(initialValue: start)
+        _whole = State(initialValue: start != nil)  // opened on a photo picked from the library
         if let offering { _lenses = State(initialValue: offering) }
     }
 
@@ -924,7 +928,7 @@ struct CameraScreen: View {
                     defer { picked = nil }
                     let photo = await Captured.picked(item)
                     guard picks.stillWanted(pick, busy: shot != nil || recording) else { return }  // taken over meanwhile
-                    if let photo { captured(photo) } else { problem = "Couldn't open that photo." }
+                    if let photo { captured(photo, whole: true) } else { problem = "Couldn't open that photo." }
                 }
             }
             .navigationDestination(isPresented: $choosing) {
@@ -1146,8 +1150,9 @@ struct CameraScreen: View {
     }
 
     /// Shown in place; the next capture starts at 1× (Nate, 2026-10-29).
-    private func captured(_ media: Captured) {
+    private func captured(_ media: Captured, whole: Bool = false) {
         shot = media
+        self.whole = whole
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
@@ -1178,29 +1183,47 @@ struct CameraScreen: View {
     private func review(_ media: Captured) -> some View {
         ZStack {
             GeometryReader { geo in
+                // The photo's own place on screen: whole, the pen and the caption
+                // are on it, and the caption sits where recipients see it on theirs.
+                let stage = Self.stage(media, whole: whole, screen: geo.size)
                 ZStack {
                     switch media {
                     case .photo(let image):
                         Image(uiImage: image).resizable().scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height).clipped()
-                        PenLayer(image: image.size, box: geo.size, strokes: $strokes, drawing: penOn)
+                            .frame(width: stage.width, height: stage.height).clipped()
+                        PenLayer(image: image.size, box: stage, strokes: $strokes, drawing: penOn)
                     case .video(let url):
                         LoopingPlayer(url: url, muted: muted)
                     }
-                    captionBar(in: geo.size)
+                    captionBar(in: stage)
                 }
+                .frame(width: stage.width, height: stage.height)
                 .contentShape(Rectangle())
                 .onTapGesture { at in
                     switch Self.tap(writing: editingCaption, drawing: penOn, captioned: !caption.isEmpty) {
                     case .putKeyboardAway: endCaption()
-                    case .startCaption: startCaption(at: at.y / max(geo.size.height, 1))
+                    case .startCaption: startCaption(at: at.y / max(stage.height, 1))
                     case .nothing: break
                     }
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .background {
+                    // Around a whole photo, a tap only puts the keyboard away.
+                    Color.black.contentShape(Rectangle()).onTapGesture { if editingCaption { endCaption() } }
                 }
             }
             .ignoresSafeArea()
             reviewControls(media)
         }
+    }
+
+    /// Where a capture is shown: the whole screen (filled, as the camera
+    /// showed it), or, for a photo shown whole, the largest box of its shape
+    /// that fits.
+    static func stage(_ media: Captured, whole: Bool, screen: CGSize) -> CGSize {
+        guard whole, case .photo(let image) = media, image.size.width > 0, image.size.height > 0 else { return screen }
+        let s = min(screen.width / image.size.width, screen.height / image.size.height)
+        return CGSize(width: (image.size.width * s).rounded(.down), height: (image.size.height * s).rounded(.down))
     }
 
     /// What a tap on the picture does (the caption line takes its own taps).
@@ -1431,6 +1454,7 @@ struct CameraScreen: View {
     private func retake() {
         files.removeAll()
         shot = nil
+        whole = false
         silent = nil
         noSound = false
         muted = false
