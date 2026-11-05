@@ -141,6 +141,7 @@ struct FriendsScreen: View {
     @State private var note: String?
     @State private var copied = false
     @State private var scanning = false
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
         List {
@@ -166,16 +167,10 @@ struct FriendsScreen: View {
                             .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         // A matched, quiet pair: the same style, size, and width, icon and words in
                         // the text's own color (the pale accent is hard to read as a fill or as text).
-                        HStack(spacing: 12) {
-                            ShareLink(item: URL(string: address)!) {
-                                LinkButtonLabel(text: "Share", symbol: "square.and.arrow.up")
-                            }
-                            Button {
-                                UIPasteboard.general.string = address
-                                copied = true
-                            } label: {
-                                LinkButtonLabel(text: copied ? "Copied" : "Copy link", symbol: copied ? "checkmark" : "link")
-                            }
+                        // Side by side while their words fit on one line each; otherwise one above the other.
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) { linkButtons(address) }
+                            VStack(spacing: 12) { linkButtons(address) }
                         }
                         .font(.subheadline.weight(.medium))
                         .buttonStyle(.bordered)
@@ -190,12 +185,14 @@ struct FriendsScreen: View {
                     .padding(.vertical, 8)
                 }
                 Button("Scan their code", systemImage: "qrcode.viewfinder") { scanning = true }
-                HStack {
+                // With the largest text, the button under the field, so neither is squeezed to a sliver.
+                (textSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout())) {
                     TextField("Add by username", text: $username)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
                         .onSubmit(add)
                     Button("Send request", action: add).disabled(username.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .buttonStyle(.borderless)  // each its own tap, not the whole row's
             } header: {
                 Text("Add a friend")
             } footer: {
@@ -233,6 +230,19 @@ struct FriendsScreen: View {
         .refreshable { await load() }
         .task { await load() }
         .onChange(of: friends, initial: true) { _, now in model.friends = now }
+    }
+
+    /// Share and Copy link, laid out by whoever holds them.
+    @ViewBuilder private func linkButtons(_ address: String) -> some View {
+        ShareLink(item: URL(string: address)!) {
+            LinkButtonLabel(text: "Share", symbol: "square.and.arrow.up")
+        }
+        Button {
+            UIPasteboard.general.string = address
+            copied = true
+        } label: {
+            LinkButtonLabel(text: copied ? "Copied" : "Copy link", symbol: copied ? "checkmark" : "link")
+        }
     }
 
     private func add() {

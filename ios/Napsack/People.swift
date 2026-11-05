@@ -55,29 +55,43 @@ struct PersonRow<Trailing: View>: View {
     var detail: String? = nil
     @ViewBuilder var trailing: () -> Trailing
 
+    @Environment(\.dynamicTypeSize) private var textSize
+
     var body: some View {
-        HStack(spacing: 12) {
-            Avatar(kind: .friend(person.id), avatarId: me?.avatarId ?? person.avatarId, name: me?.username ?? person.name, size: size)
-            ViewThatFits(in: .horizontal) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                avatar
                 HStack(spacing: 8) {
                     names
                     Spacer(minLength: 0)
                     trailing()
                 }
+            }
+            HStack(spacing: 12) {
+                avatar
                 VStack(alignment: .leading, spacing: 8) {
                     names
                     HStack(spacing: 8) { trailing() }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // The largest text on the narrowest phone: the offers one above the other too.
-                VStack(alignment: .leading, spacing: 8) {
-                    names
-                    VStack(alignment: .leading, spacing: 8) { trailing() }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // A long name, or the largest text on the narrowest phone: the offers one above the other, under
+            // the picture too, and with the largest text a size smaller, so their words fit ("Accept", not "Acce…").
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    avatar
+                    names
+                }
+                VStack(alignment: .leading, spacing: 8) { trailing() }.controlSize(textSize.isAccessibilitySize ? .small : .regular)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var avatar: some View {
+        Avatar(kind: .friend(person.id), avatarId: me?.avatarId ?? person.avatarId, name: me?.username ?? person.name, size: size)
     }
 
     private var names: some View {
@@ -90,7 +104,7 @@ struct PersonRow<Trailing: View>: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
             }
         }
-        .lineLimit(1)
+        .lineLimit(textSize.isAccessibilitySize ? 3 : 1)  // the largest text: a long name wraps rather than ending at its first letters
     }
 }
 
