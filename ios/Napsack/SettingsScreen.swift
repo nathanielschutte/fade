@@ -28,11 +28,19 @@ struct SettingsScreen: View {
     @State private var birthdaySaves = LatestSave()
     @State private var profileNote: String?
     @State private var serverLabel: String?
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    /// Side by side; with the largest text, one above the other, so neither is squeezed to a sliver.
+    private func rowOrStack(spacing: CGFloat, @ViewBuilder _ content: () -> some View) -> some View {
+        let layout = textSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        return layout(content)
+    }
 
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 16) {
+                rowOrStack(spacing: 16) {
                     // Tap it to see it big, as on the web; the x on its corner takes it away.
                     Avatar(kind: .friend(account.user.id), avatarId: profile?.profile?.avatarId, name: account.user.username, size: 64, enlarges: true)
                         .overlay(alignment: .topTrailing) {
@@ -55,10 +63,11 @@ struct SettingsScreen: View {
                     PhotosPicker(profile?.profile?.avatarId == nil ? "Choose a picture" : "Change picture", selection: $picked, matching: .images)
                 }
                 .buttonStyle(.borderless)  // each its own tap, not the whole row's
-                HStack {
+                rowOrStack(spacing: 8) {
                     TextField("Your name, for friends", text: $name).textContentType(.name).onSubmit(saveName)
                     Button("Save", action: saveName).disabled(name == (profile?.profile?.displayName ?? ""))
                 }
+                .buttonStyle(.borderless)  // each its own tap, not the whole row's
                 HStack {
                     Button { withAnimation { pickingBirthday.toggle() } } label: {
                         LabeledContent("Birthday", value: birthday.map { Self.words($0, withYear: withYear) } ?? "Not set")
