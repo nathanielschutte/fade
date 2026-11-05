@@ -68,6 +68,13 @@ struct PersonRow<Trailing: View>: View {
                     names
                     HStack(spacing: 8) { trailing() }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // The largest text on the narrowest phone: the offers one above the other too.
+                VStack(alignment: .leading, spacing: 8) {
+                    names
+                    VStack(alignment: .leading, spacing: 8) { trailing() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .accessibilityElement(children: .contain)
