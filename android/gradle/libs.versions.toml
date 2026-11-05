@@ -12,6 +12,7 @@ serialization = "1.12.0"
 junit5 = "5.14.4"
 androidxTestRunner = "1.7.0"
 androidxTestJunit = "1.3.0"
+espresso = "3.7.0"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
@@ -30,6 +31,7 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestJunit" }
+androidx-test-espresso = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

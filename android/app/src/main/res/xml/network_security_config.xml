@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Release builds: https only, to every server. Debug builds replace this file
+     (src/debug/res/xml) to allow plain http to this computer for development. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

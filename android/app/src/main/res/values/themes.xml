@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the window behind Compose (and the launch screen, which takes its
+         color): the screens' colors are in Theme.kt. -->
+    <style name="Theme.Napsack" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+    </style>
+</resources>

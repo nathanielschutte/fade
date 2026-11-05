@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only, merged into src/main's manifest. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Reaching a development server on this computer (the emulator's 10.0.2.2) or
+         the local network: Android 17 asks the person first for apps targeting it.
+         Release builds only talk to https://api.napsack.io, so they never ask. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+
+</manifest>
