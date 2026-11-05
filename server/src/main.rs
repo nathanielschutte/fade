@@ -768,7 +768,9 @@ async fn log_request(
         .get(version::CLIENT_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("web")
-        .to_owned();
+        .chars()
+        .take(40)
+        .collect::<String>();
     let response = next.run(req).await;
     let status = response.status().as_u16();
     if !path.starts_with("/dev/") {
@@ -784,8 +786,12 @@ async fn log_request(
         ($lvl:ident) => {
             tracing::$lvl!(
                 target: "fade_server::http",
-                ip = %who.ip, %method, %route, %path, status, ms, %client,
-                ua = %who.user_agent, %host, "request"
+                // What the caller typed (client, user agent, host) is logged
+                // escaped (`?`), so a header can't forge fields in the
+                // journal. The path can't hold spaces (the URI parser
+                // refuses them), nor can the route or method.
+                ip = %who.ip, %method, %route, %path, status, ms, ?client,
+                ua = ?who.user_agent, ?host, "request"
             )
         };
     }

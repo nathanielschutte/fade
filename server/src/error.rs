@@ -60,7 +60,7 @@ impl IntoResponse for AppError {
         };
         if status.is_client_error() && status != StatusCode::UNAUTHORIZED {
             // The message is the user-facing text, so it's safe to log.
-            tracing::debug!(status = status.as_u16(), reason = %msg, "request rejected");
+            tracing::debug!(status = status.as_u16(), reason = ?msg, "request rejected");
         }
         (status, Json(json!({ "error": msg }))).into_response()
     }
