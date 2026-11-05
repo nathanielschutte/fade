@@ -1316,11 +1316,14 @@ struct CameraScreen: View {
                 }
             }
             .captionStrip(width: size.width)
-            // Above the keyboard while it's written; then where it was put.
-            .position(x: size.width / 2, y: size.height * (editingCaption ? min(captionY, 0.42) : captionY))
+            // Above the keyboard while it's written; then where it was put. Kept inside the picture (CaptionLook.middle).
+            .position(x: size.width / 2, y: CaptionLook.middle(editingCaption ? min(captionY, 0.42) : captionY, text: caption, picture: size))
             .gesture(DragGesture().onChanged { drag in
                 guard !editingCaption else { return }
                 captionY = min(max(drag.location.y / max(size.height, 1), 0.08), 0.92)
+            }.onEnded { _ in
+                // Where it shows is where it's sent.
+                captionY = Double(CaptionLook.middle(captionY, text: caption, picture: size) / max(size.height, 1))
             })
             .onTapGesture { startCaption(at: captionY) }
             .allowsHitTesting(!penOn)  // drawing, the pen goes over it

@@ -105,6 +105,19 @@ enum CaptionLook {
         return max(1, Int((height / font.lineHeight).rounded()))
     }
 
+    /// The strip's height on a picture `width` points wide.
+    static func height(_ text: String, width: CGFloat) -> CGFloat {
+        CGFloat(max(lines(text, width: width), 1)) * size(width) * 1.25 - lineSpacing(width) + size(width)
+    }
+
+    /// Where the strip's middle goes on a `picture`: at `y` of its height,
+    /// but never past its top or bottom (in the middle if it's taller).
+    static func middle(_ y: Double, text: String, picture: CGSize) -> CGFloat {
+        let h = height(text, width: picture.width)
+        guard h < picture.height else { return picture.height / 2 }
+        return min(max(picture.height * CGFloat(y), h / 2), picture.height - h / 2)
+    }
+
     /// What's typed, as it may be: no line breaks, 200 characters, 5 lines;
     /// past that, what was there before. Nil when Return was typed (it's done).
     static func typed(_ new: String, was old: String, width: CGFloat) -> String? {

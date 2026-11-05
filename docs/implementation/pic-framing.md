@@ -20,7 +20,7 @@ One look on every client, set by the picture's width as shown (W) so it covers t
 
 | | |
 |---|---|
-| Strip | Across the picture's whole width, nothing past its edges; its middle at `y` × the picture's height (`y` 0 top, 1 bottom, kept between 0.08 and 0.92) |
+| Strip | Across the picture's whole width, nothing past its edges; its middle at `y` × the picture's height (`y` 0 top, 1 bottom, kept between 0.08 and 0.92), but never past the picture's top or bottom: the middle stays between half the strip's height from each (in the middle when it's taller than the picture). When the sender drags it there, that's the `y` sent |
 | Background | black at 55% (`rgba(0, 0, 0, 0.55)`), square corners |
 | Text | the system font (`-apple-system, system-ui, sans-serif` on the web), regular, white, centered |
 | Size | 0.044 × W (17 points on a 390-point-wide picture); lines 1.25 × that apart |

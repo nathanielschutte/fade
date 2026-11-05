@@ -84,6 +84,17 @@ struct FramingTests {
         #expect(sent.size == CGSize(width: 800, height: 900))  // never scaled up
     }
 
+    @Test func aCaptionStaysInsideThePicture() {
+        let picture = CGSize(width: 390, height: 219)  // a wide photo, whole
+        let long = Array(repeating: "Lots of words here", count: 10).joined(separator: " ")
+        let h = CaptionLook.height(long, width: 390)
+        #expect(h < 219)
+        #expect(abs(CaptionLook.middle(0.08, text: long, picture: picture) - h / 2) < 0.01)  // its top on the picture's
+        #expect(abs(CaptionLook.middle(0.92, text: long, picture: picture) - (219 - h / 2)) < 0.01)
+        #expect(CaptionLook.middle(0.5, text: "hi", picture: picture) == 109.5)  // where it was put, when it fits
+        #expect(CaptionLook.middle(0.1, text: long, picture: CGSize(width: 390, height: 80)) == 40)  // taller: the middle
+    }
+
     @Test func aCaptionIsAtMostFiveLinesAndHasNoLineBreaks() {
         let width: CGFloat = 390
         #expect(CaptionLook.typed("hi\n", was: "hi", width: width) == nil)  // Return: done

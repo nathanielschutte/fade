@@ -146,7 +146,7 @@ struct PicCaption: View {
             GeometryReader { geo in
                 Text(text)
                     .captionStrip(width: geo.size.width)
-                    .position(x: geo.size.width / 2, y: geo.size.height * CGFloat(y ?? CaptionLook.unplaced))
+                    .position(x: geo.size.width / 2, y: CaptionLook.middle(y ?? CaptionLook.unplaced, text: text, picture: geo.size))
             }
         }
     }
