@@ -303,8 +303,8 @@ struct ReportSheet: View {
     private(set) var people: [BlockedPerson] = []
     private(set) var loaded = false
     private(set) var problem: String?
-    private let account: Account
-    private let transport: any Transport
+    let account: Account
+    let transport: any Transport
     /// Each load's turn: only the newest answer is used.
     @ObservationIgnored private var turn = 0
 
@@ -357,10 +357,11 @@ struct BlockedScreen: View {
             } else {
                 Section {
                     ForEach(model.people) { person in
-                        // Stacked when the words are large or the screen is narrow.
-                        ViewThatFits(in: .horizontal) {
-                            HStack { who(person); Spacer(minLength: 8); unblockButton(person) }
-                            VStack(alignment: .leading, spacing: 8) { who(person); unblockButton(person) }
+                        // No longer friends: their username and initial (X45). A tap opens what
+                        // their profile can show (X46); stacked when the words are large or the screen narrow.
+                        PersonLink(person: Person(id: person.id, username: person.username, friends: [:]), account: model.account,
+                                   standing: .blocked(person.blockedAt), detail: blockedWords(person)) {
+                            unblockButton(person)
                         }
                     }
                 } footer: {
@@ -372,7 +373,7 @@ struct BlockedScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load() }
         .refreshable { await model.load() }
-        .confirmationDialog(unblocking.map { "Unblock @\($0.username)?" } ?? "",
+        .confirmationDialog(unblocking.map { "Unblock \($0.username)?" } ?? "",
                             isPresented: Binding(get: { unblocking != nil }, set: { if !$0 { unblocking = nil } }),
                             titleVisibility: .visible, presenting: unblocking) { person in
             Button("Unblock") { Task { await unblock(person) } }
@@ -381,12 +382,8 @@ struct BlockedScreen: View {
         }
     }
 
-    private func who(_ person: BlockedPerson) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("@\(person.username)")
-            Text("Blocked \(Date(timeIntervalSince1970: TimeInterval(person.blockedAt)).formatted(date: .abbreviated, time: .omitted))")
-                .font(.caption).foregroundStyle(.secondary)
-        }
+    private func blockedWords(_ person: BlockedPerson) -> String {
+        "Blocked \(Date(timeIntervalSince1970: TimeInterval(person.blockedAt)).formatted(date: .abbreviated, time: .omitted))"
     }
 
     private func unblockButton(_ person: BlockedPerson) -> some View {
@@ -396,7 +393,7 @@ struct BlockedScreen: View {
     private func unblock(_ person: BlockedPerson) async {
         do {
             try await model.unblock(person)
-            note = "Unblocked @\(person.username)."
+            note = "Unblocked \(person.username)."
         } catch {
             Reporter.shared.report(.warn, "unblock failed", Reporter.fields(error, ["user_id": String(person.id)]))
             session.noticed(error)

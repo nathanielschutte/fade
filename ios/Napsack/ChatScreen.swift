@@ -278,7 +278,7 @@ struct ChatScreen: View {
                 ToolbarItem(placement: .principal) {
                     NavigationLink {
                         FriendProfileScreen(friend: friend, account: account, safetyCode: conversation.safetyCode ?? "",
-                                            unfriended: { unfriended = true }, model: ProfileModel(account: account))
+                                            unfriended: { unfriended = true }, model: ProfileModel(account: account), friends: conversation.friendsById)
                     } label: {
                         HStack(spacing: 8) {
                             Avatar(kind: .friend(friend.id), avatarId: friend.avatarId, name: friend.name, size: 28)

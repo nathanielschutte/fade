@@ -72,6 +72,20 @@ struct TestServer: Sendable {
         _ = try await request("friends/requests", method: "POST", token: b.token, json: ["username": a.username])
     }
 
+    /// A profile picture for them (a JPEG, as the app uploads one).
+    func setPicture(_ jpeg: Data, for person: Person) async throws {
+        var request = URLRequest(url: URL(string: address)!.appending(path: "api/me/avatar"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(person.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jpeg
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw Failure(description: "POST me/avatar: \(status) \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
     /// A text from one to the other (format 2), sealed here.
     @discardableResult func send(_ text: String, from: Person, to: Person) async throws -> Int64 {
         let key = try E2E.pairKey(mine: from.identity, theirs: to.publicKey, myId: from.id, theirId: to.id)

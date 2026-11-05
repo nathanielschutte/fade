@@ -28,13 +28,21 @@ import UIKit
 
     let account: Account
     private let transport: any Transport
-    /// Friends' names as you call them (for the friend map); the chat list's.
-    var friendNames: [Int64: String] = [:]
+    /// Your friends (the chat list's), for the list of them and the friend map's names.
+    var friends: [Int64: Friend] = [:]
+    /// Friends' names as you call them (for the friend map).
+    var friendNames: [Int64: String] { friends.mapValues(\.name) }
 
-    init(account: Account, friendNames: [Int64: String] = [:], transport: any Transport = NetworkTransport()) {
+    init(account: Account, friends: [Int64: Friend] = [:], transport: any Transport = NetworkTransport()) {
         self.account = account
-        self.friendNames = friendNames
+        self.friends = friends
         self.transport = transport
+    }
+
+    /// Your friends as a list, by name: not Team Napsack (no one to visit).
+    var friendList: [Person] {
+        friends.values.filter { $0.system != true }.map(Person.init)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private var server: Server {
@@ -67,6 +75,11 @@ import UIKit
 
     /// Asks someone to be friends; if they'd asked you, you're friends now. In the web's words.
     func add(_ typed: String) async throws -> String {
+        try await ask(typed).words
+    }
+
+    /// The same, and whether you're friends now.
+    func ask(_ typed: String) async throws -> (friends: Bool, words: String) {
         let username = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         struct Ask: Encodable { let username: String }
         struct Answer: Decodable {
@@ -80,8 +93,8 @@ import UIKit
         let was = answer.user.username.lowercased() != username.lowercased() ? " (was @\(username))" : ""
         try? await loadRequests()
         return answer.status == "friends"
-            ? "You and \(answer.user.username)\(was) are now friends."
-            : "Request sent to \(answer.user.username)\(was)."
+            ? (true, "You and \(answer.user.username)\(was) are now friends.")
+            : (false, "Request sent to \(answer.user.username)\(was).")
     }
 
     func accept(_ request: Request) async throws {
@@ -122,6 +135,8 @@ struct QRCode: View {
 struct FriendsScreen: View {
     @Environment(Session.self) private var session
     @State var model: FriendsModel
+    /// Your friends, as the chat list has them now (a request accepted here joins them).
+    var friends: [Int64: Friend] = [:]
     @State private var username = ""
     @State private var note: String?
     @State private var copied = false
@@ -132,9 +147,9 @@ struct FriendsScreen: View {
             if !model.requests.incoming.isEmpty {
                 Section("Wants to be friends") {
                     ForEach(model.requests.incoming) { request in
-                        HStack {
-                            Text(request.username)
-                            Spacer()
+                        // Not friends yet: their username and the initial (X45); a tap opens what their profile can show.
+                        PersonLink(person: Person(id: request.id, username: request.username, friends: [:]), account: model.account,
+                                   standing: .askedYou) {
                             Button("Accept") { act { try await model.accept(request) } }.buttonStyle(.borderedProminent)
                             Button("Decline") { act { try await model.dismiss(request) } }.buttonStyle(.bordered)
                         }
@@ -196,11 +211,18 @@ struct FriendsScreen: View {
             if !model.requests.outgoing.isEmpty {
                 Section("Waiting on them") {
                     ForEach(model.requests.outgoing) { request in
-                        HStack {
-                            Text(request.username)
-                            Spacer()
+                        PersonLink(person: Person(id: request.id, username: request.username, friends: [:]), account: model.account,
+                                   standing: .youAsked) {
                             Button("Cancel request") { act { try await model.dismiss(request) } }.buttonStyle(.bordered)
                         }
+                    }
+                }
+            }
+            let friends = model.friendList
+            if !friends.isEmpty {
+                Section("Your friends (\(friends.count))") {
+                    ForEach(friends) { person in
+                        PersonLink(person: person, account: model.account, friends: model.friends)
                     }
                 }
             }
@@ -210,6 +232,7 @@ struct FriendsScreen: View {
         .sheet(isPresented: $scanning) { ScanScreen { url in Task { await FriendLinks.shared.open(url) } } }
         .refreshable { await load() }
         .task { await load() }
+        .onChange(of: friends, initial: true) { _, now in model.friends = now }
     }
 
     private func add() {

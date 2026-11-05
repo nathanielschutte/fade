@@ -191,13 +191,19 @@ struct Avatar: View {
         Group {
             // Only this picture is watched: another one arriving doesn't redraw this row.
             if let path, let image = pictures?.picture(path).image(pixels) {
-                Image(uiImage: image).resizable().scaledToFill()
+                let picture = Image(uiImage: image).resizable().scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(group ? AnyShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)) : AnyShape(Circle()))
-                    .accessibilityHidden(!enlarges)
-                    .onTapGesture { if enlarges { Task { big = await pictures?.full(path) ?? image } } }
-                    .accessibilityAddTraits(enlarges ? .isButton : [])
-                    .accessibilityLabel(enlarges ? "Picture of \(name). Tap to see it big" : "")
+                if enlarges {
+                    picture
+                        .onTapGesture { Task { big = await pictures?.full(path) ?? image } }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityLabel("Picture of \(name). Tap to see it big")
+                } else {
+                    // No tap of its own: in a row, the row's tap is the picture's too (X48: a chat's
+                    // picture opens the chat). A tap gesture here, even one doing nothing, took it.
+                    picture.accessibilityHidden(true)
+                }
             } else {
                 Initial(name: name, group: group, size: size)
             }
@@ -354,6 +360,8 @@ struct FriendProfileScreen: View {
     let safetyCode: String
     let unfriended: () -> Void
     @State var model: ProfileModel
+    /// Your friends, for the friends you have in common (their names and pictures, and their profiles).
+    var friends: [Int64: Friend] = [:]
     @State private var nickname = ""
     @State private var problem: String?
     @State private var confirmingUnfriend = false
@@ -366,12 +374,22 @@ struct FriendProfileScreen: View {
 
     private var person: Reportable { Reportable(id: friend.id, name: friend.name) }
 
+    /// What the app calls them: a nickname set here wins at once, as in the list.
+    private var shownName: String {
+        guard let profile = model.profile else { return friend.name }
+        return profile.nickname ?? profile.displayName ?? friend.username
+    }
+
     var body: some View {
         List {
             Section {
                 VStack(spacing: 8) {
                     Avatar(kind: .friend(friend.id), avatarId: model.profile?.avatarId ?? friend.avatarId, name: friend.name, size: 96, enlarges: true)
-                    Text(model.profile?.displayName ?? friend.username).font(.title2.bold())
+                    // Your nickname for them first, as everywhere (X47); their own display name under it when that differs.
+                    Text(shownName).font(.title2.bold()).multilineTextAlignment(.center)
+                    if let theirs = model.profile?.displayName ?? friend.displayName, theirs != shownName {
+                        Text(theirs).multilineTextAlignment(.center)
+                    }
                     Text("@\(friend.username)").foregroundStyle(.secondary)
                     if let past = model.profile?.pastUsernames, !past.isEmpty {
                         Text("Was " + past.map { "@\($0)" }.joined(separator: ", ")).font(.footnote).foregroundStyle(.secondary)
@@ -402,7 +420,9 @@ struct FriendProfileScreen: View {
                 }
                 if let mutual = profile.mutualFriends, !mutual.isEmpty {
                     Section("Friends in common") {
-                        ForEach(mutual) { Text($0.username) }
+                        ForEach(mutual) { m in
+                            PersonLink(person: Person(id: m.id, username: m.username, friends: friends), account: account, friends: friends)
+                        }
                     }
                 }
             }

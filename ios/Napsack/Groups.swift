@@ -101,13 +101,12 @@ struct NewGroupScreen: View {
                         Button {
                             if picked.contains(friend.id) { picked.remove(friend.id) } else { picked.insert(friend.id) }
                         } label: {
-                            HStack {
-                                Avatar(kind: .friend(friend.id), avatarId: friend.avatarId, name: friend.name, size: 32)
-                                Text(friend.name).foregroundStyle(.primary)
-                                Spacer()
+                            // A tap picks them here, rather than opening their profile.
+                            PersonRow(person: Person(friend), size: 32) {
                                 Image(systemName: picked.contains(friend.id) ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(picked.contains(friend.id) ? Color.accentColor : .secondary)
                             }
+                            .contentShape(Rectangle())
                         }
                         .accessibilityAddTraits(picked.contains(friend.id) ? .isSelected : [])
                     }
@@ -182,9 +181,8 @@ struct GroupInfoScreen: View {
             if let detail = model.detail {
                 Section {
                     ForEach(detail.members) { member in
-                        HStack {
-                            Text(display(member))
-                            Spacer()
+                        // A friend's picture and name; anyone else, their username and initial (X45, X47). A tap opens their profile (X46).
+                        PersonLink(person: Person(id: member.id, username: member.username, friends: friends), account: account, friends: friends) {
                             if member.role == "owner" { Text("Owner").font(.caption).foregroundStyle(.secondary) }
                         }
                         .swipeActions {
@@ -208,16 +206,14 @@ struct GroupInfoScreen: View {
                 } footer: {
                     Text((model.isOwner ? "You're the owner, so you can remove people (swipe). Everything they sent stays in the chat."
                           : "Only \(detail.members.first { $0.role == "owner" }.map(display) ?? "the owner") can remove people. You can add your friends.")
-                         + " Hold someone to report or block them.")
+                         + " Tap someone for their profile, or hold them to report or block them.")
                 }
                 let addable = friends.values.filter { f in f.system != true && f.deactivated != true && !detail.members.contains { $0.id == f.id } }
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
                 if !addable.isEmpty {
                     Section("Add friends") {
                         ForEach(addable) { friend in
-                            HStack {
-                                Text(friend.name)
-                                Spacer()
+                            PersonLink(person: Person(friend), account: account, friends: friends) {
                                 Button("Add") { act { try await model.add(friend.id); note = "Added \(friend.name). They'll see messages from now on." } }
                                     .buttonStyle(.bordered)
                             }

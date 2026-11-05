@@ -179,7 +179,7 @@ struct ChatListScreen: View {
             .navigationDestination(for: Screen.self) { screen in
                 switch screen {
                 case .friends:
-                    FriendsScreen(model: FriendsModel(account: account, friendNames: (list.reader?.friends ?? [:]).mapValues(\.name)))
+                    FriendsScreen(model: FriendsModel(account: account), friends: list.reader?.friends ?? [:])
                 case .chat(let kind):
                     chatScreen(kind)
                 }

@@ -1281,7 +1281,14 @@ struct SendToScreen: View {
                 } label: {
                     HStack {
                         Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name, size: 32)
-                        Text(row.name).foregroundStyle(.primary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.name).foregroundStyle(.primary)
+                            // A friend's @username where their name differs (X47).
+                            if let username = row.username, let handle = Person.handle(name: row.name, username: username) {
+                                Text(handle).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .lineLimit(1)
                         Spacer()
                         Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
@@ -1303,7 +1310,7 @@ struct SendToScreen: View {
 
     private var shown: [ChatRow] {
         let words = search.trimmingCharacters(in: .whitespaces)
-        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) }
+        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
     }
 
     /// A few chats at a time, each sealed its own copy of the same bytes; what
