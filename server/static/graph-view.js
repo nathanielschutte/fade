@@ -238,7 +238,9 @@ export function drawGraph(host, graph, { center = null, label = () => "", descri
   root.addEventListener("click", () => select(null));
 
   // Legend: each group, its letter and color, and its people.
-  const shown = (keys) => keys.map((k) => byKey.get(k)).filter((n) => n.kind !== "unknown").map(label).filter(Boolean);
+  // Alphabetical: the order groups are found in isn't fixed, and a list reads better sorted.
+  const shown = (keys) => keys.map((k) => byKey.get(k)).filter((n) => n.kind !== "unknown").map(label).filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
   const strangers = (keys) => keys.filter((k) => byKey.get(k).kind === "unknown").length;
   const groupLine = (keys, i) => {
     const people = shown(keys);
