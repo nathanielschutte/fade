@@ -6,7 +6,7 @@ Encryption happens in the client (shared/crypto/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """
-import asyncio, base64, json, os, sqlite3, struct, sys, time, urllib.parse, uuid, zlib
+import asyncio, base64, hashlib, json, os, sqlite3, struct, sys, time, urllib.parse, uuid, zlib
 import requests, websockets
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
@@ -16,6 +16,12 @@ DB = os.environ.get("NAPSACK_DB") or None
 # local one. Skips what needs the local machine: the push receiver.
 REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
+# smoke_admin's key (SMOKE_ADMIN_KEY below) is public for a local server only.
+ADMIN_SECRET = os.environ.get("NAPSACK_ADMIN_KEY") or ""
+LOCAL = (urllib.parse.urlparse(BASE).hostname or "") in ("127.0.0.1", "localhost", "::1")
+if not LOCAL and not ADMIN_SECRET:
+    sys.exit(f"refusing: {BASE} isn't this machine, and smoke_admin's key is the public one. "
+             "Set NAPSACK_ADMIN_KEY (scripts/test-staging.sh does).")
 
 b64 = lambda raw: base64.b64encode(raw).decode()
 AUTH_KEY = b64(os.urandom(32))
@@ -293,8 +299,12 @@ def check_people(tag, a, a_tok, b, b_tok):
     print("  people: names, private nicknames, pictures, birthdays; friends only")
 
 
-# Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in.
-SMOKE_ADMIN, SMOKE_ADMIN_KEY = "smoke_admin", base64.b64encode(b"smoke admin key, not a secret..").decode()
+# Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in:
+# public for a local server, and staging's own from NAPSACK_ADMIN_KEY (its tfvars, any
+# long random string; checked at the top), so nobody else can be staging's smoke_admin.
+SMOKE_ADMIN = "smoke_admin"
+SMOKE_ADMIN_KEY = b64(hashlib.sha256(ADMIN_SECRET.encode()).digest()) if ADMIN_SECRET \
+    else b64(b"smoke admin key, not a secret..")
 
 
 def real_public_key():

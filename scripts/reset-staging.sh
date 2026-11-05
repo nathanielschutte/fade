@@ -22,6 +22,9 @@ URL=$(terraform -chdir=infra/staging output -raw url)
 case "$URL" in https://staging.*) ;; *) echo "refusing: $URL isn't staging"; exit 1;; esac
 INVITE=$(sed -n 's/^invite_code *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
 [ -n "$INVITE" ] || { echo "no invite_code in infra/staging/terraform.tfvars"; exit 1; }
+# The seeded people's password: staging's own, as for test-staging.sh.
+PASSWORD=$(sed -n 's/^test_password *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
+[ -n "$PASSWORD" ] || { echo "no test_password in infra/staging/terraform.tfvars"; exit 1; }
 if ! command -v node >/dev/null && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi
 command -v node >/dev/null || { echo "Node.js is required for the seed (docs/onboarding.md)"; exit 1; }
 LOADTEST="tests/.loadtest-${URL#https://}.json"
@@ -64,7 +67,7 @@ done
 curl -sf "$URL/api/health" >/dev/null || { echo "staging didn't come back: FADE_STACK=staging scripts/ssh.sh \"sudo journalctl -u fade -n 50\""; exit 1; }
 
 echo "==> seeding"
-NAPSACK_INVITE="$INVITE" node scripts/seed/seed.mjs --url "$URL"
+NAPSACK_INVITE="$INVITE" NAPSACK_PASSWORD="$PASSWORD" node scripts/seed/seed.mjs --url "$URL"
 
 if [ -e "$LOADTEST" ]; then
   rm "$LOADTEST"

@@ -60,6 +60,13 @@ if [ "$STAGING" = 1 ]; then
   case "$NAPSACK_URL" in https://staging.*) ;; *) echo "refusing: $NAPSACK_URL isn't staging"; exit 1;; esac
   NAPSACK_INVITE=$(sed -n 's/^invite_code *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
   [ -n "$NAPSACK_INVITE" ] || { echo "no invite_code in infra/staging/terraform.tfvars"; exit 1; }
+  # Staging's own test password (as test-staging.sh), for tests that read
+  # NAPSACK_TEST_PASSWORD. The app's live tests still sign in with the public
+  # one, which staging's e2e_admin doesn't have: until they read it, the tests
+  # that need an Admin skip on staging (no NAPSACK_TEST_ADMIN).
+  NAPSACK_PASSWORD=$(sed -n 's/^test_password *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
+  [ -n "$NAPSACK_PASSWORD" ] || { echo "no test_password in infra/staging/terraform.tfvars"; exit 1; }
+  NAPSACK_ADMIN=""
   echo "==> $NAPSACK_URL is running build $(curl -sf "$NAPSACK_URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')"
 elif [ "$LIVE" = 1 ]; then
   section "building server"
@@ -68,8 +75,9 @@ elif [ "$LIVE" = 1 ]; then
 fi
 if [ "$LIVE" = 1 ]; then
   # xcodebuild hands the tests every TEST_RUNNER_ variable, without the prefix.
-  ENV=(TEST_RUNNER_NAPSACK_TEST_SERVER="$NAPSACK_URL" TEST_RUNNER_NAPSACK_TEST_INVITE="$NAPSACK_INVITE"
-       TEST_RUNNER_NAPSACK_TEST_ADMIN="$NAPSACK_ADMIN")
+  ENV=(TEST_RUNNER_NAPSACK_TEST_SERVER="$NAPSACK_URL" TEST_RUNNER_NAPSACK_TEST_INVITE="$NAPSACK_INVITE")
+  if [ -n "$NAPSACK_ADMIN" ]; then ENV+=(TEST_RUNNER_NAPSACK_TEST_ADMIN="$NAPSACK_ADMIN"); fi
+  if [ -n "${NAPSACK_PASSWORD:-}" ]; then ENV+=(TEST_RUNNER_NAPSACK_TEST_PASSWORD="$NAPSACK_PASSWORD"); fi
 fi
 
 section "release build, without the vectors"

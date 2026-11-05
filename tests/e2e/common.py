@@ -4,11 +4,12 @@ also export them yourself to point the tests at another server.
 NAPSACK_URL      server to test, e.g. http://127.0.0.1:8099
 NAPSACK_INVITE   invite code the server requires
 NAPSACK_ADMIN    username in the server's FADE_ADMINS (test_admin.py signs up as it)
+NAPSACK_PASSWORD the test accounts' password; needed for any server but this machine's
 NAPSACK_DB       optional: path to the server's SQLite file, for checks that read it
 NAPSACK_SHOTS    optional: directory to write screenshots into
 E2E_CHROME       "chrome" (default) uses installed Chrome; "bundled" uses Playwright's Chromium
 """
-import asyncio, os, re
+import asyncio, os, re, urllib.parse
 
 from playwright.async_api import expect
 
@@ -26,7 +27,16 @@ REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 _CHANNEL = os.environ.get("E2E_CHROME", "chrome")
 
 # Every test account's password (the admin's too, which several tests share).
-PASSWORD = "correct horse battery"
+# A local server's is this public one; staging's is its own (NAPSACK_PASSWORD,
+# from its tfvars: scripts/test-staging.sh), so nobody else can sign in to the
+# accounts the tests leave there. scripts/seed/seed.mjs reads this line too.
+LOCAL_PASSWORD = "correct horse battery"
+PASSWORD = os.environ.get("NAPSACK_PASSWORD") or LOCAL_PASSWORD
+_HOST = urllib.parse.urlparse(BASE).hostname or ""
+LOCAL = _HOST in ("127.0.0.1", "localhost", "::1")
+if not LOCAL and PASSWORD == LOCAL_PASSWORD:
+    raise SystemExit(f"refusing: {BASE} isn't this machine, and the test password is the public one. "
+                     "Set NAPSACK_PASSWORD (scripts/test-staging.sh does).")
 # Signing up or in makes keys from the password (600,000 rounds, twice for a
 # new account, plus a recovery key): with four browsers at once on a CI runner
 # that can pass 20 seconds. A waiting check, so it costs nothing when it's quick.

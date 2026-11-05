@@ -17,6 +17,12 @@ URL=$(terraform -chdir=infra/staging output -raw url)
 case "$URL" in https://staging.*) ;; *) echo "refusing: $URL isn't staging"; exit 1;; esac
 INVITE=$(sed -n 's/^invite_code *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
 [ -n "$INVITE" ] || { echo "no invite_code in infra/staging/terraform.tfvars"; exit 1; }
+# Staging's own test password and smoke_admin key, so nobody else can sign in
+# to its test accounts or Admins (the tests refuse the public ones off this machine).
+PASSWORD=$(sed -n 's/^test_password *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
+ADMIN_KEY=$(sed -n 's/^smoke_admin_key *= *"\(.*\)"/\1/p' infra/staging/terraform.tfvars)
+[ -n "$PASSWORD" ] || { echo "no test_password in infra/staging/terraform.tfvars"; exit 1; }
+[ -n "$ADMIN_KEY" ] || { echo "no smoke_admin_key in infra/staging/terraform.tfvars"; exit 1; }
 
 VENV_PY="$HOME/.venvs/napsack-tests/bin/python"
 if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
@@ -30,6 +36,7 @@ if [ "$(uname -s)" = Linux ] && ! command -v google-chrome >/dev/null; then
 fi
 
 export NAPSACK_URL="$URL" NAPSACK_INVITE="$INVITE" NAPSACK_ADMIN=e2e_admin NAPSACK_REMOTE=1
+export NAPSACK_PASSWORD="$PASSWORD" NAPSACK_ADMIN_KEY="$ADMIN_KEY"
 export NAPSACK_SHOTS="${NAPSACK_SHOTS:-$(mktemp -d)/shots}"
 echo "==> $URL is running build $(curl -sf "$URL/api/config" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')"
 

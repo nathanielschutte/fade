@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright, expect
 
 import uuid
 
-from common import BASE, INVITE, REMOTE, launch, save_recovery_key, shot, PHONE
+from common import BASE, INVITE, PASSWORD, REMOTE, launch, save_recovery_key, shot, PHONE
 
 errors = []
 
@@ -89,7 +89,7 @@ async def main():
         name = f"env_{uuid.uuid4().hex[:5]}"
         await p.click("#auth-toggle")
         await p.fill("#auth-form input[name=username]", name)
-        await p.fill("#auth-form input[name=password]", "correct horse battery")
+        await p.fill("#auth-form input[name=password]", PASSWORD)
         await p.fill("#auth-form input[name=invite_code]", INVITE)
         await p.click("#auth-submit")
         await expect(p.locator("#app")).to_be_visible(timeout=20000)
