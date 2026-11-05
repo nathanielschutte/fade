@@ -1,11 +1,12 @@
 # Everyday commands: building, running, and testing napsack on this machine.
 # Nothing here deploys, connects to production, or changes anything outside
-# the repository (that's scripts/deploy.sh, ssh.sh, and Terraform: the owner's).
+# the repository but staging, which the *-staging targets test and reset
+# (deploying is scripts/deploy.sh, ssh.sh, and Terraform: the owner's).
 # `make` alone lists them. Setting up a machine: docs/onboarding.md, and for
 # the iOS app docs/ios-onboarding.md, the Android app docs/android-onboarding.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging ios-archive android android-jvm android-open test-staging
+.PHONY: help run seed test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging ios-archive android android-jvm android-open test-staging reset-staging
 
 PORT ?= 8080
 ADMIN ?= nate
@@ -17,6 +18,9 @@ help: ## This list
 
 run: ## The server and web app on http://127.0.0.1:8080 (PORT=), with nate as an Admin (ADMIN=); web files reload as they change
 	cd server && FADE_BIND=127.0.0.1:$(PORT) FADE_ADMINS=$(ADMIN) cargo run
+
+seed: ## Fills the server from make run (empty, PORT=) with a few friends and their chats: scripts/seed/seed.mjs
+	node scripts/seed/seed.mjs --url http://127.0.0.1:$(PORT)
 
 run-lan: ## The server and web app on http://0.0.0.0:8080 (PORT=), with nate as an Admin (ADMIN=); web files reload as they change
 	cd server && FADE_BIND=0.0.0.0:$(PORT) FADE_ADMINS=$(ADMIN) cargo run
@@ -76,3 +80,6 @@ android-open: ## Opens the Android app in Android Studio
 
 test-staging: ## The smoke and browser tests against staging (makes test accounts there; never production)
 	bash scripts/test-staging.sh
+
+reset-staging: ## Empties staging and seeds it with a few friends and their chats: says what it would do, YES=1 does it (never production)
+	bash scripts/reset-staging.sh $(if $(YES),--yes)
