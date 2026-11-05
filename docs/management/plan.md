@@ -32,6 +32,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
 | 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 11 | [The web chat can stop following the newest message as the window shrinks](#d22-the-web-chat-can-stop-following-the-newest-message-as-the-window-shrinks) | Debug | – | Planned | Found 2026-11-05 by a flaky test on main's CI: a scroll event racing a resize |
 
 **Done**
 
@@ -514,6 +515,9 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-11-04): music stops as soon as the camera opens, even for a pic. Whatever is playing should keep playing, through a pic or a video.
 - Same cause as [D20](#d20-the-iphone-camera-freezes-during-a-phone-call): with the microphone in, the capture session sets up the app's audio on its own, in a mode that stops other apps' sound. Fix: napsack sets up its audio itself, mixing with others, and only as long as the camera is open. The web already asks for the microphone only as a recording starts, and records without sound when it can't have it, so a pic there leaves music and calls alone.
 - **Built (2026-11-04).** napsack sets up the camera's sound itself (mixing with other apps', back as it was when the camera closes) and takes the microphone only when it's free: not on a call, and dropped if iOS hands it to a call while the camera's open. A video then has no sound and says so. The decisions are tested (`CameraAudioTests`); the call and the music need a phone.
+
+#### D22. The web chat can stop following the newest message as the window shrinks
+- Found 2026-11-05: `test_chat_scroll.py` failed on main's CI (and once locally under load) at "a shorter window (the keyboard) keeps it in view". The likely cause: `scroller.pinned` is recomputed on every scroll event (app.js), so a scroll event that lands before the ResizeObserver has handled a shrink sees the resize's gap at the bottom as a scroll up, and the chat stops following. A first fix (ignoring scroll events while a resize is unhandled) broke "a new message while scrolled up", so it wasn't shipped. Next: reproduce it on purpose (shrink the window and fire a scroll in the same frame), then fix by the data, not by the order the events come in (CLAUDE.md, concurrency).
 
 ### Experience/visual
 
