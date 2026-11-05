@@ -10,6 +10,8 @@ How napsack's pieces are versioned, how each one ships, and the rules that keep 
 | iOS app | `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `ios/Config/Base.xcconfig` | Xcode → TestFlight → App Store, with the Developer Program ([mobile.md](../design/mobile.md)) | `ios-v1.2.0` |
 | Infrastructure | git history | `terraform apply` by hand | none |
 
+**1.0 (Nate, 2026-11-05):** the server and the iPhone app both became `1.0.0` together, for the App Store release (`server-v1.0.0`; `ios-v1.0.0` once the App Store approves it). From there each moves on its own, by the compatibility rules below. Android stays `0.x` until it ships.
+
 The web client is compiled into the server binary, so it always matches the server. Every running server reports what it is at `GET /api/config`: `server_version`, `build` (git short sha, `-dirty` if built from uncommitted code), `api_version`, `message_formats`, and `min_client_versions`. The admin panel shows the same.
 
 ## Compatibility rules
