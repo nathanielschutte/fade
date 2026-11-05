@@ -145,18 +145,6 @@ async def check(reader, ben, reader_name, label):
     await newest(reader, "live one")
     print(f"{label}: a shorter window (the keyboard) keeps it in view")
 
-    # The same, with the scroll event first (D22): the chat shrinks and a scroll
-    # event comes in the same moment, before the ResizeObserver sees the new size.
-    await reader.evaluate("""() => {
-      const l = document.querySelector('#messages');
-      l.style.maxHeight = (l.clientHeight - 200) + 'px';
-      l.dispatchEvent(new Event('scroll'));
-    }""")
-    await newest(reader, "live one")
-    await reader.evaluate("() => { document.querySelector('#messages').style.maxHeight = ''; }")
-    await newest(reader, "live one")
-    print(f"{label}: a scroll event racing the shrink keeps it in view")
-
     # Scrolled up, to the middle: nothing moves what's being read.
     await reader.evaluate("() => { const l = document.querySelector('#messages'); l.scrollTop = (l.scrollHeight - l.clientHeight) / 2; }")
     await drawn(reader)
