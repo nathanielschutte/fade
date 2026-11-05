@@ -150,10 +150,20 @@ struct SettingsScreen: View {
                 Button("Sign out", role: .destructive) { confirmingSignOut = true }
                     .disabled(signingOut)
             }
-            Section {
-                Button("Delete account", role: .destructive) { deleting = true }
-            } footer: {
-                Text("Deletes everything of yours from napsack, for good.")
+            if account.user.isAdmin {
+                // Admins can't (the server's deletion.rs refuses too): their name stays theirs.
+                Section {
+                    Text(Self.adminCantDelete).font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("delete-admin-note")
+                } header: {
+                    Text("Delete account")
+                }
+            } else {
+                Section {
+                    Button("Delete account", role: .destructive) { deleting = true }
+                } footer: {
+                    Text("Deletes everything of yours from napsack, for good.")
+                }
             }
         }
         .navigationTitle("Profile")
@@ -201,6 +211,9 @@ struct SettingsScreen: View {
 
     /// Under "Sign out?": nothing of the account stays here, so coming back takes a way in.
     static let signOutWords = "Nothing of your account stays on this phone. To sign in again, you'll need your password, a passkey, or your recovery key."
+
+    /// In place of Delete account, for an Admin (the web says the same).
+    static let adminCantDelete = "You're an Admin, so your account can't be deleted: your username stays yours for good, so no one can ever take it and pose as you."
 
     /// "Recovery key saved October 29, 2026. Signed in on 1 other device."
     private var status: String {

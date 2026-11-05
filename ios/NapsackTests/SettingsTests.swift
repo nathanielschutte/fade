@@ -19,4 +19,10 @@ import Testing
         // Short, and names every way back in.
         #expect(["password", "passkey", "recovery key"].allSatisfy(SettingsScreen.signOutWords.contains))
     }
+
+    @Test func anAdminIsToldWhyTheyCantDelete() {
+        // In place of Delete account, and the same words as the web's note.
+        #expect(SettingsScreen.adminCantDelete.hasPrefix("You're an Admin, so your account can't be deleted"))
+        #expect(SettingsScreen.adminCantDelete.contains("no one can ever take it"))
+    }
 }

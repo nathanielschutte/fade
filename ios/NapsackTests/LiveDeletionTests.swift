@@ -49,4 +49,28 @@ struct LiveDeletionTests {
             try await again.signIn(server: live.address, username: anaAccount.user.username, password: password)
         }
     }
+
+    /// An Admin can't, whatever's typed (deletion.rs): the server's words, and
+    /// still signed in. Settings shows a note instead of the button.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"] != nil))
+    func anAdminCantDeleteTheirAccount() async throws {
+        let admin = Session(store: MemoryStore(), reporter: Reporter())
+        let adminName = ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"]!
+        do {
+            try await admin.signUp(server: live.address, username: adminName, password: password, inviteCode: live.invite)
+        } catch {
+            try await admin.signIn(server: live.address, username: adminName, password: password)
+        }
+        #expect(admin.account?.user.isAdmin == true)
+        do {
+            try await admin.deleteAccount(password: password, typedUsername: adminName)
+            Issue.record("an Admin deleted their account")
+        } catch let ServerError.refused(message, status) {
+            #expect(status == 403)
+            #expect(message.contains("Admins can't delete their account"), "\(message)")
+        }
+        #expect(admin.account != nil && admin.state != .signedOut, "still signed in")
+        let me = try await Server(live.address).send("me", token: try #require(admin.account?.token))
+        #expect(!me.isEmpty, "the account is all still there")
+    }
 }
