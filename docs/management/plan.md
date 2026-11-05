@@ -25,13 +25,12 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake; started 2026-11-04 on the web and the iPhone |
 | 3 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
-| 4 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | Nate | In progress | Nate (2026-10-30), from the intake. Decided (2026-11-04): a seeding script through the API, a small realistic set |
-| 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 6 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 4 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
+| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 9 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -136,6 +135,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | build 175 | Nate |
 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | 0.50.0, build 175 | Nate |
 | [Passkeys](#f26-passkeys) on the iPhone | 0.50.0, build 175 | Nate |
+| [Reset staging's data](#i12-reset-stagings-data): `scripts/reset-staging.sh` and a seed through the API | scripts (2026-11-05) | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
@@ -872,6 +872,7 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Staging has no user data, so a reset is safe there (never production: the same guards as `test-staging.sh`). Options: (a) stop the server, replace `fade.db` with a seed copy from S3, start; (b) a fresh empty database plus a seeding script (an Admin, a few friends, groups, messages) run against the API, so the seed always matches the current schema. (b) keeps working as migrations are added; (a) needs regenerating when they are.
 - **Needs decision:** what staging should start with (accounts, friends, groups, history), and whether the seed is a file or a script.
 - **Decided (Nate, 2026-11-04):** (b), a script through the API, so the seed always matches the current schema and formats; and a small realistic set: `e2e_admin` and about six people with display names and pictures, friendships among them and a pending request, two groups, a few dozen texts and reactions in each chat, and an unopened pic.
+- **Done (2026-11-05).** `scripts/reset-staging.sh --yes` (`make reset-staging YES=1`) refuses anything but staging, stops the server, sets the database and pics aside in `before-reset/` (one copy, replacing the last), starts it fresh, and runs `scripts/seed/seed.mjs`: the web's own crypto (`shared/crypto/crypto.js`) in Node, through the API, so the seed matches the formats in use. Six people (`maya.lin`, `theo.ramirez`, `priya.shah`, `sam.okafor`, `jules.m`, `ben.hart`) and `e2e_admin`, on the test password; 9 friendships and a pending request; 9 direct chats (200 texts, reactions, an edit, a waiting pic); two groups (Saturday hike, Book club) with messages, reactions, and a waiting pic. `test_seed.py` runs it against the test server and reads it back in the browser, so a format change that breaks it fails `scripts/test.sh`. `make seed` fills a local server. Staging was reset with it on 2026-11-05.
 
 #### I13. The server stays fast as history grows
 - Nate (2026-11-03): make the server's hot queries fast as data grows, without changing what any endpoint returns. Texts are kept forever, so every read of a whole history only gets slower. A survey of the code found: streaks and profile counts read the whole messages table; the chat list sorted each pair's whole history for its newest message and ran about 200 queries for 99 friends; the groups list and a group's page ran a few queries per group or message (up to ~600 a page); the friend map loaded every friendship in the database; and every read of a group sent `groups_changed`, so each of the reader's apps fetched its lists again.
