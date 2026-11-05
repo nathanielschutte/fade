@@ -40,7 +40,7 @@ jobs:
       rebuild: ${{ steps.fetch.outputs.rebuild }}
       sha256: ${{ steps.fetch.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # to check the tag is on main
 
@@ -103,7 +103,7 @@ jobs:
     outputs:
       sha256: ${{ steps.build.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
         with:
           toolchain: stable
@@ -148,7 +148,7 @@ jobs:
       BUILD: ${{ needs.candidate.outputs.build }}
       SHA256: ${{ needs.rebuild.outputs.sha256 || needs.candidate.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the release notes start at the previous server-v* tag
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
