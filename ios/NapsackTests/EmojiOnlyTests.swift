@@ -26,16 +26,6 @@ struct EmojiOnlyTests {
         #expect(BubbleView.emojiOnly("™") == nil)
         #expect(BubbleView.emojiOnly("❤") == nil)  // without its emoji form
     }
-
-    @Test func aPhotoShownWholeFitsTheScreen() {
-        let screen = CGSize(width: 390, height: 844)
-        let wide = Captured.photo(TestPicture.photo(size: CGSize(width: 1600, height: 900)))
-        #expect(CameraScreen.stage(wide, whole: true, screen: screen) == CGSize(width: 390, height: 219))
-        let tall = Captured.photo(TestPicture.photo(size: CGSize(width: 900, height: 3000)))
-        #expect(CameraScreen.stage(tall, whole: true, screen: screen) == CGSize(width: 253, height: 844))
-        // Just taken, it fills the screen, as the camera showed it.
-        #expect(CameraScreen.stage(wide, whole: false, screen: screen) == screen)
-    }
 }
 
 /// Pictures of texts of emoji beside ordinary ones, mine and a friend's, a

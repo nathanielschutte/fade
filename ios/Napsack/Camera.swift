@@ -678,13 +678,16 @@ struct ReadyToSend: Sendable {
         if case .video = media { true } else { false }
     }
 
-    /// Flattens the drawing into the photo and compresses it (Pen.flatten,
+    /// Flattens the drawing into the photo, crops it to what was on screen
+    /// (`crop`, its pixels), and compresses it (Pen.flatten, Framing.cropped,
     /// Conversation.photoJPEG), or reads the video's file, off the main thread.
-    static func prepare(_ shot: Captured, strokes: [Stroke], caption: String, y: Double) async throws -> ReadyToSend {
+    static func prepare(_ shot: Captured, strokes: [Stroke], crop: CGRect? = nil, caption: String, y: Double) async throws -> ReadyToSend {
         let media = try await Task.detached(priority: .userInitiated) { () throws -> Media in
             switch shot {
             case .photo(let image):
-                guard let jpeg = Conversation.photoJPEG(Pen.flatten(image, strokes: strokes)) else { throw SendError.tooLarge }
+                var flat = Pen.flatten(image, strokes: strokes)
+                if let crop { flat = Framing.cropped(flat, to: crop) }
+                guard let jpeg = Conversation.photoJPEG(flat) else { throw SendError.tooLarge }
                 return .photo(jpeg)
             case .video(let url):
                 return .video(try Data(contentsOf: url))
@@ -730,6 +733,8 @@ struct MadeReady {
         let caption: String
         let y: Double
         let muted: Bool
+        /// The part of the photo that was on screen, in its pixels (Framing.crop).
+        var crop: CGRect? = nil
     }
 
     let content: Content
@@ -834,9 +839,13 @@ struct CameraScreen: View {
     @State private var holdTask: Task<Void, Never>?
     // After a capture.
     @State private var shot: Captured?
-    /// A photo from the library is shown whole, as it's sent (X52); one just
-    /// taken fills the screen, as the camera showed it.
-    @State private var whole = false
+    /// How the capture sits on screen, which is what's sent (Framing; X52):
+    /// a photo from the library whole, zoomable; one just taken filling it.
+    @State private var framing = Framing(whole: false)
+    /// Where a pinch or drag began.
+    @State private var framingFrom: Framing?
+    /// The screen it's shown on, in points: what's sent is cropped to it.
+    @State private var screen: CGSize = .zero
     @State private var files = CaptureFiles()
     @State private var caption = ""
     @State private var captionY = 0.75
@@ -860,15 +869,21 @@ struct CameraScreen: View {
     /// The flash as chosen (CameraChoice keeps it until the app is quit); each camera uses what it has of it.
     @State private var flash = CameraChoice.shared.flash
 
-    /// `offering` stands in for what a camera offers, to look at the screen where there's none (tests).
+    /// `offering` stands in for what a camera offers, to look at the screen where there's none (tests);
+    /// `caption` and `framing`, a capture as it's being made ready (tests).
     init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil,
-         offering: CameraSession.Lenses? = nil) {
+         offering: CameraSession.Lenses? = nil, caption: (String, Double)? = nil, framing: Framing? = nil) {
         self.maxSeconds = maxSeconds
         self.maxBytes = maxBytes
         self.send = send
         self.close = close
         _shot = State(initialValue: start)
-        _whole = State(initialValue: start != nil)  // opened on a photo picked from the library
+        _framing = State(initialValue: Framing(whole: start != nil))  // opened on a photo picked from the library
+        if let framing { _framing = State(initialValue: framing) }
+        if let caption {
+            _caption = State(initialValue: caption.0)
+            _captionY = State(initialValue: caption.1)
+        }
         if let offering { _lenses = State(initialValue: offering) }
     }
 
@@ -1152,7 +1167,7 @@ struct CameraScreen: View {
     /// Shown in place; the next capture starts at 1× (Nate, 2026-10-29).
     private func captured(_ media: Captured, whole: Bool = false) {
         shot = media
-        self.whole = whole
+        framing = Framing(whole: whole)
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
@@ -1183,47 +1198,88 @@ struct CameraScreen: View {
     private func review(_ media: Captured) -> some View {
         ZStack {
             GeometryReader { geo in
-                // The photo's own place on screen: whole, the pen and the caption
-                // are on it, and the caption sits where recipients see it on theirs.
-                let stage = Self.stage(media, whole: whole, screen: geo.size)
-                ZStack {
-                    switch media {
-                    case .photo(let image):
-                        Image(uiImage: image).resizable().scaledToFill()
-                            .frame(width: stage.width, height: stage.height).clipped()
-                        PenLayer(image: image.size, box: stage, strokes: $strokes, drawing: penOn)
-                    case .video(let url):
-                        LoopingPlayer(url: url, muted: muted)
+                // The picture: the part of the photo on screen, which is what's sent.
+                // The pen draws on the whole photo; the caption sits on the picture,
+                // where recipients see it on theirs (pic-framing.md).
+                let (rect, shown) = Self.place(media, framing: framing, screen: geo.size)
+                ZStack(alignment: .topLeading) {
+                    Color.black
+                        .contentShape(Rectangle())
+                        .onTapGesture { if editingCaption { endCaption() } }  // off the picture, only the keyboard goes
+                    Group {
+                        switch media {
+                        case .photo(let image):
+                            ZStack {
+                                Image(uiImage: image).resizable().scaledToFill()
+                                PenLayer(image: image.size, box: rect.size, strokes: $strokes, drawing: penOn)
+                            }
+                        case .video(let url):
+                            LoopingPlayer(url: url, muted: muted)
+                        }
                     }
-                    captionBar(in: stage)
+                    .frame(width: rect.width, height: rect.height)
+                    .offset(x: rect.minX, y: rect.minY)
+                    .allowsHitTesting(penOn)  // drawing; otherwise taps and pinches are the picture's
+                    Color.clear
+                        .frame(width: shown.width, height: shown.height)
+                        .contentShape(Rectangle())
+                        .onTapGesture { at in
+                            switch Self.tap(writing: editingCaption, drawing: penOn, captioned: !caption.isEmpty) {
+                            case .putKeyboardAway: endCaption()
+                            case .startCaption: startCaption(at: at.y / max(shown.height, 1))
+                            case .nothing: break
+                            }
+                        }
+                        .overlay { captionBar(in: shown.size) }
+                        .offset(x: shown.minX, y: shown.minY)
+                        .allowsHitTesting(!penOn)
                 }
-                .frame(width: stage.width, height: stage.height)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
                 .contentShape(Rectangle())
-                .onTapGesture { at in
-                    switch Self.tap(writing: editingCaption, drawing: penOn, captioned: !caption.isEmpty) {
-                    case .putKeyboardAway: endCaption()
-                    case .startCaption: startCaption(at: at.y / max(stage.height, 1))
-                    case .nothing: break
-                    }
-                }
-                .frame(width: geo.size.width, height: geo.size.height)
-                .background {
-                    // Around a whole photo, a tap only puts the keyboard away.
-                    Color.black.contentShape(Rectangle()).onTapGesture { if editingCaption { endCaption() } }
-                }
+                .gesture(framingGesture(media, screen: geo.size), including: framing.movable && !penOn ? .all : .none)
+                .onAppear { screen = geo.size }
+                .onChange(of: geo.size) { _, size in screen = size }
             }
             .ignoresSafeArea()
             reviewControls(media)
         }
     }
 
-    /// Where a capture is shown: the whole screen (filled, as the camera
-    /// showed it), or, for a photo shown whole, the largest box of its shape
-    /// that fits.
-    static func stage(_ media: Captured, whole: Bool, screen: CGSize) -> CGSize {
-        guard whole, case .photo(let image) = media, image.size.width > 0, image.size.height > 0 else { return screen }
-        let s = min(screen.width / image.size.width, screen.height / image.size.height)
-        return CGSize(width: (image.size.width * s).rounded(.down), height: (image.size.height * s).rounded(.down))
+    /// Where the photo is on screen (larger than it, zoomed in or filling) and
+    /// the picture (the part of it on screen); a video fills the screen.
+    static func place(_ media: Captured, framing: Framing, screen: CGSize) -> (photo: CGRect, shown: CGRect) {
+        guard case .photo(let image) = media, image.size.width > 0, image.size.height > 0 else {
+            let all = CGRect(origin: .zero, size: screen)
+            return (all, all)
+        }
+        return (framing.photoRect(image: image.size, screen: screen), framing.shown(image: image.size, screen: screen))
+    }
+
+    /// A pinch zooms a photo from the library, around the fingers; zoomed in,
+    /// a drag moves it. Kept so no gap opens (Framing.kept).
+    private func framingGesture(_ media: Captured, screen: CGSize) -> some Gesture {
+        let image: CGSize = if case .photo(let i) = media { i.size } else { .zero }
+        let pinch = MagnifyGesture()
+            .onChanged { value in
+                let start = framingFrom ?? framing
+                framingFrom = start
+                let at = CGPoint(x: value.startAnchor.x * screen.width, y: value.startAnchor.y * screen.height)
+                framing = framing.pinched(from: start, by: value.magnification, at: at, moved: .zero, screen: screen)
+                    .kept(image: image, screen: screen)
+            }
+            .onEnded { _ in framingFrom = nil }
+        let drag = DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                guard framing.zoom > 1 else { return }
+                let start = framingFrom ?? framing
+                framingFrom = start
+                var moved = start
+                moved.offset = CGSize(width: start.offset.width + value.translation.width, height: start.offset.height + value.translation.height)
+                framing = moved.kept(image: image, screen: screen)
+            }
+            .onEnded { _ in framingFrom = nil }
+        return pinch.exclusively(before: drag)
     }
 
     /// What a tap on the picture does (the caption line takes its own taps).
@@ -1238,23 +1294,28 @@ struct CameraScreen: View {
         return drawing || captioned ? .nothing : .startCaption
     }
 
+    /// The caption as recipients will see it (CaptionLook), on a picture `size` points.
     @ViewBuilder private func captionBar(in size: CGSize) -> some View {
         if editingCaption || !caption.isEmpty {
             Group {
                 if editingCaption {
-                    TextField("", text: $caption)
+                    TextField("", text: $caption, axis: .vertical)
                         .focused($captionFocused)
                         .submitLabel(.done)
-                        .onSubmit { endCaption() }
-                        .onChange(of: caption) { _, c in if c.count > 200 { caption = String(c.prefix(200)) } }
+                        .onChange(of: caption) { old, new in
+                            // No line breaks (Return is done), 200 characters, 5 lines.
+                            guard let kept = CaptionLook.typed(new, was: old, width: size.width) else {
+                                caption = new.replacingOccurrences(of: "\n", with: "")
+                                endCaption()
+                                return
+                            }
+                            if kept != new { caption = kept }
+                        }
                 } else {
                     Text(caption)
                 }
             }
-            .font(.body).foregroundStyle(.white).multilineTextAlignment(.center)
-            .padding(.vertical, 8).padding(.horizontal, 16)
-            .frame(width: size.width)
-            .background(.black.opacity(0.55))
+            .captionStrip(width: size.width)
             // Above the keyboard while it's written; then where it was put.
             .position(x: size.width / 2, y: size.height * (editingCaption ? min(captionY, 0.42) : captionY))
             .gesture(DragGesture().onChanged { drag in
@@ -1409,14 +1470,18 @@ struct CameraScreen: View {
     private func ready() -> Task<ReadyToSend, any Error>? {
         guard let shot else { return nil }
         endCaption()
-        let content = MadeReady.Content(strokes: strokes, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines), y: captionY,
-                                        muted: muted && silent != nil)
+        var crop: CGRect?
+        if case .photo(let image) = shot, screen.width > 0, screen.height > 0 {
+            crop = framing.crop(image: image.size, screen: screen)
+        }
+        let content = MadeReady.Content(strokes: strokes, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines),
+                                        y: captionY, muted: muted && silent != nil, crop: crop)
         var media = shot
         if case .video = shot, content.muted, let silent {
             media = .video(silent)  // a different file: one with no sound in it
         }
         let kept = MadeReady.reusing(made, for: content) {
-            Task { try await ReadyToSend.prepare(media, strokes: content.strokes, caption: content.caption, y: content.y) }
+            Task { try await ReadyToSend.prepare(media, strokes: content.strokes, crop: content.crop, caption: content.caption, y: content.y) }
         }
         made = kept
         return kept.ready
@@ -1454,7 +1519,7 @@ struct CameraScreen: View {
     private func retake() {
         files.removeAll()
         shot = nil
-        whole = false
+        framing = Framing(whole: false)
         silent = nil
         noSound = false
         muted = false

@@ -17,13 +17,28 @@ extension OnScreen {
                 try await Task.sleep(for: .milliseconds(500))  // pictures only: let it draw
                 try review.save("camera-review-\(name)")
                 review.close()
-                // A wide photo from the library, shown whole (X52).
-                let wide = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat("Ben") { _ in },
-                                                   start: .photo(TestPicture.photo(size: CGSize(width: 1600, height: 900)))),
-                                      size: phone.size, insets: phone.insets)
-                try await Task.sleep(for: .milliseconds(500))
-                try wide.save("camera-review-wide-\(name)")
-                wide.close()
+                // A wide photo from the library: whole, then zoomed in, each with a
+                // long caption; and what each sends, as the friend sees it (X52, X54).
+                let photo = TestPicture.photo(size: CGSize(width: 1600, height: 900))
+                let words = "The sun came out just as we got to the top, and the whole valley lit up green. Worth every step of that climb!"
+                var zoomed = Framing(whole: true)
+                zoomed.zoom = 2.4
+                zoomed.offset = CGSize(width: -60, height: 0)
+                for (shown, framing) in [("wide", Framing(whole: true)), ("zoomed", zoomed)] {
+                    let review = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat("Ben") { _ in }, start: .photo(photo),
+                                                         caption: (words, 0.7), framing: framing.kept(image: photo.size, screen: phone.size)),
+                                            size: phone.size, insets: phone.insets)
+                    try await Task.sleep(for: .milliseconds(500))
+                    try review.save("camera-review-\(shown)-\(name)")
+                    review.close()
+                    let crop = framing.kept(image: photo.size, screen: phone.size).crop(image: photo.size, screen: phone.size)
+                    let sent = Framing.cropped(photo, to: crop)
+                    let opened = try Hosted(ZStack { Color.black.ignoresSafeArea(); OpenedPhoto(photo: sent, caption: words, y: 0.7, tapped: {}) },
+                                            size: phone.size, insets: phone.insets)
+                    try await Task.sleep(for: .milliseconds(500))
+                    try opened.save("camera-review-\(shown)-\(name)-as-opened")
+                    opened.close()
+                }
                 let live = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .pick([], { _, _ in }, done: { _ in })),
                                       size: phone.size, insets: phone.insets)
                 try await Task.sleep(for: .milliseconds(500))

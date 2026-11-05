@@ -92,6 +92,14 @@ enum VideoEncoder {
         (try? await AVURLAsset(url: source).loadTracks(withMediaType: .audio).isEmpty == false) ?? false
     }
 
+    /// A video's picture size as it plays (turned upright); nil if it can't be read.
+    static func uprightSize(_ source: URL) async -> CGSize? {
+        guard let track = try? await AVURLAsset(url: source).loadTracks(withMediaType: .video).first,
+              let (natural, transform) = try? await track.load(.naturalSize, .preferredTransform) else { return nil }
+        let r = CGRect(origin: .zero, size: natural).applying(transform)
+        return CGSize(width: abs(r.width), height: abs(r.height))
+    }
+
     /// The same video without its sound (the sound button, as on the web): its
     /// picture copied as it is, nothing encoded again. The caller removes the file.
     static func withoutSound(_ source: URL) async throws -> URL {
