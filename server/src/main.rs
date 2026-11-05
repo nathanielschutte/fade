@@ -260,8 +260,10 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// Recent log entries for the admin log viewer.
     pub logs: Arc<logs::LogBuffer>,
-    /// Client log entries per user (or per address when signed out) per minute.
+    /// Client log entries per signed-in user per minute.
     pub client_log_limit: ratelimit::RateLimit,
+    /// Client log entries per address per minute, signed out.
+    pub client_log_anon_limit: ratelimit::RateLimit,
     /// Sign-in and sign-up attempts per address.
     pub auth_ip_limit: ratelimit::RateLimit,
     /// Failed sign-ins per username.
@@ -351,6 +353,10 @@ async fn main() -> anyhow::Result<()> {
         started_at: std::time::Instant::now(),
         logs: log_buffer,
         client_log_limit: ratelimit::RateLimit::new(300, Duration::from_secs(60)),
+        client_log_anon_limit: ratelimit::RateLimit::new(
+            logs::ANONYMOUS_PER_MINUTE,
+            Duration::from_secs(60),
+        ),
         auth_ip_limit: ratelimit::RateLimit::new(30, Duration::from_secs(10 * 60)),
         login_fail_limit: ratelimit::RateLimit::new(10, Duration::from_secs(15 * 60)),
         image_upload_limit: ratelimit::RateLimit::new(60, Duration::from_secs(10 * 60)),
