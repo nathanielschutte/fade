@@ -141,6 +141,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [Admins by user id](#s5-admins-by-user-id): production's list switched | 0.45.0; setting (2026-11-05) | Nate |
 | napsack 1.0.0: [who reacted](#f21-see-who-reacted) on the web, [Admins can't delete](#s6-admins-cant-delete-their-own-account), [the security audit's fixes](#s7-security-audit-2026-11-05), the release checked byte for byte against main's CI | 1.0.0 | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
+| [A copy of the database to look around in](#i14-a-copy-of-the-database-to-look-around-in): `scripts/db-copy.sh`, secrets removed on the server | scripts (2026-11-05) | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
 
@@ -905,6 +906,12 @@ Not yet: the iOS app needs the same (it will share the approach when it's built)
 - Built (on `nate/server-speed`): migration 0028, four indexes and nothing else (messages by recipient; what's waiting for each person; pics by pair and time; unopened pics by time). The chat list is one query for its rows plus one for every newest message, with streaks from the last 62 days of pics (further back only for a run that reaches the window's start); a chat's page reads at most `limit` ids each way; the groups list and a group's page batch their lookups (`json_each`); profiles count from indexes alone; your own friend map reads only the friendships near you. Reading a group sends `groups_changed` and `group_read` only when the read position moved.
 - Tests: the old queries run beside the new on a mix of data and the answers are compared field by field; plan tests (`db::tests::assert_searches`) fail if the chat list, a chat, groups, profiles, streaks, the map, the iPhone badge, or the unopened-pic checks read every message or sort a whole history; `check_group_reads` in the smoke test. Timing on a seeded set (100 people, 60 friends each, ~200,000 messages), fastest of 15 runs before and after on Nate's Mac: the chat list 38 → 8 ms, the groups list 2.3 → 0.3 ms, your own profile 53 → 9 ms, a friend's 33 → 8 ms, a chat's newest 50 13 → 0.3 ms, the iPhone badge 14 → 0.5 ms, the pic disk check 20 → 0.05 ms, the friend map 3.7 → 3.0 ms (`cargo test --release timing -- --ignored --nocapture`).
 - Left for Nate: admin stats still load the whole users list without using it.
+
+#### I14. A copy of the database to look around in
+- Nate (2026-11-05): a local database client on production's data, ideally over the SSH tunnel so nothing new is opened.
+- SQLite is a file, not a server, so there's no port to tunnel, and opening the live file over the network (a mounted drive) could block or damage it. Instead, `scripts/db-copy.sh` (owner only; `FADE_STACK=staging` for staging) takes a consistent snapshot over SSH from the live file opened read-only, into memory on the server (`/dev/shm`). There, before anything is sent, every secret is replaced with a placeholder (password and recovery hashes, wrapped private keys, session, invite, and reset hashes, push and passkey secrets, the server's own keys) and every message's contents with its size, then the file is rewritten (VACUUM) so no trace is left. The copy lands outside the repository (`~/.napsack-db-copies/`, private and read-only), and copies older than 7 days are deleted on the next run, since account deletion promises to reach every copy within 30 days.
+- A new table or column holding a secret or message contents goes into the script's lists.
+- Done (2026-11-05): checked against staging (secrets and contents replaced, no password hash left anywhere in the file).
 
 #### I3. Auto Scaling group
 - Migrate compute to an EC2 ASG, set desired size to 1 for now
