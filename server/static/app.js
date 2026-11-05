@@ -3125,6 +3125,7 @@ const mediaWord = (m) => (isVideo(m) ? "video" : "pic");
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function renderMessages() {
+  drawWhoReacted(); // what it shows is part of the chat (F21)
   if (state.activeGroupId) return renderGroupMessages();
   const id = state.activeId;
   if (id == null) return;
@@ -3460,8 +3461,27 @@ const myReaction = (m) => reactionsOf(m).find((r) => r.user === state.me.id)?.em
 function reactorName(m, userId) {
   if (userId === state.me.id) return "You";
   if (!m.group_id) return personName(userId, "");
-  const member = groupMemberKeys.get(m.group_id)?.find((x) => x.id === userId);
-  return personName(userId, member?.username ?? groupMemberName(m.group_id, userId));
+  return personName(userId, groupUsername(m.group_id, userId) ?? "Someone");
+}
+
+/** A group member's username, from whatever's loaded: the members, how far each has read, who sent what. */
+function groupUsername(groupId, userId) {
+  return groupMemberKeys.get(groupId)?.find((x) => x.id === userId)?.username
+    ?? state.groupReads.get(groupId)?.get(userId)?.username
+    ?? (state.groupMessages.get(groupId) || []).find((x) => x.sender_id === userId)?.sender_name
+    ?? null;
+}
+
+/**
+ * Each emoji on a message, in the order it was first given, with who gave it
+ * (me first, then in the order they reacted): [{ emoji, users: [id] }].
+ */
+function reactionSummary(m) {
+  const by = new Map();
+  for (const r of reactionsOf(m)) by.set(r.emoji, [...(by.get(r.emoji) || []), r.user]);
+  return [...by].map(([emoji, users]) => ({
+    emoji, users: users.includes(state.me.id) ? [state.me.id, ...users.filter((u) => u !== state.me.id)] : users,
+  }));
 }
 
 /**
@@ -3501,18 +3521,18 @@ function bubbleItems(m, mine, content, byId) {
 
   const reactions = reactionsOf(m);
   if (reactions.length) {
-    // Each emoji, with who chose it (by the names I know them by, X47), shown on hover.
-    const who = new Map();
-    for (const r of reactions) who.set(r.emoji, [...(who.get(r.emoji) || []), reactorName(m, r.user)]);
+    // Each emoji, with who chose it (by the names I know them by, X47), shown on
+    // hover; a tap shows them all, and every other emoji with theirs (F21).
+    const who = reactionSummary(m).map((r) => [r.emoji, r.users.map((u) => reactorName(m, u))]);
     const me = myReaction(m);
     items.push({
       key: `r:${key}`,
-      sig: JSON.stringify([mine, me, [...who]]),
+      sig: JSON.stringify([mine, me, who]),
       make: () => el("li", { class: `reactions ${mine ? "mine" : ""}` },
-        ...[...who].map(([emoji, names]) => el("button", {
+        ...who.map(([emoji, names]) => el("button", {
           type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`, title: names.join(", "),
-          "aria-label": `${emoji} from ${names.join(", ")}${me === emoji ? ". Tap to take yours back" : ". Tap to react"}`,
-          onclick: () => react(liveMessage(m), emoji),
+          "aria-label": `${emoji} from ${names.join(", ")}. Shows who reacted`,
+          onclick: () => openWhoReacted(liveMessage(m), emoji),
         }, emoji, names.length > 1 ? String(names.length) : ""))),
     });
   }
@@ -3809,6 +3829,109 @@ $("#emoji-dialog").addEventListener("click", (e) => {
   if (m) react(liveMessage(m), choice.dataset.emoji);
 });
 $("#emoji-dialog").addEventListener("close", () => { emojiPicker.m = null; });
+
+// ---------- who reacted (F21) ----------
+// A tap on a reaction under a message: who reacted with that emoji, and
+// "All", every emoji with who gave it. Direct reactions are opened here (only
+// the two of us can read them); a group's come from the server as they are.
+// Drawn again with the chat (renderMessages), so a reaction arriving while
+// it's open shows in it. A button reacts with the emoji shown, or takes mine back.
+const whoReacted = { m: null, emoji: null, sig: null };
+
+function openWhoReacted(m, emoji) {
+  Object.assign(whoReacted, { m, emoji, sig: null });
+  drawWhoReacted();
+  const dialog = $("#reactions-dialog");
+  if (whoReacted.m && !dialog.open) dialog.showModal();
+}
+
+/** Someone who reacted, for personRow: me, a friend, or a group member by username (null if not known). */
+function reactorUser(m, userId) {
+  if (userId === state.me.id) return state.me;
+  const chat = chatById(userId);
+  if (chat) return chat;
+  const username = m.group_id ? groupUsername(m.group_id, userId) : null;
+  return username ? { id: userId, username } : null;
+}
+
+function drawWhoReacted() {
+  const dialog = $("#reactions-dialog");
+  if (!whoReacted.m) return;
+  const m = liveMessage(whoReacted.m);
+  // Only over its own chat: another chat opened meanwhile (a notification, a link) closes it.
+  if (m.group_id ? state.activeGroupId !== m.group_id : state.activeId !== friendOf(m)) {
+    whoReacted.m = null;
+    dialog.close();
+    return;
+  }
+  const summary = reactionSummary(m);
+  // Nobody has the emoji shown any more: everyone's, then.
+  if (whoReacted.emoji && !summary.some((r) => r.emoji === whoReacted.emoji)) whoReacted.emoji = null;
+  const shown = whoReacted.emoji;
+  const mine = myReaction(m);
+  const rows = shown
+    ? summary.find((r) => r.emoji === shown).users.map((user) => ({ user, emoji: shown }))
+    : summary.flatMap((r) => r.users.map((user) => ({ user, emoji: r.emoji })));
+  const people = rows.map((r) => ({ ...r, who: reactorUser(m, r.user) }));
+  const sig = JSON.stringify([shown, mine, summary,
+    people.map((p) => p.who && [personName(p.who.id, p.who.username), p.who.username, p.who.avatar_id ?? null])]);
+  if (sig === whoReacted.sig) return; // nothing it shows has changed (keeps the focus where it is)
+  whoReacted.sig = sig;
+
+  // Rebuilt, the focus goes back to the same tab or person.
+  const focused = dialog.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+  const total = summary.reduce((n, r) => n + r.users.length, 0);
+  const tab = (emoji, label, count) => el("button", {
+    type: "button", class: "reaction-tab", "data-focus": `tab:${emoji ?? ""}`, "aria-pressed": String(shown === emoji),
+    "aria-label": emoji ? `${emoji}, ${count}` : `All reactions, ${count}`,
+    onclick: () => { whoReacted.emoji = emoji; drawWhoReacted(); },
+  }, label, el("span", { class: "reaction-count", text: String(count) }));
+  $("#reaction-tabs").hidden = summary.length === 0;
+  $("#reaction-tabs").replaceChildren(tab(null, "All", total), ...summary.map((r) => tab(r.emoji, r.emoji, r.users.length)));
+
+  const leaving = () => dialog.close();
+  $("#reaction-people").replaceChildren(...people.map(({ user, emoji, who }) => {
+    const mark = shown ? null : el("span", { class: "reaction-of", text: emoji });
+    if (!who) {
+      // Someone no longer in the group, whose name isn't loaded: nothing to open.
+      return el("li", { class: "person", "data-id": String(user) },
+        el("span", { class: "person-open" },
+          paintInitial(el("span", { class: "avatar small", "aria-hidden": "true" }), "", user),
+          el("span", { class: "person-text" }, el("span", { class: "person-name", text: "Someone" }))),
+        mark);
+    }
+    const li = personRow(who, { suffix: who.id === state.me.id ? " (you)" : "", leaving, controls: [mark] });
+    li.querySelector(".person-open").dataset.focus = `person:${user}`;
+    return li;
+  }));
+  $("#reactions-none").hidden = summary.length > 0;
+  // Who else can see them (every client says so in each group, CLAUDE.md).
+  $("#reactions-privacy").textContent = m.group_id
+    ? "Reactions in groups aren't end-to-end encrypted yet: the napsack server can see them."
+    : "End-to-end encrypted: only the two of you can see these.";
+
+  // Mine: react with the emoji shown, or take mine back (shown, or on All).
+  const button = $("#reaction-mine");
+  const target = shown ?? mine;
+  button.hidden = !target;
+  if (target) {
+    button.textContent = mine === target ? `Take back your ${target}` : mine ? `React ${target} instead` : `React ${target}`;
+    button.dataset.emoji = target;
+  }
+  if (focused) dialog.querySelector(`[data-focus="${CSS.escape(focused)}"]`)?.focus();
+}
+
+$("#reaction-mine").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  if (!whoReacted.m || button.disabled) return;
+  button.disabled = true; // one tap, one change
+  try {
+    await react(liveMessage(whoReacted.m), button.dataset.emoji);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#reactions-dialog").addEventListener("close", () => { whoReacted.m = null; });
 
 function startReply(m) {
   state.actionFor = null;
