@@ -1,4 +1,4 @@
-# The iOS app (and Android later)
+# The iOS app (and Android)
 
 The plan for napsack's native apps: what they're built with, how they keep the encryption identical to the web client's, and how they're developed, versioned, and released. Release rules that apply to every client are in [releasing.md](../operations/releasing.md).
 
@@ -25,7 +25,7 @@ server/            Rust server; also serves the web client
 shared/crypto/     crypto.js: the reference implementation (web), and vector-checks.js
 tests/vectors/     the pinned vectors every implementation must reproduce exactly
 ios/               the Swift app: Napsack.xcodeproj, and NapsackCrypto (the formats, a Swift package)
-android/           the Kotlin app, later
+android/           the Kotlin app: app/, and crypto/ (the formats in Kotlin)
 ```
 
 - **Crypto in Swift.** Everything the formats use is built into iOS:
@@ -95,6 +95,6 @@ Getting it to people:
 4. **Notifications.** APNs: the server's `push.rs` gains APNs delivery alongside Web Push (needs the paid program). The server can't read messages, so notifications say who sent something, never what.
 5. **TestFlight** for friends, then the App Store.
 
-## Android, later
+## Android
 
-A native Kotlin app (Jetpack Compose), in `android/`. Its crypto is its own port, held to the same vectors in its own test suite: PBKDF2 and AES-GCM from `javax.crypto`, P-256 key agreement, HKDF, and keys in the Android Keystore. It follows the same version handshake (`X-Napsack-Client: android/<version>`) and release order. Not started; it waits until the iOS app is in people's hands.
+A native Kotlin app (Jetpack Compose), in `android/`. Its crypto is its own port, held to the same vectors in its own test suite: PBKDF2 and AES-GCM from `javax.crypto`, P-256 key agreement, HKDF, and keys in the Android Keystore. It follows the same version handshake (`X-Napsack-Client: android/<version>`) and release order. Started 2026-11-04 (Nate), with the iOS app in people's hands: its own plan is [android.md](android.md), its task list [plan-android.md](../management/plan-android.md).

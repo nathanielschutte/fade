@@ -26,7 +26,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake; started 2026-11-04 on the web and the iPhone |
 | 3 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
 | 4 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | Nate | In progress | Nate (2026-10-30), from the intake. Decided (2026-11-04): a seeding script through the API, a small realistic set |
-| 5 | [Android app](#f29-android-app): the plan and a shell app | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started |
+| 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
 | 6 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
 | 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
@@ -413,6 +413,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### F29. Android app
 - Nate (2026-11-04): "start planning how we will build our android app. Let's make a planning doc and skeleton filesystem ... and get a shell android app going like we did when we started ios development." The plan: [android.md](../design/android.md); the app lives in `android/`.
+- **The shell, built (2026-11-04):** `android/` (Gradle 9.8.2, AGP 9.5.0, Kotlin 2.4.21, Compose), `crypto/` with format 1 against the vectors (the checks vector-checks.js makes, under its names), one development screen (`/api/config` with `X-Napsack-Client: android/…`, the minimum-version check, the key derivation timed: 2.6 s on the emulator, to measure on a phone), `make android` (JVM tests, release checks, then the emulator against a fresh server), and `android.yml` by hand only. Android 17 treats a development server as the local network: only debug builds ask for it. Task list: [plan-android.md](plan-android.md).
 
 ### Debug
 
