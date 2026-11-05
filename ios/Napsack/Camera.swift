@@ -735,6 +735,7 @@ final class CaptureFiles {
 /// photo, it starts on Retake.
 struct CameraScreen: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var textSize
     let maxSeconds: Int
     let maxBytes: Int
     let send: CameraSend
@@ -1225,12 +1226,13 @@ struct CameraScreen: View {
                     Button { sendTapped() } label: {
                         HStack(spacing: 8) {
                             if sending { ProgressView().tint(.black) }
-                            Text(sendWords).font(.headline).lineLimit(1)
+                            // Who it goes to stays readable at the largest text: more lines, rather than "Send…".
+                            Text(sendWords).font(.headline).lineLimit(textSize.isAccessibilitySize ? 4 : 1)
                             Image(systemName: "paperplane.fill")
                         }
                         .padding(.horizontal, 18).padding(.vertical, 12)
                         .foregroundStyle(.black)
-                        .background(.white, in: Capsule())
+                        .background(.white, in: textSize.isAccessibilitySize ? AnyShape(RoundedRectangle(cornerRadius: 24, style: .continuous)) : AnyShape(Capsule()))
                     }
                     .disabled(sending)
                 }
