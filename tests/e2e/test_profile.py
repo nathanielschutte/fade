@@ -56,7 +56,7 @@ async def main():
         await shot(ana, "profile-mine", full_page=False)
 
         # Click through to Ben's profile.
-        await ana.locator("#profile-people .person-link", has_text=BEN).click()
+        await ana.locator("#profile-people .person-open", has_text=BEN).click()
         await expect(ana.locator("#profile-name")).to_have_text(BEN)
         await expect(ana.locator("#profile-sub")).to_contain_text("friends since")
         await expect(stat(ana, "Texts between you")).to_have_text("2")

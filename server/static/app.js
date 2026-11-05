@@ -4711,16 +4711,14 @@ async function sendGroupText(groupId, input, text) {
 
 // New group: a name and some friends.
 
+// A tap anywhere on a row picks them (it's a checkbox's label), so here the
+// row doesn't open their profile as other lists of people do.
 function friendPicker(friends, checked = new Set()) {
-  return friends.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", {},
-      el("label", { class: "person pick" },
-        el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
-        avatar,
-        el("span", { class: "person-name", text: chatName(f) })));
-  });
+  return friends.map((f) => el("li", {},
+    el("label", { class: "person pick" },
+      el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
+      personAvatar(f),
+      personText(f))));
 }
 
 // The + in the chat list bar starts something new. Friends (adding, invites)
@@ -4809,31 +4807,31 @@ function drawGroupInfo() {
   $("#group-remove-hint").textContent = g.role === "owner"
     ? "You're the owner, so you can remove people. Everything they sent stays in the chat."
     : `Only ${owner ? personName(owner.id, owner.username) : "the owner"} can remove people. You can add your friends.`;
+  // Everyone opens their profile (X46): a friend's in full, anyone else's as
+  // far as I may see it (openPerson). The sheet closes first.
+  const leaving = () => $("#group-dialog").close();
   $("#group-members").replaceChildren(...g.members.map((m) => {
     const me = m.id === state.me.id;
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, m);
     const friend = !me && chatById(m.id);
-    return el("li", { class: "person" },
-      avatar,
-      friend
-        ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, personName(m.id, m.username))
-        : el("span", { class: "person-name", text: me ? `${personName(m.id, m.username)} (you)` : m.username }),
-      m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
-      !me && !friend ? befriendControl(g, m) : null,
-      g.role === "owner" && !me
-        ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
-          onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
-        : null);
+    return personRow(m, {
+      suffix: me ? " (you)" : "",
+      leaving,
+      controls: [
+        m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
+        !me && !friend ? befriendControl(g, m) : null,
+        g.role === "owner" && !me
+          ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
+            onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
+          : null,
+      ],
+    });
   }));
   $("#group-add-section").hidden = addable.length === 0;
-  $("#group-add").replaceChildren(...addable.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", { class: "person" }, avatar,
-      el("span", { class: "person-name", text: chatName(f) }),
-      el("button", { type: "button", class: "button primary", onclick: () => addToGroup(g, f) }, "Add"));
-  }));
+  $("#group-add").replaceChildren(...addable.map((f) => personRow(f, {
+    leaving,
+    controls: [el("button", { type: "button", class: "button primary", "aria-label": `Add ${chatName(f)} to the group`,
+      onclick: () => addToGroup(g, f) }, "Add")],
+  })));
   const leave = $("#leave-group");
   leave.textContent = "Leave group";
   delete leave.dataset.confirm;
@@ -5050,26 +5048,121 @@ function stat(label, value) {
   return [el("dt", { text: label }), el("dd", { text: String(value) })];
 }
 
+// ---------- people in lists (X45, X46, X47) ----------
+// Every list of people (a group's members and the friends to add to it,
+// friend requests, the friends on a profile, Blocked) shows each one the same
+// way: their picture, or the initial stand-in (pictures go only to friends),
+// the name I know them by, and @username under it when that's different,
+// since the username is who they are. Picture and name are one button that
+// opens their profile.
+
+const personAvatar = (user) => paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), user);
+
+/** The name I know someone by (personName), then @username when it differs, and `meta` (when, who). */
+function personText(user, { suffix = "", meta = "" } = {}) {
+  const name = personName(user.id, user.username);
+  const sub = [name !== user.username ? `@${user.username}` : "", meta].filter(Boolean).join(" · ");
+  return el("span", { class: "person-text" },
+    el("span", { class: "person-name", text: `${name}${suffix}` }),
+    sub ? el("span", { class: "person-meta", text: sub }) : null);
+}
+
+/** Someone in a list: their picture and name, one button that opens their
+ * profile (after `leaving()`, which closes the sheet the list is in), then `controls`. */
+function personRow(user, { suffix, meta, controls = [], leaving = null } = {}) {
+  return el("li", { class: "person", "data-id": String(user.id) },
+    el("button", { type: "button", class: "person-open", onclick: () => { leaving?.(); openPerson(user); } },
+      personAvatar(user), personText(user, { suffix, meta })),
+    ...controls);
+}
+
+/** Anyone's profile (X46): mine or a friend's, as the server has it; anyone
+ * else (in a group with me, a request either way, someone I block) as far as
+ * I may see them: their username, and adding, reporting, or blocking them. */
+function openPerson(user) {
+  const chat = chatById(user.id);
+  if (chat?.system) return; // Team Napsack has no profile (team.rs)
+  if (user.id === state.me.id || chat) openProfile(user.id);
+  else openStranger(user);
+}
+
+// Bumped by each profile shown, so an answer for one shown before is dropped.
+let profileTurn = 0;
+
+/** The profile sheet, emptied for someone new: never the last person's name or picture while this one loads (X23). */
+function resetProfile(user) {
+  const turn = ++profileTurn;
+  for (const id of ["#profile-stats", "#profile-people", "#profile-actions", "#profile-safety"]) $(id).replaceChildren();
+  hideProfileEdit();
+  profileEdit.profile = null;
+  $("#profile-people-section").hidden = true;
+  $("#profile-account").hidden = user.id !== state.me?.id;
+  disarmSignOut("#profile-sign-out");
+  $("#profile-message").hidden = true;
+  $("#profile-name").textContent = user.username ? personName(user.id, user.username) : "";
+  if (user.username) paintAvatar($("#profile-avatar"), user);
+  else paintInitial($("#profile-avatar"), "", user.id);
+  $("#profile-sub").textContent = "";
+  if (!$("#profile-dialog").open) $("#profile-dialog").showModal();
+  return turn;
+}
+
+/** Someone who isn't my friend: the server shows me no profile of theirs (only friends see those), so this is what I know. */
+function openStranger(user) {
+  resetProfile(user);
+  // Not a profile to edit, but who Block closes the sheet for.
+  profileEdit.profile = { kind: "other", id: user.id, username: user.username };
+  const blocked = blockedList.items?.some((b) => b.id === user.id);
+  $("#profile-sub").textContent = `@${user.username} · ${blocked ? "you block them" : "not your friend"}`;
+  $("#profile-message").textContent = "Only friends see each other's profiles, pictures, and names.";
+  $("#profile-message").hidden = false;
+  const who = { id: user.id, username: user.username };
+  if (!blocked) $("#profile-actions").append(strangerFriendControl(user));
+  $("#profile-safety").append(
+    el("button", { type: "button", class: "button", onclick: () => reportPerson(who) }, "Report"),
+    blocked ? null : el("button", { type: "button", class: "button danger", onclick: () => openBlock(who) }, "Block"));
+}
+
+/** Add friend, or Accept if they asked me, or that I've asked already. */
+function strangerFriendControl(user) {
+  if (state.requests.outgoing.some((r) => r.id === user.id)) {
+    return el("span", { class: "person-meta", text: "Friend request sent" });
+  }
+  const accepting = state.requests.incoming.some((r) => r.id === user.id);
+  const btn = el("button", { type: "button", class: "button primary", onclick: async () => {
+    btn.disabled = true;
+    $("#profile-edit-note").textContent = "";
+    let friends = accepting;
+    try {
+      if (accepting) await api(`/friends/requests/${user.id}/accept`, { method: "POST" });
+      else friends = (await getJSON("/friends/requests", { method: "POST", json: { username: user.username } })).status === "friends";
+    } catch (err) {
+      btn.disabled = false;
+      $("#profile-edit-note").textContent = err.message;
+      return;
+    }
+    await Promise.all([refreshRequests(), refreshChats()]);
+    if (profileEdit.profile?.id !== user.id) return; // moved on meanwhile
+    if (friends && chatById(user.id)) return openProfile(user.id);
+    btn.replaceWith(el("span", { class: "person-meta", text: "Friend request sent" }));
+    $("#profile-edit-note").textContent = `Request sent to ${user.username}.`;
+  } }, accepting ? "Accept friend request" : "Add friend");
+  return btn;
+}
+
 async function openProfile(userId) {
   const dialog = $("#profile-dialog");
   const msg = $("#profile-message");
-  for (const id of ["#profile-stats", "#profile-people", "#profile-actions", "#profile-safety"]) $(id).replaceChildren();
-  hideProfileEdit();
-  $("#profile-people-section").hidden = true;
-  $("#profile-account").hidden = userId !== state.me?.id;
-  disarmSignOut("#profile-sign-out");
-  msg.hidden = true;
-  // Never the last person's name while this one loads (X23).
   const known = userId === state.me?.id ? state.me : chatById(userId);
-  $("#profile-name").textContent = known ? personName(userId, known.username) : "";
-  $("#profile-sub").textContent = "";
+  const turn = resetProfile({ id: userId, username: known?.username ?? "" });
   $("#profile-stats").replaceChildren(el("p", { class: "muted", text: "Loading…" }));
-  if (!dialog.open) dialog.showModal();
 
   let p;
   try {
     p = await getJSON(`/users/${userId}/profile?tz=${tzOffset()}`);
+    if (turn !== profileTurn) return; // another profile is showing now
   } catch (err) {
+    if (turn !== profileTurn) return;
     $("#profile-name").textContent = "";
     $("#profile-sub").textContent = "";
     $("#profile-stats").replaceChildren(); // not "Loading…" under the problem
@@ -5129,15 +5222,7 @@ async function openProfile(userId) {
   }
 
   $("#profile-people-section").hidden = people.length === 0 && p.kind !== "me";
-  $("#profile-people").replaceChildren(...people.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", {},
-      el("button", { type: "button", class: "person person-link", onclick: () => openProfile(f.id) },
-        avatar,
-        el("span", { class: "person-name", text: personName(f.id, f.username) }),
-        el("span", { class: "person-meta", text: `since ${longDate(f.since)}` })));
-  }));
+  $("#profile-people").replaceChildren(...people.map((f) => personRow(f, { meta: `since ${longDate(f.since)}` })));
 }
 
 // Your profile: your display name and picture. A friend's: your private nickname for them.
@@ -5440,11 +5525,7 @@ function renderBlocks() {
 
 function blockedRow(b) {
   const unblockButton = el("button", { type: "button", class: "button", onclick: () => unblock(unblockButton, b) }, "Unblock");
-  return el("li", { class: "person", "data-id": String(b.id) },
-    el("span", { class: "blocked-text" },
-      el("span", { class: "person-name", text: `@${b.username}` }),
-      el("span", { class: "person-meta", text: `Blocked ${dayName(b.blocked_at)}` })),
-    unblockButton);
+  return personRow(b, { meta: `Blocked ${dayName(b.blocked_at)}`, controls: [unblockButton] });
 }
 
 /** Two taps: the first says what unblocking does (and doesn't). */
@@ -5533,19 +5614,17 @@ function renderRequests() {
   badge.textContent = incoming.length;
 
   $("#incoming-section").hidden = incoming.length === 0;
-  $("#incoming-list").replaceChildren(...incoming.map((r) =>
-    el("li", { class: "person" },
-      el("span", { class: "person-name", text: r.username }),
-      el("button", { type: "button", class: "button primary", onclick: () => requestAction(r.id, "accept") }, "Accept"),
-      el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "decline") }, "Decline"),
-    )));
+  // Tapping who it is opens what I may see of them (X46); this sheet closes first.
+  const leaving = () => $("#friends-dialog").close();
+  $("#incoming-list").replaceChildren(...incoming.map((r) => personRow(r, { leaving, controls: [
+    el("button", { type: "button", class: "button primary", onclick: () => requestAction(r.id, "accept") }, "Accept"),
+    el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "decline") }, "Decline"),
+  ] })));
 
   $("#outgoing-section").hidden = outgoing.length === 0;
-  $("#outgoing-list").replaceChildren(...outgoing.map((r) =>
-    el("li", { class: "person" },
-      el("span", { class: "person-name", text: r.username }),
-      el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "cancel") }, "Cancel request"),
-    )));
+  $("#outgoing-list").replaceChildren(...outgoing.map((r) => personRow(r, { leaving, controls: [
+    el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "cancel") }, "Cancel request"),
+  ] })));
 }
 
 async function requestAction(userId, action) {
