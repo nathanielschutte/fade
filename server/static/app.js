@@ -6171,7 +6171,8 @@ const camera = {
   sends: new Map(),            // per recipient: the pic's id (friends) or sealed copy (groups), kept for retries
   sent: new Set(),             // recipients that have it, so Send again skips them
   videoType: null,             // set when `blob` is a recorded video (X28)
-  captionY: null,              // where the caption sits, 0 (top) to 1, once placed (X33)
+  captionY: null,              // where the caption was put, 0 (top) to 1, once placed (X33)
+  captionShownY: null,         // where it shows, kept inside the picture (stripOnPicture): what's sent
   audio: null,                 // the microphone, once asked for, while the camera is open
   zoom: 1,                     // 1 = no zoom (X27)
   hwZoom: null,                // the camera's own zoom range, where the browser offers one
@@ -6946,10 +6947,11 @@ function clearCaption() {
   $("#snap-caption-box").hidden = true;
   $("#snap-caption-box").classList.remove("editing");
   $("#caption-hint").hidden = true;
-  camera.captionY = null;
+  camera.captionY = camera.captionShownY = null;
   fitCaption();
 }
-$("#snap-caption").addEventListener("input", fitCaption);
+// A line more or less changes the strip's height, so where it can sit inside the picture.
+$("#snap-caption").addEventListener("input", () => layoutCaption());
 
 // ---------- captions anywhere on the picture (X33) ----------
 // Tap the picture where the caption should go, and type. Enter, or a tap
@@ -6985,14 +6987,21 @@ function containedRect(media, w, h) {
 /**
  * Draws a caption strip by the one rule every client follows
  * (docs/implementation/pic-framing.md, "The caption"): across the picture's
- * whole width, its middle at `y` of the picture's height, its text sized by
- * that width (style.css reads --pic-w). `pic` is in `el`'s parent's coordinates.
+ * whole width, its middle at `y` of the picture's height but kept so the
+ * whole strip stays inside the picture (centered if it's taller), its text
+ * sized by that width (style.css reads --pic-w). `pic` is in `el`'s parent's
+ * coordinates; `fit` sizes the strip's height once its width is set. Returns
+ * where its middle ends up, as a fraction of the picture's height.
  */
-function stripOnPicture(el, pic, y) {
+function stripOnPicture(el, pic, y, fit = null) {
   el.style.left = `${pic.left}px`;
   el.style.width = `${pic.width}px`;
-  el.style.top = `${pic.top + y * pic.height}px`;
   el.style.setProperty("--pic-w", `${pic.width}px`);
+  fit?.();
+  const h = el.offsetHeight, H = pic.height;
+  const middle = h >= H ? H / 2 : Math.min(H - h / 2, Math.max(h / 2, y * H));
+  el.style.top = `${pic.top + middle}px`;
+  return H ? middle / H : y;
 }
 
 function placeCaption(y) {
@@ -7000,13 +7009,13 @@ function placeCaption(y) {
   layoutCaption();
 }
 
-/** The caption on the stage, where it sits on the picture; again whenever the picture moves or changes size. */
+/** The caption on the stage, where it sits on the picture; again as it's typed, and whenever the picture moves or changes size. */
 function layoutCaption() {
-  if (camera.captionY == null || $("#snap-caption-box").hidden) return;
+  const box = $("#snap-caption-box");
+  if (camera.captionY == null || box.hidden) return fitCaption();
   const pic = previewRect();
   const stage = $(".camera-stage").getBoundingClientRect();
-  stripOnPicture($("#snap-caption-box"), { ...pic, left: pic.left - stage.left, top: pic.top - stage.top }, camera.captionY);
-  fitCaption();
+  camera.captionShownY = stripOnPicture(box, { ...pic, left: pic.left - stage.left, top: pic.top - stage.top }, camera.captionY, fitCaption);
 }
 // A video's size, or the window's, can change while its caption is on it (a photo's is drawing's onView).
 new ResizeObserver(() => { if (camera.videoType) layoutCaption(); }).observe($(".camera-stage"));
@@ -7028,7 +7037,7 @@ function finishCaption() {
   if (!$("#snap-caption").value.trim()) {
     $("#snap-caption").value = "";
     box.hidden = true;
-    camera.captionY = null;
+    camera.captionY = camera.captionShownY = null;
     $("#caption-hint").hidden = $("#send-controls").hidden;
   }
 }
@@ -7065,7 +7074,7 @@ $("#snap-caption-box").addEventListener("pointerdown", (e) => {
   if ($("#snap-caption-box").classList.contains("editing")) return;
   captionDrag.id = e.pointerId;
   captionDrag.startY = e.clientY;
-  captionDrag.from = camera.captionY ?? 0.7;
+  captionDrag.from = camera.captionShownY ?? camera.captionY ?? 0.7; // from where it shows
   captionDrag.moved = false;
   e.currentTarget.setPointerCapture?.(e.pointerId);
   e.preventDefault();
@@ -7079,6 +7088,8 @@ $("#snap-caption-box").addEventListener("pointermove", (e) => {
 const endCaptionDrag = (e) => {
   if (captionDrag.id !== e.pointerId) return;
   captionDrag.id = null;
+  // Dragged: it's put where it shows (kept inside the picture), so that's where it's sent.
+  if (captionDrag.moved && camera.captionShownY != null) camera.captionY = camera.captionShownY;
   if (!captionDrag.moved && e.type === "pointerup") editCaption();
 };
 $("#snap-caption-box").addEventListener("pointerup", endCaptionDrag);
@@ -7148,7 +7159,7 @@ async function sendPics(to) {
       ? { video: new Uint8Array(await camera.blob.arrayBuffer()), type: camera.videoType }
       : { photo: await finalPhoto() };
     const caption = $("#snap-caption").value.trim();
-    media.y = caption ? camera.captionY : null;
+    media.y = caption ? camera.captionShownY ?? camera.captionY : null; // where it shows, inside the picture
     for (const r of to) {
       if (camera.sent.has(recipientKey(r))) continue;
       try {
@@ -7635,8 +7646,8 @@ async function showInViewer({ blob, video = false, from, caption = "", y = null 
 }
 
 /**
- * Puts the caption on the picture as shown, at `y` (0 top to 1 bottom); a
- * pic sent before there was a `y` has it at 0.8. The strip is drawn by the
+ * Puts the caption on the picture as shown, at `y` (0 top to 1 bottom), kept
+ * inside it; a pic sent before there was a `y` has it at 0.8. The strip is drawn by the
  * rule every client follows (stripOnPicture), in the stage's own coordinates,
  * so it zooms with the picture.
  */
@@ -7746,8 +7757,10 @@ function boundZoom() {
   const media = $("#viewer-video").hidden ? $("#viewer-image") : $("#viewer-video");
   const v = $("#viewer");
   const room = (size, view) => Math.max(0, (size * zoom.s - view) / 2);
-  const rx = room(media.offsetWidth, v.clientWidth);
-  const ry = room(media.offsetHeight, v.clientHeight);
+  // The picture as drawn, not its box: it fills the screen, letterboxed.
+  const pic = containedRect(media, media.offsetWidth, media.offsetHeight);
+  const rx = room(pic.width, v.clientWidth);
+  const ry = room(pic.height, v.clientHeight);
   zoom.x = Math.min(rx, Math.max(-rx, zoom.x));
   zoom.y = Math.min(ry, Math.max(-ry, zoom.y));
 }

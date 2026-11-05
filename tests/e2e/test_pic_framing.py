@@ -53,7 +53,7 @@ VIEWER = """() => {
   const pic = { left: b.left + (b.width - img.naturalWidth * s) / 2, top: b.top + (b.height - img.naturalHeight * s) / 2,
     width: img.naturalWidth * s, height: img.naturalHeight * s };
   const cap = document.querySelector('#viewer-caption'), c = cap.getBoundingClientRect();
-  return { pic, nw: img.naturalWidth, nh: img.naturalHeight, cap: { left: c.left, width: c.width, middle: c.top + c.height / 2 },
+  return { pic, nw: img.naturalWidth, nh: img.naturalHeight, cap: { left: c.left, width: c.width, top: c.top, bottom: c.bottom, middle: c.top + c.height / 2 },
     font: parseFloat(getComputedStyle(cap).fontSize), screen: [innerWidth, innerHeight] };
 }"""
 
@@ -70,7 +70,7 @@ WRITING = """() => {
   const box = document.querySelector('#snap-caption-box').getBoundingClientRect();
   const t = document.querySelector('#snap-caption'), css = getComputedStyle(t);
   const font = parseFloat(css.fontSize);
-  return { left: box.left, width: box.width, middle: box.top + box.height / 2, font, value: t.value,
+  return { left: box.left, width: box.width, top: box.top, bottom: box.bottom, middle: box.top + box.height / 2, font, value: t.value,
     lines: Math.round((t.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom)) / (font * 1.25)) };
 }"""
 
@@ -95,11 +95,15 @@ async def check_viewer(page, sent):
     w, h = sent["size"]
     assert near(v["nw"], w, 2) and near(v["nh"], h, 2), (v, sent)
     pic, cap = v["pic"], v["cap"]
-    # All of it on screen (a pic taller than a computer's screen used to run off it).
-    assert pic["top"] >= -1 and pic["top"] + pic["height"] <= v["screen"][1] + 1 and pic["width"] <= v["screen"][0] + 1, v
+    # As large as it fits (a small crop is enlarged), and all of it on screen
+    # (a pic taller than a computer's screen used to run off it).
+    sw, sh = v["screen"]
+    assert pic["top"] >= -1 and pic["top"] + pic["height"] <= sh + 1 and pic["width"] <= sw + 1, v
+    assert near(pic["width"], sw, 1) or near(pic["height"], sh, 1), v
     assert near(cap["left"], pic["left"], 1) and near(cap["width"], pic["width"], 1), v
     assert near(v["font"], 0.044 * pic["width"], 0.2), v
     assert near(cap["middle"], pic["top"] + sent["y"] * pic["height"], 2), (v, sent)
+    assert cap["top"] >= pic["top"] - 1 and cap["bottom"] <= pic["top"] + pic["height"] + 1, v  # inside the picture
     return v
 
 
@@ -180,6 +184,8 @@ async def main():
         wr = await ana.evaluate(WRITING)
         # (Spaces at a line's end don't start the next one, so those still go in.)
         assert wr["lines"] == 5 and wr["value"].count("M") < typed.count("M"), wr
+        # Too tall to sit there, it's kept inside the picture.
+        assert near(wr["top"], vis["top"], 1) and wr["bottom"] <= vis["top"] + vis["height"] + 1, (wr, vis)
         await ana.locator("#snap-caption").press_sequentially("MMMM")
         assert (await ana.evaluate(WRITING))["value"] == wr["value"], "a sixth line is refused"
         await shot(ana, "caption-five-lines-desktop", full_page=False)
@@ -227,23 +233,27 @@ async def main():
         await ben.evaluate(PICK_WIDE)
         await expect(ben.locator("#draw-tools")).to_be_visible(timeout=10000)
         await expect(ben.locator("#camera-preview")).to_have_css("transform", "none")
-        await ben.evaluate(PINCH, [*mid, 40, 80])
-        await expect(ben.locator("#camera-preview")).to_have_css("transform", re.compile(r"^matrix\(2, 0, 0, 2,"))
+        # A little zoom: still wide and short. A five-line caption put near its
+        # top is kept inside it, while it's written, placed, and for Ana.
+        await ben.evaluate(PINCH, [*mid, 40, 48])
+        await expect(ben.locator("#camera-preview")).to_have_css("transform", re.compile(r"^matrix\(1\.2, 0, 0, 1\.2,"))
         framed = await ben.evaluate(FRAMING)
         vis = framed["visible"]
-        # Twice as wide as the phone: now as tall as it is wide, so square.
-        assert near(vis["width"], box["width"], 1) and near(vis["height"], box["width"], 2), framed
-        await ben.tap(".camera-stage", position={"x": box["width"] / 2, "y": vis["top"] - box["y"] + vis["height"] * 0.75})
+        assert near(vis["width"], box["width"], 1) and vis["height"] < box["width"] * 0.7, framed
+        await ben.tap(".camera-stage", position={"x": box["width"] / 2, "y": vis["top"] - box["y"] + vis["height"] * 0.1})
         await expect(ben.locator("#snap-caption")).to_be_focused()
-        await ben.locator("#snap-caption").press_sequentially("pinched in")
+        await ben.locator("#snap-caption").press_sequentially("MMMM " * 30)
         wr = await ben.evaluate(WRITING)
+        assert wr["lines"] == 5, wr
         assert near(wr["width"], vis["width"], 1) and near(wr["font"], 0.044 * vis["width"], 0.2), (wr, vis)
+        assert near(wr["top"], vis["top"], 1) and wr["bottom"] <= vis["top"] + vis["height"] + 1, (wr, vis)
         await shot(ben, "camera-zoomed-writing-phone", full_page=False)
         await ben.press("#snap-caption", "Enter")
         await expect(ben.locator("#snap-caption")).not_to_be_focused()
         wr = await ben.evaluate(WRITING)
+        assert near(wr["top"], vis["top"], 1), (wr, vis)
         await shot(ben, "camera-zoomed-placed-phone", full_page=False)
-        sent = {"caption": "pinched in", "size": expected_size(framed), "y": (wr["middle"] - vis["top"]) / vis["height"]}
+        sent = {"caption": wr["value"].strip(), "size": expected_size(framed), "y": (wr["middle"] - vis["top"]) / vis["height"]}
         await ben.tap("#send-snap")
         await expect(ben.locator("#camera-dialog")).not_to_be_visible(timeout=15000)
 
