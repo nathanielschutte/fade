@@ -23,14 +23,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
-| 3 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
-| 4 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 9 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | Needs decision | Nate (2026-11-05): "we can tag napsack 1.0 for production release on the app store". The app is ready; left: the reviewer account, App Store Connect's forms, the EU trader answer, the version |
+| 3 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
+| 4 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
+| 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
+| 6 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -415,6 +416,12 @@ Oldest first; newly shipped rows go at the bottom.
 #### F29. Android app
 - Nate (2026-11-04): "start planning how we will build our android app. Let's make a planning doc and skeleton filesystem ... and get a shell android app going like we did when we started ios development." The plan: [android.md](../design/android.md); the app lives in `android/`.
 - **The shell, built (2026-11-04):** `android/` (Gradle 9.8.2, AGP 9.5.0, Kotlin 2.4.21, Compose), `crypto/` with format 1 against the vectors (the checks vector-checks.js makes, under its names), one development screen (`/api/config` with `X-Napsack-Client: android/…`, the minimum-version check, the key derivation timed: 2.6 s on the emulator, to measure on a phone), `make android` (JVM tests, release checks, then the emulator against a fresh server), and `android.yml` by hand only. Android 17 treats a development server as the local network: only debug builds ask for it. Task list: [plan-android.md](plan-android.md).
+
+#### F30. napsack 1.0 on the App Store
+- Nate (2026-11-05): "how are we looking for an official app store release? We can tag napsack 1.0 for production release on the app store at some point."
+- **In the app, done:** everything on the [external testing checklist](../ios-onboarding.md#external-testing-the-checklist): production through `api.napsack.io`, export compliance, permission wording, deleting your account (5.1.1(v)), report and block (1.2), privacy policy and support in the app (5.1.1(i)), an iPad pass, no local network in Release, and a phone run through builds 186 to 190 (2.1).
+- **Left, Nate's:** (1) the reviewer account on production (`appreview`, your friend, made from your own link; the one test account there; steps in ios-onboarding.md), and answering it during a review; (2) App Store Connect: the privacy labels, the age rating, the listing (description, keywords, Social Networking), the support and privacy URLs; (3) the EU's trader question (declare as a non-trader if that's so, or leave the EU out at first); (4) whether the server becomes `1.0.0` with the app (the two versions are separate; [releasing.md](../operations/releasing.md)).
+- **Left, ours:** `MARKETING_VERSION` to `1.0.0` (`ios/Config/Base.xcconfig`); screenshots from the Simulator with staging's seeded people; an external TestFlight build through Beta App Review first, as a dry run; then the App Store submission, and the tag when it's approved.
 
 ### Debug
 
