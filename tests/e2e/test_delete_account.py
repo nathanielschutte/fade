@@ -3,7 +3,8 @@ says what goes, the last button works only once the password is filled in and
 the username typed exactly, a wrong password is refused, and then everything
 goes: Ana is signed out with nothing kept, can't sign in again, and her friend
 Ben's chat with her disappears from his list. The API's rules are in the smoke
-test (check_deletion). Settings come from the environment; see common.py."""
+test (check_deletion); that Admins see a note instead, in test_roles.py.
+Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
@@ -26,6 +27,7 @@ async def main():
         await expect(row(ana, BEN)).to_contain_text("see you soon", timeout=10000)
 
         await ana.click("#my-profile")
+        await expect(ana.locator("#delete-admin-note")).to_be_hidden()            # only Admins can't (test_roles.py)
         await ana.click("#delete-account")
         dialog = ana.locator("#delete-dialog")
         await expect(dialog).to_be_visible()

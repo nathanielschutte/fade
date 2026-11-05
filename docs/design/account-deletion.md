@@ -2,7 +2,7 @@
 
 Status: decided (Nate, 2026-11-03), built in 0.49.0 ([plan.md](../management/plan.md), F22).
 
-Anyone can delete their own account, from the web app or the iOS app, and everything of theirs goes. It's the one exception to Rule 1 (user data is never deleted), and only the person themselves can do it. Admins keep turning accounts off ([admin-users.md](../implementation/admin-users.md)), which deletes nothing.
+Anyone but an Admin can delete their own account, from the web app or the iOS app, and everything of theirs goes. It's the one exception to Rule 1 (user data is never deleted), and only the person themselves can do it. Admins keep turning accounts off ([admin-users.md](../implementation/admin-users.md)), which deletes nothing.
 
 The App Store requires it (Guideline 5.1.1(v), read 2026-11-03): "Offer to delete the entire account record, along with associated personal data… only offering to temporarily deactivate or disable an account is insufficient." A confirmation step is fine; if deletion takes time, say how long.
 
@@ -48,6 +48,14 @@ For 30 days no one can take it, so nobody can pose as the person their friends j
 - A test seeds a person into every table and checks that after deletion nothing refers to them except the hollow row's references, and that a friend's own data is untouched. A new table that refers to users fails it until deletion handles it.
 - Admins can't delete anyone, and Team Napsack can't be deleted.
 
+## Admins can't delete their own account (Nate, 2026-11-05)
+
+An Admin's user id and username stay theirs for good, so no one can ever take the name and pose as an Admin. `POST /api/me/delete` answers **403** for anyone on the admin list (by id, by their username, or by a name they had: [roles.md](../implementation/roles.md#where-admins-come-from)), with "Admins can't delete their account: an Admin's username stays theirs for good, so no one can ever take it and pose as them." It's checked before the password: no password or name typed would change the answer, so the refusal costs no slow password check and no failed try against the sign-in limit, and the role is no secret from the account itself (`/api/me` says it). The server logs it (info, `user_id`).
+
+The clients go by `role` in `/api/me`, never the username: the web's Profile and the iOS app's Settings show, in place of the Delete account button, "You're an Admin, so your account can't be deleted: your username stays yours for good, so no one can ever take it and pose as you." If the server refuses anyway (the role changed since the app last asked), the delete screen shows its words.
+
+Someone taken off the admin list later is a User again, and can delete their account like anyone. Put them back on the list by `id:` and the id at least stays held: a deleted account's row stays, hollow, so its id is never given to anyone else.
+
 ## Every client
 
-The web (desktop and phone) and the iOS app build the same confirmation. An Admin's System › Users doesn't list deleted accounts at all, and their pages answer "not found": there's nothing left to show or turn back on.
+The web (desktop and phone) and the iOS app build the same confirmation, and the same note for an Admin instead of it. An Admin's System › Users doesn't list deleted accounts at all, and their pages answer "not found": there's nothing left to show or turn back on.

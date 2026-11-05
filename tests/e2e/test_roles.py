@@ -1,4 +1,5 @@
-"""Roles (docs/implementation/roles.md) in the browser: an Admin makes someone a PowerUser on
+"""Roles (docs/implementation/roles.md) in the browser: an Admin (whose profile has no
+Delete account, only a note why) makes someone a PowerUser on
 the Roles page; the PowerUser gets the System link and the tabs for their role
 (no Logs), the overview without the users table, metrics without cost, the
 graph with strangers anonymous, and can make a friend a PowerUser but not take
@@ -41,6 +42,9 @@ async def main():
         assert (await link.bounding_box())["height"] == (await out.bounding_box())["height"]
         style = "e => [getComputedStyle(e).color, getComputedStyle(e).alignItems]"
         assert await link.evaluate(style) == [(await out.evaluate(style))[0], "center"], await link.evaluate(style)
+        # An Admin can't delete their account (deletion.rs): a note says why, no button.
+        await expect(admin.locator("#delete-admin-note")).to_contain_text("You're an Admin, so your account can't be deleted")
+        await expect(admin.locator("#delete-account")).to_be_hidden()
         await admin.click("#profile-dialog [data-close]")
         await admin.goto(f"{BASE}/admin#roles")
         await expect(admin.locator("#tab-logs")).to_be_visible()

@@ -436,8 +436,10 @@
     <p class="field-hint sign-out-note" id="profile-sign-out-note" hidden>Signing out leaves nothing of your account in this browser. Your chats are here again when you sign back in.</p>
     <section class="profile-delete">
       <h3>Delete account</h3>
-      <p class="field-hint">Deletes everything of yours from napsack, for good.</p>
-      <div class="picture-row">
+      <p class="field-hint" id="delete-hint">Deletes everything of yours from napsack, for good.</p>
+      <!-- Admins can't (deletion.rs): renderAccountBar shows this instead of the button -->
+      <p class="field-hint" id="delete-admin-note" hidden>You're an Admin, so your account can't be deleted: your username stays yours for good, so no one can ever take it and pose as you.</p>
+      <div class="picture-row" id="delete-row">
         <button type="button" class="button danger" id="delete-account">Delete account</button>
       </div>
     </section>

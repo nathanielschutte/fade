@@ -1223,7 +1223,18 @@ def check_deletion(tag):
     assert ana["id"] not in [u["id"] for u in ok(call("GET", "/admin/users", adm)).json()["users"]]
     ok(call("GET", f"/admin/users/{ana['id']}", adm), 404)
     ok(register(ana["username"]), 400)
-    print("  deletion: password and username typed again; everything of hers gone, friends and groups keep theirs, name held")
+
+    # Admins can't delete their account, even with everything right: their
+    # name stays theirs for good. Refused before the password is checked.
+    me_adm = ok(call("GET", "/me", adm)).json()
+    friends_before = ok(call("GET", "/friends", adm)).json()
+    for key in (SMOKE_ADMIN_KEY, b64(os.urandom(32))):
+        r = ok(call("POST", "/me/delete", adm, json={"auth_key": key, "username": SMOKE_ADMIN}), 403)
+        assert "Admins can't delete their account" in r.json()["error"], r.json()
+    assert ok(call("GET", "/me", adm)).json() == me_adm, "the admin is all still there"
+    assert ok(call("GET", "/friends", adm)).json() == friends_before
+    ok(call("POST", "/auth/login", json={"username": SMOKE_ADMIN, "auth_key": SMOKE_ADMIN_KEY}))
+    print("  deletion: password and username typed again; everything of hers gone, friends and groups keep theirs, name held; Admins can't")
 
 def check_admin_users(tag):
     """System → Users (admin_users.rs): turning an account off keeps all of it,

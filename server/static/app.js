@@ -1545,6 +1545,11 @@ function renderAccountBar() {
   // Here, not once at start: the app may open from a kept "me" with an older role (X31).
   $("#admin-link").hidden = !(["power", "powerxtreme", "admin"].includes(state.me.role) || state.me.is_admin);
   $("#profile-admin-link").hidden = $("#admin-link").hidden;
+  // Admins can't delete their account (deletion.rs); a note says why instead.
+  const admin = state.me.role === "admin" || Boolean(state.me.is_admin);
+  $("#delete-hint").hidden = admin;
+  $("#delete-row").hidden = admin;
+  $("#delete-admin-note").hidden = !admin;
   $("#my-name").textContent = personName(state.me.id);
   paintAvatar($("#my-avatar"), state.me);
   paintAvatar($("#tab-avatar"), state.me);
