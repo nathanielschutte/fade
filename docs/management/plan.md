@@ -25,7 +25,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Reviewer account and forms done (Nate); next: version 1.0.0, external TestFlight; then Nate's review before the App Store |
 | 3 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
-| 4 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
+| 4 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send |
 | 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
 | 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
@@ -651,6 +651,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### X51. Send a pic from a chat to more chats too (iPhone)
 - Nate (2026-11-04): "when you're already in a chat and you take a pic, right now you can only send to that chat you were in. On desktop/web we always have the second 'send to' option where you can add additional recipients as well even if you were already in a chat. We need this feature implemented in the same way for ios." The web's behaviour is the model: the quick send to this chat stays, and Send to… opens with this chat already chosen.
+- **Built (2026-11-05).** As the web: after a capture in a chat, "To Ben +" beside Send (stacked when they don't fit). Send goes to that chat; "To Ben +" opens Send to… with it picked, to add friends and groups, and sends from there. Sending again reuses each chat's id and sealed copy, so a lost answer never makes a second pic (the Camera tab's Send to… had that gap too); a chat gone meanwhile says so. `CameraSendTests`, `CameraUITests`.
 
 ### Security
 
