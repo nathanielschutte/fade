@@ -1,0 +1,8 @@
+# The workflows pin every action by commit (a tag or branch can be moved to
+# other code); this proposes the newer commits, as pull requests, once a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

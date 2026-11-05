@@ -59,9 +59,11 @@ Build the change, with its tests, on a branch (`<name>/<topic>`). Before opening
 
 ### 2. A pull request, then a release candidate on staging
 
-Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). Its description says which checks ran locally; CI doesn't run on pull requests (GitHub Actions is billed; Nate, 2026-11-03), so those local runs are the check, and the owner reviews it. The owner squash-merges it into `main`, where the **CI** workflow (`.github/workflows/ci.yml`) runs everything (format, lints, all the tests, Terraform validation), and if it passes, its **Release candidate on staging** job:
-1. builds the ARM server binary once, stamped with the commit (`build` = the short sha);
-2. uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
+Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). Its description says which checks ran locally; CI doesn't run on pull requests (GitHub Actions is billed; Nate, 2026-11-03), so those local runs are the check, and the owner reviews it. The owner squash-merges it into `main`, where the **CI** workflow (`.github/workflows/ci.yml`) runs everything (format, lints, all the tests, Terraform validation), and if it passes, makes a release candidate in two jobs. **Build the release candidate**, which has no AWS role and no way to get one:
+1. builds the ARM server binary once, stamped with the commit (`build` = the short sha), and prints its sha256 in the job's log: the record a release checks it against (below).
+
+Then **Release candidate on staging**, the only job with the staging role (`fade-github-staging`), which:
+2. checks it has the binary the build job made (the same sha256), and uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
 3. deletes all but the newest ten candidates (releases are kept forever; see below);
 4. runs `fade-update` on staging through SSM, and checks `https://staging.napsack.io/api/config` reports that commit.
 
@@ -80,7 +82,7 @@ When staging looks good:
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
 2. checks that staging ran that commit: `main`'s CI passed for it and its **Release candidate on staging** job succeeded (`release.sh staging-ran`). Otherwise it stops before anything is built or changed, saying so. Since 0.43.0: 0.42.2 once reached production without staging, when `main`'s CI had failed on a flaky test and the release fell back to building it again;
-3. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte. Only if it's no longer kept (more than ten pushes ago) does it run the tests and build again;
+3. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte, and checks its sha256 is the one `main`'s build job recorded in its own log. If it differs, the candidate was replaced after it was built, and the release stops. Only if it's no longer kept (more than ten pushes ago), or has no record, does it run the tests and build again, in a job with no AWS role;
 4. publishes it as `releases/tags/fade-server-<version>`, refusing if that version already exists (a fix is a new version), and as `releases/fade-server`, which is what production runs;
 5. backs up production's database (`fade-backup`, the hourly job, run now), so there's a fresh copy before any migration;
 6. runs `fade-update` on every production server through SSM, and checks `https://napsack.io/api/config` reports the commit;
@@ -89,6 +91,8 @@ The **Release server** workflow (`.github/workflows/release-server.yml`):
 If you've added required reviewers to the `production` environment in GitHub, it waits for approval first. Then check production as CLAUDE.md's Shipping section says: the new `build` in `/api/config`, the pages you changed, and a clean start in the log.
 
 The release's `build` is the commit's sha, the same as on staging: it's the same binary. The version is in `server_version`.
+
+**Why the record is a log.** The staging role can write anything under `releases/main/`; a step in the staging job that went wrong (or an action that was compromised) could replace a candidate there, and production would promote it. So nothing that builds code holds a role: the build job has none, and the jobs with a role only check, upload, and deploy. The build job's log can be written only by that job while it runs, so a release trusts the sha256 it recorded there, not anything in S3. The release workflow's three jobs work the same way: the candidate is fetched and checked by a job with production's role (reading only), a rebuild, when there is one, happens in a job without it, and the job that publishes checks the binary's sha256 once more before it has the role.
 
 ### Where builds live
 

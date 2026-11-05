@@ -22,6 +22,10 @@ concurrency:
   # released (release.sh staging-ran); release the newer one, which includes it.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only unless a job says otherwise (only the staging deploy does).
+permissions:
+  contents: read
+
 jobs:
   # Changes only to the iOS or Android app or the docs (the plan included)
   # don't touch the server, the web app, or the infrastructure, so the jobs
@@ -35,7 +39,7 @@ jobs:
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - id: diff
@@ -59,12 +63,13 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: server
 
@@ -76,11 +81,11 @@ jobs:
         working-directory: server
 
       # Runs shared/crypto against the pinned vectors (the code the iOS app shares).
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "24"
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -96,7 +101,7 @@ jobs:
           NAPSACK_SHOTS: ${{ runner.temp }}/shots
       - name: Keep screenshots
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: screenshots
           path: ${{ runner.temp }}/shots
@@ -106,10 +111,55 @@ jobs:
   # kept in S3 as releases/main/fade-server-<sha> (the newest ten), and put on
   # staging. A server-v* tag later promotes that same binary to production
   # (release-server.yml).
-  candidate:
-    name: Release candidate on staging
+  #
+  # Built in a job of its own, with no AWS role and no OIDC token, so the
+  # toolchain, the cache, and everything the build downloads never hold
+  # credentials. Its log records the binary's sha256 (release.sh build), and
+  # a release promotes the candidate only if it still has that sha256
+  # (release.sh fetch-candidate): the staging role can replace files in
+  # releases/main/, but not this job's log. (The name is release.sh's BUILD_JOB.)
+  candidate-build:
+    name: Build the release candidate
     needs: [server, infra]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.build.outputs.build }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+          key: aarch64
+      - name: Build
+        id: build
+        run: |
+          BUILD=$(git rev-parse --short=7 HEAD)
+          pip install ziglang==0.13.0.post1
+          cargo install cargo-zigbuild --locked
+          bash scripts/release.sh build "$BUILD"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cat dist/fade-server.sha256)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: fade-server
+          path: dist/fade-server
+          retention-days: 7
+          if-no-files-found: error
+
+  # Uploads what the job above built (checked against its sha256 first) and
+  # puts it on staging. The only job here with the staging role. Its name is
+  # what release.sh staging-ran looks for.
+  candidate:
+    name: Release candidate on staging
+    needs: candidate-build
     runs-on: ubuntu-24.04
     environment: staging
     concurrency:
@@ -127,6 +177,8 @@ jobs:
       STAGING_APP: ${{ vars.APP_NAME || 'fade' }}-staging
       STAGING_URL: ${{ vars.STAGING_URL }}
       ROLE: ${{ vars.STAGING_DEPLOY_ROLE_ARN }}
+      BUILD: ${{ needs.candidate-build.outputs.build }}
+      SHA256: ${{ needs.candidate-build.outputs.sha256 }}
     steps:
       - name: Settings
         run: |
@@ -137,28 +189,18 @@ jobs:
           fi
           case "$STAGING_URL" in https://staging.*) ;; *) echo "STAGING_URL isn't staging's address: $STAGING_URL"; exit 1;; esac
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         if: env.SKIP != '1'
-      - name: Build id
-        if: env.SKIP != '1'
-        run: echo "BUILD=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         if: env.SKIP != '1'
         with:
-          targets: aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
+          name: fade-server
+          path: dist
+      - name: The binary the build job built
         if: env.SKIP != '1'
-        with:
-          workspaces: server
-          key: aarch64
-      - name: Build
-        if: env.SKIP != '1'
-        run: |
-          pip install ziglang==0.13.0.post1
-          cargo install cargo-zigbuild --locked
-          bash scripts/release.sh build "$BUILD"
+        run: bash scripts/release.sh check-sha256 "$SHA256"
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         if: env.SKIP != '1'
         with:
           role-to-assume: ${{ env.ROLE }}
@@ -179,8 +221,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
       - run: terraform fmt -check -recursive
         working-directory: infra
       - run: terraform init -backend=false -input=false && terraform validate
