@@ -49,7 +49,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 25 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 26 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 | 27 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | Nate | In progress | Built in the iOS app (2026-11-03); the web to match |
+| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | Nate | In progress | Built in the iOS app (2026-11-03); the web to match. Built on the web (2026-11-04), as on the iPhone |
 
 **Done**
 
@@ -596,6 +596,7 @@ Oldest first; newly shipped rows go at the bottom.
 - **The web today:** a tap on a chat in the list always opens the chat (`openChat`); pics open only from a chat's "Tap to view pic" (`snap-chip`, `openPics`); a double tap opens the camera for that chat ([X12](#x12-double-tap-a-chat-to-send-a-pic)).
 - **For the web to match:** a single tap on such a row runs `openPics` for that chat's waiting pics without opening the chat, then returns to the list. The double tap must still be told apart (the phone's 150ms wait before a tap acts already does that). A text from them before the pics stays unread: the row keeps its marker, from the server's `unread` count (`chatStatus` looks only at the newest message today). A group is marked read after only if those pics were all that was unread. If they turn out opened elsewhere, the tap opens the chat.
 - iOS's own double tap (answer with a pic, as X12) is planned there, not built (Nate: "leave that as planned for now").
+- **Built on the web (2026-11-04).** The rule is the iPhone's (`Reader.opensPics`): a tap on a row whose newest is a pic or video waiting from them fetches the chat's newest page and shows its waiting pics oldest first, without opening the chat. A tap waits out the double tap (350ms, as seeing a pic opens it for good) while the page loads; a second tap opens the chat with the camera (X12). Unread texts stay unread (the row keeps its marker from the server's `unread`); a group is marked read only if what was unread was all pics shown, and nothing newer came. Opened elsewhere, the tap opens the chat. Screen readers hear "Opens the pic, not the chat"; Enter opens straight away. `test_list_pics.py`.
 
 #### X42. Choices left from the speed work
 - From the speed survey and the work after it (2026-11-03, [I13](#i13-the-server-stays-fast-as-history-grows), [X40](#x40-the-web-app-stays-fast-as-data-grows-natural-chat-scrolling), plan-ios's faster chat list). Each is Nate's call, and none blocks anything:
