@@ -685,6 +685,10 @@ Oldest first; newly shipped rows go at the bottom.
 - **Built:** an entry `id:7` names user 7 (`Admins::contains_id`, `usernames::is_listed_admin`); usernames keep working, so the switch has no gap. `scripts/set-admins.sh id:1,id:5` takes them. To finish (Nate's, a production setting): set the parameter to the Admins' ids and reload (`scripts/reload-admins.sh`).
 - **Done (2026-11-05):** production's list is user ids (Nate approved the switch; `set-admins.sh`, reloaded). A username entry also matched past names, and a free listed name could be taken.
 
+#### S6. Admins can't delete their own account
+- Nate (2026-11-05): "admins shouldn't be able to delete their accounts so that their user id/username id is reserved forever. this way people cannot ever impersonate."
+- **Built (2026-11-05).** `deletion.rs` refuses an Admin (by id, name, or a past name) with a 403 before the password check; the web and the iPhone show why instead of the button. Someone taken off the list is a User again and can delete. Noticed: a deleted person's current name is held 30 days, but their past names are freed at once (`wipe` removes `past_usernames`). **Needs decision (Nate):** hold past names as long as the current one, or for good.
+
 ### Infrastructure
 
 - **Next boot script change:** its comment still says `docs/BACKUPS.md`; make it `docs/operations/backups.md`. (Left alone in the docs move on 2026-10-23: any edit to `infra/user_data.sh.tftpl` replaces the production instance, which a comment isn't worth.)
