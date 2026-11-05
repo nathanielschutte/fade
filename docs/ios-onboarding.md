@@ -223,31 +223,18 @@ The **safe area** is the part of the screen nothing covers. On top it's 20 point
 
 TestFlight is how builds reach phones before the App Store: yours and up to 100 people on the App Store Connect team (**internal** testers, no review), then friends by email or a public link (**external**, up to 10,000; the first build of each version goes through Apple's Beta App Review, usually within a day or two). A build expires after 90 days. The plan for the App Store itself is in [plan-ios.md](management/plan-ios.md), section 12.
 
-### Once (the owner, with the Developer Program)
+### Uploading builds
 
-1. **The bundle id.** It's the app's permanent identity: once the app is in App Store Connect it can't change. The code uses `NAPSACK_BUNDLE_ID` in `Config/Base.xcconfig`. Register it at [developer.apple.com](https://developer.apple.com/account) → Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs → App:
-   - **Description:** napsack. **Bundle ID:** Explicit, exactly what `Base.xcconfig` says.
-   - **Capabilities:** **Push Notifications** and **Associated Domains** (add-a-friend links on the site opening the app). Both are in the app's entitlements (`Config/Napsack.entitlements`); cloud signing turns them on for the App ID if they aren't yet.
-   - **App Services:** none. **Capability Requests:** none (special permissions Apple grants one by one; napsack needs none).
-2. **The app in App Store Connect.** [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → Apps → **+** → New App:
-   - **Platforms:** iOS. **Name:** napsack (the App Store name: unique across the store; it can change later). **Primary language:** English (U.S.).
-   - **Bundle ID:** the one from step 1. **SKU:** your own label for it, never shown to anyone, e.g. `napsack-ios`. **User access:** Full Access.
-3. **This Mac's settings**, `Config/Local.xcconfig`: `DEVELOPMENT_TEAM` = the Program team's id (developer.apple.com → Membership; it may differ from the free account's), and **delete the `NAPSACK_BUNDLE_ID` line** (the `.dev` id was for the free account). Development builds then use the real id too.
-4. **An App Store Connect API key**, so the upload can sign and send without Xcode's windows: App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, name `napsack upload`, access **Admin**. (Only an Admin key may use cloud signing, where Apple keeps the distribution certificate and signs the upload; with App Manager the upload fails with "Cloud signing permission error" and "No profiles for ...".) Download the `.p8` (only once!) to `~/.appstoreconnect/private_keys/`, and make `ios/Config/AppStoreConnect.env` (git-ignored; never commit it):
-   ```
-   ASC_KEY_ID=ABC123DEFG
-   ASC_ISSUER_ID=12345678-aaaa-bbbb-cccc-1234567890ab
-   ASC_KEY_FILE=~/.appstoreconnect/private_keys/AuthKey_ABC123DEFG.p8
-   ```
-   (The Key ID is in the keys list; the Issuer ID is above it.)
+TestFlight uploads and App Store Connect are the owner's (`scripts/ios-testflight.sh`, `make ios-archive`): they need the Developer Program team and an App Store Connect key, both kept outside the repository, and the owner's private notes have the setup and the steps. Everything else in this doc works with a free Apple ID.
 
-### Each build
+What an upload checks, so a contributor knows what a release build must pass:
 
-1. `make ios` passes, and `ios/` is committed (the build number is the commit count, so it goes up with every commit; App Store Connect refuses a number it has seen).
-2. `scripts/ios-testflight.sh`: it checks the settings (the real bundle id, the team, the server: release builds always use `https://api.napsack.io`), runs the crypto checks, builds the Release archive signed for the App Store, checks no test data is in it, and uploads it. `make ios-archive` does everything but the upload.
-3. In App Store Connect → the app → TestFlight, the build appears after processing (minutes). It doesn't ask about **export compliance** (encryption): the owner's answer (plan-ios.md, section 12) is in every build, `ITSAppUsesNonExemptEncryption` in `Config/App.xcconfig`.
-4. **Internal testing:** make a group, add yourself (and anyone on the team); TestFlight on the phone offers the build.
-5. **External testing:** once the checklist below is done, add the build to the external group and submit it for Beta App Review.
+- `make ios` passes, and `ios/` is committed: the build number is the commit count, so it goes up with every commit (App Store Connect refuses a number it has seen).
+- The settings are a release's: the real bundle id (`NAPSACK_BUNDLE_ID` in `Config/Base.xcconfig`, the app's permanent identity), the Program team, and the server (release builds always use `https://api.napsack.io`).
+- The crypto checks pass, the Release archive is signed for the App Store, and no test data is in it.
+- Export compliance (encryption) is answered in every build (`ITSAppUsesNonExemptEncryption` in `Config/App.xcconfig`; the owner's answer, plan-ios.md section 12), so uploads don't ask.
+
+Builds go to **internal** testers first; once the checklist below is done, a build goes to the external group through Beta App Review.
 
 ### External testing: the checklist
 
@@ -271,30 +258,9 @@ External testers are anyone outside the App Store Connect team, invited by email
 - [ ] **Report and block** (1.2, plan-ios.md section 12, Planned): apps with what other people write must let you report it and block whoever sent it, and answer reports in good time. Only friends can message you and unfriending stops them, which helps, but an unfriended person can ask again, so it isn't a block. This is the likeliest reason for a rejection. A server change first (a block that stops requests and messages, and reports that reach the Admins), then the web and the app.
 - [ ] **No crashes, nothing unfinished** (2.1): `make ios` passes, and a TestFlight build has been through signing up, a text, a pic, notifications, and deleting an account on a real phone. Hide anything that's half built.
 
-**Nate, in App Store Connect** (the app → TestFlight)
+**In App Store Connect** (the owner's): the test information (a short description, the feedback address on `/support`, the privacy policy at `https://napsack.io/privacy`), the contact for Apple's reviewers, review notes saying what to try, and the external group. Review needs a sign-in: a dedicated account on production with a User's permissions only (Nate, 2026-11-02; the one account there made for testing), which the owner makes and keeps working while a build is in review. Its details are only in App Store Connect and the owner's password manager, never in the repository, the plan, or a chat.
 
-1. **Test Information** (once; edit it when it changes):
-   - **Beta App Description** (required): "napsack is a private messenger for close friends: texts, and pics and videos that can be viewed once, all end-to-end encrypted. You join through a friend's link."
-   - **Feedback Email:** the address on `/support` (testers' feedback from the TestFlight app also comes to App Store Connect, with screenshots).
-   - **Privacy Policy URL:** `https://napsack.io/privacy`. **Marketing URL:** none.
-2. **Beta App Review Information** (once):
-   - **Contact:** your name, email, and phone, the phone in international form (`+1 ...`). Apple uses it if the review has a question.
-   - **Sign-in required:** on, with the reviewer account (below). It must keep working: never turn it off or change its password while a build is in review.
-   - **Review Notes** (up to 4,000 bytes): "Sign in with the account above. Its friend, nate, will answer. Try a text, a reply (swipe a message), a reaction (hold a message), and a pic or video from the camera: the friend can open it once. Settings has deleting your account. napsack is for friends: anyone can join through a friend's link (Friends › Share), and only friends can message each other." Add how to report and block once it's built.
-3. **Groups:** the internal group exists. Make an external group, add the build, and submit it for review. For a public link, set its **Tester Limit** to fit the account cap (below); for email invitations, invite no more than that.
-4. **Each build:** What to Test, in a sentence or two. Only one build per version is in review at a time, and up to six a day can be submitted.
-5. **The version:** the first external build is the first one Apple reviews, so it's a good time to decide what `MARKETING_VERSION` it carries (`0.1.0` now; the owner's, [mobile.md](design/mobile.md)).
-
-**The reviewer account** (Nate, 2026-11-02: a dedicated account, a User's permissions only; the one account on production made for testing). The owner makes it, so its password never passes through anyone else:
-
-1. In a private browser window, open your own add-a-friend link (Friends → Copy link), so the new account starts out your friend and needs no invite code.
-2. Sign up as `appreview` with a long password from your password manager. Save its recovery key there too.
-3. New accounts are Users: no PowerUser or Admin role (`/fade/admins` stays as it is).
-4. Put the username and password in the Beta App Review Information's sign-in fields, and nowhere else (never the repository, the plan, or a chat).
-
-Answer its messages while a build is in review. Between reviews it can stay; turning it off (System → Users) also works, but turn it back on before the next submission.
-
-**The account cap.** Production takes at most 100 accounts (`FADE_MAX_ACCOUNTS`, `guard.rs`), counting every account that isn't turned off or deleted (Team Napsack doesn't count, and neither does a deleted account). Past it, sign-up says "napsack isn't taking new accounts right now." TestFlight allows 10,000 testers, and every tester new to napsack takes a place (a friend who already uses the website signs in and takes none), the reviewer account included. Before inviting anyone, look at how many accounts there are (System → Users) and either keep the invitations and the public link's Tester Limit under the room left, or raise the cap first ([security.md](security.md), the settings: a line in `infra/main.tf`, `terraform apply`, a restart).
+**The account cap.** Production takes at most 100 accounts (`FADE_MAX_ACCOUNTS`, `guard.rs`), counting every account that isn't turned off or deleted (Team Napsack doesn't count, and neither does a deleted account). Past it, sign-up says "napsack isn't taking new accounts right now." TestFlight allows 10,000 testers, and every tester new to napsack takes a place (a friend who already uses the website signs in and takes none), the reviewer account included. Before inviting anyone, look at how many accounts there are (System → Users) and either keep the invitations and the public link's Tester Limit under the room left, or raise the cap first (a setting, [security.md](security.md#changing-a-limit)).
 
 ## When it doesn't work
 

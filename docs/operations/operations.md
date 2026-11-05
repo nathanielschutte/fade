@@ -1,39 +1,26 @@
 # Operations
 
-Running napsack in production: the AWS setup, settings, getting a shell, domains, and what it costs. Releasing is in [releasing.md](releasing.md), backups in [backups.md](backups.md), limits and what to do under attack in [security.md](../security.md). The rules for touching production (above all: data is never deleted) are in [CLAUDE.md](../../CLAUDE.md).
+Running napsack in production: the AWS setup, settings, shell access, domains, and what it costs. Releasing is in [releasing.md](releasing.md), backups in [backups.md](backups.md), limits and what to do under attack in [security.md](../security.md). The rules for touching production (above all: data is never deleted) are in [CLAUDE.md](../../CLAUDE.md).
 
-## Deploy to AWS
+## The AWS setup
 
-```sh
-cd infra
-cp terraform.tfvars.example terraform.tfvars   # set invite_code
-terraform init && terraform apply
-cd ..
+Everything in AWS is in Terraform (`infra/`), and running it is the owner's: applying it, deploying, and the shell all need the owner's AWS credentials, the Terraform state, and the settings files kept out of the repository. The step-by-step is in the owner's private notes; this section describes what's there.
 
-# one-time build tooling
-rustup target add aarch64-unknown-linux-musl
-cargo install cargo-zigbuild && pip install ziglang
+The normal way to ship the server is the release pipeline: a push to `main` is tested, built once, and put on staging; a `server-v*` tag puts that same build on production (after a backup). `scripts/deploy.sh` is the owner's hotfix path. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [releasing.md](releasing.md).
 
-scripts/deploy.sh          # build, copy over SSH, restart, check the live build
-scripts/ssh.sh             # shell on the box; extra args run a command
-scripts/rollback.sh        # list kept builds, or roll back to one
-```
+**Terraform state lives in S3**, not on anyone's machine, production's and staging's under separate keys (the `backend "s3"` blocks in `infra/main.tf` and `infra/staging/main.tf`). The bucket is versioned (every earlier state is kept), encrypted, HTTPS-only, and closed to the public, and a plan or apply holds a lock file beside the state, so two machines can't apply at once. Only the owner's AWS credentials reach it; no server or GitHub role does. Each root's `terraform.tfvars` holds its secrets and isn't in git. The bucket isn't in Terraform, since it holds Terraform's own state; it was made by hand (2026-10-29). Before that the state was a local file on the owner's machine.
 
-The normal way to ship the server is the release pipeline: a push to `main` is tested, built once, and put on staging; a `server-v*` tag puts that same build on production (after a backup). `scripts/deploy.sh` is for hotfixes. Versioning, compatibility rules, rollbacks, and one-time CI setup are in [releasing.md](releasing.md).
+**Shell access** is the owner's: SSH as `ec2-user` (which has sudo), tunneled through AWS Systems Manager. Port 22 is closed to everyone but the owner's own address (`ssh_allowed_cidrs`), and only keys listed in tfvars are authorized.
 
-**Terraform state lives in S3**, not on anyone's machine: the bucket `fade-tfstate-<account>-us-east-1`, production at `fade/terraform.tfstate` and staging at `fade-staging/terraform.tfstate` (the `backend "s3"` blocks in `infra/main.tf` and `infra/staging/main.tf`). The bucket is versioned (every earlier state is kept), encrypted, HTTPS-only, and closed to the public, and a plan or apply holds a lock file beside the state, so two machines can't apply at once. Only the owner's AWS credentials reach it; no server or GitHub role does. A new machine needs the AWS CLI signed in, both `terraform.tfvars` files (they aren't in git), and `terraform init` in each root. The bucket isn't in Terraform, since it holds Terraform's own state; it was made by hand (2026-10-29), and a new copy of napsack makes its own the same way: `aws s3api create-bucket`, then versioning, default encryption, the public access block, and a policy denying non-HTTPS requests. Before that (until 2026-10-29) the state was a local file on the owner's machine.
+Deploying runs `sudo fade-update <file>` on the box: it keeps the old binary as `fade-server.prev`, restarts, and fails if the service doesn't come back up. The build is also kept in S3, so a replaced instance boots with the same release.
 
-SSH uses `~/.ssh/id_ed25519` by default (`ssh_public_key_path`; set it in tfvars to the machine's own key). The `ssh_config` output is saved with the state, so it names the key path of whichever machine applied last; `terraform apply` once from a new machine to make it yours. With `ssh_allowed_cidrs` empty, port 22 stays closed and SSH is tunneled through SSM, which needs the AWS CLI and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html). Set it to e.g. `["203.0.113.7/32"]` to connect directly instead. To use plain `ssh fade`, scp, or VS Code Remote-SSH, run `terraform -chdir=infra output -raw ssh_config >> ~/.ssh/config`.
-
-Deploy runs `sudo fade-update <file>` on the box: it keeps the old binary as `fade-server.prev`, restarts, and fails if the service doesn't come back up. It also copies the build to S3, so a replaced instance boots with the same release.
-
-With no `domain` set, the app is served at `https://<elastic-ip-with-dashes>.sslip.io` with a real Let's Encrypt cert, so you don't need DNS. To use your own domain on a fresh deploy, run `terraform apply -target=aws_eip.app` first, point an A record at that IP, set `domain`, then run a full `terraform apply`. Otherwise Caddy requests the cert before DNS resolves and backs off. Changing it replaces the instance, but the data volume survives.
+With no `domain` set, the app is served at `https://<elastic-ip-with-dashes>.sslip.io` with a real Let's Encrypt cert, so it needs no DNS. A custom domain needs its DNS record pointing at the Elastic IP before the server starts, or Caddy requests the cert before DNS resolves and backs off. Changing the domain replaces the instance, but the data volume survives.
 
 The apps talk to the API on its own name, `api.<domain>` (`/api/*` only; [api-host.md](../implementation/api-host.md)), served by the same Caddy and server.
 
-What you get: one Graviton `t4g.nano` running Amazon Linux 2023, Caddy for TLS, and the app under a hardened systemd unit. The DB and certs sit on a separate encrypted EBS volume with daily snapshots. You get in over SSH as `ec2-user`, which has sudo. The SSH host keys live on the data volume, so replacing the instance doesn't trigger host-key warnings.
+What you get: one Graviton `t4g.nano` running Amazon Linux 2023, Caddy for TLS, and the app under a hardened systemd unit. The DB and certs sit on a separate encrypted EBS volume with daily snapshots. The SSH host keys live on the data volume, so replacing the instance doesn't trigger host-key warnings.
 
-Changing config: edit tfvars, run `terraform apply` (which updates the SSM parameter), then `scripts/ssh.sh sudo systemctl restart fade`. Rollback: `scripts/rollback.sh`.
+Changing a setting is the owner's: Terraform writes the settings parameter, and the server reads it when it restarts. Rolling back: [releasing.md](releasing.md).
 
 ### Rough monthly cost (us-east-1, on-demand)
 
@@ -72,7 +59,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_APPLE_TEAM_ID` · `FADE_IOS_BUNDLE_ID` | unset · `com.getattr.napsack` | The iPhone app (`apple_team_id` in tfvars): signs notifications, and names the app in `/.well-known/apple-app-site-association`, so add-a-friend links and the home page open it (Universal Links). Without a team, that file is a 404 and links open the site |
 | `FADE_SESSION_DAYS` | `365` | How long a session lasts after it was last used: each use (noted at most hourly) pushes its end out again |
 | `FADE_ADMINS` | unset | Admins, comma-separated (development and tests). Production uses `FADE_ADMINS_PARAM` instead ([roles.md](../implementation/roles.md)) |
-| `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Set it with `scripts/set-admins.sh nate,liana`, then `scripts/reload-admins.sh` |
+| `FADE_ADMINS_PARAM` | unset | The SSM parameter holding the admin list (production: `/fade/admins`), read at start and on reload. Entries are user ids, like `id:1,id:7` ([roles.md](../implementation/roles.md)); the owner sets it outside Terraform, so the list isn't in source control or Terraform state |
 | `FADE_ENVIRONMENT` | unset (production) | A non-production copy's name, like `staging`: every page then says "napsack (staging)", shows an amber band and the build in the corner, and notifications start with `[staging]`. Letters, digits, and hyphens; empty, `production` or `prod` mean production |
 | `FADE_HEALTH_PREFIX` | `health/` | Where the Metrics tab reads incident records in the artifacts bucket. Staging sets `staging/health/` so it never reads production's |
 | `FADE_EXEMPT_ADDRESSES` | unset | **Staging only.** Comma-separated client addresses treated like local requests: no per-address limits or scanner bans, so test machines can run the suites and load tests ([staging.md](staging.md)). Never set in production |
@@ -84,25 +71,7 @@ The server reads these environment variables. In production they come from an AW
 
 ### iPhone notifications (APNs)
 
-The server sends iPhone notifications through Apple with a key from the Apple Developer account, one per stack: production's is a **Production** key (TestFlight and App Store builds), staging's a **Sandbox** key (Xcode builds), so staging never holds production's.
-
-1. developer.apple.com › Certificates, Identifiers & Profiles › Identifiers › `com.getattr.napsack`: Push Notifications on.
-2. Keys › +: Apple Push Notifications service (APNs), Configure: the environment (Production, or Sandbox for staging), topic `com.getattr.napsack`. Download the .p8 (it downloads only once; keep it outside the repository) and note its Key ID.
-3. In that stack's `terraform.tfvars` (never committed):
-
-   ```hcl
-   apns_key      = <<-EOT
-     -----BEGIN PRIVATE KEY-----
-     ...the .p8 file's lines...
-     -----END PRIVATE KEY-----
-   EOT
-   apns_key_id   = "ABC123DEFG"
-   apple_team_id = "TEAM123456"
-   ```
-
-4. `terraform plan` should change only `aws_ssm_parameter.env` (in place; the instance stays). Apply, then `scripts/ssh.sh "sudo systemctl restart fade"`. The journal no longer says "no apns key".
-
-A key that leaks is revoked in the same Keys page and replaced the same way.
+The server sends iPhone notifications through Apple with a key from the Apple Developer account, one per stack: production's is a **Production** key (TestFlight and App Store builds), staging's a **Sandbox** key (Xcode builds), so staging never holds production's. The owner makes each key (Push Notifications on for `com.getattr.napsack`, topic `com.getattr.napsack`) and puts it, with its Key ID and the team id, in that stack's `terraform.tfvars` (never committed: `apns_key`, `apns_key_id`, `apple_team_id`). Terraform writes them to the settings parameter, so adding a key changes no instance; after a restart the journal no longer says "no apns key". A key that leaks is revoked in the Developer account and replaced the same way.
 
 ## Metrics
 
@@ -115,8 +84,8 @@ How every figure is measured and drawn: [metrics.md](../implementation/metrics.m
 
 ## Health monitor
 
-A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](../implementation/health-monitor.md)). Incidents (evidence and actions): `aws s3 ls s3://$(terraform -chdir=infra output -raw artifacts_bucket 2>/dev/null)/health/incidents/`. Notifications go to the SNS topic in `terraform -chdir=infra output -raw health_topic_arn`; subscribe an email to receive them. Watch-only mode: `health_act = false` in tfvars.
+A Lambda (`fade-health`) checks `/api/health` every 5 minutes and, after two failures in a row, tries to fix the server: restart the app, reboot, stop and start, then asks for a human ([health-monitor.md](../implementation/health-monitor.md)). Each incident's evidence and actions are kept in the artifacts bucket under `health/incidents/`, and Admins see the last 7 days on the Metrics tab. Notifications go to an SNS topic (`fade-health`) the owner subscribes to. It can be set to watch only (`health_act = false` in tfvars), for instance while a planned replacement boots.
 
 ## Staging
 
-A separate napsack at staging.napsack.io (`infra/staging/`, its own Terraform state), for the browser tests and load tests against a real deployment. No backups, no user data, and no access to production's settings, data, or releases. How to deploy, test, and load test it, and why it can't touch production: [staging.md](staging.md). Set `FADE_STACK=staging` for `scripts/deploy.sh` and `scripts/ssh.sh`.
+A separate napsack at staging.napsack.io (`infra/staging/`, its own Terraform state), for the browser tests and load tests against a real deployment. No backups, no user data, and no access to production's settings, data, or releases. What it is, how it's tested and load tested, and why it can't touch production: [staging.md](staging.md). The owner's scripts take `FADE_STACK=staging` to work on it instead of production.

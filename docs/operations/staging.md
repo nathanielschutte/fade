@@ -8,7 +8,7 @@ A second, separate napsack at <https://staging.napsack.io>, for running the brow
 - **Its own resources**, all tagged `App=fade-staging`: a t4g.nano (same size as production, so load numbers mean something), an Elastic IP, a security group, a 1 GB data volume, the settings parameter `/fade-staging/env`, an instance role, and the DNS records `staging.napsack.io` and `api.staging.napsack.io` (the apps' name for the API, [api-host.md](../implementation/api-host.md)).
 - **The same boot script as production** (`infra/user_data.sh.tftpl`), with two exact substitutions: the backup timer isn't enabled, and the server comes from `releases/main/fade-server`, the newest release candidate, instead of production's release. Preconditions on the instance fail the plan if the template changes so that either substitution would miss.
 - **Its own accounts.** Its own invite code, test password, and `smoke_admin` key (in `infra/staging/terraform.tfvars`, gitignored; none of them is in the repository), and admin list (`e2e_admin`, `smoke_admin`, the test accounts). Nobody's real data is on it, and nobody without the tfvars can sign in to its test accounts or Admins: the tests and the seed use the public test password only against this machine's server, and refuse to run elsewhere without staging's own.
-- Cost: about $7.40 a month (instance $3.07, Elastic IP $3.65, volumes $0.72). `terraform -chdir=infra/staging destroy` removes it all (allowed for staging only; it holds no user data). Never run destroy in `infra/`.
+- Cost: about $7.40 a month (instance $3.07, Elastic IP $3.65, volumes $0.72). Staging may be torn down and rebuilt whole, since it holds no user data; production never is (CLAUDE.md, Rule 1).
 
 ## How you know you're on it
 
@@ -30,37 +30,21 @@ It's all added on top of the design (`server/static/env.js`, and the "non-produc
 
 ## Using it
 
-Every script picks the stack from `FADE_STACK` (empty means production):
+CI puts every passing push to `main` on staging. The rest is the owner's, since it needs staging's Terraform state and settings: putting a local build there instead, a shell on it, running the smoke and browser tests (`scripts/test-staging.sh`), the iOS app's live tests (`scripts/test-ios.sh --staging`), and load tests (`scripts/load-staging.sh`) against it, and resetting it (below). Every script picks the stack from `FADE_STACK` (empty means production). The commands are in the owner's private notes.
 
-```sh
-git push origin main                      # CI: tests, then builds and deploys the commit to staging
-FADE_STACK=staging scripts/deploy.sh      # a local build instead, to staging only (needs cargo-zigbuild)
-FADE_STACK=staging scripts/ssh.sh "sudo journalctl -u fade -n 30"
-scripts/test-staging.sh                   # smoke test + all browser tests against staging
-scripts/test-staging.sh --no-browser      # smoke test only
-scripts/test-ios.sh --staging             # the iOS app's live tests against staging (make ios-staging; a Mac)
-scripts/load-staging.sh --stages 50,100,200 --rate 6 --duration 60
-scripts/reset-staging.sh --yes            # empties staging and seeds a few friends and chats (below)
-```
+The staging scripts read the URL from Terraform and refuse anything that isn't `https://staging.*`. `tests/load_test.py` refuses too, and the smoke and browser tests refuse any server but this machine's and a `staging.*` one (with `NAPSACK_REMOTE=1`), before sending anything.
 
-`test-staging.sh` and `load-staging.sh` read the URL from `terraform -chdir=infra/staging output url` and refuse anything that isn't `https://staging.*`. `tests/load_test.py` refuses too, and the smoke and browser tests refuse any server but this machine's and a `staging.*` one (with `NAPSACK_REMOTE=1`), before sending anything.
-
-**Tester addresses.** Per-address limits (request budgets, sign-up limits, scanner bans) would throttle a test run from one machine. On staging only, `FADE_EXEMPT_ADDRESSES` (from `exempt_addresses` in the staging tfvars) treats those addresses like local requests. Production never sets it. If your address changes, update the tfvars and `terraform -chdir=infra/staging apply` (it updates the setting; restart the service to pick it up).
+**Tester addresses.** Per-address limits (request budgets, sign-up limits, scanner bans) would throttle a test run from one machine. On staging only, `FADE_EXEMPT_ADDRESSES` (from `exempt_addresses` in the staging tfvars) treats those addresses like local requests. Production never sets it.
 
 What the remote runs skip (`NAPSACK_REMOTE=1`): the dev live-reload test (staging runs a release build), the checks that need the server's own machine (the test server's log file, the "no AWS" cost estimate), and the seed's test (staging is seeded by its reset).
 
 ## Resetting staging
 
-Test runs and load tests leave staging full of accounts nobody uses. `scripts/reset-staging.sh --yes` (or `make reset-staging YES=1`; without it, it only says what it would do) starts it again from a small, realistic set (plan [I12](../management/plan.md#i12-reset-stagings-data)):
-
-1. Refuses anything that isn't staging, as `test-staging.sh` does (the URL from `terraform -chdir=infra/staging output url` must be `https://staging.*`), and connects only to staging's server (`FADE_STACK=staging scripts/ssh.sh`).
-2. Stops the server and moves the database (`fade.db` and its `-wal`/`-shm`) and the unopened pics (`pics/`) to `/var/lib/fade/db/before-reset/`, replacing the copy from the reset before. The Metrics history (`metrics.db`) stays. Starting again, the migrations make an empty database.
-3. Waits for `/api/health`, then runs the seed, `scripts/seed/seed.mjs`.
-4. Deletes the load test's accounts file (`tests/.loadtest-staging.napsack.io.json`, on the machine running it), since those accounts are gone; the next load test makes new ones.
+Test runs and load tests leave staging full of accounts nobody uses, so the owner resets it now and then (`scripts/reset-staging.sh`) to a small, realistic set (plan [I12](../management/plan.md#i12-reset-stagings-data)). The script refuses anything that isn't staging and connects only to staging's server. It stops the server and sets the database and the unopened pics aside on the machine (replacing the copy from the reset before; the Metrics history stays), lets the migrations make an empty database, and then runs the seed, `scripts/seed/seed.mjs`. The load test's accounts file is deleted with it, since those accounts are gone.
 
 **The seed** goes through the API as the web app does, with the same `shared/crypto/crypto.js`, so every message is end-to-end encrypted in the current formats and the web and iOS apps read it like anything a person sent. Because it's a script and not a saved database, it keeps matching the schema as migrations are added (Nate, 2026-11-04). What it makes is in `scripts/seed/story.mjs`:
 
-- `e2e_admin` (the admin the staging tests sign in as) and six friends: `maya.lin`, `theo.ramirez`, `priya.shah`, `sam.okafor`, `jules.m`, `ben.hart`, with display names, profile pictures, and two birthdays. Every password is staging's test password (`test_password` in its tfvars), so the owner can sign in as any of them and nobody else can. `e2e_admin` keeps its plain username, with no display name or picture, since tests look for it by name.
+- `e2e_admin` (the admin the staging tests sign in as) and six friends: `maya.lin`, `theo.ramirez`, `priya.shah`, `sam.okafor`, `jules.m`, `ben.hart`, with display names, profile pictures, and two birthdays. Every password is staging's own test password (in its tfvars, never in the repository), so the owner can sign in as any of them and nobody else can. `e2e_admin` keeps its plain username, with no display name or picture, since tests look for it by name.
 - Nine friendships (`e2e_admin` is friends with Maya and Theo) and one request waiting (Ben asked Priya), and a nickname (Maya calls Theo "T").
 - Nine direct chats of about twenty texts each, with replies, reactions, an edit, and the last two left unread; Theo's chat with Maya ends with a pic she hasn't opened.
 - Two groups with pictures: "Saturday hike" (Maya, Theo, Priya, Sam, `e2e_admin`) and "Book club" (Jules, Priya, Ben), each with a few dozen messages and reactions, and a pic in Saturday hike nobody has opened.

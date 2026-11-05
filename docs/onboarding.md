@@ -189,13 +189,13 @@ Everyone is a **User**. Two more roles see more of how napsack is doing, never m
 | System → Logs | – | – | yes |
 
 - **The server decides, on every request.** Each System endpoint calls `roles::require(&state, &me, Role::...)`, which answers 404 to anyone below that role. The page hides tabs too, but that's only for looks: anything new on the System page states its role, sends nothing that role can't see, and gets a row in `check_roles` in the smoke test.
-- **Admins come from settings, never the database**: `FADE_ADMINS` locally, and in production the SSM parameter `/fade/admins` (`scripts/set-admins.sh nate,...`, then `scripts/reload-admins.sh`). PowerUser grants are rows in `user_roles`, marked ended when taken away, never deleted.
+- **Admins come from settings, never the database**: `FADE_ADMINS` locally, and in production the SSM parameter `/fade/admins`, which names Admins by user id (`id:1`) and which only the owner sets ([roles.md](implementation/roles.md)). PowerUser grants are rows in `user_roles`, marked ended when taken away, never deleted.
 
 ## Production
 
 napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `terraform output url`). Everything is in Terraform in `infra/`; [operations.md](operations/operations.md) has the details and costs, about $8 a month.
 
-- **The server.** One EC2 instance (t4g.nano: 2 ARM vCPUs, 0.5 GB), with Caddy in front for HTTPS and the old addresses redirecting. The boot script (`infra/user_data.sh.tftpl`) sets everything up and pulls the newest release from S3. Settings live in SSM Parameter Store (`/fade/env`), fetched into memory on every start. You get a shell with `scripts/ssh.sh`, tunneled through SSM (port 22 is closed to everyone but the owner's own address).
+- **The server.** One EC2 instance (t4g.nano: 2 ARM vCPUs, 0.5 GB), with Caddy in front for HTTPS and the old addresses redirecting. The boot script (`infra/user_data.sh.tftpl`) sets everything up and pulls the newest release from S3. Settings live in SSM Parameter Store (`/fade/env`), fetched into memory on every start. Only the owner has a shell on it, tunneled through SSM (port 22 is closed to everyone but the owner's own address).
 - **The data.** A separate encrypted disk (`aws_ebs_volume.data`, with `prevent_destroy`) holds the database and unopened pics. It survives the instance being replaced. The database is backed up to S3 every hour, kept 30 days; the disk is snapshotted daily, kept 30 days too ([backups.md](operations/backups.md)).
 - **Releases.** A release is one binary, built by GitHub Actions. Every push to `main` that passes CI becomes a release candidate in S3 and goes to staging; when staging looks good, a `server-v<version>` tag sends that same binary to production, after a backup. Releases are kept forever (the newest ten candidates too), so `scripts/rollback.sh` can go back. `scripts/deploy.sh` is the owner's hotfix path ([releasing.md](operations/releasing.md)).
 - **The health monitor.** A Lambda (`infra/health/monitor.py`) checks `https://napsack.io/api/health` every 5 minutes ([health-monitor.md](implementation/health-monitor.md)):
@@ -204,7 +204,7 @@ napsack runs at <https://napsack.io> (never hardcode it: scripts read it from `t
   - Every step, with the evidence (the health answer, EC2's status checks, the SSM agent, the serial console), is written to `s3://<artifacts bucket>/health/incidents/`, and each one is announced on the SNS topic `fade-health`.
   - Admins see the last 7 days of incidents on the Metrics tab and can mark one resolved. The monitor can act only on instances tagged `App=fade`, and it can't delete anything.
 - **The Metrics tab** shows how the machine and the server are doing (CPU, memory, disks, CPU credits, response times, errors, what it costs), with a status at the top: all good, worth watching, or in the red ([metrics.md](implementation/metrics.md)).
-- **Staging.** <https://staging.napsack.io> is a separate copy with its own Terraform state (`infra/staging/`), its own disk and settings, and no backups. It can't read production's settings, data, or releases. Run the browser tests against it with `scripts/test-staging.sh` and load test it with `scripts/load-staging.sh` ([staging.md](operations/staging.md)). On the same size machine it handled 400 people online and 718 texts a second.
+- **Staging.** <https://staging.napsack.io> is a separate copy with its own Terraform state (`infra/staging/`), its own disk and settings, and no backups. It can't read production's settings, data, or releases. The owner runs the browser tests against it (`scripts/test-staging.sh`) and load tests it (`scripts/load-staging.sh`; [staging.md](operations/staging.md)). On the same size machine it handled 400 people online and 718 texts a second.
 
 ## Working together
 
@@ -247,7 +247,7 @@ Several people (and their Claude sessions) can be working at once, so everyone w
 
 - **The server says why.** Errors come back as `{"error": "..."}` and show in the app; the details are in the terminal running `cargo run`.
 - **The browser console** shows everything the app reports as `[napsack] ...`, and the Network tab shows each API call and its answer.
-- **System → Logs** (`/admin#logs`, Admins) collects both, searchable, with a live tail. In production it holds the last 20,000 entries since the server started; older history is in the journal: `scripts/ssh.sh "sudo journalctl -u fade --since '1 hour ago'"`.
+- **System → Logs** (`/admin#logs`, Admins) collects both, searchable, with a live tail. In production it holds the last 20,000 entries since the server started; older history is in the server's journal, which the owner can read.
 - **Is production all right?** `curl https://napsack.io/api/health`; the Metrics tab's status and incidents; the `fade-health` SNS topic.
 - **Look at the database**: `sqlite3 server/fade.db` (`.tables`, then plain SQL). Read-only habits are good habits: production is always read-only (`?mode=ro`).
 - **A browser test fails**: it prints the failing check and the server's warnings, and leaves screenshots. Playwright refuses selectors that match more than one element, so be specific (`#friends-dialog [data-close]`, not `[data-close]`).

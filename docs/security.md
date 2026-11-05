@@ -1,6 +1,6 @@
 # Security
 
-How napsack protects its people and itself: what's in place, the limits that keep one small server standing, what we don't protect against yet, and what to do when something looks wrong.
+How napsack protects its people and itself: what's in place, the limits that keep one small server standing, what we don't protect against yet, and how the owner responds when something looks wrong.
 
 napsack is one small server (an AWS t4g.nano: 2 vCPUs, 0.5 GB of memory, a 5 GB data disk) for a few dozen friends. Security here means three things:
 
@@ -102,14 +102,16 @@ Being honest about the gaps:
 
 ## When something looks wrong
 
-1. **Look.** The admin panel's *Protection* line shows accounts used, banned addresses, and requests refused since start. `/admin#logs` holds recent events (search `ip=...` to see what one address did). Older history, and every problem an app reported: `scripts/ssh.sh "sudo journalctl -u fade --since '1 hour ago'"`.
-2. **Stop new accounts.** Set `FADE_MAX_ACCOUNTS` to the current count (or change the invite code in `terraform.tfvars`), `terraform apply`, then `scripts/ssh.sh "sudo systemctl restart fade"`.
-3. **Shut out an address** that gets past the automatic bans: add a deny rule for it to the subnet's network ACL in AWS (instant, no restart).
-4. **Someone's account was taken over.** From the admin panel, issue them a reset code: it ends every session and gives them a new key.
-5. **The server itself is compromised.** Take it out of service (stop the instance), snapshot the data volume, and rebuild from a known release; backups older than the compromise can't have been read or deleted, and any written over in the last day still have their earlier version in the bucket (it keeps them a day), as do the disk snapshots. [backups.md](operations/backups.md) has the restore drill.
+The owner has a private runbook for incidents, with the commands. In outline:
+
+1. **Look.** The admin panel's *Protection* line shows accounts used, banned addresses, and requests refused since start. `/admin#logs` holds recent events (search `ip=...` to see what one address did); older history, and every problem an app reported, is in the server's journal.
+2. **Stop new accounts** by lowering `FADE_MAX_ACCOUNTS` to the current count, or changing the invite code (a settings change, below).
+3. **Shut out an address** that gets past the automatic bans, at the network, in front of the server (instant, no restart).
+4. **Someone's account was taken over.** An Admin issues them a reset code: it ends every session and gives them a new key.
+5. **The server itself is compromised.** It's taken out of service, the data volume is snapshotted, and it's rebuilt from a known release; backups older than the compromise can't have been read or deleted, and any written over in the last day still have their earlier version in the bucket (it keeps them a day), as do the disk snapshots ([backups.md](operations/backups.md)).
 
 ## Changing a limit
 
-The settings in the table are environment variables. Add the line to `local.env_file` in `infra/main.tf` (for example `"FADE_MAX_ACCOUNTS=150",`), run `terraform plan` and `apply` (it only updates the settings parameter), then restart: `scripts/ssh.sh "sudo systemctl restart fade"`. The rest are constants in `server/src/` (`guard.rs`, `main.rs`), changed with a release.
+The settings in the table are environment variables in production's settings parameter, which Terraform writes (`local.env_file` in `infra/main.tf`): changing one is the owner's, an apply that touches nothing else and a restart. The rest are constants in `server/src/` (`guard.rs`, `main.rs`), changed with a release.
 
 Every limit has a test: `server/src/guard.rs` (unit tests) and `tests/smoke_test.py` (`check_guard`, `check_rate_limits`, `check_attempts` for attempts at once and usernames that can't exist, `check_passkeys` for passkeys per person, and `check_reports` for reports per day); blocks per person in `blocks::tests`; password checks at once in `auth::tests`; limiter keys in `ratelimit::tests`; the log viewer's budgets in `logs::tests`; a connection's frames and queue in `ws::tests`.

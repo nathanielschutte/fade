@@ -77,7 +77,7 @@ Pushes to `main` don't cancel each other while running, but GitHub keeps only on
 
 When staging looks good:
 1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), usually as part of the feature's pull request, or in a small one of its own (`server 1.4.0`). Once merged, that commit is a candidate too; it's the one you'll release, so let it reach staging.
-2. The owner (or a Claude session the owner has allowed to release) tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
+2. The owner (or a Claude session the owner has allowed to release) tags that commit `server-v<version>` and pushes the tag. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
 
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
@@ -106,23 +106,19 @@ In the artifacts bucket (`terraform output artifacts_bucket`):
 | `releases/fade-server` | What production runs | Replaced each release |
 | `releases/hotfix/fade-server-<version>-<sha>` | Hotfixes from `scripts/deploy.sh` | Forever |
 
-Nothing else belongs under `releases/`. Each candidate and release carries the commit it was built from as S3 metadata (`build`); `aws s3api head-object --bucket <bucket> --key releases/tags/fade-server-0.31.1` shows it. Every version before the pipeline (0.1.0 to 0.31.0, shipped with `deploy.sh`) was moved into `releases/tags/` the same way on 2026-10-23, its build (with `-dirty` where it was built from uncommitted code) kept in the metadata.
+Nothing else belongs under `releases/`. Each candidate and release carries the commit it was built from as S3 metadata (`build`). Every version before the pipeline (0.1.0 to 0.31.0, shipped with `deploy.sh`) was moved into `releases/tags/` the same way on 2026-10-23, its build (with `-dirty` where it was built from uncommitted code) kept in the metadata.
 
 Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)), assumed through GitHub's OIDC, so no AWS keys are stored in GitHub. The staging job's role can write only `releases/main/` and reach only staging's server; the release job's role can't delete anything and reaches only production's servers.
 
 ### Hotfix without CI
 
-`scripts/deploy.sh` (the owner's; needs cargo-zigbuild and zig) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. On production it saves `releases/hotfix/fade-server-<version>-<sha>`; with `FADE_STACK=staging`, a candidate in `releases/main/`. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Afterwards, open a pull request for the same change, merge it, and release a tag the normal way so production runs a tagged release again.
+The owner can put a build on a server directly, without CI (`scripts/deploy.sh`), for an emergency. It's saved as `releases/hotfix/fade-server-<version>-<sha>` on production (on staging, as a candidate in `releases/main/`), and a build from uncommitted code shows as `<sha>-dirty` everywhere. A hotfix is followed by a pull request for the same change and a tagged release the normal way, so production runs a tagged release again.
 
 ### Rollback
 
-```sh
-scripts/rollback.sh                   # list releases, hotfixes, and older builds
-scripts/rollback.sh 1.3.2             # a release (releases/tags/)
-scripts/rollback.sh 1.3.2-a1b2c3d     # a hotfix (releases/hotfix/)
-```
+The owner can make any kept release or hotfix what production runs again (`scripts/rollback.sh`). Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).
 
-It makes that build what production runs and installs it. Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).
+The step-by-step for both is in the owner's private notes.
 
 ## Releasing the iOS app
 
