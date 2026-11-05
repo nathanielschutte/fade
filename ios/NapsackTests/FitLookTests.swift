@@ -111,6 +111,31 @@ extension OnScreen {
             try await shoot("fit-camera-review", wait: .milliseconds(500)) {
                 CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat("Alexandria Ocasio-Cortez") { _ in }, start: .photo(TestPicture.photo()))
             }
+            // From a chat, with others to add: "To Ben +" beside Send, short and long names.
+            for (shown, name) in [("short", "Ben"), ("long", "Alexandria Ocasio-Cortez")] {
+                let more = CameraSend.AddMore(here: .friend(8), chats: { Self.sendable }, send: { _, _ in }, done: { _ in })
+                try await shoot("fit-camera-review-more-\(shown)", wait: .milliseconds(500)) {
+                    CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat(name, { _ in }, more: more), start: .photo(TestPicture.photo()))
+                }
+            }
+        }
+
+        static let sendable = [
+            ChatRow(kind: .friend(8), name: "Alexandria Ocasio-Cortez", preview: "", waiting: nil, time: nil, favorite: false, muted: false,
+                    hidden: false, avatarId: 41, username: "aoc"),
+            ChatRow(kind: .group(12), name: "Road trip", preview: "", waiting: nil, time: nil, favorite: false, muted: false, hidden: false),
+            ChatRow(kind: .friend(9), name: "ben", preview: "", waiting: nil, time: nil, favorite: false, muted: false, hidden: false,
+                    username: "ben"),
+        ]
+
+        /// Send to…, opened from a chat's camera: that chat picked already.
+        @Test func sendToFromAChat() async throws {
+            try await shoot("fit-send-to-from-chat") {
+                NavigationStack {
+                    SendToScreen(ready: Task { ReadyToSend(media: .photo(Data()), caption: "", y: 0.75) }, chats: Self.sendable,
+                                 picked: [.friend(8)], send: { _, _ in }, done: { _ in })
+                }
+            }
         }
     }
 }
