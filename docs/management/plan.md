@@ -23,15 +23,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | Needs decision | Nate (2026-11-05): "we can tag napsack 1.0 for production release on the app store". The app is ready; left: the reviewer account, App Store Connect's forms, the EU trader answer, the version |
+| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Reviewer account and forms done (Nate); next: version 1.0.0, external TestFlight; then Nate's review before the App Store |
 | 3 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
 | 4 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
 | 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 6 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 9 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -137,6 +136,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | 0.50.0, build 175 | Nate |
 | [Passkeys](#f26-passkeys) on the iPhone | 0.50.0, build 175 | Nate |
 | [Reset staging's data](#i12-reset-stagings-data): `scripts/reset-staging.sh` and a seed through the API | scripts (2026-11-05) | Nate |
+| [Admins by user id](#s5-admins-by-user-id): production's list switched | 0.45.0; setting (2026-11-05) | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
@@ -422,6 +422,7 @@ Oldest first; newly shipped rows go at the bottom.
 - **In the app, done:** everything on the [external testing checklist](../ios-onboarding.md#external-testing-the-checklist): production through `api.napsack.io`, export compliance, permission wording, deleting your account (5.1.1(v)), report and block (1.2), privacy policy and support in the app (5.1.1(i)), an iPad pass, no local network in Release, and a phone run through builds 186 to 190 (2.1).
 - **Left, Nate's:** (1) the reviewer account on production (`appreview`, your friend, made from your own link; the one test account there; steps in ios-onboarding.md), and answering it during a review; (2) App Store Connect: the privacy labels, the age rating, the listing (description, keywords, Social Networking), the support and privacy URLs; (3) the EU's trader question (declare as a non-trader if that's so, or leave the EU out at first); (4) whether the server becomes `1.0.0` with the app (the two versions are separate; [releasing.md](../operations/releasing.md)).
 - **Left, ours:** `MARKETING_VERSION` to `1.0.0` (`ios/Config/Base.xcconfig`); screenshots from the Simulator with staging's seeded people; an external TestFlight build through Beta App Review first, as a dry run; then the App Store submission, and the tag when it's approved.
+- **Decided (Nate, 2026-11-05):** 1.0 across the board, versions in sync: the iPhone app `1.0.0` and the server `1.0.0` (Android stays `0.x` until it ships). Not an EU trader. The reviewer account is ready, your friend. External TestFlight first; Nate reviews before the App Store submission. The invite code is only for signing up cold: anyone invited another way (a friend's link, among others) is already invited.
 
 ### Debug
 
@@ -681,6 +682,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-30): name Admins by their user id (fixed forever) instead of their username, which can change.
 - Today the `/fade/admins` parameter lists usernames, and a renamed Admin stays one through their old name (roles.md). With ids: the parameter (and `FADE_ADMINS` in development) takes ids; for one release it takes both, so production can switch without a gap.
 - **Built:** an entry `id:7` names user 7 (`Admins::contains_id`, `usernames::is_listed_admin`); usernames keep working, so the switch has no gap. `scripts/set-admins.sh id:1,id:5` takes them. To finish (Nate's, a production setting): set the parameter to the Admins' ids and reload (`scripts/reload-admins.sh`).
+- **Done (2026-11-05):** production's list is user ids (Nate approved the switch; `set-admins.sh`, reloaded). A username entry also matched past names, and a free listed name could be taken.
 
 ### Infrastructure
 
