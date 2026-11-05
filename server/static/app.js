@@ -5225,7 +5225,7 @@ function openStranger(user) {
   // Not a profile to edit, but who Block closes the sheet for.
   profileEdit.profile = { kind: "other", id: user.id, username: user.username };
   const blocked = blockedList.items?.some((b) => b.id === user.id);
-  $("#profile-sub").textContent = `@${user.username} · ${blocked ? "you block them" : "not your friend"}`;
+  $("#profile-sub").textContent = blocked ? "You block them" : "Not your friend";
   $("#profile-message").textContent = "Only friends see each other's profiles, pictures, and names.";
   $("#profile-message").hidden = false;
   const who = { id: user.id, username: user.username };
