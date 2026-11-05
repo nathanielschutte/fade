@@ -23,10 +23,10 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Reviewer account and forms done (Nate); next: version 1.0.0, external TestFlight; then Nate's review before the App Store |
-| 3 | [Security audit](#s7-security-audit-2026-11-05) and [Admins can't delete their account](#s6-admins-cant-delete-their-own-account) | Security | Nate | In progress | Nate (2026-11-05). Fixed and in testing; goes out with 1.0. Left: infrastructure items (Nate's) |
-| 4 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
-| 5 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send |
+| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Server 1.0.0 live (2026-11-05); the iPhone app 1.0.0 is build 202, for the external group once the Beta App Review details have Nate's phone and the reviewer's password; then Nate's review before the App Store |
+| 3 | [Security audit](#s7-security-audit-2026-11-05) and [Admins can't delete their account](#s6-admins-cant-delete-their-own-account) | Security | Nate | In progress | Nate (2026-11-05). Live in 1.0.0 (server, web) and build 202 (iPhone). Left: infrastructure items (Nate's) |
+| 4 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted. Live in 1.0.0 (web) and TestFlight build 202 (iPhone); waiting on a try on the phone |
+| 5 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send. In TestFlight build 202; waiting on a try on the phone |
 | 6 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
 | 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
 | 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
@@ -139,6 +139,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [Passkeys](#f26-passkeys) on the iPhone | 0.50.0, build 175 | Nate |
 | [Reset staging's data](#i12-reset-stagings-data): `scripts/reset-staging.sh` and a seed through the API | scripts (2026-11-05) | Nate |
 | [Admins by user id](#s5-admins-by-user-id): production's list switched | 0.45.0; setting (2026-11-05) | Nate |
+| napsack 1.0.0: [who reacted](#f21-see-who-reacted) on the web, [Admins can't delete](#s6-admins-cant-delete-their-own-account), [the security audit's fixes](#s7-security-audit-2026-11-05), the release checked byte for byte against main's CI | 1.0.0 | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
