@@ -156,6 +156,12 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     private var discarding = false
     /// The flash chosen for the recording under way: each part (each camera) lights by it.
     private var recordingFlash = Flash.off
+    /// The app's audio while the microphone's in (D21), and whether a call has it (D20).
+    private let audio: CameraAudioSession
+    private let onCall: @Sendable () -> Bool
+    /// You allowed the microphone (asked as the camera first opens).
+    private var soundAllowed = false
+    private var interruptions: (any NSObjectProtocol)?
 
     /// The zoom a camera offers, as the Camera app shows it, and its flash.
     struct Lenses: Equatable, Sendable {
@@ -181,10 +187,59 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     /// Opens on the camera `choice` says (the front one, after a launch).
-    init(choice: CameraChoice = .shared) {
+    init(choice: CameraChoice = .shared, audio: CameraAudioSession = CameraAudioSession(),
+         onCall: @escaping @Sendable () -> Bool = { CameraAudio.onCall() }) {
         self.choice = choice
+        self.audio = audio
+        self.onCall = onCall
         facing = choice.current
         super.init()
+        // napsack sets up its own audio, mixed with others, and only with the microphone in (CameraAudio).
+        session.automaticallyConfiguresApplicationAudioSession = false
+        interruptions = NotificationCenter.default.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session,
+                                                               queue: nil) { [weak self] note in
+            let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int).flatMap(AVCaptureSession.InterruptionReason.init)
+            guard let self else { return }
+            queue.async { self.interrupted(reason) }
+        }
+    }
+
+    deinit {
+        if let interruptions { NotificationCenter.default.removeObserver(interruptions) }
+    }
+
+    /// Interrupted: for the microphone (a call took it), the camera lets it go
+    /// and carries on without it; for anything else, iOS resumes it. Only on `queue`.
+    private func interrupted(_ reason: AVCaptureSession.InterruptionReason?) {
+        let response = CameraAudio.response(to: reason)
+        Task { @MainActor in
+            Reporter.shared.report(.info, "camera interrupted", ["reason": String(reason?.rawValue ?? -1), "response": "\(response)"])
+        }
+        guard response == .dropMicrophone else { return }
+        dropMicrophone()
+        if !session.isRunning { session.startRunning() }
+    }
+
+    /// Takes the microphone if it may (CameraAudio.takesMicrophone), setting
+    /// up the app's audio for it first. Only on `queue`, inside a configuration.
+    private func takeMicrophone() {
+        guard microphone == nil,
+              CameraAudio.takesMicrophone(allowed: soundAllowed, onCall: onCall(), inputAvailable: audio.isInputAvailable),
+              let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
+              session.canAddInput(input), audio.open() else { return }
+        session.addInput(input)
+        microphone = input
+    }
+
+    /// Lets the microphone go, and the app's audio back as it was. Only on `queue`.
+    private func dropMicrophone() {
+        if let microphone {
+            session.beginConfiguration()
+            session.removeInput(microphone)
+            session.commitConfiguration()
+            self.microphone = nil
+        }
+        audio.close()
     }
 
     static func allowed(_ type: AVMediaType) async -> Bool {
@@ -199,19 +254,16 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// Already running, it stays as it is (a retake goes straight back to it).
     func start() async throws -> Lenses {
         guard await Self.allowed(.video) else { throw Problem.denied }
-        let withSound = await Self.allowed(.audio)  // without it, videos have no sound (the web says so too)
+        let withSound = await Self.allowed(.audio)  // without it, videos have no sound, and say so
         return try await run { [self] in
+            soundAllowed = withSound
             if session.isRunning, let configured { return configured }
             session.beginConfiguration()
             var lenses: Lenses
             do {
                 session.sessionPreset = .high
                 lenses = try use(facing)
-                if withSound, microphone == nil, let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
-                   session.canAddInput(input) {
-                    session.addInput(input)
-                    microphone = input
-                }
+                takeMicrophone()  // not on a call (D20)
                 if !session.outputs.contains(photo), session.canAddOutput(photo) { session.addOutput(photo) }
                 if !session.outputs.contains(movie), session.canAddOutput(movie) { session.addOutput(movie) }
             } catch {
@@ -233,6 +285,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         queue.async { [self] in
             torch(false)  // never left on once the camera's closed
             if session.isRunning { session.stopRunning() }
+            dropMicrophone()  // the next opening decides again (a call may have begun or ended)
         }
     }
 
@@ -349,6 +402,11 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             limit = Double(seconds)
             stopAfterSwitch = false
             recordingFlash = flash
+            if microphone == nil {  // without it so far (a call, since ended): this video may have sound
+                session.beginConfiguration()
+                takeMicrophone()
+                session.commitConfiguration()
+            }
             startPart()
         }
     }
@@ -715,6 +773,8 @@ struct CameraScreen: View {
     /// the sound button sends it instead (as on the web).
     @State private var silent: URL?
     @State private var muted = false
+    /// The video on screen was recorded without sound (D20: a call had the microphone).
+    @State private var noSound = false
     /// The flash as chosen (CameraChoice keeps it until the app is quit); each camera uses what it has of it.
     @State private var flash = CameraChoice.shared.flash
 
@@ -1005,9 +1065,15 @@ struct CameraScreen: View {
         pinchFrom = 1
         camera.zoom(1)
         muted = false
+        noSound = false
         if case .video(let url) = media {
             files.keep(url)
             Task {
+                // Recorded without the microphone (not allowed, or a call had it: CameraAudio): it says so, and there's no sound to turn off.
+                guard await VideoEncoder.hasSound(url) else {
+                    if case .video(url) = shot { noSound = true }
+                    return
+                }
                 let quiet = try? await VideoEncoder.withoutSound(url)
                 // Retaken meanwhile: not this one's.
                 if case .video(url) = shot, let quiet {
@@ -1143,6 +1209,12 @@ struct CameraScreen: View {
             .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
             if !penOn && !editingCaption {
+                if noSound, case .video = media {
+                    Label(CameraAudio.noSound, systemImage: "speaker.slash.fill")
+                        .font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
+                        .padding(10).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 20).padding(.bottom, 8)
+                }
                 if let sendProblem {
                     Text(sendProblem).font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
                         .padding(10).background(.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
@@ -1209,6 +1281,7 @@ struct CameraScreen: View {
         files.removeAll()
         shot = nil
         silent = nil
+        noSound = false
         muted = false
         caption = ""
         captionY = 0.75
