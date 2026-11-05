@@ -16,9 +16,15 @@ DB = os.environ.get("NAPSACK_DB") or None
 # local one. Skips what needs the local machine: the push receiver.
 REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
+# This machine's server, or staging (scripts/test-staging.sh sets NAPSACK_REMOTE=1).
+# Never production or anything else: it makes accounts, and this runs before any
+# request is sent. (tests/e2e/common.py checks the same.)
+_HOST = urllib.parse.urlparse(BASE).hostname or ""
+LOCAL = _HOST in ("127.0.0.1", "localhost", "::1")
+if not LOCAL and not (REMOTE and _HOST.startswith("staging.")):
+    sys.exit(f"refusing: {BASE} is neither this machine nor staging (NAPSACK_REMOTE=1 and a staging.* host)")
 # smoke_admin's key (SMOKE_ADMIN_KEY below) is public for a local server only.
 ADMIN_SECRET = os.environ.get("NAPSACK_ADMIN_KEY") or ""
-LOCAL = (urllib.parse.urlparse(BASE).hostname or "") in ("127.0.0.1", "localhost", "::1")
 if not LOCAL and not ADMIN_SECRET:
     sys.exit(f"refusing: {BASE} isn't this machine, and smoke_admin's key is the public one. "
              "Set NAPSACK_ADMIN_KEY (scripts/test-staging.sh does).")

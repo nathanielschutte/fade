@@ -43,7 +43,7 @@ scripts/load-staging.sh --stages 50,100,200 --rate 6 --duration 60
 scripts/reset-staging.sh --yes            # empties staging and seeds a few friends and chats (below)
 ```
 
-`test-staging.sh` and `load-staging.sh` read the URL from `terraform -chdir=infra/staging output url` and refuse anything that isn't `https://staging.*`. `tests/load_test.py` refuses too.
+`test-staging.sh` and `load-staging.sh` read the URL from `terraform -chdir=infra/staging output url` and refuse anything that isn't `https://staging.*`. `tests/load_test.py` refuses too, and the smoke and browser tests refuse any server but this machine's and a `staging.*` one (with `NAPSACK_REMOTE=1`), before sending anything.
 
 **Tester addresses.** Per-address limits (request budgets, sign-up limits, scanner bans) would throttle a test run from one machine. On staging only, `FADE_EXEMPT_ADDRESSES` (from `exempt_addresses` in the staging tfvars) treats those addresses like local requests. Production never sets it. If your address changes, update the tfvars and `terraform -chdir=infra/staging apply` (it updates the setting; restart the service to pick it up).
 

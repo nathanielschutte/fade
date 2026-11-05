@@ -32,8 +32,14 @@ _CHANNEL = os.environ.get("E2E_CHROME", "chrome")
 # accounts the tests leave there. scripts/seed/seed.mjs reads this line too.
 LOCAL_PASSWORD = "correct horse battery"
 PASSWORD = os.environ.get("NAPSACK_PASSWORD") or LOCAL_PASSWORD
+# This machine's server, or staging (scripts/test-staging.sh sets NAPSACK_REMOTE=1).
+# Never production or anything else: the tests make accounts, and this runs on
+# import, before any page opens. (tests/smoke_test.py checks the same.)
 _HOST = urllib.parse.urlparse(BASE).hostname or ""
 LOCAL = _HOST in ("127.0.0.1", "localhost", "::1")
+if not LOCAL and not (REMOTE and _HOST.startswith("staging.")):
+    raise SystemExit(f"refusing: {BASE} is neither this machine nor staging "
+                     "(NAPSACK_REMOTE=1 and a staging.* host)")
 if not LOCAL and PASSWORD == LOCAL_PASSWORD:
     raise SystemExit(f"refusing: {BASE} isn't this machine, and the test password is the public one. "
                      "Set NAPSACK_PASSWORD (scripts/test-staging.sh does).")
