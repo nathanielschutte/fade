@@ -130,10 +130,12 @@ extension Reader {
         } else {
             content = .unreadable(Self.cantOpen)
         }
+        // Any one emoji (X49), held to the server's rule for groups' (E2E.isReaction):
+        // the server can't see these, so anything else a client sealed is dropped here.
         let reactions = (m.reactions ?? []).compactMap { r -> (Int64, String)? in
             let to = r.senderId == me.id ? friend.id : me.id
             return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
-                .map { (r.senderId, $0) }
+                .flatMap { E2E.isReaction($0) ? (r.senderId, $0) : nil }
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
                             time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions.map(\.1))
@@ -191,7 +193,7 @@ extension Reader {
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: mine || m.kind == "event" ? nil : name(m.senderId, m.senderName),
                             content: content, replyTo: replyTo, time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)),
-                            reactions: (m.reactions ?? []).map(\.emoji))
+                            reactions: (m.reactions ?? []).map(\.emoji).filter(E2E.isReaction))  // the server checks these too
         bubble.myReaction = m.reactions?.first { $0.userId == me.id }?.emoji
         if case .text = content { bubble.editable = mine && m.format == E2E.groupFormat }
         bubble.recipients = m.recipients
@@ -253,12 +255,13 @@ struct Outgoing: Identifiable, Equatable, Sendable {
 }
 
 /// Why napsack won't send.
-enum SendError: LocalizedError {
+enum SendError: LocalizedError, Equatable {
     case keyChanged(String)
     case memberKeyChanged(String)
     case cantEdit
     case cantOpen
     case tooLarge
+    case notAReaction
 
     var errorDescription: String? {
         switch self {
@@ -266,6 +269,7 @@ enum SendError: LocalizedError {
         case .cantEdit: "This text can't be edited: napsack doesn't have the key of everyone it went to."
         case .cantOpen: "This pic couldn't be shown. It's still unopened."
         case .tooLarge: "That's too large to send."
+        case .notAReaction: "A reaction is one emoji. Pick another."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
@@ -931,6 +935,7 @@ struct OpenedPic: Sendable {
     /// Reacts to a message; the same emoji again takes it back, another replaces it.
     /// Direct reactions are encrypted; group reactions aren't (each group says so).
     func react(_ bubble: Bubble, _ emoji: String) async throws {
+        guard E2E.isReaction(emoji) else { throw SendError.notAReaction }
         let server = try Server(account.server, transport: transport)
         let next = bubble.myReaction == emoji ? nil : emoji
         switch chat {

@@ -19,8 +19,82 @@ extension E2E {
         }
     }
 
-    /// The reactions clients offer (the server checks group reactions against the same set).
+    /// The quick row of reactions every client offers; any other one emoji
+    /// can be picked too (X49), and is held to `isReaction`.
     public static let reactions = ["\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F44D}", "\u{1F44E}"]
+
+    /// A reaction: exactly one emoji, nothing else. The server's rule for
+    /// group reactions (`text::is_one_emoji`, server/src/text.rs), scalar for
+    /// scalar, and the one decrypted direct-chat reactions are held to (the
+    /// server can't see those). One emoji can be several code points (a skin
+    /// tone, a flag's pair, a keycap, people joined by U+200D), so this follows
+    /// the shape of an emoji sequence rather than counting characters.
+    public static func isReaction(_ s: String) -> Bool {
+        // The longest real ones (a family, a subdivision flag) are under 30 bytes.
+        guard !s.isEmpty, s.utf8.count <= 40 else { return false }
+        var scalars = s.unicodeScalars.makeIterator()
+        var peeked: Unicode.Scalar?
+        func next() -> Unicode.Scalar? {
+            if let p = peeked { peeked = nil; return p }
+            return scalars.next()
+        }
+        func peek() -> Unicode.Scalar? {
+            if peeked == nil { peeked = scalars.next() }
+            return peeked
+        }
+        /// Takes the next one if it's in `range`.
+        func take(_ range: ClosedRange<UInt32>) -> Bool {
+            guard let p = peek(), range.contains(p.value) else { return false }
+            peeked = nil
+            return true
+        }
+        let regional: ClosedRange<UInt32> = 0x1F1E6...0x1F1FF, tones: ClosedRange<UInt32> = 0x1F3FB...0x1F3FF
+        let tags: ClosedRange<UInt32> = 0xE0020...0xE007E
+        while true {
+            guard let c = next() else { return false }
+            switch c.value {
+            case regional:
+                // A flag is two regional indicators, and nothing joins to it.
+                guard let second = next(), regional.contains(second.value) else { return false }
+                return next() == nil
+            case 0x30...0x39, 0x23, 0x2A:  // 0-9, #, *: a keycap
+                _ = take(0xFE0F...0xFE0F)
+                return next()?.value == 0x20E3 && next() == nil
+            case _ where isPictographic(c.value):
+                _ = take(0xFE0F...0xFE0F)
+                _ = take(tones)
+                if c.value == 0x1F3F4, let p = peek(), tags.contains(p.value) {  // a subdivision flag's tags
+                    while take(tags) {}
+                    guard next()?.value == 0xE007F else { return false }
+                }
+            default:
+                return false
+            }
+            switch next()?.value {
+            case nil: return true
+            case 0x200D: continue
+            default: return false
+            }
+        }
+    }
+
+    /// Code points that are emoji on their own: Unicode's Extended_Pictographic,
+    /// by block, minus the regional indicators and skin tones (as text.rs).
+    static func isPictographic(_ c: UInt32) -> Bool {
+        switch c {
+        case 0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139,
+             0x2194...0x2199, 0x21A9...0x21AA, 0x231A...0x231B,
+             0x2328, 0x23CF, 0x23E9...0x23F3, 0x23F8...0x23FA,
+             0x24C2, 0x25AA...0x25AB, 0x25B6, 0x25C0, 0x25FB...0x25FE,
+             0x2600...0x27BF, 0x2934...0x2935, 0x2B05...0x2B07,
+             0x2B1B...0x2B1C, 0x2B50, 0x2B55, 0x3030, 0x303D,
+             0x3297, 0x3299,
+             0x1F000...0x1F1E5, 0x1F200...0x1F3FA, 0x1F400...0x1FAFF:
+            true
+        default:
+            false
+        }
+    }
 
     static func textAAD2(_ sender: Int64, _ recipient: Int64) -> String { "napsack/v2/text/\(sender)/\(recipient)" }
     static func reactionAAD(_ sender: Int64, _ recipient: Int64, _ message: Int64) -> String {

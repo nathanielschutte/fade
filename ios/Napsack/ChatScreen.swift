@@ -771,10 +771,13 @@ struct MessageActions: View {
 
     let bubble: Bubble
     let quote: String?
+    /// The quick row (E2E.reactions); + after them picks any other emoji (X49).
     let reactions: [String]
     let actions: [Action]
     let react: (String) -> Void
     let dismiss: () -> Void
+    /// The emoji keyboard is up, for any emoji.
+    @State private var pickingAny = false
 
     var body: some View {
         ZStack {
@@ -783,28 +786,52 @@ struct MessageActions: View {
                 .accessibilityAddTraits(.isButton).accessibilityLabel("Close")
             VStack(alignment: bubble.mine ? .trailing : .leading, spacing: 10) {
                 if !reactions.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(reactions, id: \.self) { emoji in
-                                let mine = bubble.myReaction == emoji
-                                Button {
-                                    react(emoji)
-                                    dismiss()
-                                } label: {
-                                    // About the size of the message's words, a touch bigger.
-                                    Text(emoji).font(.system(size: 26))
-                                        .frame(width: 44, height: 44)
-                                        .background(mine ? Color.accentColor.opacity(0.35) : .clear, in: Circle())
+                    // Your own first if it's another emoji (so it can be taken back here too), then the quick row.
+                    let row = (bubble.myReaction.map { reactions.contains($0) ? [] : [$0] } ?? []) + reactions
+                    HStack(spacing: 0) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(row, id: \.self) { emoji in
+                                    let mine = bubble.myReaction == emoji
+                                    Button {
+                                        react(emoji)
+                                        dismiss()
+                                    } label: {
+                                        // About the size of the message's words, a touch bigger.
+                                        Text(emoji).font(.system(size: 26))
+                                            .frame(width: 44, height: 44)
+                                            .background(mine ? Color.accentColor.opacity(0.35) : .clear, in: Circle())
+                                    }
+                                    .accessibilityLabel(mine ? "Take back \(emoji)" : "React \(emoji)")
                                 }
-                                .accessibilityLabel(mine ? "Take back \(emoji)" : "React \(emoji)")
                             }
+                            .padding(.leading, 8).padding(.vertical, 4)
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .frame(maxWidth: CGFloat(row.count) * 48 + 8)  // hugs them; scrolls past that
+                        // Always in sight, past the row: any other emoji.
+                        Button { pickingAny = true } label: {
+                            Image(systemName: "plus").font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(Color.primary.opacity(0.6))
+                                .frame(width: 44, height: 44)
+                                .background(pickingAny ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.08), in: Circle())
+                        }
+                        .accessibilityLabel("React with another emoji")
+                        .padding(.horizontal, 6)
                     }
                     .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        // The system's emoji keyboard, unseen: the first emoji typed is the reaction.
+                        EmojiField(active: $pickingAny) { emoji in
+                            react(emoji)
+                            dismiss()
+                        }
+                        .frame(width: 1, height: 1)
+                        .opacity(0.01)
+                        .accessibilityIdentifier("any-emoji")
+                    }
                     .background(.regularMaterial, in: Capsule())
                     .shadow(color: .black.opacity(0.12), radius: 10, y: 2)
-                    .frame(maxWidth: min(CGFloat(reactions.count) * 48 + 16, 340))  // hugs them; scrolls past that
+                    .frame(maxWidth: 420)
                 }
                 BubbleView(bubble: bubble, quote: quote, showTime: false)
                     .allowsHitTesting(false)
@@ -836,6 +863,71 @@ struct MessageActions: View {
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
         }
+    }
+}
+
+/// Any emoji as a reaction (X49), from the system's own emoji keyboard: an
+/// unseen text field that asks for it (the phone's every emoji, skin tones,
+/// search, and recents, all the system's; nothing to keep up to date here).
+/// The first emoji typed is the reaction; anything else typed is ignored. A
+/// phone without the emoji keyboard gets its usual one, whose globe key
+/// reaches emoji.
+struct EmojiField: UIViewRepresentable {
+    @Binding var active: Bool
+    let picked: (String) -> Void
+
+    final class Field: UITextField {
+        /// Not the keyboard last used in this field: the emoji one, each time.
+        override var textInputContextIdentifier: String? { "" }
+        override var textInputMode: UITextInputMode? {
+            UITextInputMode.activeInputModes.first { $0.primaryLanguage == "emoji" } ?? super.textInputMode
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: EmojiField
+        init(_ parent: EmojiField) { self.parent = parent }
+
+        func textField(_ field: UITextField, shouldChangeCharactersIn range: NSRange, replacementString typed: String) -> Bool {
+            if let emoji = EmojiField.reaction(in: typed) {
+                let picked = parent.picked
+                DispatchQueue.main.async { picked(emoji) }  // after the keyboard's done with this keystroke
+            }
+            return false  // nothing stays in the field
+        }
+
+        func textFieldDidEndEditing(_ field: UITextField) {
+            if parent.active { parent.active = false }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> Field {
+        let field = Field()
+        field.delegate = context.coordinator
+        field.autocorrectionType = .no
+        field.tintColor = .clear
+        return field
+    }
+
+    func updateUIView(_ field: Field, context: Context) {
+        context.coordinator.parent = self
+        // Not while SwiftUI is updating views: the keyboard coming changes the layout.
+        if active && !field.isFirstResponder {
+            DispatchQueue.main.async { field.becomeFirstResponder() }
+        } else if !active && field.isFirstResponder {
+            DispatchQueue.main.async { field.resignFirstResponder() }
+        }
+    }
+
+    static func dismantleUIView(_ field: Field, coordinator: Coordinator) {
+        field.resignFirstResponder()
+    }
+
+    /// The first emoji in what was typed, if it's one reaction (E2E.isReaction).
+    static func reaction(in typed: String) -> String? {
+        typed.lazy.map(String.init).first(where: E2E.isReaction)
     }
 }
 
