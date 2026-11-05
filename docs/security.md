@@ -49,7 +49,7 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - Caddy terminates HTTPS (with HSTS) and caps request bodies; the app sends strict security headers on every response.
 - The app runs as its own user with a read-only system, no new privileges, a 400 MB memory ceiling, and no swap (so nothing in memory reaches disk).
 - Secrets (the invite code, admin list) live in AWS Parameter Store and are loaded into memory at start, never written to disk.
-- Backups run every hour to S3. The server can add backups but not read, change, or delete them, so even a fully compromised server can't destroy them. Disk snapshots are kept 30 days. See [backups.md](operations/backups.md).
+- Backups run every hour to S3, kept 30 days. The server can add backups but not read, list, or delete them. It can write over one whose name it knows (adding to S3 allows that); the bucket's versioning keeps the version written over, but only for a day, so a compromised server could spoil backups if nobody noticed within a day. Disk snapshots, kept 30 days, are made by AWS's own schedule, which the server can't touch. See [backups.md](operations/backups.md).
 
 ## Limits
 
@@ -101,7 +101,7 @@ Being honest about the gaps:
 2. **Stop new accounts.** Set `FADE_MAX_ACCOUNTS` to the current count (or change the invite code in `terraform.tfvars`), `terraform apply`, then `scripts/ssh.sh "sudo systemctl restart fade"`.
 3. **Shut out an address** that gets past the automatic bans: add a deny rule for it to the subnet's network ACL in AWS (instant, no restart).
 4. **Someone's account was taken over.** From the admin panel, issue them a reset code: it ends every session and gives them a new key.
-5. **The server itself is compromised.** Take it out of service (stop the instance), snapshot the data volume, and rebuild from a known release; the backups in S3 can't have been altered. [backups.md](operations/backups.md) has the restore drill.
+5. **The server itself is compromised.** Take it out of service (stop the instance), snapshot the data volume, and rebuild from a known release; backups older than the compromise can't have been read or deleted, and any written over in the last day still have their earlier version in the bucket (it keeps them a day), as do the disk snapshots. [backups.md](operations/backups.md) has the restore drill.
 
 ## Changing a limit
 

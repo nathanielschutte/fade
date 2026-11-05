@@ -228,7 +228,8 @@ resource "aws_iam_role_policy" "instance" {
       },
       {
         # Add backups only: no delete, no read, no listing. Keys are unique per
-        # run, and versioning keeps any object that does get overwritten.
+        # run, and versioning keeps any object that does get overwritten, for a
+        # day (backups.tf).
         Sid      = "WriteBackups"
         Effect   = "Allow"
         Action   = ["s3:PutObject"]

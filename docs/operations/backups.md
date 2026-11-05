@@ -10,7 +10,7 @@ User data is never deleted ([CLAUDE.md](../../CLAUDE.md)), except by a person de
 | How often | Hourly (systemd timer `fade-backup.timer`) | Daily at 09:00 UTC (AWS Data Lifecycle Manager) |
 | Where | `s3://fade-backups-<account>-us-east-1/db/YYYY/MM/DD/fade-<time>.db.gz` | EBS snapshots tagged `Backup=fade-daily` |
 | Kept | 30 days, then gone, every version (Nate, 2026-11-03), so a deleted account is in no copy after 30 days ([account-deletion.md](../design/account-deletion.md)). Before that, backups were kept forever | 30 days |
-| Protected by | Versioned bucket with `prevent_destroy`; the server may only add objects, never delete or overwrite | AWS retention policy |
+| Protected by | Versioned bucket with `prevent_destroy`; the server may only add objects, never read, list, or delete them. It could write over one it knows the name of; the version written over is kept a day | AWS retention policy |
 | Status | `/admin` → Server → Last backup (from `/var/lib/fade/backups/last.json`); the job's journal: `journalctl -u fade-backup` | `aws ec2 describe-snapshots --filters Name=tag:Backup,Values=fade-daily` |
 
 A backup older than two hours shows as **Overdue** in the admin panel, and a failed one shows its error.

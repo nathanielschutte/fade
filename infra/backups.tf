@@ -1,8 +1,9 @@
 # Database backups: an hourly consistent copy of the SQLite database, kept 30
 # days (docs/operations/backups.md): a deleted account is gone from every copy
 # within 30 days (Nate, 2026-11-03; docs/design/account-deletion.md). The instance
-# can only add objects here, never delete or overwrite them, and versioning keeps
-# anything that does change until the lifecycle below removes it.
+# can only add objects here, never read, list, or delete them. Adding can write
+# over an existing key; versioning keeps the version written over until the
+# lifecycle below removes it (a day).
 
 resource "aws_s3_bucket" "backups" {
   bucket = "${var.app_name}-backups-${data.aws_caller_identity.current.account_id}-${var.region}"
