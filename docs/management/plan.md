@@ -24,13 +24,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
 | 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Reviewer account and forms done (Nate); next: version 1.0.0, external TestFlight; then Nate's review before the App Store |
-| 3 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
-| 4 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send |
-| 5 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 9 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 3 | [Security audit](#s7-security-audit-2026-11-05) and [Admins can't delete their account](#s6-admins-cant-delete-their-own-account) | Security | Nate | In progress | Nate (2026-11-05). Fixed and in testing; goes out with 1.0. Left: infrastructure items (Nate's) |
+| 4 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
+| 5 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send |
+| 6 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
+| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -688,6 +689,11 @@ Oldest first; newly shipped rows go at the bottom.
 #### S6. Admins can't delete their own account
 - Nate (2026-11-05): "admins shouldn't be able to delete their accounts so that their user id/username id is reserved forever. this way people cannot ever impersonate."
 - **Built (2026-11-05).** `deletion.rs` refuses an Admin (by id, name, or a past name) with a 403 before the password check; the web and the iPhone show why instead of the button. Someone taken off the list is a User again and can delete. Noticed: a deleted person's current name is held 30 days, but their past names are freed at once (`wipe` removes `past_usernames`). **Needs decision (Nate):** hold past names as long as the current one, or for good.
+
+#### S7. Security audit, 2026-11-05
+- Nate (2026-11-05): an audit of what the public repository gives away, and of the server against common web attacks: "we are rock solid against common web attack vectors", with only an Admin who has credentials able to do damage. Two read-only reviews; the details are the owner's.
+- **Fixed (2026-11-05):** the Admin list by user id (S5) and Admins out of reach of Admin actions; limits that keep one client from exhausting the server's memory (password checks, usernames, app logs, sockets); the per-username limit made exact under concurrency; signing out closes live sockets; logs escape what callers send; tokio updated. Staging's test credentials are private. CI pins its actions by commit and checks that production's binary is the one main's CI built; tests refuse production; owner-only scripts say so; the owner's operating steps moved to private notes.
+- **Left, Nate's (infrastructure):** backups the server can't overwrite (Object Lock); HSTS `includeSubDomains` and Caddy timeouts (they change the boot script, which replaces the instance); MFA or SSO for the owner's AWS keys; dropping the name-based GitHub OIDC subject. **Ours, later:** p256 0.14 (a crypto-bigint advisory, impractical remotely).
 
 ### Infrastructure
 
