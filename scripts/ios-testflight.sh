@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's Apple Developer team and App
+# Store Connect API key, set up privately; none of it is in this repository,
+# and without it this stops at its first step.
+#
 # Builds the iOS app as it ships (Release, signed for the App Store) and uploads
 # it to App Store Connect for TestFlight (docs/ios-onboarding.md, TestFlight).
 #   scripts/ios-testflight.sh                 # check, archive, upload

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials and access
+# to the Terraform state, set up privately; none of it is in this repository,
+# and without it this stops at its first step.
+#
 # Runs the current server, and so its migrations, against a copy of the newest
 # production backup, then checks that no rows were lost and the database is
 # intact. Never touches production. Run before releasing any new migration
-# (CLAUDE.md). The owner's: needs AWS CLI, terraform, cargo, python3, curl.
+# (CLAUDE.md). Needs: AWS CLI, terraform, cargo, python3, curl.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

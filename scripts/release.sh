@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# CI only: GitHub Actions runs it, with the short-lived AWS role each job gets
+# (infra/github.tf). People don't run it; without that role it stops at its
+# first step.
+#
 # The release pipeline's steps (docs/operations/releasing.md), run by GitHub
 # Actions: .github/workflows/ci.yml (main → a release candidate on staging)
 # and release-server.yml (a server-v* tag → a release on production).
@@ -153,7 +157,7 @@ case "${1:-}" in
     ;;
 
   *)
-    sed -n '2,20p' "$0"
+    awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"
     exit 2
     ;;
 esac

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# the Terraform state, and an SSH key on the servers, set up privately; none
+# of it is in this repository, and without it this stops at its first step.
+#
 # Proves the newest database backup restores: downloads it, checks its
 # integrity, and compares its row counts with production. Read-only: it never
 # touches production data. Run it after backup changes and now and then

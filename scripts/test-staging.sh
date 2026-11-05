@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# staging's Terraform state, and its terraform.tfvars, set up privately; none
+# of it is in this repository, and without it this stops at its first step.
+#
 # The smoke test and the browser tests against staging (docs/operations/staging.md):
 # a real deployment, behind Caddy, on AWS. Never production: it refuses any
 # address that isn't staging's.

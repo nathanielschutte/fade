@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# the Terraform state, and an SSH key on the servers, set up privately; none
+# of it is in this repository, and without it this stops at its first step.
+#
 # SSH to the box. Extra args pass through: scripts/ssh.sh journalctl -u fade -f
 set -euo pipefail
 cd "$(dirname "$0")/.."

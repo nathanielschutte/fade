@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# staging's Terraform state and its terraform.tfvars, and an SSH key on the
+# servers, set up privately; none of it is in this repository, and without it
+# this stops at its first step.
+#
 # Resets staging's data (docs/operations/staging.md, "Resetting staging"):
 # every account, message, and pic on staging is set aside, the server starts
 # on an empty database, and the seed (scripts/seed/seed.mjs) fills it with a

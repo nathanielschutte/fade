@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials and access
+# to the Terraform state, set up privately; none of it is in this repository,
+# and without it this stops at its first step.
+#
 # Set who's an Admin (docs/implementation/roles.md): user ids (id:7, fixed
 # forever; preferred, S5) or usernames, comma-separated.
 #   scripts/set-admins.sh id:1,id:5

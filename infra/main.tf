@@ -1,3 +1,8 @@
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# the Terraform state, and infra/terraform.tfvars, set up privately; none of
+# it is in this repository, and without it `terraform init` and `plan` stop
+# at their first step.
+
 terraform {
   required_version = ">= 1.10" # use_lockfile
   required_providers {
