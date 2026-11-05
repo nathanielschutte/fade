@@ -4,3 +4,6 @@
 * text=auto eol=lf
 *.png binary
 *.deb binary
+# Except the Gradle wrapper for Windows (android/gradlew.bat), which cmd.exe misreads without them.
+*.bat text eol=crlf
+*.jar binary
