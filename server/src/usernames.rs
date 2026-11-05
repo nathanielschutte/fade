@@ -54,6 +54,17 @@ pub async fn available_to(db: &SqlitePool, user: i64, name: &str) -> sqlx::Resul
     Ok(!taken && !crate::deletion::held(db, name).await?)
 }
 
+/// Is `name` kept back for the Admin the admin list names by it? A listed
+/// name that nobody holds would make whoever took it an Admin, so nobody can
+/// sign up as it, except from the server's own machine or staging's test
+/// machines (`local`), where tests and development make their Admins that way.
+/// In production, a name goes on the list after its account exists (or the
+/// list says `id:N`, which nobody can take). Renaming into one is refused in
+/// account.rs, unless it's the person's own old name.
+pub fn reserved_for_admin(admins: &crate::roles::Admins, name: &str, local: bool) -> bool {
+    !local && admins.contains(name)
+}
+
 /// Is `user` (now `username`) an Admin? Admins are listed by username in
 /// settings, so an old name still counts: nobody else can ever hold it.
 pub async fn is_listed_admin(
@@ -133,6 +144,13 @@ mod tests {
             admin_ids(&db, &admins).await.unwrap(),
             [1].into_iter().collect()
         );
+        // A listed name: nobody signs up as it from outside (H3).
+        assert!(reserved_for_admin(&admins, "ANA", false));
+        assert!(
+            !reserved_for_admin(&admins, "ana", true),
+            "tests make their Admins"
+        );
+        assert!(!reserved_for_admin(&admins, "cal", false));
         // By id (S5): whatever they're called.
         let admins = crate::roles::Admins::new(vec!["id:2".into()], None);
         assert!(is_listed_admin(&db, &admins, 2, "anything").await.unwrap());

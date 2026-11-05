@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# the Terraform state, and an SSH key on the servers, set up privately; none
+# of it is in this repository, and without it this stops at its first step.
+#
 # Build an ARM64 static binary, push it to the box over SSH, and restart.
 # The normal path is GitHub Actions (docs/operations/releasing.md): main goes
 # to staging, a server-v* tag goes to production. This script is for hotfixes

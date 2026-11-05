@@ -2,6 +2,10 @@
 # Nothing here deploys, connects to production, or changes anything outside
 # the repository but staging, which the *-staging targets test and reset
 # (deploying is scripts/deploy.sh, ssh.sh, and Terraform: the owner's).
+# Those staging targets (ios-staging, test-staging, reset-staging) are owner
+# only (napsack's Admin): they need the owner's AWS credentials and staging's
+# Terraform state and tfvars, set up privately; none of it is in this
+# repository, and without it they stop at their first step.
 # `make` alone lists them. Setting up a machine: docs/onboarding.md, and for
 # the iOS app docs/ios-onboarding.md, the Android app docs/android-onboarding.md.
 

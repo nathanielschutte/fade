@@ -105,7 +105,7 @@ variable "data_volume_gb" {
 }
 
 variable "snapshot_retain_days" {
-  description = "Daily snapshots of the data volume kept for this many days. 0 disables them. Hourly database backups to S3 (backups.tf) are separate and kept forever."
+  description = "Daily snapshots of the data volume kept for this many days. 0 disables them. Hourly database backups to S3 (backups.tf) are separate and kept 30 days."
   type        = number
   default     = 30
 }

@@ -14,7 +14,7 @@ struct LiveRecoverTests {
     @Test func backInWithTheRecoveryKey() async throws {
         let first = Session(store: MemoryStore(), reporter: Reporter())
         let name = "rec_\(UUID().uuidString.prefix(6).lowercased())"
-        try await first.signUp(server: live.address, username: name, password: "correct horse battery", inviteCode: live.invite)
+        try await first.signUp(server: live.address, username: name, password: testPassword, inviteCode: live.invite)
         let key = try #require(first.recoveryKeyToShow)
         let publicKey = try #require(first.account?.publicKey)
 
@@ -35,9 +35,9 @@ struct LiveRecoverTests {
         let admin = Session(store: MemoryStore(), reporter: Reporter())
         let adminName = ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"]!
         do {
-            try await admin.signUp(server: live.address, username: adminName, password: "correct horse battery", inviteCode: live.invite)
+            try await admin.signUp(server: live.address, username: adminName, password: testPassword, inviteCode: live.invite)
         } catch {
-            try await admin.signIn(server: live.address, username: adminName, password: "correct horse battery")
+            try await admin.signIn(server: live.address, username: adminName, password: testPassword)
         }
         struct Code: Decodable { let code: String }
         let code = try Server.decoder.decode(Code.self, from: await Server(live.address).send(

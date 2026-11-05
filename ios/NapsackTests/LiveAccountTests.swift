@@ -9,7 +9,7 @@ import Testing
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["NAPSACK_TEST_SERVER"] != nil), .timeLimit(.minutes(1)))
 struct LiveAccountTests {
     let live = LiveChatListTests()
-    let password = "correct horse battery"
+    let password = testPassword
 
     func session(_ username: String, password: String) async throws -> Session {
         let session = Session(store: MemoryStore(), reporter: Reporter())

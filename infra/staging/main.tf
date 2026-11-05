@@ -1,3 +1,8 @@
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# staging's Terraform state, and its terraform.tfvars, set up privately; none
+# of it is in this repository, and without it `terraform init` and `plan`
+# stop at their first step.
+#
 # Staging (docs/operations/staging.md): a second, separate napsack on staging.<domain>,
 # for browser tests against a real deployment and for load tests.
 #

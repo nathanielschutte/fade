@@ -104,6 +104,28 @@ impl Admins {
             .any(|a| a == &username.to_lowercase())
     }
 
+    /// Entries that name a username rather than `id:N`. A username can be
+    /// taken by whoever signs up as it when it's free (a deleted account's,
+    /// once its hold ends), so these are warned about (`warn_about_names`).
+    pub fn by_name(&self) -> Vec<String> {
+        self.list
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|a| !a.starts_with("id:"))
+            .cloned()
+            .collect()
+    }
+
+    /// A warning per username entry, at start and on each reload, until the
+    /// list says `id:N` for everyone. Not refused yet: production still
+    /// names its Admins by username.
+    pub fn warn_about_names(&self) {
+        for entry in self.by_name() {
+            tracing::warn!(?entry, "admin list entry by username; use id:N");
+        }
+    }
+
     pub fn count(&self) -> usize {
         self.list.read().unwrap().len()
     }
@@ -127,6 +149,7 @@ impl Admins {
         list.dedup();
         let count = list.len();
         *self.list.write().unwrap() = list;
+        self.warn_about_names();
         Ok(count)
     }
 }
@@ -464,18 +487,20 @@ mod tests {
     #[test]
     fn admin_lists() {
         assert_eq!(
-            parse_list(" Nate, liana\nmaint  nate,,"),
-            ["liana", "maint", "nate"]
+            parse_list(" Admin_A, admin_b\nadmin_c  admin_a,,"),
+            ["admin_a", "admin_b", "admin_c"]
         );
         assert!(parse_list("").is_empty());
-        let admins = Admins::new(vec!["nate".into()], None);
-        assert!(admins.contains("NATE") && !admins.contains("liana"));
+        let admins = Admins::new(vec!["admin_a".into()], None);
+        assert!(admins.contains("ADMIN_A") && !admins.contains("admin_b"));
         assert!(!admins.has_param());
         // By id (S5): `id:7` names user 7, never a username "7" or "id:7".
-        let admins = Admins::new(parse_list("ID:7, liana, 12"), None);
+        let admins = Admins::new(parse_list("ID:7, admin_b, 12"), None);
         assert!(admins.contains_id(7) && !admins.contains_id(12) && !admins.contains_id(70));
         assert_eq!(admins.ids(), [7]);
-        assert!(admins.contains("liana") && admins.contains("12") && !admins.contains("7"));
+        assert!(admins.contains("admin_b") && admins.contains("12") && !admins.contains("7"));
+        // Entries by username are the ones to warn about (H3).
+        assert_eq!(admins.by_name(), ["12", "admin_b"]);
     }
 
     #[test]

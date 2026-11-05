@@ -8,10 +8,7 @@
 use std::{
     collections::VecDeque,
     fmt::Write as _,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 use axum::{
@@ -31,6 +28,15 @@ use crate::{
 
 pub const DEFAULT_CAPACITY: usize = 20_000;
 const MAX_PAGE: usize = 500;
+/// Memory the server's own entries may take, whatever they hold.
+pub const SERVER_BYTES: usize = 32 * 1024 * 1024;
+/// Memory the apps' entries may take. They have a ring of their own, so a
+/// flood of them (`POST /api/logs` takes them signed out too) can never push
+/// the server's entries out, and stays small.
+pub const CLIENT_BYTES: usize = 4 * 1024 * 1024;
+/// A logged message or field value longer than this is cut (at a character
+/// boundary) before it's kept, so no one event can hold much memory.
+pub const MAX_VALUE_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
@@ -45,11 +51,76 @@ pub struct LogEntry {
     pub fields: Vec<(String, String)>,
 }
 
+impl LogEntry {
+    /// About how much memory it holds.
+    fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.target.len()
+            + self.message.len()
+            + self
+                .fields
+                .iter()
+                .map(|(k, v)| std::mem::size_of::<(String, String)>() + k.len() + v.len())
+                .sum::<usize>()
+    }
+}
+
+/// Entries newest last, within a count and a memory budget: the oldest go first.
+struct Ring {
+    entries: VecDeque<LogEntry>,
+    bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
+}
+
+impl Ring {
+    fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: VecDeque::with_capacity(max_entries.min(4096)),
+            bytes: 0,
+            max_entries,
+            max_bytes,
+        }
+    }
+
+    fn push(&mut self, entry: LogEntry) {
+        let size = entry.bytes();
+        while self.entries.len() >= self.max_entries
+            || (!self.entries.is_empty() && self.bytes + size > self.max_bytes)
+        {
+            let Some(old) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes -= old.bytes();
+        }
+        self.bytes += size;
+        self.entries.push_back(entry);
+    }
+}
+
+/// The server's entries and the apps' (`client::...`), kept apart.
+struct Rings {
+    server: Ring,
+    client: Ring,
+    next_seq: u64,
+}
+
 pub struct LogBuffer {
-    entries: Mutex<VecDeque<LogEntry>>,
+    rings: Mutex<Rings>,
     capacity: usize,
-    next_seq: AtomicU64,
     started_ms: i64,
+}
+
+/// `s`, cut to at most `max` bytes at a character boundary, with "…" when cut.
+pub fn truncate_bytes(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 fn now_ms() -> i64 {
@@ -86,10 +157,17 @@ pub struct LogQuery {
 
 impl LogBuffer {
     pub fn new(capacity: usize) -> Self {
+        Self::with_budgets(capacity, SERVER_BYTES, CLIENT_BYTES)
+    }
+
+    fn with_budgets(capacity: usize, server_bytes: usize, client_bytes: usize) -> Self {
         Self {
-            entries: Mutex::new(VecDeque::with_capacity(capacity.min(4096))),
+            rings: Mutex::new(Rings {
+                server: Ring::new(capacity, server_bytes),
+                client: Ring::new(capacity, client_bytes),
+                next_seq: 1,
+            }),
             capacity,
-            next_seq: AtomicU64::new(1),
             started_ms: now_ms(),
         }
     }
@@ -101,19 +179,26 @@ impl LogBuffer {
         message: String,
         fields: Vec<(String, String)>,
     ) {
-        let entry = LogEntry {
-            seq: self.next_seq.fetch_add(1, Ordering::Relaxed),
+        let mut entry = LogEntry {
+            seq: 0,
             ts: now_ms(),
             level,
-            target: target.to_string(),
-            message,
-            fields,
+            target: truncate_bytes(target, 200),
+            message: truncate_bytes(&message, MAX_VALUE_BYTES),
+            fields: fields
+                .into_iter()
+                .map(|(k, v)| (truncate_bytes(&k, 100), truncate_bytes(&v, MAX_VALUE_BYTES)))
+                .collect(),
         };
-        let mut entries = self.entries.lock().unwrap();
-        if entries.len() == self.capacity {
-            entries.pop_front();
+        let mut rings = self.rings.lock().unwrap();
+        // Numbered under the lock, so each ring stays in order.
+        entry.seq = rings.next_seq;
+        rings.next_seq += 1;
+        if entry.target.starts_with(CLIENT_TARGET) {
+            rings.client.push(entry);
+        } else {
+            rings.server.push(entry);
         }
-        entries.push_back(entry);
     }
 
     /// Matching entries, newest first.
@@ -129,41 +214,50 @@ impl LogBuffer {
                 .filter(|s| !s.is_empty())
                 .map(str::to_lowercase);
         let limit = q.limit.unwrap_or(200).clamp(1, MAX_PAGE);
-        let entries = self.entries.lock().unwrap();
-        entries
-            .iter()
-            .rev()
-            .filter(|e| q.before.is_none_or(|b| e.seq < b))
-            .filter(|e| q.after.is_none_or(|a| e.seq > a))
-            .filter(|e| level_rank(e.level) >= min)
-            .filter(|e| match q.source.as_deref() {
-                Some("server") => !e.target.starts_with(CLIENT_TARGET),
-                Some("client") => e.target.starts_with(CLIENT_TARGET),
-                _ => true,
-            })
-            .filter(|e| match &needle {
-                None => true,
-                Some(n) => {
-                    e.message.to_lowercase().contains(n)
-                        || e.target.to_lowercase().contains(n)
-                        || e.fields.iter().any(|(k, v)| {
-                            // Matches "user_id", "7", or "user_id=7".
-                            format!("{k}={v}").to_lowercase().contains(n)
-                        })
-                }
-            })
-            .take(limit)
-            .cloned()
-            .collect()
+        let rings = self.rings.lock().unwrap();
+        // Both rings, newest first, merged by seq.
+        let mut server = rings.server.entries.iter().rev().peekable();
+        let mut client = rings.client.entries.iter().rev().peekable();
+        std::iter::from_fn(|| match (server.peek(), client.peek()) {
+            (Some(s), Some(c)) if s.seq > c.seq => server.next(),
+            (_, Some(_)) => client.next(),
+            (Some(_), None) => server.next(),
+            (None, None) => None,
+        })
+        .filter(|e| q.before.is_none_or(|b| e.seq < b))
+        .filter(|e| q.after.is_none_or(|a| e.seq > a))
+        .filter(|e| level_rank(e.level) >= min)
+        .filter(|e| match q.source.as_deref() {
+            Some("server") => !e.target.starts_with(CLIENT_TARGET),
+            Some("client") => e.target.starts_with(CLIENT_TARGET),
+            _ => true,
+        })
+        .filter(|e| match &needle {
+            None => true,
+            Some(n) => {
+                e.message.to_lowercase().contains(n)
+                    || e.target.to_lowercase().contains(n)
+                    || e.fields.iter().any(|(k, v)| {
+                        // Matches "user_id", "7", or "user_id=7".
+                        format!("{k}={v}").to_lowercase().contains(n)
+                    })
+            }
+        })
+        .take(limit)
+        .cloned()
+        .collect()
     }
 
     /// (entries held, oldest seq held, newest seq held)
     pub fn span(&self) -> (usize, u64, u64) {
-        let entries = self.entries.lock().unwrap();
+        let rings = self.rings.lock().unwrap();
+        let (s, c) = (&rings.server.entries, &rings.client.entries);
+        let fronts = [s.front(), c.front()].into_iter().flatten().map(|e| e.seq);
+        let backs = [s.back(), c.back()].into_iter().flatten().map(|e| e.seq);
         (
-            entries.len(),
-            entries.front().map_or(0, |e| e.seq),
-            entries.back().map_or(0, |e| e.seq),
+            s.len() + c.len(),
+            fronts.min().unwrap_or(0),
+            backs.max().unwrap_or(0),
         )
     }
 }
@@ -223,8 +317,15 @@ impl<S: Subscriber> Layer<S> for BufferLayer {
 pub const CLIENT_TARGET: &str = "client::";
 const CLIENT_MAX_ENTRIES: usize = 50;
 const CLIENT_MAX_FIELDS: usize = 20;
+/// Bytes, not characters: a 4-byte character counts four times.
 const CLIENT_MAX_MESSAGE: usize = 500;
 const CLIENT_MAX_VALUE: usize = 300;
+/// Fields the server adds itself, which a client can't send for it.
+const SERVER_FIELDS: &[&str] = &["user_id", "client", "ip"];
+/// Entries a signed-out app may send per address per minute (signed in, it's
+/// per person: `client_log_limit`). Signed out, an app has little to say: a
+/// failed sign-in, a page that broke.
+pub const ANONYMOUS_PER_MINUTE: u32 = 60;
 /// Field names containing any of these are redacted.
 const REDACT: &[&str] = &[
     "text",
@@ -256,11 +357,7 @@ pub struct ClientBatch {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(max).collect::<String>())
-    }
+    truncate_bytes(s, max)
 }
 
 /// Bounded, redacted copies of whatever the client sent.
@@ -278,6 +375,7 @@ fn sanitize(entry: ClientEntry) -> (&'static str, String, Vec<(String, String)>)
             !k.is_empty()
                 && k.len() <= 40
                 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !SERVER_FIELDS.contains(&k.to_ascii_lowercase().as_str())
         })
         .take(CLIENT_MAX_FIELDS)
         .map(|(k, v)| {
@@ -335,9 +433,13 @@ pub async fn ingest(
     let key = user
         .as_ref()
         .map_or_else(|| format!("ip:{}", who.ip), |u| u.id.to_string());
-    let granted = state
-        .client_log_limit
-        .take(&key, batch.entries.len() as u32) as usize;
+    let wanted = batch.entries.len() as u32;
+    let granted = match &user {
+        Some(_) => state.client_log_limit.take(&key, wanted),
+        // Local, un-proxied requests (development, tests) aren't limited by address.
+        None if who.local => wanted,
+        None => state.client_log_anon_limit.take(&key, wanted),
+    } as usize;
     let dropped = batch.entries.len() - granted;
     for entry in batch.entries.into_iter().take(granted) {
         let (level, message, mut fields) = sanitize(entry);
@@ -355,9 +457,9 @@ pub async fn ingest(
                 .collect::<Vec<_>>()
                 .join(" ");
             if level == "ERROR" {
-                tracing::error!(target: "napsack_client", platform = %platform, message = ?message, detail = %detail, "client reported");
+                tracing::error!(target: "napsack_client", platform = %platform, message = ?message, detail = ?detail, "client reported");
             } else {
-                tracing::warn!(target: "napsack_client", platform = %platform, message = ?message, detail = %detail, "client reported");
+                tracing::warn!(target: "napsack_client", platform = %platform, message = ?message, detail = ?detail, "client reported");
             }
         }
         state.logs.push(
@@ -484,7 +586,7 @@ mod tests {
             }),
         ));
         assert_eq!(level, "WARN");
-        assert_eq!(message.chars().count(), CLIENT_MAX_MESSAGE + 1);
+        assert_eq!(message.len(), CLIENT_MAX_MESSAGE + "…".len());
         let get = |k: &str| fields.iter().find(|(f, _)| f == k).map(|(_, v)| v.as_str());
         assert_eq!(get("message_id"), Some("5"));
         assert_eq!(get("message"), Some("[redacted]"));
@@ -496,13 +598,96 @@ mod tests {
         assert_eq!(get("error"), Some("Request failed (500)."));
         assert_eq!(get("bad key!"), None);
         assert_eq!(
-            get("long").map(|v| v.chars().count()),
-            Some(CLIENT_MAX_VALUE + 1)
+            get("long").map(str::len),
+            Some(CLIENT_MAX_VALUE + "…".len())
         );
         assert_eq!(
             sanitize(entry("shout", "m", serde_json::json!({}))).0,
             "DEBUG"
         );
+    }
+
+    /// Limits are bytes, so 4-byte characters keep a quarter as many, and a
+    /// cut never splits one. The server's own fields can't be sent.
+    #[test]
+    fn client_entries_are_bounded_in_bytes() {
+        let emoji = "\u{1F600}";
+        let fields: serde_json::Map<String, serde_json::Value> = (0..20)
+            .map(|i| {
+                (
+                    format!("f{i}"),
+                    serde_json::Value::String(emoji.repeat(300)),
+                )
+            })
+            .chain([
+                ("ip".to_string(), "1.2.3.4".into()),
+                ("User_Id".to_string(), "1".into()),
+            ])
+            .collect();
+        let (_, message, fields) = sanitize(ClientEntry {
+            level: "debug".into(),
+            message: emoji.repeat(500),
+            fields,
+        });
+        assert!(message.len() <= CLIENT_MAX_MESSAGE + 3 && message.ends_with('…'));
+        assert!(message
+            .trim_end_matches('…')
+            .chars()
+            .all(|c| c == '\u{1F600}'));
+        assert_eq!(fields.len(), 20, "ip and user_id are the server's to add");
+        assert!(fields.iter().all(|(_, v)| v.len() <= CLIENT_MAX_VALUE + 3));
+        let held: usize =
+            message.len() + fields.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>();
+        assert!(held < 7 * 1024, "{held} bytes, from about 38 KB sent");
+        assert_eq!(truncate_bytes("héllo", 2), "h…", "never half a character");
+    }
+
+    /// Apps' entries have a budget of their own: however many arrive, they
+    /// never push the server's out, and the memory they hold stays bounded.
+    #[test]
+    fn client_entries_cant_push_server_entries_out() {
+        let b = LogBuffer::with_budgets(1000, 1 << 20, 64 * 1024);
+        b.push("INFO", "fade_server::auth", "signed in".into(), vec![]);
+        for i in 0..5000 {
+            b.push(
+                "DEBUG",
+                "client::web",
+                format!("noise {i}"),
+                vec![("f".into(), "x".repeat(300))],
+            );
+        }
+        let rings = b.rings.lock().unwrap();
+        assert_eq!(rings.server.entries.len(), 1, "the server's entry stays");
+        assert!(rings.client.bytes <= 64 * 1024 && rings.client.entries.len() < 200);
+        assert_eq!(rings.client.entries.back().unwrap().message, "noise 4999");
+        drop(rings);
+        let all = b.query(&LogQuery {
+            limit: Some(500),
+            ..Default::default()
+        });
+        assert_eq!(
+            all.last().unwrap().message,
+            "signed in",
+            "merged in order, oldest last"
+        );
+        assert!(all.windows(2).all(|w| w[0].seq > w[1].seq));
+        let (held, oldest, newest) = b.span();
+        assert_eq!((oldest, newest), (1, 5001));
+        assert!(held < 200);
+    }
+
+    #[test]
+    fn long_server_values_are_cut() {
+        let b = LogBuffer::new(10);
+        b.push(
+            "INFO",
+            "fade_server::x",
+            "m".repeat(5000),
+            vec![("username".into(), "y".repeat(2_000_000))],
+        );
+        let e = &b.query(&LogQuery::default())[0];
+        assert!(e.message.len() <= MAX_VALUE_BYTES + 3);
+        assert!(e.fields[0].1.len() <= MAX_VALUE_BYTES + 3);
     }
 
     #[test]

@@ -79,10 +79,7 @@ struct ChatListScreen: View {
                 if tab == .camera {
                     // Send picks the chats on the next screen; back returns to the pic.
                     CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
-                                 send: .pick(sendable, { kind, ready in
-                                     guard let chat = conversation(kind) else { throw SendError.cantOpen }
-                                     try await ready.send(to: chat, limits: limits)  // compressed once, sealed for each chat
-                                 }, done: { words in
+                                 send: .pick(sendable, { kind, ready in try await send(ready, to: kind) }, done: { words in
                                      toast = Toast(text: words, undo: nil)
                                      tab = .chats  // where it went, as on the web
                                  }),
@@ -210,6 +207,8 @@ struct ChatListScreen: View {
                 .environment(live)
                 .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
                 .environment(\.openChatLink, OpenChatLink(run: openLink))
+                // Its camera's "To Ben +": the chats here, to send to as well.
+                .environment(\.sendElsewhere, SendElsewhere(chats: { sendable }, send: { kind, ready in try await send(ready, to: kind) }))
         }
     }
 
@@ -413,6 +412,12 @@ struct ChatListScreen: View {
             guard let friend = list.reader?.friends[id] else { return false }
             return friend.system != true && friend.deactivated != true && list.reader?.changed.contains(id) != true
         }
+    }
+
+    /// A ready pic or video to one chat: compressed once, sealed for each chat.
+    private func send(_ ready: ReadyToSend, to kind: ChatRow.Kind) async throws {
+        guard let chat = conversation(kind) else { throw SendError.noChat }
+        try await ready.send(to: chat, limits: limits)
     }
 
     private func conversation(_ kind: ChatRow.Kind) -> Conversation? {

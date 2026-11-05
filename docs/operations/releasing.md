@@ -59,9 +59,11 @@ Build the change, with its tests, on a branch (`<name>/<topic>`). Before opening
 
 ### 2. A pull request, then a release candidate on staging
 
-Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). Its description says which checks ran locally; CI doesn't run on pull requests (GitHub Actions is billed; Nate, 2026-11-03), so those local runs are the check, and the owner reviews it. The owner squash-merges it into `main`, where the **CI** workflow (`.github/workflows/ci.yml`) runs everything (format, lints, all the tests, Terraform validation), and if it passes, its **Release candidate on staging** job:
-1. builds the ARM server binary once, stamped with the commit (`build` = the short sha);
-2. uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
+Push the branch and open a pull request, described by the template (`.github/pull_request_template.md`). Its description says which checks ran locally; CI doesn't run on pull requests (GitHub Actions is billed; Nate, 2026-11-03), so those local runs are the check, and the owner reviews it. The owner squash-merges it into `main`, where the **CI** workflow (`.github/workflows/ci.yml`) runs everything (format, lints, all the tests, Terraform validation), and if it passes, makes a release candidate in two jobs. **Build the release candidate**, which has no AWS role and no way to get one:
+1. builds the ARM server binary once, stamped with the commit (`build` = the short sha), and prints its sha256 in the job's log: the record a release checks it against (below).
+
+Then **Release candidate on staging**, the only job with the staging role (`fade-github-staging`), which:
+2. checks it has the binary the build job made (the same sha256), and uploads it as `releases/main/fade-server-<sha>`, and as `releases/main/fade-server`, which is what staging runs;
 3. deletes all but the newest ten candidates (releases are kept forever; see below);
 4. runs `fade-update` on staging through SSM, and checks `https://staging.napsack.io/api/config` reports that commit.
 
@@ -75,12 +77,12 @@ Pushes to `main` don't cancel each other while running, but GitHub keeps only on
 
 When staging looks good:
 1. Bump `version` in `server/Cargo.toml` (patch for fixes, minor for features, major only alongside an `/api/v2`), usually as part of the feature's pull request, or in a small one of its own (`server 1.4.0`). Once merged, that commit is a candidate too; it's the one you'll release, so let it reach staging.
-2. The owner (or a Claude session the owner has allowed to release) tags that commit and pushes the tag: `git tag -a server-v1.4.0 <sha> -m "..." && git push origin server-v1.4.0`. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
+2. The owner (or a Claude session the owner has allowed to release) tags that commit `server-v<version>` and pushes the tag. Release tags are protected (Admins only), and the `production` environment accepts deployments only from `server-v*` tags. Tag a commit staging has run (the `build` staging's `/api/config` shows): changes only to `ios/` or the docs skip CI and make no candidate, so a commit like that can't be released, and doesn't need to be (it changes nothing on the server).
 
 The **Release server** workflow (`.github/workflows/release-server.yml`):
 1. checks the tag matches `Cargo.toml` and that the commit is on `main`;
 2. checks that staging ran that commit: `main`'s CI passed for it and its **Release candidate on staging** job succeeded (`release.sh staging-ran`). Otherwise it stops before anything is built or changed, saying so. Since 0.43.0: 0.42.2 once reached production without staging, when `main`'s CI had failed on a flaky test and the release fell back to building it again;
-3. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte. Only if it's no longer kept (more than ten pushes ago) does it run the tests and build again;
+3. takes the candidate staging ran for that commit, `releases/main/fade-server-<sha>`, byte for byte, and checks its sha256 is the one `main`'s build job recorded in its own log. If it differs, the candidate was replaced after it was built, and the release stops. Only if it's no longer kept (more than ten pushes ago), or has no record, does it run the tests and build again, in a job with no AWS role;
 4. publishes it as `releases/tags/fade-server-<version>`, refusing if that version already exists (a fix is a new version), and as `releases/fade-server`, which is what production runs;
 5. backs up production's database (`fade-backup`, the hourly job, run now), so there's a fresh copy before any migration;
 6. runs `fade-update` on every production server through SSM, and checks `https://napsack.io/api/config` reports the commit;
@@ -89,6 +91,8 @@ The **Release server** workflow (`.github/workflows/release-server.yml`):
 If you've added required reviewers to the `production` environment in GitHub, it waits for approval first. Then check production as CLAUDE.md's Shipping section says: the new `build` in `/api/config`, the pages you changed, and a clean start in the log.
 
 The release's `build` is the commit's sha, the same as on staging: it's the same binary. The version is in `server_version`.
+
+**Why the record is a log.** The staging role can write anything under `releases/main/`; a step in the staging job that went wrong (or an action that was compromised) could replace a candidate there, and production would promote it. So nothing that builds code holds a role: the build job has none, and the jobs with a role only check, upload, and deploy. The build job's log can be written only by that job while it runs, so a release trusts the sha256 it recorded there, not anything in S3. The release workflow's three jobs work the same way: the candidate is fetched and checked by a job with production's role (reading only), a rebuild, when there is one, happens in a job without it, and the job that publishes checks the binary's sha256 once more before it has the role.
 
 ### Where builds live
 
@@ -102,23 +106,19 @@ In the artifacts bucket (`terraform output artifacts_bucket`):
 | `releases/fade-server` | What production runs | Replaced each release |
 | `releases/hotfix/fade-server-<version>-<sha>` | Hotfixes from `scripts/deploy.sh` | Forever |
 
-Nothing else belongs under `releases/`. Each candidate and release carries the commit it was built from as S3 metadata (`build`); `aws s3api head-object --bucket <bucket> --key releases/tags/fade-server-0.31.1` shows it. Every version before the pipeline (0.1.0 to 0.31.0, shipped with `deploy.sh`) was moved into `releases/tags/` the same way on 2026-10-23, its build (with `-dirty` where it was built from uncommitted code) kept in the metadata.
+Nothing else belongs under `releases/`. Each candidate and release carries the commit it was built from as S3 metadata (`build`). Every version before the pipeline (0.1.0 to 0.31.0, shipped with `deploy.sh`) was moved into `releases/tags/` the same way on 2026-10-23, its build (with `-dirty` where it was built from uncommitted code) kept in the metadata.
 
 Each GitHub job has its own AWS role ([infra/github.tf](../../infra/github.tf)), assumed through GitHub's OIDC, so no AWS keys are stored in GitHub. The staging job's role can write only `releases/main/` and reach only staging's server; the release job's role can't delete anything and reaches only production's servers.
 
 ### Hotfix without CI
 
-`scripts/deploy.sh` (the owner's; needs cargo-zigbuild and zig) builds, copies the binary over SSH, restarts, saves the build to S3, and checks the live build. On production it saves `releases/hotfix/fade-server-<version>-<sha>`; with `FADE_STACK=staging`, a candidate in `releases/main/`. A deploy from uncommitted code shows as `<sha>-dirty` everywhere. Afterwards, open a pull request for the same change, merge it, and release a tag the normal way so production runs a tagged release again.
+The owner can put a build on a server directly, without CI (`scripts/deploy.sh`), for an emergency. It's saved as `releases/hotfix/fade-server-<version>-<sha>` on production (on staging, as a candidate in `releases/main/`), and a build from uncommitted code shows as `<sha>-dirty` everywhere. A hotfix is followed by a pull request for the same change and a tagged release the normal way, so production runs a tagged release again.
 
 ### Rollback
 
-```sh
-scripts/rollback.sh                   # list releases, hotfixes, and older builds
-scripts/rollback.sh 1.3.2             # a release (releases/tags/)
-scripts/rollback.sh 1.3.2-a1b2c3d     # a hotfix (releases/hotfix/)
-```
+The owner can make any kept release or hotfix what production runs again (`scripts/rollback.sh`). Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).
 
-It makes that build what production runs and installs it. Rule 5 is what makes this safe. A rollback can't undo a migration, so a migration that broke something needs a new forward release. Once fixed, release a new version (a higher one; tags are never reused).
+The step-by-step for both is in the owner's private notes.
 
 ## Releasing the iOS app
 

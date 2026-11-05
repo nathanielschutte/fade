@@ -16,7 +16,7 @@ struct LiveChatListTests {
     func newAccount(_ name: String) async throws -> Account {
         let session = Session(store: MemoryStore())
         try await session.signUp(server: address, username: "\(name)_\(UUID().uuidString.prefix(6).lowercased())",
-                                 password: "correct horse battery", inviteCode: invite)
+                                 password: testPassword, inviteCode: invite)
         return try #require(session.account)
     }
 

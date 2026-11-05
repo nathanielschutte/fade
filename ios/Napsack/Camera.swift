@@ -670,6 +670,9 @@ struct ReadyToSend: Sendable {
     let media: Media
     let caption: String
     let y: Double
+    /// Where each chat's copy is up to: sent to a chat again (Send again after
+    /// a failure, or that chat picked again), it's the same pic, or nothing if it's there.
+    var sends = PicSends()
 
     var isVideo: Bool {
         if case .video = media { true } else { false }
@@ -690,12 +693,52 @@ struct ReadyToSend: Sendable {
         return ReadyToSend(media: media, caption: caption, y: y)
     }
 
-    /// Seals it for `chat` and sends it there, within the server's limits.
+    /// Seals it for `chat` and sends it there, within the server's limits; a
+    /// chat that has it already isn't sent it again.
     @MainActor func send(to chat: Conversation, limits: ServerConfig?) async throws {
+        let slot = sends.slot(chat.kind)
+        guard !slot.sent else { return }
         switch media {
-        case .photo(let jpeg): try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes)
-        case .video(let mp4): try await chat.sendVideo(mp4, caption: caption, y: y, maxBytes: limits?.videoMaxBytes)
+        case .photo(let jpeg): try await chat.sendPhoto(jpeg, caption: caption, y: y, maxBytes: limits?.snapMaxBytes, slot: slot)
+        case .video(let mp4): try await chat.sendVideo(mp4, caption: caption, y: y, maxBytes: limits?.videoMaxBytes, slot: slot)
         }
+        slot.sent = true
+    }
+}
+
+/// One ready capture's copies, chat by chat (PicSlot).
+@MainActor final class PicSends {
+    private var slots: [ChatRow.Kind: PicSlot] = [:]
+
+    nonisolated init() {}
+
+    func slot(_ kind: ChatRow.Kind) -> PicSlot {
+        if let kept = slots[kind] { return kept }
+        let new = PicSlot()
+        slots[kind] = new
+        return new
+    }
+}
+
+/// The capture made ready to send, as it was when Send was tapped. Tapped
+/// again with nothing changed (after a failure, or back from Send to…), it's
+/// the same one, so every chat gets the same pic with the same id; with the
+/// caption, the drawing, or the sound changed, it's a new pic.
+struct MadeReady {
+    struct Content: Equatable {
+        let strokes: [Stroke]
+        let caption: String
+        let y: Double
+        let muted: Bool
+    }
+
+    let content: Content
+    let ready: Task<ReadyToSend, any Error>
+
+    /// `kept` when it was made from this content; otherwise a new one, from `make`.
+    static func reusing(_ kept: MadeReady?, for content: Content, make: () -> Task<ReadyToSend, any Error>) -> MadeReady {
+        if let kept, kept.content == content { return kept }
+        return MadeReady(content: content, ready: make())
     }
 }
 
@@ -703,10 +746,44 @@ struct ReadyToSend: Sendable {
 /// the main actor; what they're handed was made ready once, off it.
 enum CameraSend {
     /// Straight to one chat ("Send to Ben"), from that chat's camera, which
-    /// the chat closes once it's sent.
-    case chat(String, @MainActor (ReadyToSend) async throws -> Void)
+    /// the chat closes once it's sent; with `more`, a "To Ben +" beside Send
+    /// opens Send to… with that chat picked, to add others (as on the web).
+    case chat(String, @MainActor (ReadyToSend) async throws -> Void, more: AddMore? = nil)
     /// To chats picked on the next screen, from the Camera tab; `done` says where it went.
     case pick([ChatRow], @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+
+    /// From a chat's camera, the other chats it can go to as well.
+    struct AddMore {
+        /// The chat the camera was opened from: picked to start with.
+        let here: ChatRow.Kind
+        /// The chats a pic can go to (the chat list's), asked for as they're shown.
+        let chats: @MainActor () -> [ChatRow]
+        /// Sends to one chat; throws what went wrong there.
+        let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+        /// Sent to every chat picked: says where it went.
+        let done: @MainActor (String) -> Void
+
+        /// Only while this chat is one a pic can go to (the list has it, and
+        /// nothing has stopped it since): otherwise it's Send alone, as before.
+        @MainActor var offered: Bool { chats().contains { $0.kind == here } }
+    }
+}
+
+/// The chat list's chats, for a chat's camera to send to as well (Send to…
+/// from inside a chat). Always equal to another, as OpenChatLink: it works on
+/// the chat list's own state.
+struct SendElsewhere: Equatable {
+    /// The chats a pic can go to now.
+    let chats: @MainActor () -> [ChatRow]
+    /// Sends to one of them.
+    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+
+    static func == (_: SendElsewhere, _: SendElsewhere) -> Bool { true }
+}
+
+extension EnvironmentValues {
+    /// Set by the chat list for the chats it opens.
+    @Entry var sendElsewhere: SendElsewhere? = nil
 }
 
 /// A capture's temporary files on the camera screen (a recorded video, its
@@ -768,8 +845,9 @@ struct CameraScreen: View {
     /// Why the last send didn't go, by the Send button.
     @State private var sendProblem: String?
     @State private var choosing = false
-    /// The capture being made ready for Send to…, while the chats are picked.
-    @State private var preparing: Task<ReadyToSend, any Error>?
+    /// The capture made ready when Send was last tapped (meanwhile, for Send
+    /// to…, while the chats are picked): the same pic each time until it changes.
+    @State private var made: MadeReady?
     /// A recorded video's copy without sound, made just after it's recorded;
     /// the sound button sends it instead (as on the web).
     @State private var silent: URL?
@@ -850,10 +928,18 @@ struct CameraScreen: View {
                 }
             }
             .navigationDestination(isPresented: $choosing) {
-                if case .pick(let chats, let go, let done) = send, let preparing {
-                    SendToScreen(ready: preparing, chats: chats, send: go) { words in
-                        retake()
-                        done(words)
+                if let ready = made?.ready {
+                    switch send {
+                    case .pick(let chats, let go, let done):
+                        SendToScreen(ready: ready, chats: chats, send: go) { words in
+                            retake()
+                            done(words)
+                        }
+                    case .chat(_, _, let more?):
+                        // This chat picked to start with; the chat closes the camera once it's sent.
+                        SendToScreen(ready: ready, chats: more.chats(), picked: [more.here], send: more.send, done: more.done)
+                    case .chat:
+                        EmptyView()
                     }
                 }
             }
@@ -1221,45 +1307,102 @@ struct CameraScreen: View {
                         .padding(10).background(.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 20)
                 }
-                HStack {
-                    Spacer()
-                    Button { sendTapped() } label: {
-                        HStack(spacing: 8) {
-                            if sending { ProgressView().tint(.black) }
-                            // Who it goes to stays readable at the largest text: more lines, rather than "Send…".
-                            Text(sendWords).font(.headline).lineLimit(textSize.isAccessibilitySize ? 4 : 1)
-                            Image(systemName: "paperplane.fill")
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    if let more = addMore {
+                        // Side by side while they fit; at the largest text, or a long name on a narrow phone, one above the other.
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) { whoButton(more); sendButton }
+                            VStack(alignment: .trailing, spacing: 10) { whoButton(more); sendButton }
                         }
-                        .padding(.horizontal, 18).padding(.vertical, 12)
-                        .foregroundStyle(.black)
-                        .background(.white, in: textSize.isAccessibilitySize ? AnyShape(RoundedRectangle(cornerRadius: 24, style: .continuous)) : AnyShape(Capsule()))
+                    } else {
+                        sendButton
                     }
-                    .disabled(sending)
                 }
                 .padding(.horizontal, 20).padding(.bottom, 30)
             }
         }
     }
 
+    private var sendButton: some View {
+        Button { sendTapped() } label: {
+            HStack(spacing: 8) {
+                if sending { ProgressView().tint(.black) }
+                // Who it goes to stays readable at the largest text: more lines, rather than "Send…".
+                Text(sendWords).font(.headline).lineLimit(textSize.isAccessibilitySize ? 4 : 1)
+                Image(systemName: "paperplane.fill")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 12)
+            .foregroundStyle(.black)
+            .background(.white, in: buttonShape)
+        }
+        .disabled(sending)
+    }
+
+    /// From a chat: who it's going to, and a tap adds more (Send to… with this
+    /// chat picked; app.js, `renderSendWho`). Send beside it just sends.
+    private func whoButton(_ more: CameraSend.AddMore) -> some View {
+        Button { addTapped() } label: {
+            HStack(spacing: 6) {
+                // At the largest text, as many lines as the name needs (up to 4), never cut short by the space it's offered.
+                Text("To \(sendName)").lineLimit(textSize.isAccessibilitySize ? 4 : 1)
+                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                Image(systemName: "plus")
+            }
+            .font(.headline)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .foregroundStyle(.white)
+            .background(.black.opacity(0.5), in: buttonShape)
+            .overlay(buttonShape.stroke(.white.opacity(0.6), lineWidth: 1))
+        }
+        .disabled(sending)
+        .accessibilityLabel("Sending to \(sendName). Add more people or groups")
+    }
+
+    /// A capsule, or a rounded box where the words take more than a line.
+    private var buttonShape: AnyShape {
+        textSize.isAccessibilitySize ? AnyShape(RoundedRectangle(cornerRadius: 24, style: .continuous)) : AnyShape(Capsule())
+    }
+
+    /// From a chat, the chats it can go to as well, while there are any.
+    private var addMore: CameraSend.AddMore? {
+        if case .chat(_, _, let more?) = send, more.offered { more } else { nil }
+    }
+
+    private var sendName: String {
+        if case .chat(let name, _, _) = send { name } else { "" }
+    }
+
     private var sendWords: String {
         switch send {
-        case .chat(let name, _): "Send to \(name)"
+        // Beside "To Ben +", which says who.
+        case .chat(let name, _, _): addMore == nil ? "Send to \(name)" : "Send"
         case .pick: "Send to…"
         }
     }
 
-    private func sendTapped() {
-        guard let shot else { return }
+    /// The capture made ready, off the main thread: kept from the last tap
+    /// when nothing's changed since (the same pic, MadeReady), otherwise anew.
+    private func ready() -> Task<ReadyToSend, any Error>? {
+        guard let shot else { return nil }
         endCaption()
+        let content = MadeReady.Content(strokes: strokes, caption: caption.trimmingCharacters(in: .whitespacesAndNewlines), y: captionY,
+                                        muted: muted && silent != nil)
         var media = shot
-        if case .video = shot, muted, let silent {
+        if case .video = shot, content.muted, let silent {
             media = .video(silent)  // a different file: one with no sound in it
         }
-        // Made ready once, off the main thread: straight away, or while the chats are picked.
-        let strokes = strokes, caption = caption.trimmingCharacters(in: .whitespacesAndNewlines), y = captionY
-        let ready = Task { try await ReadyToSend.prepare(media, strokes: strokes, caption: caption, y: y) }
+        let kept = MadeReady.reusing(made, for: content) {
+            Task { try await ReadyToSend.prepare(media, strokes: content.strokes, caption: content.caption, y: content.y) }
+        }
+        made = kept
+        return kept.ready
+    }
+
+    private func sendTapped() {
+        guard let ready = ready() else { return }
         switch send {
-        case .chat(_, let go):
+        case .chat(_, let go, _):
             sending = true
             sendProblem = nil
             Task {
@@ -1273,9 +1416,15 @@ struct CameraScreen: View {
                 }
             }
         case .pick:
-            preparing = ready
-            choosing = true
+            choosing = true  // made ready while the chats are picked
         }
+    }
+
+    /// "To Ben +": Send to…, with this chat picked.
+    private func addTapped() {
+        guard ready() != nil else { return }
+        sendProblem = nil
+        choosing = true
     }
 
     /// Back to the live camera; a recorded video's files go.
@@ -1290,7 +1439,7 @@ struct CameraScreen: View {
         endCaption()
         strokes = []
         penOn = false
-        preparing = nil
+        made = nil  // a new capture is a new pic
         sendProblem = nil
     }
 }
@@ -1328,21 +1477,35 @@ struct LoopingPlayer: UIViewRepresentable {
     }
 }
 
-/// Who a pic or video from the Camera tab goes to: any of your chats, as many
-/// as you like (the web app's camera tab, Send to…). Back returns to the
-/// camera, the pic still there. Chats that can't take one (a changed key, a
-/// turned-off account, Team Napsack) aren't offered.
+/// Who a pic or video goes to: any of your chats, as many as you like (the
+/// web app's Send to…), from the Camera tab, or from a chat's camera ("To Ben
+/// +") with that chat picked to start with. Back returns to the camera, the
+/// pic still there. Chats that can't take one (a changed key, a turned-off
+/// account, Team Napsack) aren't offered.
 struct SendToScreen: View {
     /// The capture, being made ready meanwhile: once, for every chat picked.
     let ready: Task<ReadyToSend, any Error>
     let chats: [ChatRow]
+    /// Picked as it opens: listed even when hidden, so it can be unpicked.
+    let preselected: [ChatRow.Kind]
     /// Sends to one chat; throws what went wrong there.
     let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
     let done: (String) -> Void
-    @State private var picked: [ChatRow.Kind] = []
+    @Environment(\.dynamicTypeSize) private var textSize
+    @State private var picked: [ChatRow.Kind]
     @State private var search = ""
     @State private var sending = false
     @State private var problem: String?
+
+    init(ready: Task<ReadyToSend, any Error>, chats: [ChatRow], picked: [ChatRow.Kind] = [],
+         send: @escaping @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: @escaping (String) -> Void) {
+        self.ready = ready
+        self.chats = chats
+        self.preselected = picked
+        self.send = send
+        self.done = done
+        _picked = State(initialValue: picked)
+    }
 
     /// Chats sent to at once: the uploads overlap, without crowding a phone's connection.
     static let atOnce = 3
@@ -1363,7 +1526,7 @@ struct SendToScreen: View {
                                 Text(handle).font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        .lineLimit(1)
+                        .lineLimit(textSize.isAccessibilitySize ? 3 : 1)  // a long name stays readable at the largest text
                         Spacer()
                         Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
@@ -1376,6 +1539,8 @@ struct SendToScreen: View {
         .searchable(text: $search, prompt: "Search")
         .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
         .navigationBarTitleDisplayMode(.inline)
+        // Not back to the camera while it goes: Send there would race this send to the same chat.
+        .navigationBarBackButtonHidden(sending)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
@@ -1383,9 +1548,14 @@ struct SendToScreen: View {
         }
     }
 
-    private var shown: [ChatRow] {
+    private var shown: [ChatRow] { Self.shown(chats, search: search, keeping: preselected) }
+
+    /// The chats listed: those that match what's searched, or with nothing
+    /// searched, all but the hidden ones (and the chat it started with, even hidden).
+    static func shown(_ chats: [ChatRow], search: String, keeping: [ChatRow.Kind] = []) -> [ChatRow] {
         let words = search.trimmingCharacters(in: .whitespaces)
-        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
+        return words.isEmpty ? chats.filter { !$0.hidden || keeping.contains($0.kind) }
+            : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
     }
 
     /// A few chats at a time, each sealed its own copy of the same bytes; what

@@ -11,6 +11,10 @@
 //! the backups bucket (production only) lets a restored backup be wiped again
 //! at start: backups last 30 days, so after that no copy remains anywhere.
 //!
+//! Admins can't delete their account (Nate, 2026-11-05): an Admin's id and
+//! username stay theirs for good, so nobody can ever take the name and pose
+//! as an Admin. Someone taken off the admin list is a User again, and can.
+//!
 //! This is the only file allowed to `DELETE` (db::tests::code_never_deletes_rows).
 
 use axum::{extract::State, Json};
@@ -81,6 +85,25 @@ pub struct DeleteRequest {
     username: String,
 }
 
+/// What an Admin is told on asking to delete their account.
+pub const ADMIN_REFUSAL: &str = "Admins can't delete their account: an Admin's username stays theirs for good, so no one can ever take it and pose as them.";
+
+/// Admins (listed in settings by id, by their name, or by a name they had:
+/// roles.md) can't delete their account, so their id and username are never
+/// freed. 403, because no password or name typed would change the answer.
+pub async fn refuse_admin(
+    db: &SqlitePool,
+    admins: &crate::roles::Admins,
+    user: i64,
+    username: &str,
+) -> AppResult<()> {
+    if crate::usernames::is_listed_admin(db, admins, user, username).await? {
+        tracing::info!(user_id = user, "account deletion refused: an admin");
+        return Err(AppError::Forbidden(ADMIN_REFUSAL.into()));
+    }
+    Ok(())
+}
+
 /// `POST /api/me/delete`: the password and the username typed again, then
 /// everything of the account goes, at once. Every session ends.
 pub async fn delete(
@@ -91,6 +114,10 @@ pub async fn delete(
     if crate::team::is_system(&state.db, me.id).await? {
         return Err(AppError::bad("This account can't be deleted."));
     }
+    // Before the password: the answer is the same whatever's typed, so it
+    // costs no slow password check and no failed try against the sign-in
+    // limit (the role is no secret from the account itself: /api/me says it).
+    refuse_admin(&state.db, &state.admins, me.id, &me.username).await?;
     crate::account::require_password(&state, &me, &req.auth_key).await?;
     if !req.username.trim().eq_ignore_ascii_case(&me.username) {
         return Err(AppError::bad(
@@ -729,6 +756,31 @@ mod tests {
             .await
             .unwrap();
         assert!(!held(&db2, "ana").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn admins_cant_delete_their_account_users_can() {
+        let db = temp_db().await;
+        sqlx::raw_sql(SEED).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO past_usernames (user_id, username, until) VALUES (3, 'kat', 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        // Root by id, Ben by name, Cat by a name she had.
+        let admins = crate::roles::Admins::new(crate::roles::parse_list("id:4, BEN, kat"), None);
+        for (id, name) in [(4, "root"), (2, "ben"), (3, "cat")] {
+            match refuse_admin(&db, &admins, id, name).await {
+                Err(AppError::Forbidden(m)) => assert_eq!(m, ADMIN_REFUSAL),
+                other => panic!("{name} is an Admin: {other:?}"),
+            }
+        }
+        assert!(
+            refuse_admin(&db, &admins, 1, "ana").await.is_ok(),
+            "a User can"
+        );
+        // Taken off the list later: a User again, who can.
+        let admins = crate::roles::Admins::new(crate::roles::parse_list("id:4"), None);
+        assert!(refuse_admin(&db, &admins, 2, "ben").await.is_ok());
     }
 
     #[tokio::test]

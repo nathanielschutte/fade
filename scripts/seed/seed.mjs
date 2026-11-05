@@ -9,7 +9,8 @@
 //   NAPSACK_URL=http://127.0.0.1:8080 NAPSACK_INVITE=letmein node scripts/seed/seed.mjs
 //   node scripts/seed/seed.mjs --url http://127.0.0.1:8080 --tag x7   (usernames end in _x7)
 //
-// Everyone's password is the test password, PASSWORD in tests/e2e/common.py.
+// Everyone's password is the test password: NAPSACK_PASSWORD, or for this
+// machine's server the public one (LOCAL_PASSWORD in tests/e2e/common.py).
 // The accounts must not exist yet (it stops at the first that does), except
 // the admin's, which it signs in to if a test already made it.
 
@@ -26,9 +27,12 @@ const arg = (name) => {
 const BASE = (arg("--url") || process.env.NAPSACK_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
 const INVITE = process.env.NAPSACK_INVITE || "";
 const TAG = arg("--tag");
-const PASSWORD = readFileSync(new URL("../../tests/e2e/common.py", import.meta.url), "utf8")
-  .match(/^PASSWORD = "(.+)"$/m)?.[1];
-if (!PASSWORD) throw new Error("no PASSWORD in tests/e2e/common.py");
+// The tests' password: NAPSACK_PASSWORD (staging's own, which reset-staging.sh
+// sets), or else a local server's public one from common.py.
+const LOCAL_PASSWORD = readFileSync(new URL("../../tests/e2e/common.py", import.meta.url), "utf8")
+  .match(/^LOCAL_PASSWORD = "(.+)"$/m)?.[1];
+if (!LOCAL_PASSWORD) throw new Error("no LOCAL_PASSWORD in tests/e2e/common.py");
+const PASSWORD = process.env.NAPSACK_PASSWORD || LOCAL_PASSWORD;
 
 const counts = { people: 0, friendships: 0, texts: 0, reactions: 0, edits: 0, groups: 0, group_messages: 0, group_reactions: 0, pics: 0 };
 
@@ -64,6 +68,10 @@ async function checkServer() {
   // By its address before sending it anything, then by what it says it is.
   if (!local && !staging) {
     console.error(`refusing: ${BASE} is neither this machine nor staging`);
+    process.exit(1);
+  }
+  if (!local && PASSWORD === LOCAL_PASSWORD) {
+    console.error(`refusing: ${BASE} isn't this machine, and the password is the public one. Set NAPSACK_PASSWORD.`);
     process.exit(1);
   }
   const config = await api("/config");
@@ -256,7 +264,9 @@ async function main() {
   console.log(`done in ${secs}s: ${Object.entries(counts).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(", ")}`);
   console.log(`  pending request: ${people[PENDING[0]].username} -> ${people[PENDING[1]].username}`);
   console.log(`  sign in as any of: ${Object.values(people).map((p) => p.username).join(", ")}`);
-  console.log(`  password: ${PASSWORD} (the test password, tests/e2e/common.py)`);
+  console.log(PASSWORD === LOCAL_PASSWORD
+    ? `  password: ${PASSWORD} (the test password, tests/e2e/common.py)`
+    : "  password: NAPSACK_PASSWORD (staging's test password, from its tfvars)");
 }
 
 main().catch((err) => {

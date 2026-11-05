@@ -72,7 +72,7 @@ pub async fn clean(data: bytes::Bytes, max_side: u32) -> Result<Vec<u8>, AppErro
     tokio::task::spawn_blocking(move || reencode(&data, max_side))
         .await?
         .map_err(|reason| {
-            tracing::info!(%reason, "image rejected");
+            tracing::info!(?reason, "image rejected");
             AppError::bad("That doesn't look like a photo we can use. Try a different one.")
         })
 }

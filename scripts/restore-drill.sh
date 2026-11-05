@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# Owner only (napsack's Admin). Needs the owner's AWS credentials, access to
+# the Terraform state, and an SSH key on the servers, set up privately; none
+# of it is in this repository, and without it this stops at its first step.
+#
 # Proves the newest database backup restores: downloads it, checks its
 # integrity, and compares its row counts with production. Read-only: it never
 # touches production data. Run it after backup changes and now and then
-# (docs/operations/backups.md keeps a log). Needs: AWS CLI, terraform, python3, ssh.
+# (docs/operations/backups.md; the owner keeps a log). Needs: AWS CLI, terraform, python3, ssh.
 #
 #   scripts/restore-drill.sh            newest backup
 #   scripts/restore-drill.sh <s3 key>   a specific one, e.g. db/2026/10/20/fade-...db.gz

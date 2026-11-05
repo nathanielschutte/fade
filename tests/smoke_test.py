@@ -6,7 +6,7 @@ Encryption happens in the client (shared/crypto/crypto.js), so this test sends
 correctly shaped opaque payloads and checks the server stores and returns
 them byte-for-byte without needing to understand them.
 """
-import asyncio, base64, json, os, sqlite3, struct, sys, time, urllib.parse, uuid, zlib
+import asyncio, base64, hashlib, json, os, sqlite3, struct, sys, time, urllib.parse, uuid, zlib
 import requests, websockets
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAPSACK_URL", "http://127.0.0.1:8080")
@@ -16,6 +16,18 @@ DB = os.environ.get("NAPSACK_DB") or None
 # local one. Skips what needs the local machine: the push receiver.
 REMOTE = os.environ.get("NAPSACK_REMOTE") == "1"
 INVITE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("NAPSACK_INVITE")
+# This machine's server, or staging (scripts/test-staging.sh sets NAPSACK_REMOTE=1).
+# Never production or anything else: it makes accounts, and this runs before any
+# request is sent. (tests/e2e/common.py checks the same.)
+_HOST = urllib.parse.urlparse(BASE).hostname or ""
+LOCAL = _HOST in ("127.0.0.1", "localhost", "::1")
+if not LOCAL and not (REMOTE and _HOST.startswith("staging.")):
+    sys.exit(f"refusing: {BASE} is neither this machine nor staging (NAPSACK_REMOTE=1 and a staging.* host)")
+# smoke_admin's key (SMOKE_ADMIN_KEY below) is public for a local server only.
+ADMIN_SECRET = os.environ.get("NAPSACK_ADMIN_KEY") or ""
+if not LOCAL and not ADMIN_SECRET:
+    sys.exit(f"refusing: {BASE} isn't this machine, and smoke_admin's key is the public one. "
+             "Set NAPSACK_ADMIN_KEY (scripts/test-staging.sh does).")
 
 b64 = lambda raw: base64.b64encode(raw).decode()
 AUTH_KEY = b64(os.urandom(32))
@@ -293,8 +305,15 @@ def check_people(tag, a, a_tok, b, b_tok):
     print("  people: names, private nicknames, pictures, birthdays; friends only")
 
 
-# Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in.
-SMOKE_ADMIN, SMOKE_ADMIN_KEY = "smoke_admin", base64.b64encode(b"smoke admin key, not a secret..").decode()
+# Listed in FADE_ADMINS by scripts/test.sh. A fixed key, so a rerun can sign back in:
+# public for a local server, and staging's own from NAPSACK_ADMIN_KEY (its tfvars, any
+# long random string; checked at the top), so nobody else can be staging's smoke_admin.
+SMOKE_ADMIN = "smoke_admin"
+SMOKE_ADMIN_KEY = b64(hashlib.sha256(ADMIN_SECRET.encode()).digest()) if ADMIN_SECRET \
+    else b64(b"smoke admin key, not a secret..")
+# Also listed locally: a second Admin, for what one Admin can't do to another,
+# and a name nobody signs up as, for what a listed name that's free allows.
+SMOKE_ADMIN2, SMOKE_UNCLAIMED = "smoke_admin2", "smoke_unclaimed"
 
 
 def real_public_key():
@@ -305,11 +324,11 @@ def real_public_key():
     return b64(key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
 
 
-def admin_token():
+def admin_token(name=SMOKE_ADMIN):
     # A real public key, so Team Napsack can write to this admin (check_team).
-    r = register(SMOKE_ADMIN, auth_key=SMOKE_ADMIN_KEY, public_key=real_public_key())
+    r = register(name, auth_key=SMOKE_ADMIN_KEY, public_key=real_public_key())
     if r.status_code == 409:
-        r = call("POST", "/auth/login", json={"username": SMOKE_ADMIN, "auth_key": SMOKE_ADMIN_KEY})
+        r = call("POST", "/auth/login", json={"username": name, "auth_key": SMOKE_ADMIN_KEY})
     return ok(r).json()["token"]
 
 
@@ -573,6 +592,19 @@ async def first_of(ws, kinds, timeout=3.0):
             return ev
 
 
+async def closes(ws, timeout=3.0):
+    """The server closes `ws` within `timeout` (events already sent are skipped)."""
+    end = time.time() + timeout
+    try:
+        while (left := end - time.time()) > 0:
+            await asyncio.wait_for(ws.recv(), left)
+    except websockets.ConnectionClosed:
+        return
+    except asyncio.TimeoutError:
+        pass
+    raise AssertionError("the socket stayed open")
+
+
 async def no_event(ws, kind, wait=0.8):
     try:
         await next_event(ws, kind, wait)
@@ -673,7 +705,9 @@ async def check_live(tag):
 
     # Signing out ends that browser's notifications.
     ok(call("POST", "/auth/logout", b_tok))
+    await closes(wb)                                                           # its socket goes with the session
     b_tok = ok(call("POST", "/auth/login", json={"username": b["username"], "auth_key": AUTH_KEY})).json()["token"]
+    wb = await socket(b_tok)
     before = rx.count(name)
     ok(call("POST", f"/chats/{b['id']}/messages", a_tok, json={"ciphertext": b64(os.urandom(60)), "format": 2}))
     await asyncio.sleep(1.0)
@@ -774,7 +808,9 @@ async def check_live(tag):
     other = os.urandom(32).hex()
     ok(call("POST", "/push/apns", b_tok, json={"token": other, "environment": rx.origin}))
     ok(call("POST", "/auth/logout", b_tok))
+    await closes(wb)
     b_tok = ok(call("POST", "/auth/login", json={"username": b["username"], "auth_key": AUTH_KEY})).json()["token"]
+    wb = await socket(b_tok)
     if DB:
         await asyncio.sleep(0.5)
         reasons = dict(sqlite3.connect(DB).execute(
@@ -1164,6 +1200,20 @@ def check_roles(tag):
     assert ok(call("GET", "/me", P)).json()["role"] == "user"
     ok(call("POST", f"/admin/roles/{uid['power']}/powerxtreme", adm), 400)
     ok(call("POST", "/admin/roles/reload", adm), 400)                             # no settings parameter here
+    # Admins are off limits to Admins: no reset code (a way in), no turning
+    # off, no signing out everywhere. Not even a reset code for yourself.
+    me_admin = ok(call("GET", "/me", adm)).json()
+    r = ok(call("POST", f"/admin/users/{me_admin['id']}/reset-code", adm), 403)
+    assert "your own account" in r.json()["error"], r.text
+    adm2 = admin_token(SMOKE_ADMIN2)
+    other = ok(call("GET", "/me", adm2)).json()
+    if other["role"] == "admin":                                                  # listed here (not on staging)
+        for path in ("reset-code", "deactivate", "sign-out"):
+            r = ok(call("POST", f"/admin/users/{other['id']}/{path}", adm, json={}), 403)
+            assert "Admin's" in r.json()["error"], r.text
+        ok(call("GET", "/me", adm2))                                              # still signed in
+        acts = [a["action"] for a in ok(call("GET", f"/admin/users/{other['id']}", adm)).json()["actions"]]
+        assert acts == [], acts
     # Incidents: Admins only. Locally there's no monitor; ids are checked before anything else.
     inc = ok(call("GET", "/admin/incidents", adm)).json()
     if not REMOTE:
@@ -1223,7 +1273,18 @@ def check_deletion(tag):
     assert ana["id"] not in [u["id"] for u in ok(call("GET", "/admin/users", adm)).json()["users"]]
     ok(call("GET", f"/admin/users/{ana['id']}", adm), 404)
     ok(register(ana["username"]), 400)
-    print("  deletion: password and username typed again; everything of hers gone, friends and groups keep theirs, name held")
+
+    # Admins can't delete their account, even with everything right: their
+    # name stays theirs for good. Refused before the password is checked.
+    me_adm = ok(call("GET", "/me", adm)).json()
+    friends_before = ok(call("GET", "/friends", adm)).json()
+    for key in (SMOKE_ADMIN_KEY, b64(os.urandom(32))):
+        r = ok(call("POST", "/me/delete", adm, json={"auth_key": key, "username": SMOKE_ADMIN}), 403)
+        assert "Admins can't delete their account" in r.json()["error"], r.json()
+    assert ok(call("GET", "/me", adm)).json() == me_adm, "the admin is all still there"
+    assert ok(call("GET", "/friends", adm)).json() == friends_before
+    ok(call("POST", "/auth/login", json={"username": SMOKE_ADMIN, "auth_key": SMOKE_ADMIN_KEY}))
+    print("  deletion: password and username typed again; everything of hers gone, friends and groups keep theirs, name held; Admins can't")
 
 def check_admin_users(tag):
     """System → Users (admin_users.rs): turning an account off keeps all of it,
@@ -1979,7 +2040,45 @@ def check_rate_limits(tag):
     codes = [call("POST", "/auth/login", headers=remote, json={"username": f"nobody{i}_{tag}", "auth_key": AUTH_KEY}).status_code
              for i in range(31)]
     assert codes[:30] == [400] * 30 and codes[30] == 429, codes
-    print("  rate limits: 10 failed sign-ins lock the account; 30 attempts per address")
+
+    # A name listed as an Admin that nobody has: nobody signs up as it, or
+    # renames into it, from outside (H3). Locally, tests make their Admins so.
+    outside = {"X-Forwarded-For": f"198.51.100.{int(tag[2:4], 16) % 250 + 1}"}
+    r = ok(call("POST", "/auth/register", headers=outside, json={
+        "username": SMOKE_UNCLAIMED.upper(), "auth_key": AUTH_KEY, "invite_code": INVITE,
+        "public_key": b64(os.urandom(91)), "wrapped_private_key": b64(os.urandom(166))}), 400)
+    assert r.json()["error"] == "That username is taken.", r.text
+    renamer = ok(register(f"rnl_{tag}")).json()["token"]
+    r = ok(call("POST", "/me/username", renamer, json={"username": SMOKE_UNCLAIMED, "auth_key": AUTH_KEY,
+              "new_auth_key": b64(os.urandom(32)), "new_wrapped_private_key": b64(os.urandom(166))}), 400)
+    assert r.json()["error"] == "That username is taken.", r.text
+    print("  rate limits: 10 failed sign-ins lock the account; 30 attempts per address; no free admin names")
+
+
+def check_attempts(tag):
+    """Attempts are counted before the slow password check, so many at once
+    can't all be tried (M1); a username that can't exist is refused before
+    it's counted, logged, or looked up (H2)."""
+    from concurrent.futures import ThreadPoolExecutor
+    racer = f"race_{tag}"
+    ok(register(racer))
+    wrong = lambda _: call("POST", "/auth/login", json={"username": racer, "auth_key": b64(os.urandom(32))}).status_code
+    with ThreadPoolExecutor(25) as pool:
+        codes = list(pool.map(wrong, range(25)))
+    assert codes.count(400) == 10 and codes.count(429) == 15, codes
+
+    huge = "huge" + "x" * 10_000
+    for path, body in (("/auth/login", {"username": huge, "auth_key": AUTH_KEY}),
+                       ("/auth/recover/start", {"username": huge, "recovery_auth_key": AUTH_KEY}),
+                       ("/auth/reset", {"username": huge, "code": "x", "new_auth_key": AUTH_KEY,
+                                        "public_key": b64(os.urandom(91)), "wrapped_private_key": b64(os.urandom(166))})):
+        ok(call("POST", path, json=body), 400)
+    ok(register(huge), 400)
+    adm = admin_token()
+    ok(call("POST", "/friends/requests", adm, json={"username": huge}), 404)
+    found = ok(call("GET", f"/admin/logs?q={'x' * 200}&limit=5", adm)).json()["entries"]
+    assert found == [], "a username that can't exist isn't logged"
+    print("  attempts: counted before the check (25 at once, 10 tried); impossible usernames refused first, not logged")
 
 def ok(r, code=200):
     assert r.status_code == code, f"{r.request.method} {r.url} -> {r.status_code} {r.text}"
@@ -2173,8 +2272,12 @@ async def main():
     check_group_e2e(tag, a, a_tok, b, b_tok)
     check_streaks(tag, a, a_tok, b, b_tok)
 
-    # Signing out revokes the session; it doesn't come back.
+    # Signing out revokes the session; it doesn't come back. Its live socket
+    # closes too, as when any other session ends.
     ok(call("POST", "/auth/logout", a_tok))
+    done, _ = await asyncio.wait([tasks[1]], timeout=3)
+    assert done, "signing out closes that session's socket"
+    tasks[1].exception()                                                       # its close, retrieved
     ok(call("GET", "/me", a_tok), 401)
     ok(call("POST", "/auth/logout", a_tok))                                    # twice is harmless
     ok(call("GET", "/me", a_tok), 401)
@@ -2204,6 +2307,7 @@ async def main():
     check_metrics(b_tok)
     check_guard(tag)
     check_rate_limits(tag)
+    check_attempts(tag)
     check_sensitive_paths()
     check_nothing_sensitive_served()
     for t in tasks: t.cancel()

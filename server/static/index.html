@@ -436,8 +436,10 @@
     <p class="field-hint sign-out-note" id="profile-sign-out-note" hidden>Signing out leaves nothing of your account in this browser. Your chats are here again when you sign back in.</p>
     <section class="profile-delete">
       <h3>Delete account</h3>
-      <p class="field-hint">Deletes everything of yours from napsack, for good.</p>
-      <div class="picture-row">
+      <p class="field-hint" id="delete-hint">Deletes everything of yours from napsack, for good.</p>
+      <!-- Admins can't (deletion.rs): renderAccountBar shows this instead of the button -->
+      <p class="field-hint" id="delete-admin-note" hidden>You're an Admin, so your account can't be deleted: your username stays yours for good, so no one can ever take it and pose as you.</p>
+      <div class="picture-row" id="delete-row">
         <button type="button" class="button danger" id="delete-account">Delete account</button>
       </div>
     </section>
@@ -706,6 +708,23 @@
   </header>
   <p class="sheet-text small">Every version of this text, oldest first.</p>
   <ol class="edits-list" id="edits-list"></ol>
+</dialog>
+
+<!-- Who reacted (F21): a tap on a reaction under a message -->
+<dialog id="reactions-dialog" class="sheet reactions-sheet" aria-labelledby="reactions-title">
+  <header class="sheet-head">
+    <h2 id="reactions-title">Reactions</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="reaction-tabs" id="reaction-tabs" role="group" aria-label="Which reactions to show"></div>
+  <ul class="people" id="reaction-people"></ul>
+  <p class="sheet-text" id="reactions-none" hidden>No reactions on this message now.</p>
+  <div class="reaction-foot">
+    <p class="sheet-text small" id="reactions-privacy"></p>
+    <button type="button" class="button" id="reaction-mine" hidden></button>
+  </div>
 </dialog>
 
 <!-- React with any emoji (X49): + by the quick row of reactions -->

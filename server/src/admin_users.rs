@@ -197,6 +197,58 @@ async fn person(db: &SqlitePool, id: i64) -> AppResult<UserPublic> {
     Ok(user)
 }
 
+/// What an Admin hears when the account they'd act on is an Admin's.
+pub const ADMINS_ARE_OFF_LIMITS: &str =
+    "That account is an Admin's: Admins can't be reset, turned off, or signed out by another Admin.";
+
+/// Refuses (403) an action an Admin takes on another account when that
+/// account is an Admin's too: a reset code (a way in, handed to whoever asks),
+/// turning it off, or signing it out everywhere. Admins come from settings
+/// (roles.rs); to act on one, take them off the list first. Their own
+/// account counts too, for the reset code: a stolen session mustn't be able
+/// to mint one.
+pub(crate) async fn refuse_if_admin(
+    state: &SharedState,
+    me: &UserPublic,
+    target_id: i64,
+    target_username: &str,
+    action: &str,
+) -> AppResult<()> {
+    refuse_if_listed(
+        &state.db,
+        &state.admins,
+        me.id,
+        target_id,
+        target_username,
+        action,
+    )
+    .await
+}
+
+async fn refuse_if_listed(
+    db: &SqlitePool,
+    admins: &crate::roles::Admins,
+    admin_id: i64,
+    user_id: i64,
+    username: &str,
+    action: &str,
+) -> AppResult<()> {
+    if !crate::usernames::is_listed_admin(db, admins, user_id, username).await? {
+        return Ok(());
+    }
+    tracing::warn!(
+        admin_id,
+        user_id,
+        action,
+        "admin action refused: the account is an admin's"
+    );
+    Err(AppError::Forbidden(if admin_id == user_id {
+        "Not for your own account: change your password from your profile instead.".into()
+    } else {
+        ADMINS_ARE_OFF_LIMITS.into()
+    }))
+}
+
 /// Friends see the account turned off or on in their chat list at once, and
 /// on their iPhones' icon (a turned-off account's chat doesn't count).
 pub(crate) async fn tell_friends(state: &SharedState, user: i64) -> sqlx::Result<()> {
@@ -390,11 +442,7 @@ pub async fn deactivate(
     if user.id == me.id {
         return Err(AppError::bad("You can't turn off your own account."));
     }
-    if crate::usernames::is_listed_admin(&state.db, &state.admins, user.id, &user.username).await? {
-        return Err(AppError::bad(
-            "Admins come from settings: remove them from the admin list first.",
-        ));
-    }
+    refuse_if_admin(&state, &me, user.id, &user.username, "deactivate").await?;
     let reason = req
         .reason
         .map(|r| r.trim().to_owned())
@@ -481,12 +529,13 @@ pub async fn sign_out(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     crate::roles::require(&state, &me, Role::Admin).await?;
-    person(&state.db, id).await?;
+    let user = person(&state.db, id).await?;
     if id == me.id {
         return Err(AppError::bad(
             "To sign yourself out elsewhere, use your profile.",
         ));
     }
+    refuse_if_admin(&state, &me, user.id, &user.username, "sign_out").await?;
     let ended = crate::account::end_sessions(&state, id, None).await?;
     record(
         &state.db,
@@ -560,6 +609,42 @@ pub async fn actions(
 mod tests {
     use super::*;
     use crate::db::tests::temp_db;
+
+    /// An Admin can't reset, turn off, or sign out another Admin (listed by
+    /// id, by name, or by a name they had), nor mint a reset code for
+    /// themselves; anyone else, yes.
+    #[tokio::test]
+    async fn admins_are_off_limits_to_other_admins() {
+        let db = temp_db().await;
+        for (id, name) in [(1, "admin_a"), (2, "admin_b"), (3, "renamed"), (4, "ana")] {
+            sqlx::query("INSERT INTO users (id, username, auth_hash, public_key, wrapped_private_key, created_at) VALUES (?, ?, 'h', 'k', 'w', 0)")
+                .bind(id).bind(name).execute(&db).await.unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO past_usernames (user_id, username, until) VALUES (3, 'admin_c', 5)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let admins = crate::roles::Admins::new(
+            vec!["id:1".into(), "admin_b".into(), "admin_c".into()],
+            None,
+        );
+        for (target, name) in [(2, "admin_b"), (3, "renamed")] {
+            let refused = refuse_if_listed(&db, &admins, 1, target, name, "reset_code").await;
+            assert!(
+                matches!(refused, Err(AppError::Forbidden(m)) if m == ADMINS_ARE_OFF_LIMITS),
+                "{name}"
+            );
+        }
+        assert!(matches!(
+            refuse_if_listed(&db, &admins, 1, 1, "admin_a", "reset_code").await,
+            Err(AppError::Forbidden(_))
+        ));
+        assert!(refuse_if_listed(&db, &admins, 1, 4, "ana", "reset_code")
+            .await
+            .is_ok());
+    }
 
     #[tokio::test]
     async fn turning_off_and_on_keeps_history() {

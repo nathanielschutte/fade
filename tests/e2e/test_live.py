@@ -84,13 +84,15 @@ async def main():
         await expect(ana.locator(".msg", has_text="a reply").locator(".quote")).to_have_text(f"{BEN}: first message", timeout=10000)
         await expect(ben.locator(".msg", has_text="a reply").locator(".quote")).to_have_text("You: first message")
 
-        # React: Ben reacts to the reply; Ana sees it live; tapping it again takes it back.
+        # React: Ben reacts to the reply; Ana sees it live; the same again takes it back
+        # (from the message's row; a tap on the reaction shows who reacted, test_who_reacted.py).
         await ben.locator(".msg", has_text="a reply").click()
         await ben.locator(".msg-actions button[aria-label='React \U0001F602']").click()
         await expect(ana.locator(".reaction", has_text="\U0001F602")).to_be_visible(timeout=10000)
         await expect(ben.locator(".reaction.is-mine", has_text="\U0001F602")).to_be_visible()
         await shot(ana, "reaction", full_page=False)
-        await ben.locator(".reaction", has_text="\U0001F602").click()
+        await ben.locator(".msg", has_text="a reply").click()
+        await ben.locator(".msg-actions button[aria-label='Take back your \U0001F602']").click()
         await expect(ana.locator(".reaction")).to_have_count(0, timeout=10000)
         print("direct chat: replies and encrypted reactions, live")
 

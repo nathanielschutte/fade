@@ -38,3 +38,16 @@ ios/Config/AppStoreConnect.env
 
 # Keys kept on this machine (APNs .p8 files and the like); never committed.
 /keys/
+*.p8
+*.p12
+*.jks
+*.keystore
+keystore.properties
+.env
+
+# Saved Terraform plans anywhere (they hold secrets in plain text).
+*.tfplan
+
+# The owner's private notes and Claude settings, kept beside the repository.
+/offline/
+CLAUDE.local.md

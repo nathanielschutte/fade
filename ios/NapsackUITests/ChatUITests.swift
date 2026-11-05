@@ -205,11 +205,54 @@ import XCTest
         try require(app.keyboards.firstMatch.waitForExistence(timeout: 5), "a keyboard came up for any emoji")
         shot("chat-react-any-keyboard")
         app.typeText("🦩")
-        let reacted = app.buttons["🦩 1, including you. Tap to take yours back"]
+        let reacted = app.buttons["🦩 1, including you"]
         try require(reacted.waitForExistence(timeout: 10), "the flamingo shows under the message")
         try require(!app.buttons["React with another emoji"].exists, "the menu closed")
-        reacted.tap()  // the same again takes it back
-        try require(waitUntil(10) { !reacted.exists }, "taken back")
+        // Taken back from who reacted (a tap on it shows them, F21).
+        reacted.tap()
+        let takeBack = app.buttons["Take back your 🦩"]
+        try require(takeBack.waitForExistence(timeout: 5), "who reacted, with a way to take mine back")
+        takeBack.tap()
+        try require(app.staticTexts["No reactions now"].waitForExistence(timeout: 10), "taken back, and it says so")
+        app.buttons["Done"].tap()
+        try require(waitUntil(10) { !reacted.exists }, "gone from under the message")
+    }
+
+    /// A tap on a reaction under a message shows who reacted (F21): with that
+    /// emoji, and All. The friend's reaction arriving while it's open shows in
+    /// it, as does taking mine back from it.
+    func testSeeingWhoReacted() async throws {
+        var chat = try XCTUnwrap(Self.chat)
+        chat = try await friendSends(chat)
+        let id = try XCTUnwrap(chat.ids[chat.newest], "the newest's id")
+        try openChat(chat)
+        let message = messages.staticTexts[chat.newest]
+        try require(message.waitForExistence(timeout: 5), "the newest message showed")
+        message.press(forDuration: 0.6)
+        let thumbs = app.buttons["React 👍"]
+        try require(thumbs.waitForExistence(timeout: 3), "the menu's quick row")
+        thumbs.tap()
+        let mine = app.buttons["👍 1, including you"]
+        try require(mine.waitForExistence(timeout: 10), "my 👍 shows under the message")
+
+        mine.tap()
+        try require(app.navigationBars["Reactions"].waitForExistence(timeout: 5), "who reacted opened")
+        try require(app.buttons["👍, 1"].exists && app.buttons["All reactions, 1"].exists, "All, and the 👍 with one")
+        try require(app.staticTexts["You"].exists, "me, as You")
+        // The friend reacts 👍 too, while it's open.
+        try await chat.server.react("👍", to: id, from: chat.friend, to: chat.me)
+        try require(app.buttons["👍, 2"].waitForExistence(timeout: 10), "their 👍 joined, live")
+        try require(app.staticTexts[chat.friend.username].exists, "them, by the name the app calls them")
+        shot("who-reacted-sheet")
+        // Mine back, from there: they stay, I go.
+        app.buttons["Take back your 👍"].tap()
+        try require(app.buttons["👍, 1"].waitForExistence(timeout: 10), "one left")
+        try require(!app.staticTexts["You"].exists, "not me any more")
+        try require(app.buttons["React 👍"].exists, "and I can react with it again")
+        app.buttons["Done"].tap()
+        try require(app.buttons["👍 1"].waitForExistence(timeout: 5), "theirs under the message")
+        try await chat.server.react(nil, to: id, from: chat.friend, to: chat.me)  // as it was, for the tests after
+        try require(waitUntil(10) { !self.app.buttons["👍 1"].exists }, "theirs taken back")
     }
 
     // ---------- lists of people ----------
@@ -362,7 +405,7 @@ import XCTest
         var chat = chat
         chat.sent += 1
         chat.newest = "Message \(chat.sent)."
-        try await chat.server.send(chat.newest, from: chat.friend, to: chat.me)
+        chat.ids[chat.newest] = try await chat.server.send(chat.newest, from: chat.friend, to: chat.me)
         Self.chat = chat
         return chat
     }

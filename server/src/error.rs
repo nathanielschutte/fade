@@ -10,6 +10,10 @@ use serde_json::json;
 pub enum AppError {
     BadRequest(String),
     Unauthorized,
+    /// Signed in, and the request is understood, but this account may never
+    /// do it, or not to that account: an Admin deleting their own account
+    /// (deletion.rs), or acting on another Admin (admin_users.rs).
+    Forbidden(String),
     NotFound(String),
     Conflict(String),
     /// The thing existed but is gone for good (an opened or expired snap).
@@ -39,6 +43,7 @@ impl IntoResponse for AppError {
         let (status, msg) = match self {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Sign in to continue.".into()),
+            Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::Gone(m) => (StatusCode::GONE, m),
@@ -56,7 +61,7 @@ impl IntoResponse for AppError {
         };
         if status.is_client_error() && status != StatusCode::UNAUTHORIZED {
             // The message is the user-facing text, so it's safe to log.
-            tracing::debug!(status = status.as_u16(), reason = %msg, "request rejected");
+            tracing::debug!(status = status.as_u16(), reason = ?msg, "request rejected");
         }
         (status, Json(json!({ "error": msg }))).into_response()
     }

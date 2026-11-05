@@ -7,7 +7,7 @@ Settings come from the environment; see common.py."""
 import asyncio, os, time, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key
+from common import BASE, INVITE, PASSWORD, launch, save_recovery_key
 
 # run.py runs this file with nothing else running, because it:
 RUNS_ALONE = "touches the web app's files, which reloads every open page"
@@ -28,7 +28,7 @@ async def main():
         assert await page.locator('script[src="/dev/reload.js"]').count() == 1, "debug builds add the reload script"
         await page.click("#auth-toggle")
         await page.fill("#auth-form input[name=username]", f"dev_{uuid.uuid4().hex[:5]}")
-        await page.fill("#auth-form input[name=password]", "correct horse battery")
+        await page.fill("#auth-form input[name=password]", PASSWORD)
         await page.fill("#auth-form input[name=invite_code]", INVITE)
         await page.click("#auth-submit")
         await expect(page.locator("#app")).to_be_visible(timeout=20000)

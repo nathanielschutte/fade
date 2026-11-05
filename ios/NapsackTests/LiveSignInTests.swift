@@ -26,7 +26,7 @@ struct LiveSignInTests {
 
     @Test func signsUpThenInThenOut() async throws {
         let username = "ios_\(UUID().uuidString.prefix(8).lowercased())"
-        let password = "correct horse battery"
+        let password = testPassword
 
         // An account made the way sign-up makes one (as the web app does).
         let keys = try E2E.deriveFromPassword(username: username, password: password)
@@ -51,7 +51,7 @@ struct LiveSignInTests {
     @Test func signsUpWithARecoveryKey() async throws {
         let username = "ios_\(UUID().uuidString.prefix(8).lowercased())"
         let session = Session(store: MemoryStore())
-        try await session.signUp(server: address, username: username, password: "correct horse battery", inviteCode: invite)
+        try await session.signUp(server: address, username: username, password: testPassword, inviteCode: invite)
         let account = try #require(session.account)
         #expect(session.recoveryKeyToShow != nil)
         #expect(try await Server(address).me(token: account.token).hasRecoveryKey)

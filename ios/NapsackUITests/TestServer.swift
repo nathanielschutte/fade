@@ -53,7 +53,7 @@ struct TestServer: Sendable {
     /// A new account, as sign-up makes one.
     func newAccount(_ name: String) async throws -> Person {
         let username = "\(name)_\(UUID().uuidString.prefix(6).lowercased())"
-        let password = "correct horse battery"
+        let password = testPassword
         let keys = try E2E.deriveFromPassword(username: username, password: password)
         let identity = try E2E.createIdentity(wrapKey: keys.wrapKey)
         let answer = try await request("auth/register", method: "POST", json: [
@@ -94,6 +94,15 @@ struct TestServer: Sendable {
             "ciphertext": sealed, "format": 2, "client_id": UUID().uuidString,
         ]) as? [String: Any]
         return (stored?["id"] as? NSNumber)?.int64Value ?? 0
+    }
+
+    /// A reaction from one to a message in their chat with the other, sealed here (nil takes it back).
+    func react(_ emoji: String?, to message: Int64, from: Person, to: Person) async throws {
+        let key = try E2E.pairKey(mine: from.identity, theirs: to.publicKey, myId: from.id, theirId: to.id)
+        let sealed = try emoji.map { try E2E.encryptReaction(key, $0, sender: from.id, recipient: to.id, message: message) }
+        _ = try await request("chats/\(to.id)/messages/\(message)/reaction", method: "PUT", token: from.token, json: [
+            "ciphertext": sealed ?? NSNull(), "format": 2,
+        ])
     }
 }
 

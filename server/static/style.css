@@ -1703,6 +1703,28 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .emoji-none { padding: 1rem 0.25rem; color: var(--fixer); }
 #emoji-results { padding-top: 0.5rem; }
 
+/* ---------- who reacted (F21) ----------
+   All, then each emoji with its count; the one shown stands out. They wrap
+   onto a second line rather than scrolling out of sight. */
+.reaction-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--rule); }
+.reaction-tab {
+  display: inline-flex; align-items: center; gap: 0.35rem; min-height: 2.25rem; padding: 0 0.75rem;
+  border: 1px solid var(--rule); border-radius: 999px; background: var(--deep);
+  color: var(--paper); font: inherit; font-size: var(--step--1); cursor: pointer;
+}
+.reaction-tab:hover { background: var(--wash); }
+.reaction-tab[aria-pressed="true"] { border-color: var(--sage); background: var(--wash); font-weight: 600; }
+.reaction-count { color: var(--fixer); font-variant-numeric: tabular-nums; }
+.reactions-sheet .people { max-height: min(22rem, 55dvh); overflow-y: auto; overscroll-behavior: contain; }
+.reaction-of { flex: none; font-size: 1.35rem; line-height: 1; padding: 0 0.25rem; }
+.reactions-sheet span.person-open { cursor: default; }
+.reactions-sheet span.person-open:hover { background: none; }
+/* Who can see them on the left, my button on the right; on a phone, one above the other. */
+.reaction-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding-top: 0.75rem; }
+.reaction-foot .sheet-text { flex: 1 1 12rem; margin: 0; }
+.reaction-foot .button { flex: none; margin-left: auto; }
+#reactions-none { margin: 0.75rem 0 0; }
+
 /* ---------- admin: System › Reports (F28; admin.js, section "reports") ----------
    Kept in one block at the end, on its own, for the Reports page only. */
 .reports { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }

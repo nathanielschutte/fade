@@ -50,11 +50,17 @@ struct ChatScreen: View {
     @State private var viewing: PicToOpen?
     /// An edited text whose versions are showing.
     @State private var versionsOf: Bubble?
+    /// A message whose reactions are showing: who reacted with what (F21).
+    @State private var reactionsOf: ReactionsOpening?
     /// A photo from the library: it opens in the camera, ready for its caption.
     @State private var pickedPhoto: PhotosPickerItem?
     @State private var picks = PhotoPicks()
     /// The camera, while it's open: live, or on a picked photo.
     @State private var camera: CameraOpening?
+    /// The chat list's chats, for the camera to send to as well.
+    @Environment(\.sendElsewhere) private var sendElsewhere
+    /// Where a pic sent from here to several chats went.
+    @State private var toast: Toast?
     /// The server's limits for pics and videos (its /api/config).
     @State private var limits: ServerConfig?
     /// A message or the friend being reported, and someone being asked about blocking (Moderation.swift).
@@ -459,7 +465,7 @@ struct ChatScreen: View {
                 .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
         }
         BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(bubble, next),
-                   react: conversation.canSend && bubble.repliable ? { react(bubble, $0) } : nil)
+                   whoReacted: { reactionsOf = ReactionsOpening(message: bubble.id, emoji: $0) })
             .modifier(HoldForMenu(enabled: holdable(bubble)) { held = bubble })
             .onTapGesture { if let pic = bubble.opening { viewing = pic } }
             .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable && held == nil) {
@@ -594,6 +600,28 @@ struct ChatScreen: View {
         Task { await conversation.retry(id) }
     }
 
+    /// The camera's "To Ben +": Send to… with this chat picked, to add other
+    /// friends and groups (as on the web). This chat's copy goes through this
+    /// chat; the others' through the chat list. Sent, the camera closes here
+    /// and a note says where it went.
+    private var addMore: CameraSend.AddMore? {
+        guard let sendElsewhere else { return nil }
+        // This chat itself, kept: a send still going when the chat's been swapped
+        // for another (a notification opened meanwhile) still goes here.
+        let chat = conversation, here = conversation.kind, limits = limits
+        return CameraSend.AddMore(here: here, chats: sendElsewhere.chats, send: { kind, ready in
+            if kind == here {
+                try await ready.send(to: chat, limits: limits)
+            } else {
+                try await sendElsewhere.send(kind, ready)
+            }
+        }, done: { words in
+            tapped += 1
+            camera = nil
+            toast = Toast(text: words, undo: nil)
+        })
+    }
+
     /// The sheets and covers a chat shows (picked photos, the camera, the viewer, edits, problems).
     private func presentations(_ content: some View) -> some View {
         content
@@ -614,16 +642,33 @@ struct ChatScreen: View {
         .sheet(item: $versionsOf) { bubble in
             EditsSheet(bubble: bubble, conversation: conversation).presentationDetents([.medium, .large])
         }
+        .sheet(item: $reactionsOf) { opening in
+            if let account = session.account {
+                // Reacting from it as from holding the message: where this chat can, to what takes reactions.
+                let reacts = conversation.canSend && conversation.bubble(opening.message)?.repliable == true
+                WhoReactedSheet(conversation: conversation, message: opening.message, account: account, showing: opening.emoji,
+                                react: reacts ? { react($0, $1) } : nil)
+                    .presentationDetents([.medium, .large])
+            }
+        }
         .fullScreenCover(item: $camera) { opening in
             // Captured, it stays on the camera until it's sent here (Nate, 2026-10-30).
             CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
-                         send: .chat(conversation.title) { ready in
+                         send: .chat(conversation.title, { ready in
                              try await ready.send(to: conversation, limits: limits)
                              tapped += 1
                              camera = nil
-                         },
+                         }, more: addMore),
                          start: opening.start)
         }
+        .overlay(alignment: .top) {
+            if let toast {
+                ToastView(toast: toast) { self.toast = nil }
+                    .padding(.horizontal, 16).padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: toast?.id)
         .task { limits = try? await Server(AppInfo.server).config() }
         .fullScreenCover(item: Binding(get: { viewing.map(IdentifiedPic.init) }, set: { viewing = $0?.pic })) { item in
             // This one, then the others still waiting after it.
@@ -723,8 +768,8 @@ struct BubbleView: View {
     let bubble: Bubble
     let quote: String?
     var showTime = true
-    /// Tapping a reaction under the message adds the same one (or takes yours back).
-    var react: ((String) -> Void)? = nil
+    /// Tapping a reaction under the message shows who reacted (F21), from that emoji.
+    var whoReacted: ((String) -> Void)? = nil
     @Environment(\.dynamicTypeSize) private var textSize
     /// The widest a message's row gets, at the usual text size: about 60
     /// letters a line, however wide the screen (the Duo's open one is 669
@@ -759,16 +804,18 @@ struct BubbleView: View {
                     if showTime || !bubble.reactions.isEmpty {
                         HStack(spacing: 4) {
                             if !bubble.reactions.isEmpty {
-                                ForEach(Array(Set(bubble.reactions)).sorted(), id: \.self) { emoji in
-                                    let count = bubble.reactions.filter { $0 == emoji }.count
-                                    Button { react?(emoji) } label: {
+                                // In the order they were first given, as on the web (ReactionSummary).
+                                ForEach(ReactionSummary(bubble.reactions).entries) { entry in
+                                    let emoji = entry.emoji, count = entry.people.count
+                                    Button { whoReacted?(emoji) } label: {
                                         Text(count > 1 ? "\(emoji)\(count)" : emoji)
                                             .padding(.horizontal, 4).padding(.vertical, 1)
                                             .background(bubble.myReaction == emoji ? Color.accentColor.opacity(0.25) : .clear, in: Capsule())
                                     }
                                     .buttonStyle(.plain)
-                                    .disabled(react == nil)
-                                    .accessibilityLabel(bubble.myReaction == emoji ? "\(emoji) \(count), including you. Tap to take yours back" : "\(emoji) \(count). Tap to react")
+                                    .disabled(whoReacted == nil)
+                                    .accessibilityLabel("\(emoji) \(count)\(bubble.myReaction == emoji ? ", including you" : "")")
+                                    .accessibilityHint("Shows who reacted")
                                 }
                             }
                             if showTime { Text(bubble.time.formatted(date: .omitted, time: .shortened)) }

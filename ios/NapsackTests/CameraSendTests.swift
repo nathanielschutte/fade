@@ -128,6 +128,95 @@ import UIKit
         #expect(await server.requests.isEmpty)
     }
 
+    /// Send again after a failure (from the camera, or Send to…) is the same
+    /// pic: a friend's with the same id, a group's the same sealed copy, so a
+    /// response that was lost never makes a second one. A chat that has it isn't
+    /// sent it again, and another capture is another pic.
+    @Test func sendingAgainIsTheSamePic() async throws {
+        let failing = FirstFailures(3)  // one send's three tries, the connection down for each
+        let bobKey = bobKey, aliceKey = aliceKey
+        let server = StubServer { request in
+            if request.httpMethod == "GET" {
+                return (200, json(["id": 12, "name": "Road trip", "members": [SendingTests.member(3, bobKey), SendingTests.member(7, aliceKey)]]))
+            }
+            if failing.fails() { return (503, json(["error": "Try again in a moment."])) }
+            return (200, request.url!.path.hasSuffix("/snaps") ? Self.storedSnap(request) : Self.storedGroupPic(request, senderKey: bobKey))
+        }
+        let ready = ReadyToSend(media: .photo(Data(repeating: 7, count: 2000)), caption: "hi", y: 0.75)
+        let friend = sending.chat(.friend(sending.alice), server: server)
+        let group = sending.chat(.group(try sending.list.group(nil)), server: server)
+        let clientId = { (r: URLRequest) in
+            URLComponents(url: r.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "client_id" }?.value
+        }
+
+        await #expect(throws: ServerError.self) { try await ready.send(to: friend, limits: nil) }
+        try await ready.send(to: friend, limits: nil)
+        let direct = await server.requests.filter { $0.url!.path.hasSuffix("/snaps") }
+        #expect(direct.count == 4 && Set(direct.map(clientId)).count == 1 && clientId(direct[0]) != nil)
+
+        failing.reset(3)
+        await #expect(throws: ServerError.self) { try await ready.send(to: group, limits: nil) }
+        try await ready.send(to: group, limits: nil)
+        let pics = await server.requests.filter { $0.url!.path.hasSuffix("/pics") }
+        #expect(pics.count == 4)
+        #expect(Set(pics.map { Self.keys($0)["client_id"] as? String }).count == 1 && Set(pics.map(\.httpBody)).count == 1)
+
+        // Both have it: sent again, nothing goes.
+        let before = await server.requests.count
+        try await ready.send(to: friend, limits: nil)
+        try await ready.send(to: group, limits: nil)
+        #expect(await server.requests.count == before)
+
+        // Another capture, another pic.
+        let next = ReadyToSend(media: .photo(Data(repeating: 8, count: 2000)), caption: "", y: 0.75)
+        try await next.send(to: friend, limits: nil)
+        let last = try #require(await server.requests.last)
+        #expect(clientId(last) != clientId(direct[0]))
+    }
+
+    /// The camera keeps what it made ready while nothing changes, so Send
+    /// again (or Send to… after a failed Send) is the same pic; a new caption,
+    /// drawing, place, or the sound turned off makes a new one.
+    @Test func whatsMadeReadyIsKeptUntilItChanges() {
+        let content = MadeReady.Content(strokes: [], caption: "hi", y: 0.75, muted: false)
+        var made = 0
+        let make = { () -> Task<ReadyToSend, any Error> in
+            made += 1
+            return Task { ReadyToSend(media: .photo(Data()), caption: "", y: 0.75) }
+        }
+        let first = MadeReady.reusing(nil, for: content, make: make)
+        #expect(MadeReady.reusing(first, for: content, make: make).ready == first.ready && made == 1)
+        let line = Stroke(points: [.zero, CGPoint(x: 1, y: 1)], width: 4)
+        for changed in [MadeReady.Content(strokes: [], caption: "hello", y: 0.75, muted: false),
+                        MadeReady.Content(strokes: [line], caption: "hi", y: 0.75, muted: false),
+                        MadeReady.Content(strokes: [], caption: "hi", y: 0.3, muted: false),
+                        MadeReady.Content(strokes: [], caption: "hi", y: 0.75, muted: true)] {
+            #expect(MadeReady.reusing(first, for: changed, make: make).ready != first.ready)
+        }
+        #expect(made == 5)
+    }
+
+    /// From a chat's camera, "To Ben +" is there while the chat is one a pic
+    /// can go to; Send to… then lists it picked, even when it's hidden.
+    @Test func addingMoreFromAChat() {
+        let row = { (kind: ChatRow.Kind, name: String, hidden: Bool) in
+            ChatRow(kind: kind, name: name, preview: "", waiting: nil, time: nil, favorite: false, muted: false, hidden: hidden)
+        }
+        var chats = [row(.friend(7), "alice", true), row(.group(12), "Road trip", false), row(.friend(8), "cal", true)]
+        let more = { (here: ChatRow.Kind) in
+            CameraSend.AddMore(here: here, chats: { chats }, send: { _, _ in }, done: { _ in })
+        }
+        #expect(more(.friend(7)).offered && more(.group(12)).offered)
+        #expect(!more(.friend(9)).offered, "not a chat a pic can go to (Team Napsack, a changed key, gone)")
+        chats.removeFirst()
+        #expect(!more(.friend(7)).offered, "gone since: Send alone")
+
+        let all = [row(.friend(7), "alice", true), row(.group(12), "Road trip", false), row(.friend(8), "cal", true)]
+        #expect(SendToScreen.shown(all, search: "").map(\.kind) == [.group(12)])
+        #expect(SendToScreen.shown(all, search: "", keeping: [.friend(7)]).map(\.kind) == [.friend(7), .group(12)])
+        #expect(SendToScreen.shown(all, search: "ca", keeping: [.friend(7)]).map(\.kind) == [.friend(8)])
+    }
+
     /// Send to… goes to a few chats at once, never more; what failed is said
     /// for that chat, in the order they were picked.
     @Test(.timeLimit(.minutes(1))) func aFewChatsAtATimeEachSayingHowItWent() async throws {
@@ -168,5 +257,23 @@ import UIKit
         most = max(most, inFlight)
         await withCheckedContinuation { waiting.append($0) }
         inFlight -= 1
+    }
+}
+
+/// The first `n` uploads fail (then `reset` for more), for a stand-in server's answers.
+final class FirstFailures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var left: Int
+
+    init(_ n: Int) { left = n }
+
+    func reset(_ n: Int) { lock.withLock { left = n } }
+
+    func fails() -> Bool {
+        lock.withLock {
+            guard left > 0 else { return false }
+            left -= 1
+            return true
+        }
     }
 }

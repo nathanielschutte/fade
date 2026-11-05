@@ -53,6 +53,8 @@ struct PersonRow<Trailing: View>: View {
     var size: CGFloat = 36
     /// A line under the name ("Blocked Nov 3").
     var detail: String? = nil
+    /// An emoji on the picture's corner (the one they reacted with, F21).
+    var badge: String? = nil
     @ViewBuilder var trailing: () -> Trailing
 
     @Environment(\.dynamicTypeSize) private var textSize
@@ -92,6 +94,12 @@ struct PersonRow<Trailing: View>: View {
 
     private var avatar: some View {
         Avatar(kind: .friend(person.id), avatarId: me?.avatarId ?? person.avatarId, name: me?.username ?? person.name, size: size)
+            .overlay(alignment: .bottomTrailing) {
+                if let badge {
+                    Text(badge).font(.system(size: size * 0.5)).offset(x: size * 0.15, y: size * 0.12)
+                }
+            }
+            .padding(.trailing, badge == nil ? 0 : size * 0.15)
     }
 
     private var names: some View {
@@ -109,8 +117,8 @@ struct PersonRow<Trailing: View>: View {
 }
 
 extension PersonRow where Trailing == EmptyView {
-    init(person: Person, me: Me? = nil, size: CGFloat = 36, detail: String? = nil) {
-        self.init(person: person, me: me, size: size, detail: detail, trailing: { EmptyView() })
+    init(person: Person, me: Me? = nil, size: CGFloat = 36, detail: String? = nil, badge: String? = nil) {
+        self.init(person: person, me: me, size: size, detail: detail, badge: badge, trailing: { EmptyView() })
     }
 }
 
@@ -125,18 +133,19 @@ struct PersonLink<Trailing: View>: View {
     var friends: [Int64: Friend] = [:]
     var standing: PersonProfileScreen.Standing = .stranger
     var detail: String? = nil
+    var badge: String? = nil
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         if person.id == account.user.id {
-            PersonRow(person: person, me: account.user, detail: detail, trailing: trailing)
+            PersonRow(person: person, me: account.user, detail: detail, badge: badge, trailing: trailing)
         } else if person.isTeam {
-            PersonRow(person: person, detail: detail, trailing: trailing)
+            PersonRow(person: person, detail: detail, badge: badge, trailing: trailing)
         } else {
             NavigationLink {
                 ProfileOf(person: person, account: account, friends: friends, standing: standing)
             } label: {
-                PersonRow(person: person, detail: detail, trailing: trailing)
+                PersonRow(person: person, detail: detail, badge: badge, trailing: trailing)
             }
             .accessibilityHint("Opens their profile")
         }
@@ -145,8 +154,9 @@ struct PersonLink<Trailing: View>: View {
 
 extension PersonLink where Trailing == EmptyView {
     init(person: Person, account: Account, friends: [Int64: Friend] = [:], standing: PersonProfileScreen.Standing = .stranger,
-         detail: String? = nil) {
-        self.init(person: person, account: account, friends: friends, standing: standing, detail: detail, trailing: { EmptyView() })
+         detail: String? = nil, badge: String? = nil) {
+        self.init(person: person, account: account, friends: friends, standing: standing, detail: detail, badge: badge,
+                  trailing: { EmptyView() })
     }
 }
 

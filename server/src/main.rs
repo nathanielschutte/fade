@@ -260,8 +260,10 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// Recent log entries for the admin log viewer.
     pub logs: Arc<logs::LogBuffer>,
-    /// Client log entries per user (or per address when signed out) per minute.
+    /// Client log entries per signed-in user per minute.
     pub client_log_limit: ratelimit::RateLimit,
+    /// Client log entries per address per minute, signed out.
+    pub client_log_anon_limit: ratelimit::RateLimit,
     /// Sign-in and sign-up attempts per address.
     pub auth_ip_limit: ratelimit::RateLimit,
     /// Failed sign-ins per username.
@@ -351,6 +353,10 @@ async fn main() -> anyhow::Result<()> {
         started_at: std::time::Instant::now(),
         logs: log_buffer,
         client_log_limit: ratelimit::RateLimit::new(300, Duration::from_secs(60)),
+        client_log_anon_limit: ratelimit::RateLimit::new(
+            logs::ANONYMOUS_PER_MINUTE,
+            Duration::from_secs(60),
+        ),
         auth_ip_limit: ratelimit::RateLimit::new(30, Duration::from_secs(10 * 60)),
         login_fail_limit: ratelimit::RateLimit::new(10, Duration::from_secs(15 * 60)),
         image_upload_limit: ratelimit::RateLimit::new(60, Duration::from_secs(10 * 60)),
@@ -670,6 +676,27 @@ fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
+/// Routes with their own, tighter limit per address (`auth::check_ip`), so
+/// the write limit leaves them alone. Every other `/auth/` route (signing
+/// out, say) counts as a write like any other.
+const OWN_ADDRESS_LIMIT: &[&str] = &[
+    "/auth/register",
+    "/auth/login",
+    "/auth/recover/start",
+    "/auth/recover/finish",
+    "/auth/reset",
+    "/auth/unlock",
+    "/auth/passkey/options",
+    "/auth/passkey",
+];
+
+/// Whether `path` (with or without `/api`) skips the per-address write limit:
+/// the routes above, and client logs (their own limit, logs.rs).
+fn skips_write_limit(path: &str) -> bool {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    OWN_ADDRESS_LIMIT.contains(&path) || path == "/logs"
+}
+
 /// Caps API writes per address, so no one can flood the database. Sign-in
 /// and client logs have their own, tighter limits.
 async fn limit_writes(
@@ -678,8 +705,7 @@ async fn limit_writes(
     next: middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = req.uri().path();
-    let exempt = path.contains("/auth/") || path.ends_with("/logs");
+    let exempt = skips_write_limit(req.uri().path());
     if let Err(e) = guard::check_write_room(&state, req.method()) {
         return e.into_response();
     }
@@ -742,7 +768,9 @@ async fn log_request(
         .get(version::CLIENT_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("web")
-        .to_owned();
+        .chars()
+        .take(40)
+        .collect::<String>();
     let response = next.run(req).await;
     let status = response.status().as_u16();
     if !path.starts_with("/dev/") {
@@ -758,8 +786,12 @@ async fn log_request(
         ($lvl:ident) => {
             tracing::$lvl!(
                 target: "fade_server::http",
-                ip = %who.ip, %method, %route, %path, status, ms, %client,
-                ua = %who.user_agent, %host, "request"
+                // What the caller typed (client, user agent, host) is logged
+                // escaped (`?`), so a header can't forge fields in the
+                // journal. The path can't hold spaces (the URI parser
+                // refuses them), nor can the route or method.
+                ip = %who.ip, %method, %route, %path, status, ms, ?client,
+                ua = ?who.user_agent, ?host, "request"
             )
         };
     }
@@ -778,12 +810,17 @@ async fn load_admins(state: SharedState) {
         match state.admins.reload().await {
             Ok(count) => tracing::info!(admins = count, "admin list loaded"),
             Err(e) => {
-                tracing::error!(error = %e, admins = state.admins.count(), "loading the admin list failed; using FADE_ADMINS only")
+                tracing::error!(error = %e, admins = state.admins.count(), "loading the admin list failed; using FADE_ADMINS only");
+                state.admins.warn_about_names();
             }
         }
     }
     if state.admins.count() == 0 {
         tracing::info!("no admins set; the System pages are off for everyone but PowerUsers");
+    }
+    // A reload warns by itself; without a parameter, FADE_ADMINS is all there is.
+    if !state.admins.has_param() {
+        state.admins.warn_about_names();
     }
     #[cfg(unix)]
     tokio::spawn(async move {
@@ -819,7 +856,29 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{apple_app_id, environment};
+    use super::{apple_app_id, environment, skips_write_limit};
+
+    #[test]
+    fn only_routes_with_their_own_limit_skip_the_write_limit() {
+        for own in [
+            "/api/auth/login",
+            "/auth/register",
+            "/api/auth/unlock",
+            "/api/auth/passkey",
+            "/api/logs",
+        ] {
+            assert!(skips_write_limit(own), "{own}");
+        }
+        for write in [
+            "/api/auth/logout",
+            "/api/auth/anything",
+            "/api/me/auth/login",
+            "/api/x/logs",
+            "/api/messages",
+        ] {
+            assert!(!skips_write_limit(write), "{write}");
+        }
+    }
 
     #[test]
     fn apple_app_ids() {

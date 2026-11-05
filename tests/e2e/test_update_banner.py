@@ -3,7 +3,7 @@ Settings come from the environment; see common.py."""
 import asyncio, json, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, INVITE, launch, save_recovery_key, shot
+from common import BASE, INVITE, PASSWORD, launch, save_recovery_key, shot
 
 
 async def main():
@@ -31,7 +31,7 @@ async def main():
         await page.goto(BASE)
         await page.click("#auth-toggle")
         await page.fill("input[name=username]", f"ivy_{uuid.uuid4().hex[:5]}")
-        await page.fill("input[name=password]", "correct horse battery")
+        await page.fill("input[name=password]", PASSWORD)
         await page.fill("input[name=invite_code]", INVITE)
         await page.click("#auth-submit")
         await expect(page.locator("#app")).to_be_visible(timeout=20000)

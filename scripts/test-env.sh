@@ -60,7 +60,7 @@ print(ec.generate_private_key(ec.SECP256R1()).private_bytes(s.Encoding.PEM, s.Pr
   FADE_BIND="127.0.0.1:$PORT" \
   FADE_DATABASE_URL="sqlite://$NAPSACK_DB" \
   FADE_INVITE_CODE="$NAPSACK_INVITE" \
-  FADE_ADMINS="$NAPSACK_ADMIN,smoke_admin" \
+  FADE_ADMINS="$NAPSACK_ADMIN,smoke_admin,smoke_admin2,smoke_unclaimed" \
   FADE_MIN_CLIENT_VERSIONS="${NAPSACK_MIN_CLIENTS-ios=1.2.0}" \
   FADE_PUSH_ALLOW_LOCAL=true \
   FADE_APNS_KEY="$apns_key" \

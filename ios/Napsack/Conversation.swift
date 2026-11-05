@@ -23,7 +23,8 @@ struct Bubble: Identifiable, Equatable, Sendable {
     let content: Content
     let replyTo: Int64?
     let time: Date
-    let reactions: [String]
+    /// Who reacted with what, oldest first (one each). Direct reactions are opened here.
+    let reactions: [Reaction]
     /// The one I gave, if any (the same again takes it back).
     var myReaction: String? = nil
     /// One of my texts that can be edited (format 3 in a group), within the window.
@@ -49,6 +50,12 @@ struct Bubble: Identifiable, Equatable, Sendable {
         case .text, .media: true
         case .event, .unreadable: false
         }
+    }
+
+    /// One person's reaction.
+    struct Reaction: Equatable, Sendable {
+        let user: Int64
+        let emoji: String
     }
 
     /// A line about it, for a reply's quote.
@@ -132,14 +139,14 @@ extension Reader {
         }
         // Any one emoji (X49), held to the server's rule for groups' (E2E.isReaction):
         // the server can't see these, so anything else a client sealed is dropped here.
-        let reactions = (m.reactions ?? []).compactMap { r -> (Int64, String)? in
+        let reactions = (m.reactions ?? []).compactMap { r -> Bubble.Reaction? in
             let to = r.senderId == me.id ? friend.id : me.id
             return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
-                .flatMap { E2E.isReaction($0) ? (r.senderId, $0) : nil }
+                .flatMap { E2E.isReaction($0) ? Bubble.Reaction(user: r.senderId, emoji: $0) : nil }
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
-                            time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions.map(\.1))
-        bubble.myReaction = reactions.first { $0.0 == me.id }?.1
+                            time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions)
+        bubble.myReaction = reactions.first { $0.user == me.id }?.emoji
         if case .text = content { bubble.editable = mine }
         bubble.seen = mine && m.kind == "text" && m.readAt != nil
         bubble.opening = opening
@@ -193,7 +200,8 @@ extension Reader {
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: mine || m.kind == "event" ? nil : name(m.senderId, m.senderName),
                             content: content, replyTo: replyTo, time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)),
-                            reactions: (m.reactions ?? []).map(\.emoji).filter(E2E.isReaction))  // the server checks these too
+                            reactions: (m.reactions ?? []).filter { E2E.isReaction($0.emoji) }  // the server checks these too
+                                .map { Bubble.Reaction(user: $0.userId, emoji: $0.emoji) })
         bubble.myReaction = m.reactions?.first { $0.userId == me.id }?.emoji
         if case .text = content { bubble.editable = mine && m.format == E2E.groupFormat }
         bubble.recipients = m.recipients
@@ -262,6 +270,8 @@ enum SendError: LocalizedError, Equatable {
     case cantOpen
     case tooLarge
     case notAReaction
+    /// A chat picked to send to that isn't there anymore (unfriended, left, or gone from the list).
+    case noChat
 
     var errorDescription: String? {
         switch self {
@@ -270,10 +280,21 @@ enum SendError: LocalizedError, Equatable {
         case .cantOpen: "This pic couldn't be shown. It's still unopened."
         case .tooLarge: "That's too large to send."
         case .notAReaction: "A reaction is one emoji. Pick another."
+        case .noChat: "That chat isn't there anymore."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
     }
+}
+
+/// One pic or video on its way to one chat, kept across Send again: the id a
+/// friend's copy goes with, the copy sealed for a group, and whether it's
+/// there yet (app.js, `camera.sends` and `camera.sent`). A dropped response
+/// then never makes a second pic, and a chat that has it isn't sent it again.
+@MainActor final class PicSlot {
+    let clientId = Conversation.newClientId()
+    var sealed: E2E.GroupMessage?
+    var sent = false
 }
 
 /// A pic or video someone sent me that I haven't opened: what's needed to fetch and open it.
@@ -522,6 +543,14 @@ struct OpenedPic: Sendable {
         }
     }
 
+    /// Which chat this is, as the chat list names it.
+    var kind: ChatRow.Kind {
+        switch chat {
+        case .friend(let friend): .friend(friend.id)
+        case .group(let group): .group(group.id)
+        }
+    }
+
     var title: String {
         switch chat {
         case .friend(let friend): friend.name
@@ -544,6 +573,19 @@ struct OpenedPic: Sendable {
 
     /// Friends by id, for names (a group's members, adding people).
     var friendsById: [Int64: Friend] { reader.friends }
+
+    /// Someone in this chat, for a list of people (who reacted, F21): me, a
+    /// friend, or a group member by username (how far each has read, or a
+    /// message of theirs). Nil for someone no longer in the group whose
+    /// username isn't known here.
+    func person(_ id: Int64) -> Person? {
+        if id == account.user.id { return Person(id: id, username: account.user.username, friends: [:]) }
+        if let friend = reader.friends[id] ?? (friend?.id == id ? friend : nil) { return Person(friend) }
+        guard case .group = chat else { return nil }
+        // A group member who isn't a friend: their name here is their username (Reader.name).
+        let username = groupReads[id]?.username ?? bubbles.lazy.compactMap { $0.senderId == id ? $0.sender : nil }.first
+        return username.map { Person(id: id, username: $0, friends: [:]) }
+    }
 
     /// The friend in a direct chat.
     var friend: Friend? {
@@ -751,17 +793,19 @@ struct OpenedPic: Sendable {
     /// format 6 to a friend, 7 to a group (app.js, `sendSnapTo`, `sendGroupPicTo`).
     /// Sealed once and sent with the same id on every try, so a retry is never
     /// a second pic; a group that changed meanwhile (409) is sealed again for who's there now.
-    func sendPhoto(_ jpeg: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil) async throws {
-        try await sendMedia(jpeg, video: nil, caption: caption, y: y, maxBytes: maxBytes)
+    /// With a `slot`, Send again after a failure is the same pic too: a
+    /// friend's goes with the slot's id, a group's as the copy sealed the first time.
+    func sendPhoto(_ jpeg: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil, slot: PicSlot? = nil) async throws {
+        try await sendMedia(jpeg, video: nil, caption: caption, y: y, maxBytes: maxBytes, slot: slot)
     }
 
     /// A video from the camera (MP4): format 4 to a friend, 5 to a group, sealed the same way.
-    func sendVideo(_ mp4: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil) async throws {
-        try await sendMedia(mp4, video: "video/mp4", caption: caption, y: y, maxBytes: maxBytes)
+    func sendVideo(_ mp4: Data, caption: String, y: Double? = nil, maxBytes: Int? = nil, slot: PicSlot? = nil) async throws {
+        try await sendMedia(mp4, video: "video/mp4", caption: caption, y: y, maxBytes: maxBytes, slot: slot)
     }
 
     /// A photo (`video` nil) or a video of that type.
-    private func sendMedia(_ media: Data, video: String?, caption: String, y: Double?, maxBytes: Int?) async throws {
+    private func sendMedia(_ media: Data, video: String?, caption: String, y: Double?, maxBytes: Int?, slot: PicSlot?) async throws {
         let jpeg = media
         let server = try Server(account.server, transport: transport)
         let caption = String(caption.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
@@ -772,7 +816,7 @@ struct OpenedPic: Sendable {
                 ?? E2E.encryptImage(key, jpeg, caption: caption, sender: account.user.id, recipient: friend.id, y: y)
             if let maxBytes, sealed.count > maxBytes { throw SendError.tooLarge }
             let format = video == nil ? E2E.imageFormat : E2E.videoFormat
-            let query = [URLQueryItem(name: "format", value: String(format)), URLQueryItem(name: "client_id", value: Self.newClientId())]
+            let query = [URLQueryItem(name: "format", value: String(format)), URLQueryItem(name: "client_id", value: slot?.clientId ?? Self.newClientId())]
             let data = try await retrying {
                 try await server.upload("chats/\(friend.id)/snaps", data: sealed, contentType: "application/octet-stream",
                                         token: self.account.token, query: query)
@@ -798,13 +842,16 @@ struct OpenedPic: Sendable {
                                             headers: ["X-Napsack-Keys": String(decoding: keys, as: UTF8.self)])
                 }
             }
-            var sealed = try await seal()
+            var sealed: E2E.GroupMessage
+            if let kept = slot?.sealed { sealed = kept } else { sealed = try await seal() }
             if let maxBytes, sealed.content.count > maxBytes { throw SendError.tooLarge }
+            slot?.sealed = sealed
             let data: Data
             do {
                 data = try await post(sealed)
             } catch ServerError.refused(_, status: 409) {
                 sealed = try await seal()  // someone joined or left since
+                slot?.sealed = sealed
                 data = try await post(sealed)
             }
             upsert(reader.bubble(try Server.decoder.decode(GroupMessage.self, from: data), ring: ring))

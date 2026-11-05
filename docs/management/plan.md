@@ -23,14 +23,15 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake; started 2026-11-04 on the web and the iPhone |
-| 3 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
-| 4 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 5 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 6 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 7 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 8 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 9 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 2 | [napsack 1.0 on the App Store](#f30-napsack-10-on-the-app-store) | Features | Nate | In progress | Nate (2026-11-05): 1.0 across the board. Reviewer account and forms done (Nate); next: version 1.0.0, external TestFlight; then Nate's review before the App Store |
+| 3 | [Security audit](#s7-security-audit-2026-11-05) and [Admins can't delete their account](#s6-admins-cant-delete-their-own-account) | Security | Nate | In progress | Nate (2026-11-05). Fixed and in testing; goes out with 1.0. Left: infrastructure items (Nate's) |
+| 4 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
+| 5 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too. Built (2026-11-05): "To Ben +" beside Send |
+| 6 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
+| 7 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 8 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 9 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 10 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 
 **Done**
 
@@ -136,6 +137,7 @@ Oldest first; newly shipped rows go at the bottom.
 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | 0.50.0, build 175 | Nate |
 | [Passkeys](#f26-passkeys) on the iPhone | 0.50.0, build 175 | Nate |
 | [Reset staging's data](#i12-reset-stagings-data): `scripts/reset-staging.sh` and a seed through the API | scripts (2026-11-05) | Nate |
+| [Admins by user id](#s5-admins-by-user-id): production's list switched | 0.45.0; setting (2026-11-05) | Nate |
 | [On iOS 26, a friend request's notification didn't open Friends](#d19-on-ios-26-a-friend-requests-notification-doesnt-open-friends) | iOS build 186 | Nate |
 
 | Signing out left the last account's chat list on screen for the next one; now sign-out (and an ended session) deletes everything kept in the browser but the pinned keys, then reloads ([S3](#s3-signing-out-leaves-nothing-behind)) | 0.42.2 | Nate |
@@ -373,6 +375,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-30): tapping a reaction under a message shows who reacted with that emoji, and a summary of every emoji (who reacted with what). On phones, tap and hold is the only way to react (the desktop still reacts by clicking the message).
 - Direct chats: two people, so the list is you and them. Groups: reactions aren't end-to-end encrypted yet (the server has who and which emoji), so the list comes with the messages; once group reactions are encrypted (row 7's work), the list is worked out on each member's phone from what it decrypts.
 - Every client: the web (desktop and phone) and the iOS app.
+- **Built (2026-11-05), web and iPhone.** A tap on a reaction opens Reactions: "All N" and each emoji with its count, opening on the one tapped; who reacted, named by the rule (X47) with pictures, each opening their profile; a line saying who can see them (groups: the server can, until group reactions are encrypted). Reacting, changing, or taking yours back is a button there ("React 👍", "React 👍 instead", "Take back your 👍"), so a tap on a reaction no longer toggles it; holding or clicking the message still reacts in one. It follows reactions live, falling back to All. `test_who_reacted.py`, `WhoReactedTests`, `LiveWhoReactedTests`, `testSeeingWhoReacted`.
 
 #### F22. Delete your own account
 - Nate (2026-11-03): people can delete their own account, and it wipes everything of theirs; other people only lose that chat. A robust confirmation. Admins keep turning accounts off. Group messages they sent go too; backups last 30 days, then go; the username is held 30 days, then free. The App Store requires it (5.1.1(v)).
@@ -414,6 +417,13 @@ Oldest first; newly shipped rows go at the bottom.
 #### F29. Android app
 - Nate (2026-11-04): "start planning how we will build our android app. Let's make a planning doc and skeleton filesystem ... and get a shell android app going like we did when we started ios development." The plan: [android.md](../design/android.md); the app lives in `android/`.
 - **The shell, built (2026-11-04):** `android/` (Gradle 9.8.2, AGP 9.5.0, Kotlin 2.4.21, Compose), `crypto/` with format 1 against the vectors (the checks vector-checks.js makes, under its names), one development screen (`/api/config` with `X-Napsack-Client: android/…`, the minimum-version check, the key derivation timed: 2.6 s on the emulator, to measure on a phone), `make android` (JVM tests, release checks, then the emulator against a fresh server), and `android.yml` by hand only. Android 17 treats a development server as the local network: only debug builds ask for it. Task list: [plan-android.md](plan-android.md).
+
+#### F30. napsack 1.0 on the App Store
+- Nate (2026-11-05): "how are we looking for an official app store release? We can tag napsack 1.0 for production release on the app store at some point."
+- **In the app, done:** everything on the [external testing checklist](../ios-onboarding.md#external-testing-the-checklist): production through `api.napsack.io`, export compliance, permission wording, deleting your account (5.1.1(v)), report and block (1.2), privacy policy and support in the app (5.1.1(i)), an iPad pass, no local network in Release, and a phone run through builds 186 to 190 (2.1).
+- **Left, Nate's:** (1) the reviewer account on production (`appreview`, your friend, made from your own link; the one test account there; done (Nate, 2026-11-05)), and answering it during a review; (2) App Store Connect: the privacy labels, the age rating, the listing (description, keywords, Social Networking), the support and privacy URLs; (3) the EU's trader question (declare as a non-trader if that's so, or leave the EU out at first); (4) whether the server becomes `1.0.0` with the app (the two versions are separate; [releasing.md](../operations/releasing.md)).
+- **Left, ours:** `MARKETING_VERSION` to `1.0.0` (`ios/Config/Base.xcconfig`); screenshots from the Simulator with staging's seeded people; an external TestFlight build through Beta App Review first, as a dry run; then the App Store submission, and the tag when it's approved.
+- **Decided (Nate, 2026-11-05):** 1.0 across the board, versions in sync: the iPhone app `1.0.0` and the server `1.0.0` (Android stays `0.x` until it ships). Not an EU trader. The reviewer account is ready, your friend. External TestFlight first; Nate reviews before the App Store submission. The invite code is only for signing up cold: anyone invited another way (a friend's link, among others) is already invited.
 
 ### Debug
 
@@ -642,6 +652,7 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### X51. Send a pic from a chat to more chats too (iPhone)
 - Nate (2026-11-04): "when you're already in a chat and you take a pic, right now you can only send to that chat you were in. On desktop/web we always have the second 'send to' option where you can add additional recipients as well even if you were already in a chat. We need this feature implemented in the same way for ios." The web's behaviour is the model: the quick send to this chat stays, and Send to… opens with this chat already chosen.
+- **Built (2026-11-05).** As the web: after a capture in a chat, "To Ben +" beside Send (stacked when they don't fit). Send goes to that chat; "To Ben +" opens Send to… with it picked, to add friends and groups, and sends from there. Sending again reuses each chat's id and sealed copy, so a lost answer never makes a second pic (the Camera tab's Send to… had that gap too); a chat gone meanwhile says so. `CameraSendTests`, `CameraUITests`.
 
 ### Security
 
@@ -673,6 +684,16 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-30): name Admins by their user id (fixed forever) instead of their username, which can change.
 - Today the `/fade/admins` parameter lists usernames, and a renamed Admin stays one through their old name (roles.md). With ids: the parameter (and `FADE_ADMINS` in development) takes ids; for one release it takes both, so production can switch without a gap.
 - **Built:** an entry `id:7` names user 7 (`Admins::contains_id`, `usernames::is_listed_admin`); usernames keep working, so the switch has no gap. `scripts/set-admins.sh id:1,id:5` takes them. To finish (Nate's, a production setting): set the parameter to the Admins' ids and reload (`scripts/reload-admins.sh`).
+- **Done (2026-11-05):** production's list is user ids (Nate approved the switch; `set-admins.sh`, reloaded). A username entry also matched past names, and a free listed name could be taken.
+
+#### S6. Admins can't delete their own account
+- Nate (2026-11-05): "admins shouldn't be able to delete their accounts so that their user id/username id is reserved forever. this way people cannot ever impersonate."
+- **Built (2026-11-05).** `deletion.rs` refuses an Admin (by id, name, or a past name) with a 403 before the password check; the web and the iPhone show why instead of the button. Someone taken off the list is a User again and can delete. Noticed: a deleted person's current name is held 30 days, but their past names are freed at once (`wipe` removes `past_usernames`). **Needs decision (Nate):** hold past names as long as the current one, or for good.
+
+#### S7. Security audit, 2026-11-05
+- Nate (2026-11-05): an audit of what the public repository gives away, and of the server against common web attacks: "we are rock solid against common web attack vectors", with only an Admin who has credentials able to do damage. Two read-only reviews; the details are the owner's.
+- **Fixed (2026-11-05):** the Admin list by user id (S5) and Admins out of reach of Admin actions; limits that keep one client from exhausting the server's memory (password checks, usernames, app logs, sockets); the per-username limit made exact under concurrency; signing out closes live sockets; logs escape what callers send; tokio updated. Staging's test credentials are private. CI pins its actions by commit and checks that production's binary is the one main's CI built; tests refuse production; owner-only scripts say so; the owner's operating steps moved to private notes.
+- **Left, Nate's (infrastructure):** backups the server can't overwrite (Object Lock); HSTS `includeSubDomains` and Caddy timeouts (they change the boot script, which replaces the instance); MFA or SSO for the owner's AWS keys; dropping the name-based GitHub OIDC subject. **Ours, later:** p256 0.14 (a crypto-bigint advisory, impractical remotely).
 
 ### Infrastructure
 

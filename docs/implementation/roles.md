@@ -32,6 +32,7 @@ The admin panel becomes **System** (a gear in the account bar, shown to PowerUse
 | Take PowerUser away (PowerXtreme goes with it) | – | **no** | yes |
 | Make a PowerUser a PowerXtreme, or back | – | **no** | yes |
 | Reload the admin list from settings | – | no | yes |
+| Delete your own account ([account-deletion.md](../design/account-deletion.md)) | yes | yes | **no**: `403`, so an Admin's username is never freed |
 
 Pages and endpoints a role can't use answer **404**, as the admin panel always has, so they don't confirm what exists.
 
@@ -50,8 +51,10 @@ The people picker lists only the PowerUser and their friends. Anyone else is rea
 ## Where Admins come from
 
 - **Production:** the SSM parameter `/fade/admins` (SecureString, comma-separated). An entry is a user id, `id:7`, fixed forever and the way to name Admins (S5), or a username. The server reads it at start, using the instance role and its own SigV4 signing (`aws.rs`), and again on **Reload admin list** (System → Roles, Admins only) or `scripts/reload-admins.sh`, which sends the service `SIGHUP`. The parameter is set with `scripts/set-admins.sh`, outside Terraform, so the list isn't in source control or Terraform state.
-- **By id, or by name.** An `id:` entry holds whatever the person is called. A username entry matches a name someone has now or had before (an old username stays its owner's forever, usernames.rs), so a renamed Admin stays one either way. Usernames can't contain `:`, so an all-digit username is never taken for an id.
+- **By id, or by name.** An `id:` entry holds whatever the person is called. A username entry matches a name someone has now or had before (an old username stays its owner's forever, usernames.rs), so a renamed Admin stays one either way. Usernames can't contain `:`, so an all-digit username is never taken for an id. A username entry is weaker: when nobody holds the name (a typo, or a deleted account's once its 30-day hold ends), whoever took it would be an Admin. So nobody can sign up as, or rename into, a listed name nobody has (except on the server's own machine and staging's test machines, where tests make their Admins by signing up), and the server logs a `warn` for each username entry at start and on every reload ("admin list entry by username; use id:N") until the list is all ids.
+- **Admins can't act on Admins.** A reset code for any Admin's account (their own included), turning another Admin off, or signing one out everywhere is `403` (`admin_users::refuse_if_admin`).
 - **Development and tests:** `FADE_ADMINS` (comma-separated), as before. Production sets `FADE_ADMINS_PARAM=/fade/admins` and no `FADE_ADMINS`.
+- **Admins can't delete their account** (Nate, 2026-11-05; `deletion.rs`): their id and username stay theirs for good, so nobody can ever sign up as an Admin's name. Someone taken off the list is a User again and can delete theirs; that's fine, they aren't an Admin any more.
 - **Both, if both are set:** the union. If the parameter can't be read at start, the server keeps `FADE_ADMINS` (possibly empty) and logs an error. If a reload fails, the current list stays.
 
 ## Data

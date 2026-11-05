@@ -26,17 +26,10 @@ Accounts, friends, chats, groups, and unopened pics are untouched: they live on 
 
 ## How it was done
 
-The server's boot script contains the domain (Caddy's config), and changing it replaces the server: the normal path in CLAUDE.md, with its Rule 1 checklist.
-
-1. **DNS first:** create the `napsack.io` and `www` records (a targeted apply of `infra/dns.tf` only), and wait until they resolve to the Elastic IP, so Caddy can get certificates as soon as it starts.
-2. **The health monitor to watch-only** (`health_act = false`), so it doesn't "fix" a server that's still booting.
-3. **Rule 1 before:** snapshot the data volume and wait for it; record row counts (read-only).
-4. **The switch:** `domain = "napsack.io"`, `redirect_domains = ["napsack.getattr.com", "fade.getattr.com", "www.napsack.io"]`. Read the plan: the instance replaced, the data volume unchanged, the settings parameter and the health monitor's address updated. Then apply.
-5. **Rule 1 after:** the data volume mounted on the new server; row counts equal or higher; https://napsack.io serves the expected build; each old address answers 301 to the new one.
-6. **The health monitor back on** (`health_act = true`).
+The server's boot script contains the domain (Caddy's config), and changing it replaces the server: the normal path in CLAUDE.md, with its Rule 1 checklist (a snapshot and row counts before, the volume, the counts, and the build checked after). DNS came first, so Caddy could get certificates as soon as the new server started, and the health monitor watched only, so it wouldn't "fix" a server still booting. The step-by-step log is in the owner's private notes.
 
 ## After
 
-- **GitHub:** set the repository variable `APP_URL` to `https://napsack.io` (`terraform -chdir=infra output github_variables` lists them). The release workflow uses it to check a deploy.
+- **GitHub:** the repository variable `APP_URL` was set to `https://napsack.io`. The release workflow uses it to check a deploy.
 - **The getattr.com records** (`napsack.getattr.com`, `fade.getattr.com`) stay pointing at the Elastic IP for as long as the redirects should work. Caddy needs them to renew those certificates.
 - **The iPhone app:** its links (Associated Domains) name the site: `NAPSACK_LINK_HOST` in `ios/Config/Release.xcconfig`. A new domain needs a new app build for links to open the app; until then they open the site. The app's API name (`api.napsack.io`) is meant to stay put ([api-host.md](../implementation/api-host.md)).

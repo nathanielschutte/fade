@@ -24,7 +24,25 @@ variable "invite_code" {
 variable "admins" {
   description = "Staging Admins. The browser and smoke tests use e2e_admin and smoke_admin."
   type        = list(string)
-  default     = ["e2e_admin", "smoke_admin", "nate"]
+  default     = ["e2e_admin", "smoke_admin"]
+}
+
+# Read by the scripts that test and reset staging (scripts/test-staging.sh,
+# reset-staging.sh, test-ios.sh --staging), not by Terraform: declared so the
+# tfvars file can hold them without a warning. Staging's own and never in the
+# repository, so nobody else can sign in to its test accounts or its Admins.
+variable "test_password" {
+  description = "The password of staging's test accounts and seeded people (NAPSACK_PASSWORD)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "smoke_admin_key" {
+  description = "Any long random string: smoke_admin's key on staging (NAPSACK_ADMIN_KEY)."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "exempt_addresses" {
