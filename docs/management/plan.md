@@ -23,7 +23,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake; started 2026-11-04 on the web and the iPhone |
+| 2 | [See who reacted](#f21-see-who-reacted) | Features | Nate | In progress | Nate (2026-10-30), from the intake. Built (2026-11-05) on the web and the iPhone: a tap on a reaction shows who reacted |
 | 3 | [Send a pic from a chat to more chats too (iPhone)](#x51-send-a-pic-from-a-chat-to-more-chats-too-iphone) | Experience/visual | Nate | In progress | Nate (2026-11-04): the web always offers Send to… from a chat; the iPhone should too |
 | 4 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
 | 5 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
@@ -373,6 +373,7 @@ Oldest first; newly shipped rows go at the bottom.
 - Nate (2026-10-30): tapping a reaction under a message shows who reacted with that emoji, and a summary of every emoji (who reacted with what). On phones, tap and hold is the only way to react (the desktop still reacts by clicking the message).
 - Direct chats: two people, so the list is you and them. Groups: reactions aren't end-to-end encrypted yet (the server has who and which emoji), so the list comes with the messages; once group reactions are encrypted (row 7's work), the list is worked out on each member's phone from what it decrypts.
 - Every client: the web (desktop and phone) and the iOS app.
+- **Built (2026-11-05), web and iPhone.** A tap on a reaction opens Reactions: "All N" and each emoji with its count, opening on the one tapped; who reacted, named by the rule (X47) with pictures, each opening their profile; a line saying who can see them (groups: the server can, until group reactions are encrypted). Reacting, changing, or taking yours back is a button there ("React 👍", "React 👍 instead", "Take back your 👍"), so a tap on a reaction no longer toggles it; holding or clicking the message still reacts in one. It follows reactions live, falling back to All. `test_who_reacted.py`, `WhoReactedTests`, `LiveWhoReactedTests`, `testSeeingWhoReacted`.
 
 #### F22. Delete your own account
 - Nate (2026-11-03): people can delete their own account, and it wipes everything of theirs; other people only lose that chat. A robust confirmation. Admins keep turning accounts off. Group messages they sent go too; backups last 30 days, then go; the username is held 30 days, then free. The App Store requires it (5.1.1(v)).
