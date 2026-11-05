@@ -53,7 +53,7 @@ struct TestServer: Sendable {
     /// A new account, as sign-up makes one.
     func newAccount(_ name: String) async throws -> Person {
         let username = "\(name)_\(UUID().uuidString.prefix(6).lowercased())"
-        let password = "correct horse battery"
+        let password = testPassword
         let keys = try E2E.deriveFromPassword(username: username, password: password)
         let identity = try E2E.createIdentity(wrapKey: keys.wrapKey)
         let answer = try await request("auth/register", method: "POST", json: [

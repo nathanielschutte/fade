@@ -149,7 +149,7 @@ struct LiveNotificationsTests {
     @Test func theTokenRegistersForTheSession() async throws {
         let phone = Session(store: MemoryStore(), reporter: Reporter())
         let name = "push_\(UUID().uuidString.prefix(6).lowercased())"
-        try await phone.signUp(server: live.address, username: name, password: "correct horse battery", inviteCode: live.invite)
+        try await phone.signUp(server: live.address, username: name, password: testPassword, inviteCode: live.invite)
         let account = try #require(phone.account)
         let server = try Server(account.server)
         let token = Notifications.hex(Data((0..<32).map { _ in UInt8.random(in: 0...255) }))
@@ -173,7 +173,7 @@ struct LiveNotificationsTests {
         notifications.tap(url: "/#chat=424242")
         #expect(notifications.opened == .chat(.friend(424242)), "waiting, until someone signs in")
         let name = "tap_\(UUID().uuidString.prefix(6).lowercased())"
-        try await phone.signUp(server: live.address, username: name, password: "correct horse battery", inviteCode: live.invite)
+        try await phone.signUp(server: live.address, username: name, password: testPassword, inviteCode: live.invite)
         #expect(notifications.opened == nil)
     }
 }

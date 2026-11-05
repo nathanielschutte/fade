@@ -15,9 +15,9 @@ struct LiveReporterTests {
         let admin = ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"]!
         let session = Session(store: MemoryStore(), reporter: Reporter())
         do {
-            try await session.signUp(server: live.address, username: admin, password: "correct horse battery", inviteCode: live.invite)
+            try await session.signUp(server: live.address, username: admin, password: testPassword, inviteCode: live.invite)
         } catch {
-            try await session.signIn(server: live.address, username: admin, password: "correct horse battery")
+            try await session.signIn(server: live.address, username: admin, password: testPassword)
         }
         let account = try #require(session.account)
         #expect(account.user.isAdmin)
@@ -44,9 +44,9 @@ struct LiveReporterTests {
         let admin = ProcessInfo.processInfo.environment["NAPSACK_TEST_ADMIN"]!
         let session = Session(store: MemoryStore(), reporter: Reporter())
         do {
-            try await session.signUp(server: live.address, username: admin, password: "correct horse battery", inviteCode: live.invite)
+            try await session.signUp(server: live.address, username: admin, password: testPassword, inviteCode: live.invite)
         } catch {
-            try await session.signIn(server: live.address, username: admin, password: "correct horse battery")
+            try await session.signIn(server: live.address, username: admin, password: testPassword)
         }
         let account = try #require(session.account)
         struct Post: Encodable { let body: String; let hours: Int }
