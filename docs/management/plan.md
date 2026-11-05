@@ -49,7 +49,7 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 25 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
 | 26 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
 | 27 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
+| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | Nate | In progress | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
