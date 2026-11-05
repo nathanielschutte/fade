@@ -5992,6 +5992,8 @@ const camera = {
   audio: null,                 // the microphone, once asked for, while the camera is open
   zoom: 1,                     // 1 = no zoom (X27)
   hwZoom: null,                // the camera's own zoom range, where the browser offers one
+  torchable: false,            // the camera in use has a light the browser can turn on (X50)
+  torch: false,                // the flash button is on: off each time the camera opens
 };
 
 function cameraMessage(text) {
@@ -6030,8 +6032,10 @@ async function startStream() {
     video.srcObject = camera.stream;
     const range = camera.stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
     camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+    camera.torchable = Boolean(camera.stream.getVideoTracks()[0]?.getCapabilities?.().torch);
     setZoom(1);
     $("#zoom-chip").hidden = !$("#camera-preview").hidden;
+    renderTorch();
   } catch (err) {
     if (attempt !== camera.attempt) return;
     cameraProblem(err?.name === "NotFoundError" || err?.name === "OverconstrainedError"
@@ -6058,8 +6062,10 @@ function stopStream() {
   camera.audio = null;
   $("#camera-video").srcObject = null;
   camera.hwZoom = null;
+  camera.torchable = false; // a stopped camera's light is off
   setZoom(1);
   $("#zoom-chip").hidden = true;
+  renderTorch();
 }
 
 // ---------- zoom (X27) ----------
@@ -6070,7 +6076,40 @@ function stopStream() {
 const CROP_ZOOM_MAX = 3; // past this, a cropped photo gets too small to look good
 const zoomMax = () => (camera.hwZoom ? Math.min(camera.hwZoom.max, 10) : CROP_ZOOM_MAX);
 const zoomText = (z) => `${z < 10 ? Math.round(z * 10) / 10 : Math.round(z)}×`;
-let zoomApplying = null; // the camera takes a moment per change: send only the newest
+let cameraApplying = null; // the camera takes a moment per change: send only the newest
+
+/** What the camera itself is asked for: its own zoom and its light (X50), where it has them. */
+function cameraWanted() {
+  const want = {};
+  if (camera.hwZoom) want.zoom = camera.zoom;
+  if (camera.torchable) want.torch = torchLit();
+  return want;
+}
+
+/** Asks the camera for cameraWanted(), one change at a time. Each change
+ * replaces the one before, so the zoom and the light always go together. */
+function applyToCamera() {
+  const track = camera.stream?.getVideoTracks()[0];
+  if (!track || cameraApplying || !(camera.hwZoom || camera.torchable)) return;
+  cameraApplying = (async () => {
+    let sent = null;
+    while (camera.stream?.getVideoTracks()[0] === track) {
+      const want = cameraWanted();
+      if (JSON.stringify(want) === sent) break;
+      sent = JSON.stringify(want);
+      try {
+        await track.applyConstraints({ advanced: [want] });
+      } catch (err) {
+        report("debug", "camera settings failed", { ...errorFields(err), zoom: want.zoom, torch: want.torch });
+        break;
+      }
+    }
+    cameraApplying = null;
+    // Switched cameras meanwhile (while recording): the new one is asked too.
+    const now = camera.stream?.getVideoTracks()[0];
+    if (now && now !== track) applyToCamera();
+  })();
+}
 
 function setZoom(z) {
   camera.zoom = Math.min(zoomMax(), Math.max(1, z));
@@ -6080,21 +6119,7 @@ function setZoom(z) {
   const video = $("#camera-video");
   if (camera.hwZoom) {
     video.style.transform = "";
-    const track = camera.stream?.getVideoTracks()[0];
-    if (!track || zoomApplying) return;
-    zoomApplying = (async () => {
-      let sent = null;
-      while (sent !== camera.zoom && camera.stream?.getVideoTracks()[0] === track) {
-        sent = camera.zoom;
-        try {
-          await track.applyConstraints({ advanced: [{ zoom: sent }] });
-        } catch (err) {
-          report("debug", "camera zoom failed", errorFields(err));
-          break;
-        }
-      }
-      zoomApplying = null;
-    })();
+    applyToCamera();
   } else {
     // In the preview: enlarged about the middle (a mirrored view stays mirrored).
     video.style.transform = camera.zoom === 1 ? "" : `${camera.mirror ? "scaleX(-1) " : ""}scale(${camera.zoom})`;
@@ -6123,6 +6148,28 @@ $(".camera-stage").addEventListener("touchmove", (e) => {
 }, { passive: false });
 $(".camera-stage").addEventListener("touchend", (e) => {
   if (e.touches.length < 2) pinch.start = 0;
+});
+
+// ---------- flash (X50) ----------
+// The camera's own light, where the browser can turn it on (`torch`: Chrome
+// on Android, for a back camera); everywhere else, no button. Off when the
+// camera opens. On, it stays lit while the camera is taking pics, for a
+// photo and all through a video, and goes off while looking at what was
+// taken, on switching to a camera without one, and with the camera.
+const torchLit = () => camera.torch && camera.torchable && !$("#capture-controls").hidden;
+
+function renderTorch() {
+  const btn = $("#torch");
+  btn.hidden = !camera.torchable || $("#capture-controls").hidden;
+  btn.setAttribute("aria-pressed", camera.torch ? "true" : "false");
+  btn.setAttribute("aria-label", camera.torch ? "Flash on. Tap to turn it off" : "Flash off. Tap to turn it on");
+  btn.classList.toggle("on", camera.torch);
+  applyToCamera();
+}
+
+$("#torch").addEventListener("click", () => {
+  camera.torch = !camera.torch;
+  renderTorch();
 });
 
 // ---------- short videos (X28) ----------
@@ -6445,6 +6492,7 @@ function showCapture() {
   $("#send-controls").hidden = true;
   $("#zoom-chip").hidden = !camera.stream;
   if (camera.stream) setZoom(1); // each new pic or video starts at 1× (Nate, 2026-10-29)
+  renderTorch(); // lit again, if it was on
   clearCaption();
   // A new pic from the camera tab: pick who it's for again.
   if (camera.picked) {
@@ -6495,6 +6543,7 @@ function showPreview(blob, videoType = null) {
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
   $("#zoom-chip").hidden = true;
+  renderTorch(); // no light while looking at what was taken
   renderSendWho();
   $("#caption-hint").hidden = false; // until there's a caption
   fitCaption();
@@ -6558,6 +6607,7 @@ $("#list-camera").addEventListener("click", () => openCamera([]));
 $("#tab-camera").addEventListener("click", () => openCamera([]));
 
 $("#camera-dialog").addEventListener("close", () => {
+  camera.torch = false; // the next time, the flash starts off
   stopStream();
   clearPreview();
   clearCaption(); // sent or abandoned, it shouldn't linger in the page
@@ -6601,7 +6651,9 @@ async function switchWhileRecording() {
   old.getVideoTracks().forEach((t) => t.stop());
   const range = stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
   camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+  camera.torchable = Boolean(stream.getVideoTracks()[0]?.getCapabilities?.().torch);
   setZoom(camera.zoom);
+  renderTorch(); // the other camera may have no light (a front one), or have one
 }
 
 // Double-tapping the live camera switches it, like the button. Counted from

@@ -1651,6 +1651,15 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .video-sound .sound-off, .video-sound.muted .sound-on { display: none; }
 .video-sound.muted .sound-off { display: inline; }
 
+/* ---------- camera flash (X50) ----------
+   Top right over the live camera (the sound button has that corner only over
+   a video already taken). Lit: filled, on the light's own color. */
+.torch { position: absolute; z-index: 3; top: 0.75rem; right: 0.75rem; background: rgba(12, 20, 16, 0.6); color: var(--paper); }
+.torch[hidden] { display: none; }
+.torch.on { background: var(--paper); color: var(--ink); }
+.torch.on svg path:first-child { fill: currentColor; }
+.torch.on .torch-off { display: none; }
+
 /* ---------- people in lists (X45, X46, X47) ----------
    Picture and name are one button that opens the profile; the row's own
    buttons follow it. A long name, or a long @username, ends in "…". */
