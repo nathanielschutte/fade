@@ -14,7 +14,7 @@ Plan entry: [F29](../management/plan.md#f29-android-app). Started 2026-11-04 (Na
 | Screens | Jetpack Compose, Material 3 (napsack's own colors and type, not Material's look) | Declarative like SwiftUI, so screens port across in the same shape |
 | Navigation | Navigation Compose, one activity | One back stack, like the iPhone's one navigation path |
 | Build | Gradle 9.8 (wrapper, Kotlin DSL), Android Gradle Plugin 9.5 (Kotlin built in), a version catalog (`gradle/libs.versions.toml`) | Android Studio's standard; versions in one file |
-| JDK | 21 (Homebrew's `openjdk@21`, or Android Studio's own) | What the build runs on |
+| JDK | 21 (Homebrew's `openjdk@21`; on Android Studio's own, newer JDK the build fetches 21 itself, the foojay plugin) | What the build compiles with (the Kotlin and Java toolchain) |
 | SDK | compile and target API 37 (Android 17); minimum API 29 (Android 10) | Android 10 and up covers nearly every phone in use and gives one storage and permissions model |
 | HTTP and the live socket | OkHttp (one client for both) | The standard; a WebSocket built in |
 | JSON | kotlinx.serialization | No reflection; matches the server's names exactly |
@@ -23,7 +23,7 @@ Plan entry: [F29](../management/plan.md#f29-android-app). Started 2026-11-04 (Na
 | Keys on the phone | The Android Keystore | Hardware-backed where the phone has it (StrongBox on newer phones) |
 | Notifications | Firebase Cloud Messaging | The only way to wake an Android app; needs a server change ([below](#notifications)) |
 | Passkeys | Credential Manager (`androidx.credentials`) | Android's passkey API, with the PRF extension the passkeys design needs |
-| Tests | JUnit 5 on the JVM (logic, the crypto vectors); Compose UI tests on an emulator against a real local server | As `make ios` does: a fresh server, the real app |
+| Tests | JUnit 5 on the JVM (logic, the crypto vectors); Compose UI tests on an emulator against a real local server (JUnit 4 there: Android's test runner runs only JUnit 4) | As `make ios` does: a fresh server, the real app |
 
 Nothing else is added without saying why in the change (as on the web: a dependency has to do real work).
 
@@ -46,6 +46,7 @@ android/
 - **`crypto/` is a plain Kotlin library, not an Android one.** Its tests run on any machine with a JDK in seconds, without an emulator, so the vectors are checked as often as the web's. It's the counterpart of `ios/NapsackCrypto`. The app also runs the same vector checks on the emulator and on a phone (`androidTest`), because Android's crypto provider isn't the desktop JDK's, and the 600,000-round PBKDF2 has to be timed on a real phone.
 - **Package name `com.getattr.napsack`**, the same as the iPhone app's bundle id. Code lives under `io.napsack.*` (Kotlin packages don't have to match). The package name is permanent once on Google Play: **Nate to confirm before the first upload.**
 - **Settings in the build files, never in Android Studio's local state.** The server address for each build type is a `buildConfigField` in `app/build.gradle.kts`, as the iPhone's are in `ios/Config/*.xcconfig`. Per-machine things (the SDK path) go in `android/local.properties`, which git ignores.
+- **Development servers are the local network.** Android 17 makes an app targeting it ask the person before it reaches a private address, the emulator's `10.0.2.2` included (`ACCESS_LOCAL_NETWORK`, shown as "Nearby devices"). Only debug builds declare it and ask (`app/src/debug/AndroidManifest.xml`), as only the iPhone's Debug builds ask about the local network; release builds talk only to `https://api.napsack.io`.
 
 ## The encryption in Kotlin
 
