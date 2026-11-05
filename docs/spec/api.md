@@ -62,8 +62,8 @@ All endpoints are under `/api`. Auth is `Authorization: Bearer <token>`, which w
 | `PUT  /me/settings` | `{share_activity}`: friends see when you're active or typing (mutual) |
 | `POST /push/subscriptions` · `/remove` | This browser's `PushSubscription.toJSON()`, tied to the session · stop. Only known push services are accepted |
 | `POST /push/apns` · `/remove` | `{token, environment}`: this iPhone's APNs device token (lowercase hex) and which of Apple's servers knows it (`production` for TestFlight and the App Store, `sandbox` for Xcode builds), tied to the session; the app sends it on every launch · stop (`{token}`). Notifications go only to Apple's two servers, carrying the note, the badge (chats waiting, as the list's dots count them: muted and hidden ones not), and the `url` to open. When the number changes without a notification (read or muted elsewhere, a pic opened, a message while napsack is on screen elsewhere, a group left, a friend removed, turned off, or deleted), the person's iPhones get `{"aps": {"badge": n}}` alone, at most once a second, only on a change, and not kept for a phone that's off |
-| `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, encrypted emoji; null takes it back. Comes back as `message_updated` |
-| `PUT  /groups/{id}/messages/{id}/reaction` | `{emoji}` from the fixed set; null takes it back |
+| `PUT  /chats/{friend}/messages/{id}/reaction` | `{ciphertext, format: 2}`, an encrypted emoji (any one: apps check it when they decrypt, `isReaction` in crypto.js); null takes it back. Comes back as `message_updated` |
+| `PUT  /groups/{id}/messages/{id}/reaction` | `{emoji}`, any one emoji (a skin tone, flag, keycap, or joined sequence counts as one; `text::is_one_emoji`); null takes it back |
 | `PUT  /me/name` | `{name}`: your display name, seen by friends. Empty clears it |
 | `POST /me/avatar` · `DELETE /me/avatar` | Set your profile picture (raw small image; re-encoded) · remove it. Every picture is kept |
 | `GET  /users/{id}/avatar/{avatar_id}` | A profile picture: yours or a friend's, current one only |

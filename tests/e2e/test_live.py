@@ -10,7 +10,7 @@ environment; see common.py."""
 import asyncio, json, os, sys, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import BASE, launch, shot, befriend, sign_up
+from common import BASE, launch, no_placeholders, shot, befriend, sign_up
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from push_receiver import Receiver  # noqa: E402
@@ -94,6 +94,24 @@ async def main():
         await expect(ana.locator(".reaction")).to_have_count(0, timeout=10000)
         print("direct chat: replies and encrypted reactions, live")
 
+        # Any emoji (X49): + opens them all, found by name; still one each, the next replacing it.
+        await ben.locator(".msg", has_text="a reply").click()
+        await ben.locator(".msg-actions .more-reactions").click()
+        await expect(ben.locator("#emoji-groups .emoji-choice").first).to_be_visible(timeout=10000)
+        await no_placeholders(ben, "#emoji-dialog")
+        await shot(ben, "emoji-picker-desktop", full_page=False)
+        await ben.fill("#emoji-search", "fox")
+        await ben.locator("#emoji-results .emoji-choice[aria-label='fox']").click()
+        await expect(ben.locator("#emoji-dialog")).to_be_hidden()
+        fox = ana.locator(".reaction", has_text="\U0001F98A")
+        await expect(fox).to_be_visible(timeout=10000)
+        await expect(fox).to_have_attribute("title", BEN)
+        await ben.locator(".msg", has_text="a reply").click()
+        await expect(ben.locator(".msg-actions button.is-mine")).to_have_text("\U0001F98A")  # there to take back
+        await ben.locator(".msg-actions button[aria-label='React \U0001F44D']").click()
+        await expect(ana.locator(".reaction")).to_have_text(["\U0001F44D"], timeout=10000)
+        print("direct chat: any emoji, encrypted, one each")
+
         # The same in a group (end-to-end encrypted; the reply travels inside it).
         group = await api(ana, "/groups", "POST", {"name": f"live {tag}", "member_ids": [ben_id]})
         await expect(ben.locator(".chat-item", has_text=f"live {tag}")).to_be_visible(timeout=10000)
@@ -104,6 +122,19 @@ async def main():
         await ana.locator(".msg", has_text="group hello").click()
         await ana.locator(".msg-actions button[aria-label='React ❤️']").click()
         await expect(ben.locator(".reaction", has_text="❤")).to_be_visible(timeout=10000)
+        # From a group of the picker (on a phone's width); it replaces her ❤️.
+        await ana.set_viewport_size({"width": 390, "height": 844})
+        await ana.locator(".msg", has_text="group hello").click()
+        await ana.locator(".msg-actions .more-reactions").click()
+        await ana.locator("#emoji-tabs button[aria-label='Flags']").click()
+        await shot(ana, "emoji-picker-phone", full_page=False)
+        await ana.locator("#emoji-groups .emoji-choice[aria-label='flag: New Zealand']").click()
+        await expect(ben.locator(".reaction")).to_have_text(["\U0001F1F3\U0001F1FF"], timeout=10000)
+        await ana.set_viewport_size({"width": 1280, "height": 720})
+        # One the picker doesn't offer (a skin tone, picked in another app) shows all the same.
+        mid = int((await ben.locator(".msg", has_text="group hello").get_attribute("data-key")).split(":")[1])
+        await api(ben, f"/groups/{group['id']}/messages/{mid}/reaction", "PUT", {"emoji": "\U0001F44D\U0001F3FD"})
+        await expect(ana.locator(".reaction", has_text="\U0001F44D\U0001F3FD")).to_be_visible(timeout=10000)
         await ana.locator(".msg", has_text="group hello").click()
         await ana.locator(".msg-actions .reply-button").click()
         await ana.fill("#composer-input", "group reply")

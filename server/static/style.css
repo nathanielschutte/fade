@@ -681,11 +681,6 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
 .profile-stats dt { color: var(--fixer); }
 .profile-stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
-.person-link {
-  width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left;
-  cursor: pointer; border-radius: var(--radius-s); padding-left: 0.25rem; padding-right: 0.25rem;
-}
-.person-link:hover { background: var(--wash); }
 .person-meta { color: var(--fixer); font-size: var(--step--1); white-space: nowrap; }
 .profile-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }
 .profile-actions:empty { display: none; }
@@ -740,8 +735,6 @@ tr.log-error td { background: rgba(232, 165, 152, 0.06); }
   padding: 0.1rem 0.45rem; border: 1px solid var(--rule); border-radius: 999px;
   font-size: 0.7rem; color: var(--sage);
 }
-.link-name { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; font-weight: 600; }
-.link-name:hover { text-decoration: underline; }
 .sheet-text.small { font-size: 0.75rem; }
 .button.danger { border-color: var(--danger); color: var(--danger); }
 .button.danger:hover { background: rgba(232, 165, 152, 0.12); }
@@ -1137,8 +1130,6 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .profile-safety .button { min-height: 2.25rem; padding: 0 0.85rem; font-size: var(--step--1); }
 .blocked-list { margin-top: 0.25rem; }
 .blocked-list .person { gap: 0.75rem; }
-.blocked-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
-.blocked-text .person-name { overflow-wrap: anywhere; }
 .blocked-none { padding: 0.35rem 0; color: var(--fixer); font-size: var(--step--1); }
 /* A link to one of napsack's own chats or groups, in a text: the only kind
    that's ever a link (app.js, textNodes). */
@@ -1659,6 +1650,57 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .video-sound[hidden] { display: none; }
 .video-sound .sound-off, .video-sound.muted .sound-on { display: none; }
 .video-sound.muted .sound-off { display: inline; }
+
+/* ---------- camera flash (X50) ----------
+   Top right over the live camera (the sound button has that corner only over
+   a video already taken). Lit: filled, on the light's own color. */
+.torch { position: absolute; z-index: 3; top: 0.75rem; right: 0.75rem; background: rgba(12, 20, 16, 0.6); color: var(--paper); }
+.torch[hidden] { display: none; }
+.torch.on { background: var(--paper); color: var(--ink); }
+.torch.on svg path:first-child { fill: currentColor; }
+.torch.on .torch-off { display: none; }
+
+/* ---------- people in lists (X45, X46, X47) ----------
+   Picture and name are one button that opens the profile; the row's own
+   buttons follow it. A long name, or a long @username, ends in "…". */
+.person-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.6rem;
+  margin: -0.3rem 0; padding: 0.3rem 0.25rem;
+  border: 0; border-radius: var(--radius-s); background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.person-open:hover { background: var(--wash); }
+.person-text { flex: 1; min-width: 0; display: grid; gap: 0.05rem; }
+.person-text .person-name, .person-text .person-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person.pick .person-text { flex: 1; }
+.person > .role-badge, .person > .button, .person > .person-meta { flex: none; }
+
+/* ---------- any emoji (X49) ---------- */
+.msg-actions .more-reactions { font-size: 1.2rem; color: var(--fixer); }
+.emoji-tabs { display: flex; overflow-x: auto; scrollbar-width: none; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule); }
+.emoji-tabs::-webkit-scrollbar { display: none; }
+.emoji-tabs[hidden] { display: none; }
+/* Shared out across the width (all nine fit at 320px); past that it scrolls. */
+.emoji-tab {
+  flex: 1 0 1.9rem; height: 2.5rem; padding: 0; border: 0; border-radius: var(--radius-s);
+  background: none; font-size: 1.25rem; cursor: pointer;
+}
+.emoji-tab:hover { background: var(--wash); }
+/* Its own height, so the sheet doesn't jump while searching (and see .send-to-search on flex in Safari). */
+.emoji-scroll {
+  height: 50vh; height: min(24rem, 50dvh);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.emoji-group h3 { margin: 0.75rem 0 0.25rem; }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.5rem, 1fr)); }
+.emoji-choice {
+  height: 2.6rem; border: 1px solid transparent; border-radius: var(--radius-s); background: none;
+  font-size: 1.5rem; line-height: 1; cursor: pointer;
+}
+.emoji-choice:hover { background: var(--wash); }
+.emoji-choice.is-mine { border-color: var(--sage); background: var(--wash); }
+.emoji-none { padding: 1rem 0.25rem; color: var(--fixer); }
+#emoji-results { padding-top: 0.5rem; }
 
 /* ---------- admin: System › Reports (F28; admin.js, section "reports") ----------
    Kept in one block at the end, on its own, for the Reports page only. */

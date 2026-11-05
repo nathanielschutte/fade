@@ -46,6 +46,49 @@ import Testing
         #expect(chat.bubble(100)?.reactions == [] && chat.bubble(100)?.myReaction == nil)
     }
 
+    /// Any one emoji is a reaction now (X49), not just the quick row's; and
+    /// what isn't one emoji is never sent, nor shown when a client sealed it.
+    @Test func anyOneEmojiIsAReactionAndNothingElse() async throws {
+        let sealed = try E2E.encryptText2(list.pairKey, "dinner?", replyTo: nil, sender: 3, recipient: 7)
+        let server = StubServer { request in
+            (200, json(Self.myText(sealed, reaction: body(request)["ciphertext"] ?? NSNull())))
+        }
+        let chat = sending.chat(.friend(alice), server: server)
+        try await chat.react(try myBubble(sealed), "🫠")
+        let sent = try #require(await server.requests.last)
+        let ciphertext = try #require(body(sent)["ciphertext"] as? String)
+        #expect(try E2E.decryptReaction(aliceKey, ciphertext, sender: 3, recipient: 7, message: 100) == "🫠")
+        #expect(chat.bubble(100)?.reactions == ["🫠"] && chat.bubble(100)?.myReaction == "🫠")
+        let family = "👨\u{200D}👩\u{200D}👧"
+        try await chat.react(try #require(chat.bubble(100)), family)  // another replaces it: still one each
+        #expect(chat.bubble(100)?.reactions == [family])
+
+        let asked = await server.requests.count
+        let reacted = try #require(chat.bubble(100))
+        for bad in ["ok", "😂😂", "<b>", ""] {
+            await #expect(throws: SendError.notAReaction) { try await chat.react(reacted, bad) }
+        }
+        #expect(await server.requests.count == asked)  // none of them went
+
+        // Sealed by some other client, opened here: shown only if it's one emoji.
+        for (theirs, shown) in [("🦩", ["🦩"]), ("👍🏽", ["👍🏽"]), ("lol", []), ("😂😂", []), ("\u{202E}😂", [])] {
+            let reaction = try E2E.encryptReaction(list.pairKey, theirs, sender: 3, recipient: 7, message: 100)
+            #expect(sending.reader.bubble(try ChatListTests.decode(DirectMessage.self, Self.myText(sealed, reaction: reaction)), with: alice)
+                .reactions == shown, "\(theirs)")
+        }
+    }
+
+    /// The emoji keyboard's first emoji is the reaction; nothing else typed counts.
+    @Test func theEmojiKeyboardsFirstEmojiIsTheReaction() {
+        #expect(EmojiField.reaction(in: "🫠") == "🫠")
+        #expect(EmojiField.reaction(in: "👍🏽") == "👍🏽")
+        #expect(EmojiField.reaction(in: "a🦩b") == "🦩")
+        #expect(EmojiField.reaction(in: "🇳🇿") == "🇳🇿")
+        #expect(EmojiField.reaction(in: "hello") == nil)
+        #expect(EmojiField.reaction(in: " ") == nil)
+        #expect(EmojiField.reaction(in: "") == nil)
+    }
+
     @Test func groupReactionsAreTheEmojiItself() async throws {
         let base = json(list.groupMessage(body: "hello all"))
         let server = StubServer { request in

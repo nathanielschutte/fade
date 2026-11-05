@@ -129,7 +129,7 @@ async def main():
         await ana.click("#chat-title")
         await expect(ana.locator("#group-members .person")).to_have_count(3)
         await expect(ana.locator("#group-members .person", has_text=ANA).locator(".role-badge")).to_have_text("Owner")
-        await ana.locator("#group-add .person", has_text=DEE).locator("button").click()
+        await ana.locator("#group-add .person", has_text=DEE).locator("button.button", has_text="Add").click()
         await expect(ana.locator("#group-members .person")).to_have_count(4, timeout=10000)
         await expect(ana.locator("#group-note")).to_have_text(f"Added {DEE}.")
         await shot(ana, "group-info", full_page=False)
@@ -202,8 +202,7 @@ async def main():
         await dee_row.locator("button", has_text="Accept").click()
         await expect(ben.locator("#group-note")).to_have_text(f"You and {DEE} are now friends.", timeout=10000)
         await expect(dee_row.locator("button", has_text=re.compile("Add friend|Accept"))).to_have_count(0)  # friends now
-        await expect(dee_row.locator(".link-name")).to_be_visible()                        # their name opens their profile
-        await expect(ben_row.locator(".link-name")).to_be_visible(timeout=10000)  # Dee's sheet caught up live
+        await expect(ben_row).not_to_contain_text(re.compile("Add friend|Requested"), timeout=10000)  # Dee's sheet caught up live
         await expect(dee.locator(".chat-item:not(.is-group)", has_text=BEN)).to_have_count(1, timeout=10000)  # a new chat in her list
         await shot(dee, "group-befriend-phone", full_page=False)
         await dee.click("#group-dialog [data-close]")

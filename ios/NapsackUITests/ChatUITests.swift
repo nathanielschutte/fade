@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// An open chat, driven as a person drives it, against the local test server
@@ -42,6 +43,12 @@ import XCTest
                 let text = n % 7 == 0 ? "Message \(n).\nA second line.\nAnd a third." : "Message \(n)."
                 ids[text] = n % 3 == 0 ? try await server.send(text, from: me, to: friend) : try await server.send(text, from: friend, to: me)
             }
+            // The friend has a picture, as the chat list shows it (X48: tapping it opens the chat).
+            let picture = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 200)).image { c in
+                UIColor.systemTeal.setFill()
+                c.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            }
+            try await server.setPicture(try XCTUnwrap(picture.jpegData(compressionQuality: 0.8)), for: friend)
             Self.chat = Chat(server: server, me: me, friend: friend, newest: "Message 60.", ids: ids)
         }
         app = XCUIApplication()
@@ -176,6 +183,70 @@ import XCTest
         let middle = message.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
         middle.press(forDuration: 0.05, thenDragTo: middle.withOffset(CGVector(dx: 140, dy: 0)), withVelocity: .default, thenHoldForDuration: 0)
         try require(app.buttons["Cancel reply"].waitForExistence(timeout: 3), "swiping replied")
+    }
+
+    /// + after the quick row brings the system's emoji keyboard, and the first
+    /// emoji typed is the reaction (X49): it shows under the message, as the
+    /// server stored it.
+    func testReactingWithAnyEmoji() async throws {
+        let chat = try XCTUnwrap(Self.chat)
+        try openChat(chat)
+        let message = messages.staticTexts[chat.newest]
+        try require(message.waitForExistence(timeout: 5), "the newest message showed")
+        message.press(forDuration: 0.6)
+        let more = app.buttons["React with another emoji"]
+        try require(more.waitForExistence(timeout: 3), "the menu has + after the quick row")
+        more.tap()
+        try require(app.keyboards.firstMatch.waitForExistence(timeout: 5), "a keyboard came up for any emoji")
+        shot("chat-react-any-keyboard")
+        app.typeText("🦩")
+        let reacted = app.buttons["🦩 1, including you. Tap to take yours back"]
+        try require(reacted.waitForExistence(timeout: 10), "the flamingo shows under the message")
+        try require(!app.buttons["React with another emoji"].exists, "the menu closed")
+        reacted.tap()  // the same again takes it back
+        try require(waitUntil(10) { !reacted.exists }, "taken back")
+    }
+
+    // ---------- lists of people ----------
+
+    /// In the chat list, a chat's picture is part of its row: tapping it opens
+    /// the chat (X48), not the picture.
+    func testAChatsPictureOpensTheChat() async throws {
+        let chat = try XCTUnwrap(Self.chat)
+        try openChat(chat)  // the list showed first, with the friend's picture
+        app.navigationBars.buttons.firstMatch.tap()
+        let name = app.staticTexts[chat.friend.username]
+        try require(name.waitForExistence(timeout: 10), "back on the list")
+        // The picture sits left of the name, 44 points across.
+        let picture = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: name.frame.minX - 12 - 22, dy: name.frame.midY + 10))
+        picture.tap()
+        try require(composer.waitForExistence(timeout: 10), "tapping the picture opened the chat")
+    }
+
+    /// A friend request's row opens what their profile can show (X46), and its
+    /// Accept button accepts, right there.
+    func testARequestOpensTheirProfile() async throws {
+        let chat = try XCTUnwrap(Self.chat)
+        let stranger = try await chat.server.newAccount("asker")
+        _ = try await chat.server.request("friends/requests", method: "POST", token: stranger.token, json: ["username": chat.me.username])
+        try openChat(chat)
+        app.navigationBars.buttons.firstMatch.tap()
+        let friends = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Friends'")).firstMatch
+        try require(friends.waitForExistence(timeout: 10), "back on the list")
+        friends.tap()
+        let row = app.staticTexts[stranger.username]
+        try require(row.waitForExistence(timeout: 10), "their request is listed")
+        row.tap()
+        try require(app.staticTexts["Wants to be friends"].waitForExistence(timeout: 5), "their profile opened")
+        try require(app.buttons["Report \(stranger.username)"].exists, "it offers Report")
+        shot("profile-of-a-request")
+        app.navigationBars.buttons.firstMatch.tap()
+        let accept = app.buttons["Accept"]
+        try require(accept.waitForExistence(timeout: 5), "back on Friends")
+        accept.tap()
+        try require(waitUntil(10) { !self.app.buttons["Accept"].exists }, "accepted")
+        try require(!app.staticTexts["Wants to be friends"].exists, "Accept didn't open the profile")
+        try require(app.navigationBars["Friends"].exists, "still on Friends")
     }
 
     // ---------- links in texts ----------

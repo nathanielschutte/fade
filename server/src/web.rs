@@ -61,6 +61,8 @@ const ADMIN_JS: Asset = asset!("../static/admin.js");
 const SW_JS: Asset = asset!("../static/sw.js");
 const QR_JS: Asset = asset!("../static/qr.js");
 const DRAW_JS: Asset = asset!("../static/draw.js");
+// Every emoji the reaction picker offers (X49), loaded when it first opens.
+const EMOJI_JS: Asset = asset!("../static/emoji.js");
 // The friend map: the math is shared with the iOS app (shared/graph/graph.js); the drawing is the web app's.
 const GRAPH_JS: Asset = asset!("../../shared/graph/graph.js");
 const GRAPH_VIEW_JS: Asset = asset!("../static/graph-view.js");
@@ -119,6 +121,7 @@ pub fn routes() -> Router<SharedState> {
         .route("/qr.js", get(|| async { script(QR_JS.text()) }))
         .route("/env.js", get(|| async { script(ENV_JS.text()) }))
         .route("/draw.js", get(|| async { script(DRAW_JS.text()) }))
+        .route("/emoji.js", get(|| async { script(EMOJI_JS.text()) }))
         .route("/graph.js", get(|| async { script(GRAPH_JS.text()) }))
         .route(
             "/graph-view.js",
@@ -320,6 +323,7 @@ mod dev {
             &ADMIN_JS,
             &QR_JS,
             &DRAW_JS,
+            &EMOJI_JS,
             &GRAPH_JS,
             &GRAPH_VIEW_JS,
             &ENV_JS,
@@ -405,6 +409,7 @@ mod tests {
             &GRAPH_JS,
             &GRAPH_VIEW_JS,
             &ENV_JS,
+            &EMOJI_JS,
         ] {
             assert!(std::path::Path::new(asset.path).is_file(), "{}", asset.path);
             assert_eq!(asset.text(), std::fs::read_to_string(asset.path).unwrap());

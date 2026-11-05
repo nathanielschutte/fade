@@ -474,7 +474,9 @@ async function decrypt(m) {
 async function decryptReactions(m) {
   const out = [];
   for (const r of m.reactions || []) {
-    const cacheKey = `${m.id}:${r.sender_id}:${r.created_at}`;
+    // By its ciphertext, not its time: one changed within the same second is
+    // another reaction, and showed as the last one (seen once any emoji could be picked).
+    const cacheKey = `${m.id}:${r.sender_id}:${r.ciphertext}`;
     if (!state.reactionText.has(cacheKey)) {
       let emoji = null;
       try {
@@ -483,7 +485,8 @@ async function decryptReactions(m) {
       } catch {
         // unreadable reactions are just not shown
       }
-      state.reactionText.set(cacheKey, e2e.REACTIONS.includes(emoji) ? emoji : null);
+      // Any one emoji (X49), not only the quick row: they may have picked it from the full list.
+      state.reactionText.set(cacheKey, e2e.isReaction(emoji) ? emoji : null);
     }
     const emoji = state.reactionText.get(cacheKey);
     if (emoji) out.push({ user: r.sender_id, emoji });
@@ -3406,6 +3409,14 @@ function snippetOf(m) {
 const reactionsOf = (m) => (m.group_id ? (m.reactions || []).map((r) => ({ user: r.user_id, emoji: r.emoji })) : m.reactionList || []);
 const myReaction = (m) => reactionsOf(m).find((r) => r.user === state.me.id)?.emoji ?? null;
 
+/** Who reacted: "You", a friend by what I call them, anyone else in a group by their username. */
+function reactorName(m, userId) {
+  if (userId === state.me.id) return "You";
+  if (!m.group_id) return personName(userId, "");
+  const member = groupMemberKeys.get(m.group_id)?.find((x) => x.id === userId);
+  return personName(userId, member?.username ?? groupMemberName(m.group_id, userId));
+}
+
 /**
  * A message's items for drawConversation: the bubble (with the message it
  * replies to, if any), its reactions, and, when tapped, a row to react or
@@ -3443,18 +3454,19 @@ function bubbleItems(m, mine, content, byId) {
 
   const reactions = reactionsOf(m);
   if (reactions.length) {
-    const counts = new Map();
-    for (const r of reactions) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+    // Each emoji, with who chose it (by the names I know them by, X47), shown on hover.
+    const who = new Map();
+    for (const r of reactions) who.set(r.emoji, [...(who.get(r.emoji) || []), reactorName(m, r.user)]);
     const me = myReaction(m);
     items.push({
       key: `r:${key}`,
-      sig: JSON.stringify([mine, me, [...counts]]),
+      sig: JSON.stringify([mine, me, [...who]]),
       make: () => el("li", { class: `reactions ${mine ? "mine" : ""}` },
-        ...[...counts].map(([emoji, n]) => el("button", {
-          type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`,
-          "aria-label": `${emoji} ${n}${me === emoji ? ", including you. Tap to take yours back" : ". Tap to react"}`,
+        ...[...who].map(([emoji, names]) => el("button", {
+          type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`, title: names.join(", "),
+          "aria-label": `${emoji} from ${names.join(", ")}${me === emoji ? ". Tap to take yours back" : ". Tap to react"}`,
           onclick: () => react(liveMessage(m), emoji),
-        }, emoji, n > 1 ? String(n) : ""))),
+        }, emoji, names.length > 1 ? String(names.length) : ""))),
     });
   }
 
@@ -3467,10 +3479,14 @@ function bubbleItems(m, mine, content, byId) {
       key: `a:${key}`,
       sig: JSON.stringify([mine, me, copy, edit, reportable]),
       make: () => el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
-        ...e2e.REACTIONS.map((emoji) => el("button", {
-          type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
+        // The quick row, then mine if I picked another (a tap takes it back), then + for any emoji (X49).
+        ...[...e2e.REACTIONS, ...(me && !e2e.REACTIONS.includes(me) ? [me] : [])].map((emoji) => el("button", {
+          type: "button", class: me === emoji ? "is-mine" : "",
+          "aria-label": me === emoji ? `Take back your ${emoji}` : `React ${emoji}`,
           onclick: () => react(liveMessage(m), emoji),
         }, emoji)),
+        el("button", { type: "button", class: "more-reactions", "aria-label": "React with another emoji", title: "More emoji",
+          onclick: () => openEmojiPicker(liveMessage(m)) }, "+"),
         el("button", { type: "button", class: "reply-button", onclick: () => startReply(liveMessage(m)) }, "Reply"),
         copy ? el("button", { type: "button", class: "text-action", onclick: () => copyText(liveMessage(m)) }, "Copy") : null,
         edit ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(liveMessage(m)) }, "Edit") : null,
@@ -3633,6 +3649,7 @@ function quoteButton(m, targetId, text) {
 /** Same emoji again takes it back; another one replaces it. */
 async function react(m, emoji) {
   const next = myReaction(m) === emoji ? null : emoji;
+  if (next && !e2e.isReaction(next)) return; // one emoji, nothing else (the server refuses the rest in groups)
   state.actionFor = null;
   try {
     if (m.group_id) {
@@ -3650,6 +3667,101 @@ async function react(m, emoji) {
   }
   renderMessages();
 }
+
+// ---------- any emoji (X49) ----------
+// + by the quick row opens every emoji, in Unicode's groups, with a search by
+// name. The list (emoji.js) loads the first time it's opened, and the grid is
+// built once and kept. Still one reaction per person: a pick replaces mine.
+const emojiPicker = { m: null, groups: null, built: false };
+
+function loadEmoji() {
+  emojiPicker.groups ??= import("/emoji.js").then((mod) => mod.EMOJI_GROUPS.map(([name, list]) => ({
+    name,
+    items: list.split("|").map((entry) => {
+      const at = entry.indexOf(" ");
+      return { emoji: entry.slice(0, at), name: entry.slice(at + 1) };
+    }),
+  }))).catch((err) => {
+    emojiPicker.groups = null; // tried again next time
+    throw err;
+  });
+  return emojiPicker.groups;
+}
+
+// Each group's button in the bar: an emoji that says what's in it.
+const EMOJI_GROUP_ICONS = {
+  "Smileys & Emotion": "😀", "People & Body": "👋", "Animals & Nature": "🐻", "Food & Drink": "🍔",
+  "Travel & Places": "🚗", "Activities": "⚽", "Objects": "💡", "Symbols": "🔣", "Flags": "🏁",
+};
+
+const emojiChoice = (item) => el("button", {
+  type: "button", class: "emoji-choice", "data-emoji": item.emoji, "aria-label": item.name, title: item.name,
+}, item.emoji);
+
+async function openEmojiPicker(m) {
+  emojiPicker.m = m;
+  const dialog = $("#emoji-dialog");
+  $("#emoji-search").value = "";
+  $("#emoji-note").textContent = "";
+  if (!dialog.open) dialog.showModal();
+  if (!touchFirst.matches) $("#emoji-search").focus(); // on a phone, the keyboard would cover the list
+  let groups;
+  try {
+    groups = await loadEmoji();
+  } catch (err) {
+    report("warn", "emoji list failed to load", errorFields(err));
+    $("#emoji-note").textContent = "Couldn't load the emoji. Check your connection and try again.";
+    return;
+  }
+  if (!emojiPicker.built) {
+    emojiPicker.built = true;
+    $("#emoji-groups").replaceChildren(...groups.map((g, i) => el("section", { class: "emoji-group", id: `emoji-group-${i}` },
+      el("h3", { text: g.name }),
+      el("div", { class: "emoji-grid" }, ...g.items.map(emojiChoice)))));
+    $("#emoji-tabs").replaceChildren(...groups.map((g, i) => el("button", {
+      type: "button", class: "emoji-tab", "aria-label": g.name, title: g.name,
+      onclick: () => $(`#emoji-group-${i}`).scrollIntoView({ block: "start" }),
+    }, EMOJI_GROUP_ICONS[g.name] ?? g.items[0]?.emoji ?? "?")));
+  }
+  $("#emoji-scroll").scrollTop = 0;
+  showEmojiMatches();
+}
+
+/** The one I've reacted with stands out, so it's plain that picking it again takes it back. */
+function markMyEmoji() {
+  const mine = emojiPicker.m ? myReaction(liveMessage(emojiPicker.m)) : null;
+  for (const b of $("#emoji-dialog").querySelectorAll(".emoji-choice")) {
+    b.classList.toggle("is-mine", b.dataset.emoji === mine);
+  }
+}
+
+/** Searching: the matches by name, in one grid; otherwise every group. */
+async function showEmojiMatches() {
+  const q = $("#emoji-search").value.trim().toLowerCase();
+  $("#emoji-groups").hidden = Boolean(q);
+  $("#emoji-tabs").hidden = Boolean(q);
+  $("#emoji-results").hidden = !q;
+  if (q) {
+    const groups = await emojiPicker.groups?.catch(() => null);
+    if (!groups || $("#emoji-search").value.trim().toLowerCase() !== q) return; // typed on meanwhile
+    const words = q.split(/\s+/);
+    const found = groups.flatMap((g) => g.items).filter((item) => words.every((w) => item.name.includes(w)));
+    $("#emoji-results").replaceChildren(found.length
+      ? el("div", { class: "emoji-grid" }, ...found.map(emojiChoice))
+      : el("p", { class: "emoji-none", text: "No emoji by that name." }));
+  }
+  markMyEmoji();
+}
+
+$("#emoji-search").addEventListener("input", showEmojiMatches);
+$("#emoji-dialog").addEventListener("click", (e) => {
+  const choice = e.target.closest(".emoji-choice");
+  if (!choice) return;
+  const m = emojiPicker.m;
+  $("#emoji-dialog").close();
+  if (m) react(liveMessage(m), choice.dataset.emoji);
+});
+$("#emoji-dialog").addEventListener("close", () => { emojiPicker.m = null; });
 
 function startReply(m) {
   state.actionFor = null;
@@ -4711,16 +4823,14 @@ async function sendGroupText(groupId, input, text) {
 
 // New group: a name and some friends.
 
+// A tap anywhere on a row picks them (it's a checkbox's label), so here the
+// row doesn't open their profile as other lists of people do.
 function friendPicker(friends, checked = new Set()) {
-  return friends.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", {},
-      el("label", { class: "person pick" },
-        el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
-        avatar,
-        el("span", { class: "person-name", text: chatName(f) })));
-  });
+  return friends.map((f) => el("li", {},
+    el("label", { class: "person pick" },
+      el("input", { type: "checkbox", name: "member", value: String(f.id), checked: checked.has(f.id) || null }),
+      personAvatar(f),
+      personText(f))));
 }
 
 // The + in the chat list bar starts something new. Friends (adding, invites)
@@ -4809,31 +4919,31 @@ function drawGroupInfo() {
   $("#group-remove-hint").textContent = g.role === "owner"
     ? "You're the owner, so you can remove people. Everything they sent stays in the chat."
     : `Only ${owner ? personName(owner.id, owner.username) : "the owner"} can remove people. You can add your friends.`;
+  // Everyone opens their profile (X46): a friend's in full, anyone else's as
+  // far as I may see it (openPerson). The sheet closes first.
+  const leaving = () => $("#group-dialog").close();
   $("#group-members").replaceChildren(...g.members.map((m) => {
     const me = m.id === state.me.id;
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, m);
     const friend = !me && chatById(m.id);
-    return el("li", { class: "person" },
-      avatar,
-      friend
-        ? el("button", { type: "button", class: "person-name link-name", onclick: () => { $("#group-dialog").close(); openProfile(m.id); } }, personName(m.id, m.username))
-        : el("span", { class: "person-name", text: me ? `${personName(m.id, m.username)} (you)` : m.username }),
-      m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
-      !me && !friend ? befriendControl(g, m) : null,
-      g.role === "owner" && !me
-        ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
-          onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
-        : null);
+    return personRow(m, {
+      suffix: me ? " (you)" : "",
+      leaving,
+      controls: [
+        m.role === "owner" ? el("span", { class: "role-badge", text: "Owner" }) : null,
+        !me && !friend ? befriendControl(g, m) : null,
+        g.role === "owner" && !me
+          ? el("button", { type: "button", class: "button", "aria-label": `Remove ${personName(m.id, m.username)}`,
+            onclick: (e) => removeFromGroup(e.currentTarget, g, m) }, "Remove")
+          : null,
+      ],
+    });
   }));
   $("#group-add-section").hidden = addable.length === 0;
-  $("#group-add").replaceChildren(...addable.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", { class: "person" }, avatar,
-      el("span", { class: "person-name", text: chatName(f) }),
-      el("button", { type: "button", class: "button primary", onclick: () => addToGroup(g, f) }, "Add"));
-  }));
+  $("#group-add").replaceChildren(...addable.map((f) => personRow(f, {
+    leaving,
+    controls: [el("button", { type: "button", class: "button primary", "aria-label": `Add ${chatName(f)} to the group`,
+      onclick: () => addToGroup(g, f) }, "Add")],
+  })));
   const leave = $("#leave-group");
   leave.textContent = "Leave group";
   delete leave.dataset.confirm;
@@ -5050,26 +5160,121 @@ function stat(label, value) {
   return [el("dt", { text: label }), el("dd", { text: String(value) })];
 }
 
+// ---------- people in lists (X45, X46, X47) ----------
+// Every list of people (a group's members and the friends to add to it,
+// friend requests, the friends on a profile, Blocked) shows each one the same
+// way: their picture, or the initial stand-in (pictures go only to friends),
+// the name I know them by, and @username under it when that's different,
+// since the username is who they are. Picture and name are one button that
+// opens their profile.
+
+const personAvatar = (user) => paintAvatar(el("span", { class: "avatar small", "aria-hidden": "true" }), user);
+
+/** The name I know someone by (personName), then @username when it differs, and `meta` (when, who). */
+function personText(user, { suffix = "", meta = "" } = {}) {
+  const name = personName(user.id, user.username);
+  const sub = [name !== user.username ? `@${user.username}` : "", meta].filter(Boolean).join(" · ");
+  return el("span", { class: "person-text" },
+    el("span", { class: "person-name", text: `${name}${suffix}` }),
+    sub ? el("span", { class: "person-meta", text: sub }) : null);
+}
+
+/** Someone in a list: their picture and name, one button that opens their
+ * profile (after `leaving()`, which closes the sheet the list is in), then `controls`. */
+function personRow(user, { suffix, meta, controls = [], leaving = null } = {}) {
+  return el("li", { class: "person", "data-id": String(user.id) },
+    el("button", { type: "button", class: "person-open", onclick: () => { leaving?.(); openPerson(user); } },
+      personAvatar(user), personText(user, { suffix, meta })),
+    ...controls);
+}
+
+/** Anyone's profile (X46): mine or a friend's, as the server has it; anyone
+ * else (in a group with me, a request either way, someone I block) as far as
+ * I may see them: their username, and adding, reporting, or blocking them. */
+function openPerson(user) {
+  const chat = chatById(user.id);
+  if (chat?.system) return; // Team Napsack has no profile (team.rs)
+  if (user.id === state.me.id || chat) openProfile(user.id);
+  else openStranger(user);
+}
+
+// Bumped by each profile shown, so an answer for one shown before is dropped.
+let profileTurn = 0;
+
+/** The profile sheet, emptied for someone new: never the last person's name or picture while this one loads (X23). */
+function resetProfile(user) {
+  const turn = ++profileTurn;
+  for (const id of ["#profile-stats", "#profile-people", "#profile-actions", "#profile-safety"]) $(id).replaceChildren();
+  hideProfileEdit();
+  profileEdit.profile = null;
+  $("#profile-people-section").hidden = true;
+  $("#profile-account").hidden = user.id !== state.me?.id;
+  disarmSignOut("#profile-sign-out");
+  $("#profile-message").hidden = true;
+  $("#profile-name").textContent = user.username ? personName(user.id, user.username) : "";
+  if (user.username) paintAvatar($("#profile-avatar"), user);
+  else paintInitial($("#profile-avatar"), "", user.id);
+  $("#profile-sub").textContent = "";
+  if (!$("#profile-dialog").open) $("#profile-dialog").showModal();
+  return turn;
+}
+
+/** Someone who isn't my friend: the server shows me no profile of theirs (only friends see those), so this is what I know. */
+function openStranger(user) {
+  resetProfile(user);
+  // Not a profile to edit, but who Block closes the sheet for.
+  profileEdit.profile = { kind: "other", id: user.id, username: user.username };
+  const blocked = blockedList.items?.some((b) => b.id === user.id);
+  $("#profile-sub").textContent = blocked ? "You block them" : "Not your friend";
+  $("#profile-message").textContent = "Only friends see each other's profiles, pictures, and names.";
+  $("#profile-message").hidden = false;
+  const who = { id: user.id, username: user.username };
+  if (!blocked) $("#profile-actions").append(strangerFriendControl(user));
+  $("#profile-safety").append(
+    el("button", { type: "button", class: "button", onclick: () => reportPerson(who) }, "Report"),
+    blocked ? null : el("button", { type: "button", class: "button danger", onclick: () => openBlock(who) }, "Block"));
+}
+
+/** Add friend, or Accept if they asked me, or that I've asked already. */
+function strangerFriendControl(user) {
+  if (state.requests.outgoing.some((r) => r.id === user.id)) {
+    return el("span", { class: "person-meta", text: "Friend request sent" });
+  }
+  const accepting = state.requests.incoming.some((r) => r.id === user.id);
+  const btn = el("button", { type: "button", class: "button primary", onclick: async () => {
+    btn.disabled = true;
+    $("#profile-edit-note").textContent = "";
+    let friends = accepting;
+    try {
+      if (accepting) await api(`/friends/requests/${user.id}/accept`, { method: "POST" });
+      else friends = (await getJSON("/friends/requests", { method: "POST", json: { username: user.username } })).status === "friends";
+    } catch (err) {
+      btn.disabled = false;
+      $("#profile-edit-note").textContent = err.message;
+      return;
+    }
+    await Promise.all([refreshRequests(), refreshChats()]);
+    if (profileEdit.profile?.id !== user.id) return; // moved on meanwhile
+    if (friends && chatById(user.id)) return openProfile(user.id);
+    btn.replaceWith(el("span", { class: "person-meta", text: "Friend request sent" }));
+    $("#profile-edit-note").textContent = `Request sent to ${user.username}.`;
+  } }, accepting ? "Accept friend request" : "Add friend");
+  return btn;
+}
+
 async function openProfile(userId) {
   const dialog = $("#profile-dialog");
   const msg = $("#profile-message");
-  for (const id of ["#profile-stats", "#profile-people", "#profile-actions", "#profile-safety"]) $(id).replaceChildren();
-  hideProfileEdit();
-  $("#profile-people-section").hidden = true;
-  $("#profile-account").hidden = userId !== state.me?.id;
-  disarmSignOut("#profile-sign-out");
-  msg.hidden = true;
-  // Never the last person's name while this one loads (X23).
   const known = userId === state.me?.id ? state.me : chatById(userId);
-  $("#profile-name").textContent = known ? personName(userId, known.username) : "";
-  $("#profile-sub").textContent = "";
+  const turn = resetProfile({ id: userId, username: known?.username ?? "" });
   $("#profile-stats").replaceChildren(el("p", { class: "muted", text: "Loading…" }));
-  if (!dialog.open) dialog.showModal();
 
   let p;
   try {
     p = await getJSON(`/users/${userId}/profile?tz=${tzOffset()}`);
+    if (turn !== profileTurn) return; // another profile is showing now
   } catch (err) {
+    if (turn !== profileTurn) return;
     $("#profile-name").textContent = "";
     $("#profile-sub").textContent = "";
     $("#profile-stats").replaceChildren(); // not "Loading…" under the problem
@@ -5129,15 +5334,7 @@ async function openProfile(userId) {
   }
 
   $("#profile-people-section").hidden = people.length === 0 && p.kind !== "me";
-  $("#profile-people").replaceChildren(...people.map((f) => {
-    const avatar = el("span", { class: "avatar small", "aria-hidden": "true" });
-    paintAvatar(avatar, f);
-    return el("li", {},
-      el("button", { type: "button", class: "person person-link", onclick: () => openProfile(f.id) },
-        avatar,
-        el("span", { class: "person-name", text: personName(f.id, f.username) }),
-        el("span", { class: "person-meta", text: `since ${longDate(f.since)}` })));
-  }));
+  $("#profile-people").replaceChildren(...people.map((f) => personRow(f, { meta: `since ${longDate(f.since)}` })));
 }
 
 // Your profile: your display name and picture. A friend's: your private nickname for them.
@@ -5440,11 +5637,7 @@ function renderBlocks() {
 
 function blockedRow(b) {
   const unblockButton = el("button", { type: "button", class: "button", onclick: () => unblock(unblockButton, b) }, "Unblock");
-  return el("li", { class: "person", "data-id": String(b.id) },
-    el("span", { class: "blocked-text" },
-      el("span", { class: "person-name", text: `@${b.username}` }),
-      el("span", { class: "person-meta", text: `Blocked ${dayName(b.blocked_at)}` })),
-    unblockButton);
+  return personRow(b, { meta: `Blocked ${dayName(b.blocked_at)}`, controls: [unblockButton] });
 }
 
 /** Two taps: the first says what unblocking does (and doesn't). */
@@ -5533,19 +5726,17 @@ function renderRequests() {
   badge.textContent = incoming.length;
 
   $("#incoming-section").hidden = incoming.length === 0;
-  $("#incoming-list").replaceChildren(...incoming.map((r) =>
-    el("li", { class: "person" },
-      el("span", { class: "person-name", text: r.username }),
-      el("button", { type: "button", class: "button primary", onclick: () => requestAction(r.id, "accept") }, "Accept"),
-      el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "decline") }, "Decline"),
-    )));
+  // Tapping who it is opens what I may see of them (X46); this sheet closes first.
+  const leaving = () => $("#friends-dialog").close();
+  $("#incoming-list").replaceChildren(...incoming.map((r) => personRow(r, { leaving, controls: [
+    el("button", { type: "button", class: "button primary", onclick: () => requestAction(r.id, "accept") }, "Accept"),
+    el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "decline") }, "Decline"),
+  ] })));
 
   $("#outgoing-section").hidden = outgoing.length === 0;
-  $("#outgoing-list").replaceChildren(...outgoing.map((r) =>
-    el("li", { class: "person" },
-      el("span", { class: "person-name", text: r.username }),
-      el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "cancel") }, "Cancel request"),
-    )));
+  $("#outgoing-list").replaceChildren(...outgoing.map((r) => personRow(r, { leaving, controls: [
+    el("button", { type: "button", class: "button", onclick: () => requestAction(r.id, "cancel") }, "Cancel request"),
+  ] })));
 }
 
 async function requestAction(userId, action) {
@@ -5801,6 +5992,8 @@ const camera = {
   audio: null,                 // the microphone, once asked for, while the camera is open
   zoom: 1,                     // 1 = no zoom (X27)
   hwZoom: null,                // the camera's own zoom range, where the browser offers one
+  torchable: false,            // the camera in use has a light the browser can turn on (X50)
+  torch: false,                // the flash button is on: off each time the camera opens
 };
 
 function cameraMessage(text) {
@@ -5839,8 +6032,10 @@ async function startStream() {
     video.srcObject = camera.stream;
     const range = camera.stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
     camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+    camera.torchable = Boolean(camera.stream.getVideoTracks()[0]?.getCapabilities?.().torch);
     setZoom(1);
     $("#zoom-chip").hidden = !$("#camera-preview").hidden;
+    renderTorch();
   } catch (err) {
     if (attempt !== camera.attempt) return;
     cameraProblem(err?.name === "NotFoundError" || err?.name === "OverconstrainedError"
@@ -5867,8 +6062,10 @@ function stopStream() {
   camera.audio = null;
   $("#camera-video").srcObject = null;
   camera.hwZoom = null;
+  camera.torchable = false; // a stopped camera's light is off
   setZoom(1);
   $("#zoom-chip").hidden = true;
+  renderTorch();
 }
 
 // ---------- zoom (X27) ----------
@@ -5879,7 +6076,40 @@ function stopStream() {
 const CROP_ZOOM_MAX = 3; // past this, a cropped photo gets too small to look good
 const zoomMax = () => (camera.hwZoom ? Math.min(camera.hwZoom.max, 10) : CROP_ZOOM_MAX);
 const zoomText = (z) => `${z < 10 ? Math.round(z * 10) / 10 : Math.round(z)}×`;
-let zoomApplying = null; // the camera takes a moment per change: send only the newest
+let cameraApplying = null; // the camera takes a moment per change: send only the newest
+
+/** What the camera itself is asked for: its own zoom and its light (X50), where it has them. */
+function cameraWanted() {
+  const want = {};
+  if (camera.hwZoom) want.zoom = camera.zoom;
+  if (camera.torchable) want.torch = torchLit();
+  return want;
+}
+
+/** Asks the camera for cameraWanted(), one change at a time. Each change
+ * replaces the one before, so the zoom and the light always go together. */
+function applyToCamera() {
+  const track = camera.stream?.getVideoTracks()[0];
+  if (!track || cameraApplying || !(camera.hwZoom || camera.torchable)) return;
+  cameraApplying = (async () => {
+    let sent = null;
+    while (camera.stream?.getVideoTracks()[0] === track) {
+      const want = cameraWanted();
+      if (JSON.stringify(want) === sent) break;
+      sent = JSON.stringify(want);
+      try {
+        await track.applyConstraints({ advanced: [want] });
+      } catch (err) {
+        report("debug", "camera settings failed", { ...errorFields(err), zoom: want.zoom, torch: want.torch });
+        break;
+      }
+    }
+    cameraApplying = null;
+    // Switched cameras meanwhile (while recording): the new one is asked too.
+    const now = camera.stream?.getVideoTracks()[0];
+    if (now && now !== track) applyToCamera();
+  })();
+}
 
 function setZoom(z) {
   camera.zoom = Math.min(zoomMax(), Math.max(1, z));
@@ -5889,21 +6119,7 @@ function setZoom(z) {
   const video = $("#camera-video");
   if (camera.hwZoom) {
     video.style.transform = "";
-    const track = camera.stream?.getVideoTracks()[0];
-    if (!track || zoomApplying) return;
-    zoomApplying = (async () => {
-      let sent = null;
-      while (sent !== camera.zoom && camera.stream?.getVideoTracks()[0] === track) {
-        sent = camera.zoom;
-        try {
-          await track.applyConstraints({ advanced: [{ zoom: sent }] });
-        } catch (err) {
-          report("debug", "camera zoom failed", errorFields(err));
-          break;
-        }
-      }
-      zoomApplying = null;
-    })();
+    applyToCamera();
   } else {
     // In the preview: enlarged about the middle (a mirrored view stays mirrored).
     video.style.transform = camera.zoom === 1 ? "" : `${camera.mirror ? "scaleX(-1) " : ""}scale(${camera.zoom})`;
@@ -5932,6 +6148,28 @@ $(".camera-stage").addEventListener("touchmove", (e) => {
 }, { passive: false });
 $(".camera-stage").addEventListener("touchend", (e) => {
   if (e.touches.length < 2) pinch.start = 0;
+});
+
+// ---------- flash (X50) ----------
+// The camera's own light, where the browser can turn it on (`torch`: Chrome
+// on Android, for a back camera); everywhere else, no button. Off when the
+// camera opens. On, it stays lit while the camera is taking pics, for a
+// photo and all through a video, and goes off while looking at what was
+// taken, on switching to a camera without one, and with the camera.
+const torchLit = () => camera.torch && camera.torchable && !$("#capture-controls").hidden;
+
+function renderTorch() {
+  const btn = $("#torch");
+  btn.hidden = !camera.torchable || $("#capture-controls").hidden;
+  btn.setAttribute("aria-pressed", camera.torch ? "true" : "false");
+  btn.setAttribute("aria-label", camera.torch ? "Flash on. Tap to turn it off" : "Flash off. Tap to turn it on");
+  btn.classList.toggle("on", camera.torch);
+  applyToCamera();
+}
+
+$("#torch").addEventListener("click", () => {
+  camera.torch = !camera.torch;
+  renderTorch();
 });
 
 // ---------- short videos (X28) ----------
@@ -6254,6 +6492,7 @@ function showCapture() {
   $("#send-controls").hidden = true;
   $("#zoom-chip").hidden = !camera.stream;
   if (camera.stream) setZoom(1); // each new pic or video starts at 1× (Nate, 2026-10-29)
+  renderTorch(); // lit again, if it was on
   clearCaption();
   // A new pic from the camera tab: pick who it's for again.
   if (camera.picked) {
@@ -6304,6 +6543,7 @@ function showPreview(blob, videoType = null) {
   $("#capture-controls").hidden = true;
   $("#send-controls").hidden = false;
   $("#zoom-chip").hidden = true;
+  renderTorch(); // no light while looking at what was taken
   renderSendWho();
   $("#caption-hint").hidden = false; // until there's a caption
   fitCaption();
@@ -6367,6 +6607,7 @@ $("#list-camera").addEventListener("click", () => openCamera([]));
 $("#tab-camera").addEventListener("click", () => openCamera([]));
 
 $("#camera-dialog").addEventListener("close", () => {
+  camera.torch = false; // the next time, the flash starts off
   stopStream();
   clearPreview();
   clearCaption(); // sent or abandoned, it shouldn't linger in the page
@@ -6410,7 +6651,9 @@ async function switchWhileRecording() {
   old.getVideoTracks().forEach((t) => t.stop());
   const range = stream.getVideoTracks()[0]?.getCapabilities?.().zoom;
   camera.hwZoom = range && range.max > Math.max(1, range.min) ? range : null;
+  camera.torchable = Boolean(stream.getVideoTracks()[0]?.getCapabilities?.().torch);
   setZoom(camera.zoom);
+  renderTorch(); // the other camera may have no light (a front one), or have one
 }
 
 // Double-tapping the live camera switches it, like the button. Counted from

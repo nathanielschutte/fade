@@ -11,12 +11,98 @@ final class CameraChoice: @unchecked Sendable {
     static let shared = CameraChoice()
     private let lock = NSLock()
     private var last: AVCaptureDevice.Position = .front
+    private var lastFlash = Flash.off
 
     /// Where the next camera screen opens.
     var current: AVCaptureDevice.Position { lock.withLock { last } }
 
     /// A camera opened (or switched to): the next screen opens on it.
     func used(_ position: AVCaptureDevice.Position) { lock.withLock { last = position } }
+
+    /// The flash as last set (off after a launch), kept the same way.
+    var flash: Flash {
+        get { lock.withLock { lastFlash } }
+        set { lock.withLock { lastFlash = newValue } }
+    }
+}
+
+/// The camera's flash (X50): off, auto, or on, as the Camera app has it.
+enum Flash: String, CaseIterable, Sendable {
+    case off, auto, on
+
+    var words: String {
+        switch self {
+        case .off: "Flash off"
+        case .auto: "Flash auto"
+        case .on: "Flash on"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .off: "bolt.slash.fill"
+        case .auto: "bolt.badge.automatic.fill"
+        case .on: "bolt.fill"
+        }
+    }
+}
+
+/// What the camera in use can light with, as AVFoundation reports it: a
+/// flash for photos (the back camera's; on the front, the screen, which
+/// AVFoundation lights itself on phones that do that), and a torch, kept on
+/// while a video records. The flash button shows only when there's one of
+/// them, with the choices this camera has.
+struct FlashOffer: Equatable, Sendable {
+    /// Photos can flash, and decide for themselves (auto).
+    var photo = false
+    var photoAuto = false
+    /// A light that stays on (the back camera's), for videos.
+    var torch = false
+
+    static let none = FlashOffer()
+
+    /// From the photo output's `supportedFlashModes` (which follow the camera in use) and the camera's torch.
+    static func of(photoModes: [AVCaptureDevice.FlashMode], torch: Bool) -> FlashOffer {
+        FlashOffer(photo: photoModes.contains(.on), photoAuto: photoModes.contains(.auto), torch: torch)
+    }
+
+    /// The button's choices, in the order a tap goes through them; none, no button.
+    /// Auto is the camera's own judgment (`isFlashScene`), so only where it offers that.
+    var modes: [Flash] {
+        guard photo || torch else { return [] }
+        return photoAuto ? [.off, .auto, .on] : [.off, .on]
+    }
+
+    /// What's shown and used: the choice, if this camera has it; otherwise off
+    /// (switching to a camera without auto doesn't forget it for the next).
+    func shown(_ chosen: Flash) -> Flash { modes.contains(chosen) ? chosen : .off }
+
+    /// A tap on the button: the next choice.
+    func next(after current: Flash) -> Flash {
+        let modes = modes
+        guard let i = modes.firstIndex(of: current) else { return modes.first ?? .off }
+        return modes[(i + 1) % modes.count]
+    }
+
+    /// The photo's flash setting for a choice (only ever one the output supports).
+    func photoMode(_ chosen: Flash) -> AVCaptureDevice.FlashMode {
+        switch shown(chosen) {
+        case .off: .off
+        case .auto: photoAuto ? .auto : .off
+        case .on: photo ? .on : .off
+        }
+    }
+
+    /// Whether the torch is on while a video records: on, or auto when the
+    /// camera judges the scene dark enough for a flash (`dark`, its `isFlashScene`).
+    func torchOn(_ chosen: Flash, dark: Bool) -> Bool {
+        guard torch else { return false }
+        switch shown(chosen) {
+        case .off: return false
+        case .auto: return dark
+        case .on: return true
+        }
+    }
 }
 
 /// The camera, done the iOS way (AVFoundation), as the web app's camera does
@@ -68,13 +154,23 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     private var multiplier: CGFloat = 1
     /// A recording that turned out to be a tap: thrown away when it ends.
     private var discarding = false
+    /// The flash chosen for the recording under way: each part (each camera) lights by it.
+    private var recordingFlash = Flash.off
+    /// The app's audio while the microphone's in (D21), and whether a call has it (D20).
+    private let audio: CameraAudioSession
+    private let onCall: @Sendable () -> Bool
+    /// You allowed the microphone (asked as the camera first opens).
+    private var soundAllowed = false
+    private var interruptions: (any NSObjectProtocol)?
 
-    /// The zoom a camera offers, as the Camera app shows it.
+    /// The zoom a camera offers, as the Camera app shows it, and its flash.
     struct Lenses: Equatable, Sendable {
         /// The lens buttons: 0.5 (ultra wide), 1, 2, and the telephoto's (3 or 5), as the phone has them.
         var presets: [CGFloat] = [1]
         var min: CGFloat = 1
         var max: CGFloat = 1
+        /// What it can light with (worked out once the camera's set up).
+        var flash = FlashOffer.none
 
         /// From a device's numbers: `multiplier` (shown = factor × it), where
         /// it switches lenses (`switchOvers`, in its own factors), and its range.
@@ -91,10 +187,59 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     /// Opens on the camera `choice` says (the front one, after a launch).
-    init(choice: CameraChoice = .shared) {
+    init(choice: CameraChoice = .shared, audio: CameraAudioSession = CameraAudioSession(),
+         onCall: @escaping @Sendable () -> Bool = { CameraAudio.onCall() }) {
         self.choice = choice
+        self.audio = audio
+        self.onCall = onCall
         facing = choice.current
         super.init()
+        // napsack sets up its own audio, mixed with others, and only with the microphone in (CameraAudio).
+        session.automaticallyConfiguresApplicationAudioSession = false
+        interruptions = NotificationCenter.default.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session,
+                                                               queue: nil) { [weak self] note in
+            let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int).flatMap(AVCaptureSession.InterruptionReason.init)
+            guard let self else { return }
+            queue.async { self.interrupted(reason) }
+        }
+    }
+
+    deinit {
+        if let interruptions { NotificationCenter.default.removeObserver(interruptions) }
+    }
+
+    /// Interrupted: for the microphone (a call took it), the camera lets it go
+    /// and carries on without it; for anything else, iOS resumes it. Only on `queue`.
+    private func interrupted(_ reason: AVCaptureSession.InterruptionReason?) {
+        let response = CameraAudio.response(to: reason)
+        Task { @MainActor in
+            Reporter.shared.report(.info, "camera interrupted", ["reason": String(reason?.rawValue ?? -1), "response": "\(response)"])
+        }
+        guard response == .dropMicrophone else { return }
+        dropMicrophone()
+        if !session.isRunning { session.startRunning() }
+    }
+
+    /// Takes the microphone if it may (CameraAudio.takesMicrophone), setting
+    /// up the app's audio for it first. Only on `queue`, inside a configuration.
+    private func takeMicrophone() {
+        guard microphone == nil,
+              CameraAudio.takesMicrophone(allowed: soundAllowed, onCall: onCall(), inputAvailable: audio.isInputAvailable),
+              let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
+              session.canAddInput(input), audio.open() else { return }
+        session.addInput(input)
+        microphone = input
+    }
+
+    /// Lets the microphone go, and the app's audio back as it was. Only on `queue`.
+    private func dropMicrophone() {
+        if let microphone {
+            session.beginConfiguration()
+            session.removeInput(microphone)
+            session.commitConfiguration()
+            self.microphone = nil
+        }
+        audio.close()
     }
 
     static func allowed(_ type: AVMediaType) async -> Bool {
@@ -109,19 +254,16 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// Already running, it stays as it is (a retake goes straight back to it).
     func start() async throws -> Lenses {
         guard await Self.allowed(.video) else { throw Problem.denied }
-        let withSound = await Self.allowed(.audio)  // without it, videos have no sound (the web says so too)
+        let withSound = await Self.allowed(.audio)  // without it, videos have no sound, and say so
         return try await run { [self] in
+            soundAllowed = withSound
             if session.isRunning, let configured { return configured }
             session.beginConfiguration()
-            let lenses: Lenses
+            var lenses: Lenses
             do {
                 session.sessionPreset = .high
                 lenses = try use(facing)
-                if withSound, microphone == nil, let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
-                   session.canAddInput(input) {
-                    session.addInput(input)
-                    microphone = input
-                }
+                takeMicrophone()  // not on a call (D20)
                 if !session.outputs.contains(photo), session.canAddOutput(photo) { session.addOutput(photo) }
                 if !session.outputs.contains(movie), session.canAddOutput(movie) { session.addOutput(movie) }
             } catch {
@@ -129,6 +271,8 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
                 throw error
             }
             session.commitConfiguration()
+            lenses.flash = lighting()  // once the outputs are on this camera
+            configured = lenses
             // Only once configured: AVFoundation raises an exception for
             // starting inside beginConfiguration/commitConfiguration (the
             // frozen black camera on a phone, 2026-10-30).
@@ -138,7 +282,39 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     func stop() {
-        queue.async { [self] in if session.isRunning { session.stopRunning() } }
+        queue.async { [self] in
+            torch(false)  // never left on once the camera's closed
+            if session.isRunning { session.stopRunning() }
+            dropMicrophone()  // the next opening decides again (a call may have begun or ended)
+        }
+    }
+
+    /// What the camera in use can light with; auto's judgment of the scene
+    /// (`isFlashScene`) is watched where photos offer auto. Only on `queue`.
+    private func lighting() -> FlashOffer {
+        let device = input?.device
+        let offer = FlashOffer.of(photoModes: photo.supportedFlashModes,
+                                  torch: device.map { $0.hasTorch && $0.isTorchModeSupported(.on) } ?? false)
+        if offer.photoAuto {
+            let watching = AVCapturePhotoSettings()
+            watching.flashMode = .auto
+            photo.photoSettingsForSceneMonitoring = watching
+        } else {
+            photo.photoSettingsForSceneMonitoring = nil
+        }
+        return offer
+    }
+
+    /// The torch on or off, on the camera in use. Only on `queue`.
+    private func torch(_ on: Bool) {
+        guard let device = input?.device, device.hasTorch, on || device.torchMode != .off,
+              (try? device.lockForConfiguration()) != nil else { return }
+        if on && device.isTorchModeSupported(.on) {
+            try? device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+        } else {
+            device.torchMode = .off
+        }
+        device.unlockForConfiguration()
     }
 
     /// The other camera, front or back, at 1×. While recording too: the part
@@ -158,10 +334,21 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
+    /// Another camera: its zoom, and its flash (the front may have none, or only the screen's).
     private func reconfigure(_ position: AVCaptureDevice.Position) throws -> Lenses {
+        torch(false)  // the camera going off
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
-        return try use(position)
+        var lenses: Lenses
+        do {
+            lenses = try use(position)
+        } catch {
+            session.commitConfiguration()
+            throw error
+        }
+        session.commitConfiguration()
+        lenses.flash = lighting()
+        configured = lenses
+        return lenses
     }
 
     /// Zoom as shown (1× the main camera), within what the camera allows.
@@ -180,14 +367,18 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
-    /// A photo, as JPEG (the front camera's mirrored, as the preview shows it).
-    func takePhoto() async throws -> Data {
+    /// A photo, as JPEG (the front camera's mirrored, as the preview shows it), with the flash as chosen.
+    func takePhoto(flash: Flash = .off) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 guard session.isRunning else { return continuation.resume(throwing: Problem.noCamera) }
                 photoDone = continuation
                 Self.orient(photo.connection(with: .video), mirrored: facing == .front)
-                photo.capturePhoto(with: AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg]), delegate: self)
+                let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                // Only a mode the output has now: any other raises an exception.
+                let mode = (configured?.flash ?? .none).photoMode(flash)
+                settings.flashMode = photo.supportedFlashModes.contains(mode) ? mode : .off
+                photo.capturePhoto(with: settings, delegate: self)
             }
         }
     }
@@ -200,8 +391,9 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         }
     }
 
-    /// Starts a video, stopping by itself at `seconds`. `stopRecording` gives the file.
-    func startRecording(seconds: Int) {
+    /// Starts a video, stopping by itself at `seconds`, the torch on while it
+    /// records if `flash` says so. `stopRecording` gives the file.
+    func startRecording(seconds: Int, flash: Flash = .off) {
         queue.async { [self] in
             guard session.isRunning, !movie.isRecording, switching == nil else { return }
             parts.forEach { try? FileManager.default.removeItem(at: $0) }
@@ -209,12 +401,20 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             recorded = 0
             limit = Double(seconds)
             stopAfterSwitch = false
+            recordingFlash = flash
+            if microphone == nil {  // without it so far (a call, since ended): this video may have sound
+                session.beginConfiguration()
+                takeMicrophone()
+                session.commitConfiguration()
+            }
             startPart()
         }
     }
 
     /// The next part, on the camera in use, for what's left of the limit.
     private func startPart() {
+        // Auto goes by the camera's judgment now (as for a photo); the next camera judges again.
+        torch((configured?.flash ?? .none).torchOn(recordingFlash, dark: photo.isFlashScene))
         movie.maxRecordedDuration = CMTime(seconds: limit - recorded, preferredTimescale: 600)
         Self.orient(movie.connection(with: .video), mirrored: facing == .front)
         let url = FileManager.default.temporaryDirectory.appending(path: "napsack-recording-\(UUID().uuidString).mov")
@@ -274,6 +474,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         let finished = (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? (error == nil)
         let seconds = output.recordedDuration.seconds
         queue.async { [self] in
+            torch(false)  // a part's over: stopped, at the limit, thrown away, or switching cameras
             if finished { parts.append(url); recorded += seconds.isFinite ? seconds : 0 } else { try? FileManager.default.removeItem(at: url) }
             if let (position, done) = switching {
                 switching = nil
@@ -572,13 +773,20 @@ struct CameraScreen: View {
     /// the sound button sends it instead (as on the web).
     @State private var silent: URL?
     @State private var muted = false
+    /// The video on screen was recorded without sound (D20: a call had the microphone).
+    @State private var noSound = false
+    /// The flash as chosen (CameraChoice keeps it until the app is quit); each camera uses what it has of it.
+    @State private var flash = CameraChoice.shared.flash
 
-    init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil) {
+    /// `offering` stands in for what a camera offers, to look at the screen where there's none (tests).
+    init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil,
+         offering: CameraSession.Lenses? = nil) {
         self.maxSeconds = maxSeconds
         self.maxBytes = maxBytes
         self.send = send
         self.close = close
         _shot = State(initialValue: start)
+        if let offering { _lenses = State(initialValue: offering) }
     }
 
     /// Sliding a held finger up this far zooms in by 1×, as on the web (`ZOOM_SLIDE_PX`).
@@ -660,6 +868,7 @@ struct CameraScreen: View {
                     .accessibilityLabel("Close")
                     .clearOfWindowControls()
                 Spacer()
+                flashButton
             }
             .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
@@ -681,11 +890,30 @@ struct CameraScreen: View {
         }
     }
 
+    /// Off, auto, or on, tapped through in turn; only where the camera in use
+    /// has a flash or a torch (FlashOffer), and not while recording (the
+    /// torch was decided as it began).
+    @ViewBuilder private var flashButton: some View {
+        if !lenses.flash.modes.isEmpty {
+            let shown = lenses.flash.shown(flash)
+            Button {
+                flash = lenses.flash.next(after: shown)
+                CameraChoice.shared.flash = flash
+            } label: {
+                Self.round(shown.icon, color: shown == .off ? .white : .yellow)
+            }
+            .accessibilityLabel(shown.words)
+            .accessibilityHint("Changes the flash")
+            .opacity(recording ? 0 : 1)
+            .disabled(recording)
+        }
+    }
+
     /// An icon on a round, dark button, white on any picture.
-    nonisolated private static func round(_ icon: String) -> some View {
+    nonisolated private static func round(_ icon: String, color: Color = .white) -> some View {
         Image(systemName: icon)
             .font(.system(size: 21, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(color)
             .frame(width: Self.button, height: Self.button)
             .background(.black.opacity(0.35), in: Circle())
             .contentShape(Circle())
@@ -796,14 +1024,14 @@ struct CameraScreen: View {
         recording = true
         recordStart = .now
         zoomAtPress = zoom
-        camera.startRecording(seconds: maxSeconds)
+        camera.startRecording(seconds: maxSeconds, flash: lenses.flash.shown(flash))
     }
 
     private func photo() {
         guard !recording, shot == nil else { return }
         Task {
             do {
-                let data = try await camera.takePhoto()
+                let data = try await camera.takePhoto(flash: lenses.flash.shown(flash))
                 guard let image = await Captured.photo(data) else { throw CameraSession.Problem.failed }
                 captured(.photo(image))
             } catch { problem = error.localizedDescription }
@@ -837,9 +1065,15 @@ struct CameraScreen: View {
         pinchFrom = 1
         camera.zoom(1)
         muted = false
+        noSound = false
         if case .video(let url) = media {
             files.keep(url)
             Task {
+                // Recorded without the microphone (not allowed, or a call had it: CameraAudio): it says so, and there's no sound to turn off.
+                guard await VideoEncoder.hasSound(url) else {
+                    if case .video(url) = shot { noSound = true }
+                    return
+                }
                 let quiet = try? await VideoEncoder.withoutSound(url)
                 // Retaken meanwhile: not this one's.
                 if case .video(url) = shot, let quiet {
@@ -975,6 +1209,12 @@ struct CameraScreen: View {
             .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
             if !penOn && !editingCaption {
+                if noSound, case .video = media {
+                    Label(CameraAudio.noSound, systemImage: "speaker.slash.fill")
+                        .font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
+                        .padding(10).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 20).padding(.bottom, 8)
+                }
                 if let sendProblem {
                     Text(sendProblem).font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
                         .padding(10).background(.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
@@ -1041,6 +1281,7 @@ struct CameraScreen: View {
         files.removeAll()
         shot = nil
         silent = nil
+        noSound = false
         muted = false
         caption = ""
         captionY = 0.75
@@ -1113,7 +1354,14 @@ struct SendToScreen: View {
                 } label: {
                     HStack {
                         Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name, size: 32)
-                        Text(row.name).foregroundStyle(.primary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.name).foregroundStyle(.primary)
+                            // A friend's @username where their name differs (X47).
+                            if let username = row.username, let handle = Person.handle(name: row.name, username: username) {
+                                Text(handle).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .lineLimit(1)
                         Spacer()
                         Image(systemName: picked.contains(row.kind) ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(picked.contains(row.kind) ? Color.accentColor : .secondary)
@@ -1135,7 +1383,7 @@ struct SendToScreen: View {
 
     private var shown: [ChatRow] {
         let words = search.trimmingCharacters(in: .whitespaces)
-        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) }
+        return words.isEmpty ? chats.filter { !$0.hidden } : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
     }
 
     /// A few chats at a time, each sealed its own copy of the same bytes; what

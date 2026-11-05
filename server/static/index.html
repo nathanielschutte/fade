@@ -666,6 +666,9 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path class="sound-on" d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="sound-off" d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 9.5l5 5M21 9.5l-5 5"/></svg>
     </button>
     <button type="button" class="zoom-chip" id="zoom-chip" aria-label="Zoom: 1×" hidden>1×</button>
+    <button type="button" class="icon-button torch" id="torch" aria-pressed="false" aria-label="Flash off. Tap to turn it on" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L6 13.5h5L10 21l7-10.5h-5z"/><path class="torch-off" d="M4 4l16 16"/></svg>
+    </button>
   </div>
   <div class="camera-controls" id="capture-controls">
     <button type="button" class="icon-button" data-close aria-label="Close camera">
@@ -703,6 +706,23 @@
   </header>
   <p class="sheet-text small">Every version of this text, oldest first.</p>
   <ol class="edits-list" id="edits-list"></ol>
+</dialog>
+
+<!-- React with any emoji (X49): + by the quick row of reactions -->
+<dialog id="emoji-dialog" class="sheet emoji-sheet" aria-labelledby="emoji-title">
+  <header class="sheet-head">
+    <h2 id="emoji-title">React</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <input type="search" class="send-to-search" id="emoji-search" placeholder="Search emoji" aria-label="Search emoji by name" autocomplete="off" spellcheck="false">
+  <nav class="emoji-tabs" id="emoji-tabs" aria-label="Emoji groups"></nav>
+  <div class="emoji-scroll" id="emoji-scroll">
+    <p class="form-note" id="emoji-note" role="status"></p>
+    <div id="emoji-groups"><p class="muted">Loading…</p></div>
+    <div id="emoji-results" hidden></div>
+  </div>
 </dialog>
 
 <!-- Who a pic goes to (X26): friends and groups, one or more -->

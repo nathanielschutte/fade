@@ -87,6 +87,11 @@ enum VideoEncoder {
         return joined
     }
 
+    /// Whether a video has any sound (one recorded without the microphone has none: CameraAudio).
+    static func hasSound(_ source: URL) async -> Bool {
+        (try? await AVURLAsset(url: source).loadTracks(withMediaType: .audio).isEmpty == false) ?? false
+    }
+
     /// The same video without its sound (the sound button, as on the web): its
     /// picture copied as it is, nothing encoded again. The caller removes the file.
     static func withoutSound(_ source: URL) async throws -> URL {
