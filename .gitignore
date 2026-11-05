@@ -51,3 +51,6 @@ keystore.properties
 # The owner's private notes and Claude settings, kept beside the repository.
 /offline/
 CLAUDE.local.md
+
+# The owner's own tool, kept out of the public repository (plan I14).
+scripts/db-copy.sh
