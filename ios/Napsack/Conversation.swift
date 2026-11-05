@@ -23,7 +23,8 @@ struct Bubble: Identifiable, Equatable, Sendable {
     let content: Content
     let replyTo: Int64?
     let time: Date
-    let reactions: [String]
+    /// Who reacted with what, oldest first (one each). Direct reactions are opened here.
+    let reactions: [Reaction]
     /// The one I gave, if any (the same again takes it back).
     var myReaction: String? = nil
     /// One of my texts that can be edited (format 3 in a group), within the window.
@@ -49,6 +50,12 @@ struct Bubble: Identifiable, Equatable, Sendable {
         case .text, .media: true
         case .event, .unreadable: false
         }
+    }
+
+    /// One person's reaction.
+    struct Reaction: Equatable, Sendable {
+        let user: Int64
+        let emoji: String
     }
 
     /// A line about it, for a reply's quote.
@@ -132,14 +139,14 @@ extension Reader {
         }
         // Any one emoji (X49), held to the server's rule for groups' (E2E.isReaction):
         // the server can't see these, so anything else a client sealed is dropped here.
-        let reactions = (m.reactions ?? []).compactMap { r -> (Int64, String)? in
+        let reactions = (m.reactions ?? []).compactMap { r -> Bubble.Reaction? in
             let to = r.senderId == me.id ? friend.id : me.id
             return keys.lazy.compactMap { try? E2E.decryptReaction($0, r.ciphertext, sender: r.senderId, recipient: to, message: m.id) }.first
-                .flatMap { E2E.isReaction($0) ? (r.senderId, $0) : nil }
+                .flatMap { E2E.isReaction($0) ? Bubble.Reaction(user: r.senderId, emoji: $0) : nil }
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: nil, content: content, replyTo: replyTo,
-                            time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions.map(\.1))
-        bubble.myReaction = reactions.first { $0.0 == me.id }?.1
+                            time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)), reactions: reactions)
+        bubble.myReaction = reactions.first { $0.user == me.id }?.emoji
         if case .text = content { bubble.editable = mine }
         bubble.seen = mine && m.kind == "text" && m.readAt != nil
         bubble.opening = opening
@@ -193,7 +200,8 @@ extension Reader {
         }
         var bubble = Bubble(id: m.id, mine: mine, sender: mine || m.kind == "event" ? nil : name(m.senderId, m.senderName),
                             content: content, replyTo: replyTo, time: Date(timeIntervalSince1970: TimeInterval(m.createdAt)),
-                            reactions: (m.reactions ?? []).map(\.emoji).filter(E2E.isReaction))  // the server checks these too
+                            reactions: (m.reactions ?? []).filter { E2E.isReaction($0.emoji) }  // the server checks these too
+                                .map { Bubble.Reaction(user: $0.userId, emoji: $0.emoji) })
         bubble.myReaction = m.reactions?.first { $0.userId == me.id }?.emoji
         if case .text = content { bubble.editable = mine && m.format == E2E.groupFormat }
         bubble.recipients = m.recipients
@@ -544,6 +552,19 @@ struct OpenedPic: Sendable {
 
     /// Friends by id, for names (a group's members, adding people).
     var friendsById: [Int64: Friend] { reader.friends }
+
+    /// Someone in this chat, for a list of people (who reacted, F21): me, a
+    /// friend, or a group member by username (how far each has read, or a
+    /// message of theirs). Nil for someone no longer in the group whose
+    /// username isn't known here.
+    func person(_ id: Int64) -> Person? {
+        if id == account.user.id { return Person(id: id, username: account.user.username, friends: [:]) }
+        if let friend = reader.friends[id] ?? (friend?.id == id ? friend : nil) { return Person(friend) }
+        guard case .group = chat else { return nil }
+        // A group member who isn't a friend: their name here is their username (Reader.name).
+        let username = groupReads[id]?.username ?? bubbles.lazy.compactMap { $0.senderId == id ? $0.sender : nil }.first
+        return username.map { Person(id: id, username: $0, friends: [:]) }
+    }
 
     /// The friend in a direct chat.
     var friend: Friend? {

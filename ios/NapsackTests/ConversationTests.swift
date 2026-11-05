@@ -42,7 +42,7 @@ import Testing
         var m = list.message(from: 3, to: 7, kind: "snap", snap: "opened")
         m["reactions"] = [["message_id": 100, "sender_id": 7, "ciphertext": love, "format": 2, "created_at": 1],
                           ["message_id": 100, "sender_id": 7, "ciphertext": elsewhere, "format": 2, "created_at": 2]]
-        #expect(try bubble(m).reactions == [E2E.reactions[0]])  // the one moved from another message doesn't open
+        #expect(try bubble(m).reactions == [.init(user: 7, emoji: E2E.reactions[0])])  // the one moved from another message doesn't open
     }
 
     @Test func groupMessagesAsBubbles() throws {
@@ -56,7 +56,7 @@ import Testing
         #expect(try group(list.groupMessage(kind: "event", body: #"{"type":"left"}"#)).content == .event("Al left"))
         #expect(try group(list.groupMessage(format: 9)).content == .unreadable("Update napsack to read this"))
         let plain = try group(list.groupMessage(body: "old style", extra: ["reply_to": 40, "reactions": [["message_id": 50, "user_id": 3, "emoji": "👍", "created_at": 1]]]))
-        #expect(plain.content == .text("old style", edited: false) && plain.replyTo == 40 && plain.reactions == ["👍"])
+        #expect(plain.content == .text("old style", edited: false) && plain.replyTo == 40 && plain.reactions == [.init(user: 3, emoji: "👍")])
     }
 
     @Test func pagesBackToTheBeginning() async throws {
@@ -133,7 +133,7 @@ import Testing
         #expect(ring.count == 1, "one key for Alice, for every text, edit, and reaction")
         #expect(kept == messages.map { reader.bubble($0, with: alice) }, "the same as with a key worked out each time")
         #expect(kept[3].content == .text("number 4, edited", edited: true) && kept[3].original == "number 4")
-        #expect(kept.allSatisfy { $0.reactions == [E2E.reactions[0]] })
+        #expect(kept.allSatisfy { $0.reactions.map(\.emoji) == [E2E.reactions[0]] })
 
         // A group: one wrap key per sender, however many messages.
         let t = list.vg["text"] as! [String: Any]

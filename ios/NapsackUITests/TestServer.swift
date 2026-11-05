@@ -95,6 +95,15 @@ struct TestServer: Sendable {
         ]) as? [String: Any]
         return (stored?["id"] as? NSNumber)?.int64Value ?? 0
     }
+
+    /// A reaction from one to a message in their chat with the other, sealed here (nil takes it back).
+    func react(_ emoji: String?, to message: Int64, from: Person, to: Person) async throws {
+        let key = try E2E.pairKey(mine: from.identity, theirs: to.publicKey, myId: from.id, theirId: to.id)
+        let sealed = try emoji.map { try E2E.encryptReaction(key, $0, sender: from.id, recipient: to.id, message: message) }
+        _ = try await request("chats/\(to.id)/messages/\(message)/reaction", method: "PUT", token: from.token, json: [
+            "ciphertext": sealed ?? NSNull(), "format": 2,
+        ])
+    }
 }
 
 /// Someone's live connection (as their app keeps one): signed in with the

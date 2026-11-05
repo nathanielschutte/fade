@@ -38,7 +38,7 @@ import Testing
         let ciphertext = try #require(body(sent)["ciphertext"] as? String)
         #expect(try E2E.decryptReaction(aliceKey, ciphertext, sender: 3, recipient: 7, message: 100) == "😂")
         let reacted = try #require(chat.bubble(100))
-        #expect(reacted.reactions == ["😂"] && reacted.myReaction == "😂")
+        #expect(reacted.reactions == [.init(user: 3, emoji: "😂")] && reacted.myReaction == "😂")
 
         try await chat.react(reacted, "😂")  // again: taken back, sent as null
         let back = String(decoding: try #require(await server.requests.last?.httpBody), as: UTF8.self)
@@ -58,10 +58,10 @@ import Testing
         let sent = try #require(await server.requests.last)
         let ciphertext = try #require(body(sent)["ciphertext"] as? String)
         #expect(try E2E.decryptReaction(aliceKey, ciphertext, sender: 3, recipient: 7, message: 100) == "🫠")
-        #expect(chat.bubble(100)?.reactions == ["🫠"] && chat.bubble(100)?.myReaction == "🫠")
+        #expect(chat.bubble(100)?.reactions.map(\.emoji) == ["🫠"] && chat.bubble(100)?.myReaction == "🫠")
         let family = "👨\u{200D}👩\u{200D}👧"
         try await chat.react(try #require(chat.bubble(100)), family)  // another replaces it: still one each
-        #expect(chat.bubble(100)?.reactions == [family])
+        #expect(chat.bubble(100)?.reactions.map(\.emoji) == [family])
 
         let asked = await server.requests.count
         let reacted = try #require(chat.bubble(100))
@@ -74,7 +74,7 @@ import Testing
         for (theirs, shown) in [("🦩", ["🦩"]), ("👍🏽", ["👍🏽"]), ("lol", []), ("😂😂", []), ("\u{202E}😂", [])] {
             let reaction = try E2E.encryptReaction(list.pairKey, theirs, sender: 3, recipient: 7, message: 100)
             #expect(sending.reader.bubble(try ChatListTests.decode(DirectMessage.self, Self.myText(sealed, reaction: reaction)), with: alice)
-                .reactions == shown, "\(theirs)")
+                .reactions.map(\.emoji) == shown, "\(theirs)")
         }
     }
 
