@@ -20,6 +20,50 @@ import UIKit
         #expect(CameraSession.Lenses.of(multiplier: 1, switchOvers: [], minFactor: 1, maxFactor: 1.5).presets == [1])
     }
 
+    /// The flash button (X50): only where the camera in use has a flash or a
+    /// torch, with auto only where photos offer it; a tap goes off, auto, on.
+    @Test func theFlashButtonShowsWhatTheCameraHas() {
+        let back = FlashOffer.of(photoModes: [.off, .on, .auto], torch: true)
+        #expect(back.modes == [.off, .auto, .on])
+        #expect(back.next(after: .off) == .auto && back.next(after: .auto) == .on && back.next(after: .on) == .off)
+        // A front camera that lights the screen for photos (AVFoundation does it) but has no torch.
+        let screen = FlashOffer.of(photoModes: [.off, .on], torch: false)
+        #expect(screen.modes == [.off, .on] && screen.next(after: .on) == .off)
+        // Nothing to light with (the Simulator, an older front camera): no button.
+        #expect(FlashOffer.of(photoModes: [.off], torch: false).modes == [])
+        #expect(FlashOffer.of(photoModes: [], torch: false).modes == [] && FlashOffer.none.modes == [])
+        // A torch alone still lights videos.
+        #expect(FlashOffer.of(photoModes: [.off], torch: true).modes == [.off, .on])
+    }
+
+    /// What each choice does on each camera: the photo's setting (only ever one
+    /// the camera supports), and whether the torch is on while recording.
+    @Test func eachFlashChoiceLightsWhatTheCameraCan() {
+        let back = FlashOffer.of(photoModes: [.off, .on, .auto], torch: true)
+        #expect(back.photoMode(.off) == .off && back.photoMode(.auto) == .auto && back.photoMode(.on) == .on)
+        #expect(!back.torchOn(.off, dark: true))
+        #expect(back.torchOn(.on, dark: false))
+        #expect(back.torchOn(.auto, dark: true) && !back.torchOn(.auto, dark: false))  // auto: the camera's judgment of the light
+
+        // Auto chosen on the back, then the front without auto: off there, and auto again back on the back.
+        let front = FlashOffer.of(photoModes: [.off, .on], torch: false)
+        #expect(front.shown(.auto) == .off && front.photoMode(.auto) == .off && back.shown(.auto) == .auto)
+        #expect(front.photoMode(.on) == .on)  // the screen lights the photo
+        #expect(!front.torchOn(.on, dark: true))  // no torch for its videos
+
+        // Nothing at all: off, whatever was chosen.
+        #expect(FlashOffer.none.photoMode(.on) == .off && !FlashOffer.none.torchOn(.on, dark: true))
+    }
+
+    /// The flash as last set is kept for the next camera screen, until the app is quit.
+    @Test func theFlashChoiceIsKeptUntilQuit() {
+        let launch = CameraChoice()
+        #expect(launch.flash == .off)
+        launch.flash = .auto
+        #expect(launch.flash == .auto)
+        #expect(CameraChoice().flash == .off)
+    }
+
     @Test func zoomIsWrittenAsTheCameraAppDoes() {
         #expect(CameraScreen.zoomWords(0.5) == ".5")
         #expect(CameraScreen.zoomWords(1) == "1")
