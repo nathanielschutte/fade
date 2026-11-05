@@ -1,0 +1,11 @@
+# Gradle's and Android Studio's per-machine state and build output.
+.gradle/
+.kotlin/
+build/
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+# This machine's SDK path (Android Studio writes it).
+local.properties

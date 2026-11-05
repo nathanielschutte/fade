@@ -146,7 +146,9 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 
 **Shared** (`shared/`): `crypto/crypto.js` is the whole encryption scheme as the web app runs it, and the reference the native apps' own implementations are held to; `vector-checks.js` proves a client gets the pinned bytes right. `graph/graph.js` is the friend map's math (clusters, layout).
 
-**iOS app**: native Swift in `ios/`; setting up Xcode and an iPhone, building, testing, and how it's put together are in [ios-onboarding.md](ios-onboarding.md). An Android app in Kotlin comes later. Plan: [mobile.md](design/mobile.md).
+**iOS app**: native Swift in `ios/`; setting up Xcode and an iPhone, building, testing, and how it's put together are in [ios-onboarding.md](ios-onboarding.md). Plan: [mobile.md](design/mobile.md).
+
+**Android app**: native Kotlin in `android/`, being built (started 2026-11-04); setting up Android Studio and the emulator, building, and testing are in [android-onboarding.md](android-onboarding.md). Plan: [android.md](design/android.md).
 
 **Infrastructure** (`infra/`): Terraform for everything in AWS ([Production](#production) below). `infra/staging/` is a separate copy for testing.
 

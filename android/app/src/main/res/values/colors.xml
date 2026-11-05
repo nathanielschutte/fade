@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- napsack's palette (server/static/style.css :root); Theme.kt has the rest. -->
+<resources>
+    <color name="ink">#1B2822</color>
+    <color name="sage">#93C5A3</color>
+</resources>

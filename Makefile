@@ -2,10 +2,10 @@
 # Nothing here deploys, connects to production, or changes anything outside
 # the repository (that's scripts/deploy.sh, ssh.sh, and Terraform: the owner's).
 # `make` alone lists them. Setting up a machine: docs/onboarding.md, and for
-# the iOS app docs/ios-onboarding.md.
+# the iOS app docs/ios-onboarding.md, the Android app docs/android-onboarding.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging ios-archive test-staging
+.PHONY: help run test test-fast unit smoke browser lint fmt ci ios ios-quick ios-crypto ios-open ios-staging ios-archive android android-jvm android-open test-staging
 
 PORT ?= 8080
 ADMIN ?= nate
@@ -64,6 +64,15 @@ ios-crypto: ## The iOS crypto package against the pinned vectors (swift test), s
 
 ios-open: ## Opens the iOS app in Xcode
 	open ios/Napsack.xcodeproj
+
+android: ## The Android app: crypto and logic on the JVM, then its tests on an emulator, live against a fresh server (scripts/test-android.sh)
+	bash scripts/test-android.sh
+
+android-jvm: ## The same without an emulator or server, as the Android CI runs it
+	bash scripts/test-android.sh --no-emulator
+
+android-open: ## Opens the Android app in Android Studio
+	open -a "Android Studio" android
 
 test-staging: ## The smoke and browser tests against staging (makes test accounts there; never production)
 	bash scripts/test-staging.sh
