@@ -35,7 +35,7 @@ Every action takes two taps, and each is recorded (below).
 - nothing reaches their devices (notifications only go to live sessions);
 - they don't count toward the account cap.
 
-An Admin can't turn off their own account, or another Admin's: Admins come from settings, so take them off the admin list first.
+An Admin can't turn off their own account, or another Admin's, sign another Admin out everywhere, or issue a reset code for any Admin's account, their own included (`403`; `admin_users::refuse_if_admin`): Admins come from settings, so take them off the admin list first. A reset code is a way into the account handed to whoever asks, so this keeps one Admin's session, stolen, from taking over another.
 
 **Turn it back on.** Marks the row ended. Everything is as it was: they sign in with the same password and find all their history. It also ends a suspension early.
 
