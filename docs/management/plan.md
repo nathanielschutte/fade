@@ -23,14 +23,14 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | # | Task | Epic | Who | Status | Why it's here |
 |---|---|---|---|---|---|
 | 1 | [iOS app](plan-ios.md): its own task list | Features | Nate | In progress | Native Swift (decided 2026-10-29), on a Mac; the Simulator and a free Apple ID until the Developer Program comes through |
-| 2 | [Profile pictures beside every list of people](#x45-profile-pictures-beside-every-list-of-people) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 3 | [Every list of people opens their profile](#x46-every-list-of-people-opens-their-profile) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 4 | [One way of naming people, everywhere](#x47-one-way-of-naming-people-everywhere) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 5 | [A chat's picture in the list opens the chat too](#x48-a-chats-picture-in-the-list-opens-the-chat-too) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 6 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04): more emoji, still one reaction each (decided). Groups' reactions need a server change |
-| 7 | [Camera flash where the device has one](#x50-camera-flash-where-the-device-has-one) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 8 | [The iPhone camera freezes during a phone call](#d20-the-iphone-camera-freezes-during-a-phone-call) | Debug | Nate | In progress | Nate (2026-11-04), on his phone: pics and videos should work on a call |
-| 9 | [Opening the iPhone camera stops music](#d21-opening-the-iphone-camera-stops-music) | Debug | Nate | In progress | Nate (2026-11-04): what's playing keeps playing |
+| 2 | [Profile pictures beside every list of people](#x45-profile-pictures-beside-every-list-of-people) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04). Built (2026-11-04) on the web and the iPhone: one row for people everywhere (web `personRow`, iPhone `People.swift`) |
+| 3 | [Every list of people opens their profile](#x46-every-list-of-people-opens-their-profile) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04). Built (2026-11-04): a tap opens the profile; someone who isn't your friend gets their username, Add friend or Accept, Report, Block |
+| 4 | [One way of naming people, everywhere](#x47-one-way-of-naming-people-everywhere) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04). Built (2026-11-04): lists and profiles follow the rule with `@username`; inside sentences, the name alone |
+| 5 | [A chat's picture in the list opens the chat too](#x48-a-chats-picture-in-the-list-opens-the-chat-too) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04). Built (2026-11-04): the iPhone's picture took the tap (a gesture on every picture); the web already did it, and now a test checks |
+| 6 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04): more emoji, still one reaction each (decided). Groups' reactions need a server change. Built (2026-11-04): the server takes any one emoji in groups (`text::is_one_emoji`); the web has a built-in picker (`emoji.js`), the iPhone the system's emoji keyboard |
+| 7 | [Camera flash where the device has one](#x50-camera-flash-where-the-device-has-one) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04). Built (2026-11-04): the iPhone off, auto, on (the torch while recording; the front camera lights the screen where the phone can); the web on or off where the browser offers the torch |
+| 8 | [The iPhone camera freezes during a phone call](#d20-the-iphone-camera-freezes-during-a-phone-call) | Debug | Nate | In progress | Nate (2026-11-04), on his phone: pics and videos should work on a call. Built (2026-11-04), in the next TestFlight build; only a phone can show it works |
+| 9 | [Opening the iPhone camera stops music](#d21-opening-the-iphone-camera-stops-music) | Debug | Nate | In progress | Nate (2026-11-04): what's playing keeps playing. Built (2026-11-04), in the next TestFlight build; only a phone can show it works |
 | 10 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Report, Block, and Blocked live in 0.52.0 (web) and TestFlight build 186 (iPhone); the report email waits on Nate's SES apply (`reports_email`, infra/email.tf) |
 | 11 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175). Build 183's fix missed it; reproduced on iOS 26.4 and fixed (2026-11-04), in TestFlight build 186; waiting on a try on the phone |
 | 12 | [Zoom and pan an opened pic](#x43-zoom-and-pan-an-opened-pic) | Experience/visual | Nate | In progress | Nate (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
@@ -496,10 +496,12 @@ Oldest first; newly shipped rows go at the bottom.
 #### D20. The iPhone camera freezes during a phone call
 - Nate (2026-11-04, on a call on speaker): the camera freezes within a second of opening, and a pic then says it couldn't be taken. Pics and videos should work during a call.
 - Cause: the camera takes the microphone as it opens (`Camera.start`, for videos' sound). On a call the microphone belongs to the call, so iOS interrupts the whole capture session, picture included. Fix: the camera never needs the microphone to run. It skips it while it's in use (a call) and, if interrupted for it anyway, drops it and carries on; a video taken then has no sound, and says so.
+- **Built (2026-11-04).** napsack sets up the camera's sound itself (mixing with other apps', back as it was when the camera closes) and takes the microphone only when it's free: not on a call, and dropped if iOS hands it to a call while the camera's open. A video then has no sound and says so. The decisions are tested (`CameraAudioTests`); the call and the music need a phone.
 
 #### D21. Opening the iPhone camera stops music
 - Nate (2026-11-04): music stops as soon as the camera opens, even for a pic. Whatever is playing should keep playing, through a pic or a video.
 - Same cause as [D20](#d20-the-iphone-camera-freezes-during-a-phone-call): with the microphone in, the capture session sets up the app's audio on its own, in a mode that stops other apps' sound. Fix: napsack sets up its audio itself, mixing with others, and only as long as the camera is open. The web already asks for the microphone only as a recording starts, and records without sound when it can't have it, so a pic there leaves music and calls alone.
+- **Built (2026-11-04).** napsack sets up the camera's sound itself (mixing with other apps', back as it was when the camera closes) and takes the microphone only when it's free: not on a call, and dropped if iOS hands it to a call while the camera's open. A video then has no sound and says so. The decisions are tested (`CameraAudioTests`); the call and the music need a phone.
 
 ### Experience/visual
 
@@ -611,23 +613,29 @@ Oldest first; newly shipped rows go at the bottom.
 
 #### X45. Profile pictures beside every list of people
 - From Nate's intake (2026-11-04): "User profile pic shows next to all friend list items (ex. list of who is in a group chat)." Every list of people shows each one's picture (or the initials stand-in), as the chat list does: a group's members, Friends, requests, the new-group and add-people pickers, Profile › Blocked. Pictures go only to friends (the server's rule, CLAUDE.md), so a group member who isn't your friend keeps the stand-in. The web and the iPhone.
+- **Built (2026-11-04).** Group members and the add-people list, Friends and requests, a profile's friends, Profile › Blocked, and the new-group picker (where a tap picks rather than opening a profile). A non-friend has their initial.
 
 #### X46. Every list of people opens their profile
 - From Nate's intake (2026-11-04): "Able to click all friend list items to navigate to their profile page/view." A tap on a person in any list (a group's members, Friends, requests) opens their profile, as a tap on a chat's title does. Someone who isn't your friend gets what the server lets you see: their username, and Add or Report. The web and the iPhone.
+- **Built (2026-11-04).** Someone who isn't your friend opens to their username, "Not your friend" (or that you block them, or a request either way), and Add friend or Accept, Report, Block. Accepting there opens their whole profile.
 
 #### X47. One way of naming people, everywhere
 - From Nate's intake (2026-11-04): "Always display name shown where friend names render - order as we know is always: username, then user-set display name, then local nickname." The rule from [F5](#f5-profile-pic-and-nicknames): your nickname for them wins, else their display name, else their username, with `@username` beside it wherever they differ. The work is finding the places that still show a bare username (group members, reactions, "opened by", requests, notifications) and making each follow the rule, on the web and the iPhone.
+- **Built (2026-11-04).** `@username` shows under the name in lists and profiles wherever it differs; inside sentences (group events, "Seen by", typing) the name alone. Someone who isn't your friend is their username. Notifications already followed the rule (the server's `people::name_for`).
 
 #### X48. A chat's picture in the list opens the chat too
 - From Nate's intake (2026-11-04): "Profile pics should be part of the clickable area of a chat in the chat list view." The whole row, picture included, opens the chat (or its waiting pics, [X41](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list)); the picture isn't a separate target there. Its big view stays on the profile. The web and the iPhone.
+- **Built (2026-11-04).** On the iPhone every picture had a tap of its own, even where it did nothing; only pictures that open big take taps now. The web already worked; `test_people.py` and `testAChatsPictureOpensTheChat` check both.
 
 #### X49. React with any emoji
 - From Nate's intake (2026-11-04): "Multi reactions - should be able to react with all emojis. Keep the current list as the hotbar, then have a + button where you can pick from any emoji." The six stay as the quick row; + opens a picker of every emoji (the system's own on the iPhone; on the web, a picker built in, no third-party scripts).
 - Direct chats' reactions are end-to-end encrypted, so only the apps check them. A group's are stored as plain text and the server allows only the six (`reactions.rs`, `EMOJI`): any emoji means checking that it's one emoji and nothing else (`text.rs`), or doing this with group reactions encrypted (Tracker: "Group chats: encrypt reactions"), when the server can't check at all. Every client must show an emoji it didn't offer.
 - **Decided (Nate, 2026-11-04):** "multi" means more emoji to choose from; still one reaction per person per message, replaced by the next.
+- **Built (2026-11-04).** The server takes any one emoji for groups (`text::is_one_emoji`: a skin tone, flag, keycap, or joined sequence counts as one), and the apps hold decrypted direct reactions to the same rule (`isReaction`, `E2E.isReaction`, the same test cases). Your own reaction from outside the six shows first in the quick row, so a tap takes it back. The web's + opens a picker built in (`emoji.js`, 1,870 emoji up to Emoji 15.0, searchable by name, no skin tones; `scripts/make-emoji.py` builds it); the iPhone's opens the system's emoji keyboard (every emoji, skin tones, search, recents). Older apps show nothing for an emoji outside the six until they update.
 
 #### X50. Camera flash where the device has one
 - From Nate's intake (2026-11-04): "Camera flash where available." A flash button on the camera, off, on, or auto, shown only when the camera in use has a flash. The iPhone: the back camera's flash for photos, the light kept on while recording a video; the front camera may light the screen (as the system camera does). The web: the `torch` setting, where the browser offers it (Chrome on Android; not Safari on iPhone), otherwise no button.
+- **Built (2026-11-04).** The iPhone: off, auto, on, shown when the camera has a flash or a torch, re-checked on each switch; photos use the flash, videos keep the torch on while recording (auto by the camera's own judgement), the front camera lights the screen where the phone offers it; the choice lasts until the app quits. The web: on or off, where the camera offers the torch (not in Safari), lit while the camera's open, dark over the review and when it closes.
 
 ### Security
 
