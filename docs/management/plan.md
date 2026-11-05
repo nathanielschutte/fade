@@ -29,25 +29,27 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 5 | [A chat's picture in the list opens the chat too](#x48-a-chats-picture-in-the-list-opens-the-chat-too) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
 | 6 | [React with any emoji](#x49-react-with-any-emoji) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04): more emoji, still one reaction each (decided). Groups' reactions need a server change |
 | 7 | [Camera flash where the device has one](#x50-camera-flash-where-the-device-has-one) | Experience/visual | Nate | In progress | Nate's intake (2026-11-04) |
-| 8 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Report, Block, and Blocked live in 0.52.0 (web) and TestFlight build 186 (iPhone); the report email waits on Nate's SES apply (`reports_email`, infra/email.tf) |
-| 9 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175). Build 183's fix missed it; reproduced on iOS 26.4 and fixed (2026-11-04), in TestFlight build 186; waiting on a try on the phone |
-| 10 | [Zoom and pan an opened pic](#x43-zoom-and-pan-an-opened-pic) | Experience/visual | Nate | In progress | Nate (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
-| 11 | [Profile: Delete account under Sign out, and Sign out asks first](#x44-profile-delete-account-under-sign-out-and-sign-out-asks-first) | Experience/visual | Nate | In progress | Nate's intake (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
-| 12 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | Nate | In progress | Decided (Nate, 2026-11-03): texts in order live in 0.51.0 and build 183; pictures kept in build 183; the stats list tracked |
-| 13 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 14 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone. Fixed in TestFlight build 175 (a chat opens from its kept page); waiting on a try on the phone |
-| 15 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 16 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
-| 17 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 18 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
-| 19 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
-| 20 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
-| 21 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 22 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 23 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 24 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 25 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
-| 26 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
+| 8 | [The iPhone camera freezes during a phone call](#d20-the-iphone-camera-freezes-during-a-phone-call) | Debug | Nate | In progress | Nate (2026-11-04), on his phone: pics and videos should work on a call |
+| 9 | [Opening the iPhone camera stops music](#d21-opening-the-iphone-camera-stops-music) | Debug | Nate | In progress | Nate (2026-11-04): what's playing keeps playing |
+| 10 | [Report and block](#f28-report-and-block) | Features | Nate | In progress | App Review 1.2, the likeliest reason the first external TestFlight build is refused; the external group is the next milestone (Nate, 2026-11-03). Report, Block, and Blocked live in 0.52.0 (web) and TestFlight build 186 (iPhone); the report email waits on Nate's SES apply (`reports_email`, infra/email.tf) |
+| 11 | [The iPhone chat scrolled off the top as the keyboard came up](#d18-the-iphone-chat-scrolled-off-the-top-as-the-keyboard-came-up) | Debug | Nate | In progress | Nate (2026-11-03), on his phone (build 175). Build 183's fix missed it; reproduced on iOS 26.4 and fixed (2026-11-04), in TestFlight build 186; waiting on a try on the phone |
+| 12 | [Zoom and pan an opened pic](#x43-zoom-and-pan-an-opened-pic) | Experience/visual | Nate | In progress | Nate (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
+| 13 | [Profile: Delete account under Sign out, and Sign out asks first](#x44-profile-delete-account-under-sign-out-and-sign-out-asks-first) | Experience/visual | Nate | In progress | Nate's intake (2026-11-03). Live in 0.51.0 (web) and TestFlight build 183 (iPhone); waiting on a try on the phone |
+| 14 | [Choices left from the speed work](#x42-choices-left-from-the-speed-work) | Experience/visual | Nate | In progress | Decided (Nate, 2026-11-03): texts in order live in 0.51.0 and build 183; pictures kept in build 183; the stats list tracked |
+| 15 | [Delete your own account](#f22-delete-your-own-account) | Features | Nate | In progress | Nate (2026-11-03); the App Store requires it. Live in 0.49.0 (server and web); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 16 | [The iOS chat is stuck when it opens](#d17-the-ios-chat-is-stuck-for-a-second-or-two-when-it-opens) | Debug | Nate | In progress | Nate (2026-11-03), on his phone. Fixed in TestFlight build 175 (a chat opens from its kept page); waiting on a try on the phone |
+| 17 | [Easier sign-in: password managers, strong passwords, the recovery key saved](#f23-easier-sign-in-password-managers-strong-passwords-the-recovery-key-saved) | Features | Nate | In progress | Nate (2026-11-03). Live in 0.49.0 (web, and the site's webcredentials); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 18 | [Lock napsack with Face ID](#f24-lock-napsack-with-face-id-ios) | Features | Nate | In progress | Nate (2026-11-03). Not on his phone before: build 167/168 predates it (#70, build 170). In TestFlight build 175: Profile › Security › Lock with Face ID |
+| 19 | [The iPhone's badge, kept right by the server](#f27-the-iphones-badge-kept-right-by-the-server) | Features | Nate | In progress | Nate (2026-11-03): notifications and the badge done for real, with passing tests. Live in 0.50.0; the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 20 | [See who reacted](#f21-see-who-reacted) | Features | – | Planned | Nate (2026-10-30), from the intake |
+| 21 | [Admins by user id](#s5-admins-by-user-id) | Security | Nate | In progress | Built in 0.45.0; Nate switches `/fade/admins` to ids (a production setting) |
+| 22 | [Reset staging's data](#i12-reset-stagings-data) | Infrastructure | – | Needs decision | Nate (2026-10-30), from the intake: what staging starts with |
+| 23 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 24 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 25 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 26 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 27 | [Passkeys](#f26-passkeys) | Features | Nate | In progress | Nate (2026-11-03): decided. Live in 0.50.0 (server and web, napsack.io); the iOS side is in TestFlight build 175, waiting on a try on the phone |
+| 28 | [Open the latest waiting pics straight from the chat list](#x41-open-the-latest-waiting-pics-straight-from-the-chat-list) | Experience/visual | – | Planned | Built in the iOS app (2026-11-03); the web to match |
 
 **Done**
 
@@ -490,6 +492,14 @@ Oldest first; newly shipped rows go at the bottom.
 #### D19. On iOS 26, a friend request's notification doesn't open Friends
 - Found 2026-11-03 by `LiveNotificationTapTests.aTapOpensItsChatAndReadsIt` on an iOS 26.4 Simulator (it passes on iOS 27): after a tap on a friend request's notification, Friends never opens. Chats' notifications open fine on both. Not yet looked into; it may be how iOS 26 handles a navigation destination pushed from a notification while another is shown.
 - **Fixed (2026-11-04):** Friends was its own destination, switched on as the open chat closed, and iOS 26 pushed a blank screen in its place (seen in a picture of the test's window). Friends is now a step in the same path as the chats, so its notification replaces an open chat as a chat's notification replaces another chat. The test passes on iOS 26.4 and 27; the UI tests too.
+
+#### D20. The iPhone camera freezes during a phone call
+- Nate (2026-11-04, on a call on speaker): the camera freezes within a second of opening, and a pic then says it couldn't be taken. Pics and videos should work during a call.
+- Cause: the camera takes the microphone as it opens (`Camera.start`, for videos' sound). On a call the microphone belongs to the call, so iOS interrupts the whole capture session, picture included. Fix: the camera never needs the microphone to run. It skips it while it's in use (a call) and, if interrupted for it anyway, drops it and carries on; a video taken then has no sound, and says so.
+
+#### D21. Opening the iPhone camera stops music
+- Nate (2026-11-04): music stops as soon as the camera opens, even for a pic. Whatever is playing should keep playing, through a pic or a video.
+- Same cause as [D20](#d20-the-iphone-camera-freezes-during-a-phone-call): with the microphone in, the capture session sets up the app's audio on its own, in a mode that stops other apps' sound. Fix: napsack sets up its audio itself, mixing with others, and only as long as the camera is open. The web already asks for the microphone only as a recording starts, and records without sound when it can't have it, so a pic there leaves music and calls alone.
 
 ### Experience/visual
 
