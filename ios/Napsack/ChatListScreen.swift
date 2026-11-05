@@ -576,24 +576,26 @@ struct ChatListScreen: View {
 
 struct ChatRowView: View {
     let row: ChatRow
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
         HStack(spacing: 12) {
             Avatar(kind: row.kind, avatarId: row.avatarId, name: row.name)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(row.name + row.marks).font(.headline).lineLimit(1)
-                    if row.muted {
-                        Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Muted")
-                    }
-                    Spacer(minLength: 8)
-                    if let time = row.time {
-                        Text(Self.when(time)).font(.caption).foregroundStyle(.secondary)
+                if textSize.isAccessibilitySize {
+                    // The largest text: the name gets the whole line (two if it needs them), the time its own under it.
+                    name.lineLimit(2)
+                    time
+                } else {
+                    HStack(spacing: 6) {
+                        name.lineLimit(1)
+                        Spacer(minLength: 8)
+                        time
                     }
                 }
                 HStack(spacing: 6) {
                     Text(row.preview)
-                        .lineLimit(1)
+                        .lineLimit(textSize.isAccessibilitySize ? 2 : 1)
                         .foregroundStyle(row.waiting == nil ? .secondary : .primary)
                         .fontWeight(row.waiting == nil ? .regular : .semibold)
                     Spacer(minLength: 8)
@@ -608,6 +610,22 @@ struct ChatRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var name: some View {
+        HStack(spacing: 6) {
+            Text(row.name + row.marks).font(.headline)
+            if row.muted {
+                Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Muted")
+            }
+        }
+    }
+
+    /// One line, always ("10:44 AM", never "10:44 A" over "M"): the name gives way first.
+    @ViewBuilder private var time: some View {
+        if let time = row.time {
+            Text(Self.when(time)).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        }
     }
 
     /// Today: the time. This week: the day. Before that: the date.
