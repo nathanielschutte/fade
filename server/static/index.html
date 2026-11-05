@@ -705,6 +705,23 @@
   <ol class="edits-list" id="edits-list"></ol>
 </dialog>
 
+<!-- React with any emoji (X49): + by the quick row of reactions -->
+<dialog id="emoji-dialog" class="sheet emoji-sheet" aria-labelledby="emoji-title">
+  <header class="sheet-head">
+    <h2 id="emoji-title">React</h2>
+    <button type="button" class="icon-button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <input type="search" class="send-to-search" id="emoji-search" placeholder="Search emoji" aria-label="Search emoji by name" autocomplete="off" spellcheck="false">
+  <nav class="emoji-tabs" id="emoji-tabs" aria-label="Emoji groups"></nav>
+  <div class="emoji-scroll" id="emoji-scroll">
+    <p class="form-note" id="emoji-note" role="status"></p>
+    <div id="emoji-groups"><p class="muted">Loading…</p></div>
+    <div id="emoji-results" hidden></div>
+  </div>
+</dialog>
+
 <!-- Who a pic goes to (X26): friends and groups, one or more -->
 <dialog id="send-to-dialog" class="sheet send-to" aria-labelledby="send-to-title">
   <header class="sheet-head">

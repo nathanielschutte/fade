@@ -1666,6 +1666,33 @@ html[data-env] { --tabs-foot: 1.1rem; }
 .person.pick .person-text { flex: 1; }
 .person > .role-badge, .person > .button, .person > .person-meta { flex: none; }
 
+/* ---------- any emoji (X49) ---------- */
+.msg-actions .more-reactions { font-size: 1.2rem; color: var(--fixer); }
+.emoji-tabs { display: flex; overflow-x: auto; scrollbar-width: none; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule); }
+.emoji-tabs::-webkit-scrollbar { display: none; }
+.emoji-tabs[hidden] { display: none; }
+/* Shared out across the width (all nine fit at 320px); past that it scrolls. */
+.emoji-tab {
+  flex: 1 0 1.9rem; height: 2.5rem; padding: 0; border: 0; border-radius: var(--radius-s);
+  background: none; font-size: 1.25rem; cursor: pointer;
+}
+.emoji-tab:hover { background: var(--wash); }
+/* Its own height, so the sheet doesn't jump while searching (and see .send-to-search on flex in Safari). */
+.emoji-scroll {
+  height: 50vh; height: min(24rem, 50dvh);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.emoji-group h3 { margin: 0.75rem 0 0.25rem; }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.5rem, 1fr)); }
+.emoji-choice {
+  height: 2.6rem; border: 1px solid transparent; border-radius: var(--radius-s); background: none;
+  font-size: 1.5rem; line-height: 1; cursor: pointer;
+}
+.emoji-choice:hover { background: var(--wash); }
+.emoji-choice.is-mine { border-color: var(--sage); background: var(--wash); }
+.emoji-none { padding: 1rem 0.25rem; color: var(--fixer); }
+#emoji-results { padding-top: 0.5rem; }
+
 /* ---------- admin: System › Reports (F28; admin.js, section "reports") ----------
    Kept in one block at the end, on its own, for the Reports page only. */
 .reports { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }

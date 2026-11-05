@@ -336,8 +336,59 @@ export async function decryptAnyText(key, b64, format, senderId, recipientId) {
   throw new Error(`unknown text format ${format}`);
 }
 
-/** The reactions clients offer (the server checks group reactions against the same set). */
+/** The quick row of reactions clients offer; any other single emoji is a reaction too (isReaction). */
 export const REACTIONS = ["❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F44D}", "\u{1F44E}"];
+
+/**
+ * A reaction: exactly one emoji, nothing else (X49). One emoji can be several
+ * code points (a skin tone, a flag's pair, a keycap, people joined by U+200D),
+ * so this follows the shape of an emoji sequence rather than counting
+ * characters. The same rule as the server's `text::is_one_emoji`, which checks
+ * group reactions; direct-chat reactions are encrypted, so clients check them
+ * when they decrypt, and before sending.
+ */
+export function isReaction(s) {
+  // The longest real ones (a family, a subdivision flag) are under 30 bytes.
+  if (typeof s !== "string" || !s || enc.encode(s).length > 40) return false;
+  const cs = Array.from(s, (c) => c.codePointAt(0));
+  const within = (c, lo, hi) => c !== undefined && c >= lo && c <= hi;
+  let i = 0;
+  for (;;) {
+    const c = cs[i++];
+    if (c === undefined) return false;
+    if (within(c, 0x1F1E6, 0x1F1FF)) {
+      // A flag is two regional indicators, and nothing joins to it.
+      return within(cs[i], 0x1F1E6, 0x1F1FF) && i + 1 === cs.length;
+    }
+    if (within(c, 0x30, 0x39) || c === 0x23 || c === 0x2A) {
+      if (cs[i] === 0xFE0F) i++;
+      return cs[i] === 0x20E3 && i + 1 === cs.length;
+    }
+    if (!isPictographic(c)) return false;
+    if (cs[i] === 0xFE0F) i++;
+    if (within(cs[i], 0x1F3FB, 0x1F3FF)) i++;
+    if (c === 0x1F3F4 && within(cs[i], 0xE0020, 0xE007E)) {
+      while (within(cs[i], 0xE0020, 0xE007E)) i++;
+      if (cs[i++] !== 0xE007F) return false;
+    }
+    const next = cs[i++];
+    if (next === undefined) return true;
+    if (next !== 0x200D) return false;
+  }
+}
+
+// Code points that are emoji on their own: Unicode's Extended_Pictographic,
+// by block, minus the regional indicators and skin tones (handled above).
+const PICTOGRAPHIC = [
+  [0xA9, 0xA9], [0xAE, 0xAE], [0x203C, 0x203C], [0x2049, 0x2049], [0x2122, 0x2122], [0x2139, 0x2139],
+  [0x2194, 0x2199], [0x21A9, 0x21AA], [0x231A, 0x231B], [0x2328, 0x2328], [0x23CF, 0x23CF],
+  [0x23E9, 0x23F3], [0x23F8, 0x23FA], [0x24C2, 0x24C2], [0x25AA, 0x25AB], [0x25B6, 0x25B6],
+  [0x25C0, 0x25C0], [0x25FB, 0x25FE], [0x2600, 0x27BF], [0x2934, 0x2935], [0x2B05, 0x2B07],
+  [0x2B1B, 0x2B1C], [0x2B50, 0x2B50], [0x2B55, 0x2B55], [0x3030, 0x3030], [0x303D, 0x303D],
+  [0x3297, 0x3297], [0x3299, 0x3299],
+  [0x1F000, 0x1F1E5], [0x1F200, 0x1F3FA], [0x1F400, 0x1FAFF],
+];
+const isPictographic = (c) => PICTOGRAPHIC.some(([lo, hi]) => c >= lo && c <= hi);
 
 // A reaction's associated data names the message it's on, so the server
 // can't move it to another message.

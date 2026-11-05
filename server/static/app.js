@@ -474,7 +474,9 @@ async function decrypt(m) {
 async function decryptReactions(m) {
   const out = [];
   for (const r of m.reactions || []) {
-    const cacheKey = `${m.id}:${r.sender_id}:${r.created_at}`;
+    // By its ciphertext, not its time: one changed within the same second is
+    // another reaction, and showed as the last one (seen once any emoji could be picked).
+    const cacheKey = `${m.id}:${r.sender_id}:${r.ciphertext}`;
     if (!state.reactionText.has(cacheKey)) {
       let emoji = null;
       try {
@@ -483,7 +485,8 @@ async function decryptReactions(m) {
       } catch {
         // unreadable reactions are just not shown
       }
-      state.reactionText.set(cacheKey, e2e.REACTIONS.includes(emoji) ? emoji : null);
+      // Any one emoji (X49), not only the quick row: they may have picked it from the full list.
+      state.reactionText.set(cacheKey, e2e.isReaction(emoji) ? emoji : null);
     }
     const emoji = state.reactionText.get(cacheKey);
     if (emoji) out.push({ user: r.sender_id, emoji });
@@ -3406,6 +3409,14 @@ function snippetOf(m) {
 const reactionsOf = (m) => (m.group_id ? (m.reactions || []).map((r) => ({ user: r.user_id, emoji: r.emoji })) : m.reactionList || []);
 const myReaction = (m) => reactionsOf(m).find((r) => r.user === state.me.id)?.emoji ?? null;
 
+/** Who reacted: "You", a friend by what I call them, anyone else in a group by their username. */
+function reactorName(m, userId) {
+  if (userId === state.me.id) return "You";
+  if (!m.group_id) return personName(userId, "");
+  const member = groupMemberKeys.get(m.group_id)?.find((x) => x.id === userId);
+  return personName(userId, member?.username ?? groupMemberName(m.group_id, userId));
+}
+
 /**
  * A message's items for drawConversation: the bubble (with the message it
  * replies to, if any), its reactions, and, when tapped, a row to react or
@@ -3443,18 +3454,19 @@ function bubbleItems(m, mine, content, byId) {
 
   const reactions = reactionsOf(m);
   if (reactions.length) {
-    const counts = new Map();
-    for (const r of reactions) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+    // Each emoji, with who chose it (by the names I know them by, X47), shown on hover.
+    const who = new Map();
+    for (const r of reactions) who.set(r.emoji, [...(who.get(r.emoji) || []), reactorName(m, r.user)]);
     const me = myReaction(m);
     items.push({
       key: `r:${key}`,
-      sig: JSON.stringify([mine, me, [...counts]]),
+      sig: JSON.stringify([mine, me, [...who]]),
       make: () => el("li", { class: `reactions ${mine ? "mine" : ""}` },
-        ...[...counts].map(([emoji, n]) => el("button", {
-          type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`,
-          "aria-label": `${emoji} ${n}${me === emoji ? ", including you. Tap to take yours back" : ". Tap to react"}`,
+        ...[...who].map(([emoji, names]) => el("button", {
+          type: "button", class: `reaction ${me === emoji ? "is-mine" : ""}`, title: names.join(", "),
+          "aria-label": `${emoji} from ${names.join(", ")}${me === emoji ? ". Tap to take yours back" : ". Tap to react"}`,
           onclick: () => react(liveMessage(m), emoji),
-        }, emoji, n > 1 ? String(n) : ""))),
+        }, emoji, names.length > 1 ? String(names.length) : ""))),
     });
   }
 
@@ -3467,10 +3479,14 @@ function bubbleItems(m, mine, content, byId) {
       key: `a:${key}`,
       sig: JSON.stringify([mine, me, copy, edit, reportable]),
       make: () => el("li", { class: `msg-actions ${mine ? "mine" : ""}` },
-        ...e2e.REACTIONS.map((emoji) => el("button", {
-          type: "button", class: me === emoji ? "is-mine" : "", "aria-label": `React ${emoji}`,
+        // The quick row, then mine if I picked another (a tap takes it back), then + for any emoji (X49).
+        ...[...e2e.REACTIONS, ...(me && !e2e.REACTIONS.includes(me) ? [me] : [])].map((emoji) => el("button", {
+          type: "button", class: me === emoji ? "is-mine" : "",
+          "aria-label": me === emoji ? `Take back your ${emoji}` : `React ${emoji}`,
           onclick: () => react(liveMessage(m), emoji),
         }, emoji)),
+        el("button", { type: "button", class: "more-reactions", "aria-label": "React with another emoji", title: "More emoji",
+          onclick: () => openEmojiPicker(liveMessage(m)) }, "+"),
         el("button", { type: "button", class: "reply-button", onclick: () => startReply(liveMessage(m)) }, "Reply"),
         copy ? el("button", { type: "button", class: "text-action", onclick: () => copyText(liveMessage(m)) }, "Copy") : null,
         edit ? el("button", { type: "button", class: "text-action", onclick: () => startEdit(liveMessage(m)) }, "Edit") : null,
@@ -3633,6 +3649,7 @@ function quoteButton(m, targetId, text) {
 /** Same emoji again takes it back; another one replaces it. */
 async function react(m, emoji) {
   const next = myReaction(m) === emoji ? null : emoji;
+  if (next && !e2e.isReaction(next)) return; // one emoji, nothing else (the server refuses the rest in groups)
   state.actionFor = null;
   try {
     if (m.group_id) {
@@ -3650,6 +3667,101 @@ async function react(m, emoji) {
   }
   renderMessages();
 }
+
+// ---------- any emoji (X49) ----------
+// + by the quick row opens every emoji, in Unicode's groups, with a search by
+// name. The list (emoji.js) loads the first time it's opened, and the grid is
+// built once and kept. Still one reaction per person: a pick replaces mine.
+const emojiPicker = { m: null, groups: null, built: false };
+
+function loadEmoji() {
+  emojiPicker.groups ??= import("/emoji.js").then((mod) => mod.EMOJI_GROUPS.map(([name, list]) => ({
+    name,
+    items: list.split("|").map((entry) => {
+      const at = entry.indexOf(" ");
+      return { emoji: entry.slice(0, at), name: entry.slice(at + 1) };
+    }),
+  }))).catch((err) => {
+    emojiPicker.groups = null; // tried again next time
+    throw err;
+  });
+  return emojiPicker.groups;
+}
+
+// Each group's button in the bar: an emoji that says what's in it.
+const EMOJI_GROUP_ICONS = {
+  "Smileys & Emotion": "😀", "People & Body": "👋", "Animals & Nature": "🐻", "Food & Drink": "🍔",
+  "Travel & Places": "🚗", "Activities": "⚽", "Objects": "💡", "Symbols": "🔣", "Flags": "🏁",
+};
+
+const emojiChoice = (item) => el("button", {
+  type: "button", class: "emoji-choice", "data-emoji": item.emoji, "aria-label": item.name, title: item.name,
+}, item.emoji);
+
+async function openEmojiPicker(m) {
+  emojiPicker.m = m;
+  const dialog = $("#emoji-dialog");
+  $("#emoji-search").value = "";
+  $("#emoji-note").textContent = "";
+  if (!dialog.open) dialog.showModal();
+  if (!touchFirst.matches) $("#emoji-search").focus(); // on a phone, the keyboard would cover the list
+  let groups;
+  try {
+    groups = await loadEmoji();
+  } catch (err) {
+    report("warn", "emoji list failed to load", errorFields(err));
+    $("#emoji-note").textContent = "Couldn't load the emoji. Check your connection and try again.";
+    return;
+  }
+  if (!emojiPicker.built) {
+    emojiPicker.built = true;
+    $("#emoji-groups").replaceChildren(...groups.map((g, i) => el("section", { class: "emoji-group", id: `emoji-group-${i}` },
+      el("h3", { text: g.name }),
+      el("div", { class: "emoji-grid" }, ...g.items.map(emojiChoice)))));
+    $("#emoji-tabs").replaceChildren(...groups.map((g, i) => el("button", {
+      type: "button", class: "emoji-tab", "aria-label": g.name, title: g.name,
+      onclick: () => $(`#emoji-group-${i}`).scrollIntoView({ block: "start" }),
+    }, EMOJI_GROUP_ICONS[g.name] ?? g.items[0]?.emoji ?? "?")));
+  }
+  $("#emoji-scroll").scrollTop = 0;
+  showEmojiMatches();
+}
+
+/** The one I've reacted with stands out, so it's plain that picking it again takes it back. */
+function markMyEmoji() {
+  const mine = emojiPicker.m ? myReaction(liveMessage(emojiPicker.m)) : null;
+  for (const b of $("#emoji-dialog").querySelectorAll(".emoji-choice")) {
+    b.classList.toggle("is-mine", b.dataset.emoji === mine);
+  }
+}
+
+/** Searching: the matches by name, in one grid; otherwise every group. */
+async function showEmojiMatches() {
+  const q = $("#emoji-search").value.trim().toLowerCase();
+  $("#emoji-groups").hidden = Boolean(q);
+  $("#emoji-tabs").hidden = Boolean(q);
+  $("#emoji-results").hidden = !q;
+  if (q) {
+    const groups = await emojiPicker.groups?.catch(() => null);
+    if (!groups || $("#emoji-search").value.trim().toLowerCase() !== q) return; // typed on meanwhile
+    const words = q.split(/\s+/);
+    const found = groups.flatMap((g) => g.items).filter((item) => words.every((w) => item.name.includes(w)));
+    $("#emoji-results").replaceChildren(found.length
+      ? el("div", { class: "emoji-grid" }, ...found.map(emojiChoice))
+      : el("p", { class: "emoji-none", text: "No emoji by that name." }));
+  }
+  markMyEmoji();
+}
+
+$("#emoji-search").addEventListener("input", showEmojiMatches);
+$("#emoji-dialog").addEventListener("click", (e) => {
+  const choice = e.target.closest(".emoji-choice");
+  if (!choice) return;
+  const m = emojiPicker.m;
+  $("#emoji-dialog").close();
+  if (m) react(liveMessage(m), choice.dataset.emoji);
+});
+$("#emoji-dialog").addEventListener("close", () => { emojiPicker.m = null; });
 
 function startReply(m) {
   state.actionFor = null;
