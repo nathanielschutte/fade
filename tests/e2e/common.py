@@ -231,6 +231,36 @@ async def api(page, method, path, body=None):
     return out
 
 
+# A 900x600 picture, picked through the camera's file input (no camera needed).
+PIC_FILE = """async () => {
+  const c = document.createElement('canvas'); c.width = 900; c.height = 600;
+  const g = c.getContext('2d'); g.fillStyle = '#2b5'; g.fillRect(0, 0, 900, 600);
+  g.fillStyle = '#fff'; for (let x = 0; x < 900; x += 100) g.fillRect(x, 250, 50, 100);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], 'pic.png', { type: 'image/png' }));
+  const input = document.querySelector('#file-input'); input.files = dt.files; input.dispatchEvent(new Event('change'));
+}"""
+
+
+async def send_pics(page, n):
+    """Sends `n` pics into the chat open on `page`, one after another."""
+    for _ in range(n):
+        await page.click("#camera-button")
+        await page.evaluate(PIC_FILE)
+        await expect(page.locator("#send-snap")).to_be_visible(timeout=30000)
+        await page.click("#send-snap")
+        await expect(page.locator("#camera-dialog")).not_to_be_visible(timeout=20000)
+
+
+async def double_tap(page, locator, gap=0.12):
+    """Two finger taps on the middle of `locator`, `gap` seconds apart."""
+    box = await locator.bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    await page.touchscreen.tap(x, y)
+    await asyncio.sleep(gap)
+    await page.touchscreen.tap(x, y)
+
+
 async def swipe(page, locator, dx):
     """A finger dragging sideways `dx` pixels across `locator` (a chat row,
     to show its actions on a phone)."""

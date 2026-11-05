@@ -140,13 +140,14 @@ async def main():
 
         # Ben: a new video, watched once, with its caption, then gone.
         await expect(row(ben, ANA).locator(".chat-status")).to_have_text("New video", timeout=15000)
-        await row(ben, ANA).click()
-        await ben.locator("button.snap-chip", has_text="Tap to view video").click()
+        await row(ben, ANA).click()  # the newest is a video waiting: it plays from the list (X41)
         await expect(ben.locator("#viewer-video")).to_be_visible(timeout=15000)
         await expect(ben.locator("#viewer-caption")).to_have_text("listen")
         assert await ben.locator("#viewer-video").evaluate("v => !v.paused"), "it plays"
         await shot(ben, "video-viewer-phone", full_page=False)
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)  # closes when it ends
+        await expect(row(ben, ANA).locator(".chat-status")).to_have_text("Video viewed", timeout=10000)
+        await row(ben, ANA).click()  # now it opens the chat
         await expect(ben.locator(".snap-chip.done", has_text="Viewed")).to_be_visible()
         await expect(ana.locator(".snap-chip.done", has_text="Opened")).to_be_visible(timeout=10000)
         await no_placeholders(ben)

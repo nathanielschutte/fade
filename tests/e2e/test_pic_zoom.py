@@ -6,20 +6,11 @@ Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import PHONE, befriend, launch, row, shot, sign_up
+from common import PHONE, befriend, launch, row, send_pics, shot, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
 errors = []
-
-PICK_IMAGE = """async () => {
-  const c = document.createElement('canvas'); c.width = 900; c.height = 600;
-  const g = c.getContext('2d'); g.fillStyle = '#2b5'; g.fillRect(0, 0, 900, 600);
-  g.fillStyle = '#fff'; for (let x = 0; x < 900; x += 100) g.fillRect(x, 250, 50, 100);
-  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
-  const dt = new DataTransfer(); dt.items.add(new File([blob], 'pic.png', { type: 'image/png' }));
-  const input = document.querySelector('#file-input'); input.files = dt.files; input.dispatchEvent(new Event('change'));
-}"""
 
 # The stage's transform as [scale, x, y]; [1, 0, 0] when it isn't zoomed.
 ZOOM = """() => {
@@ -29,14 +20,6 @@ ZOOM = """() => {
   return [m[0], m[4], m[5]];
 }"""
 
-
-async def send_pics(page, n):
-    for _ in range(n):
-        await page.click("#camera-button")
-        await page.evaluate(PICK_IMAGE)
-        await expect(page.locator("#send-snap")).to_be_visible(timeout=30000)
-        await page.click("#send-snap")
-        await expect(page.locator("#camera-dialog")).not_to_be_visible(timeout=20000)
 
 
 async def zoom_is(page, test):
