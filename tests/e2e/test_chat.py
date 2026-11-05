@@ -125,7 +125,8 @@ async def main():
         await a.locator(".camera-stage").click(position={"x": 195, "y": 300})  # a tap on the picture places a caption
         one_line = (await a.locator("#snap-caption").bounding_box())["height"]
         await expect(a.locator("#snap-caption-count")).to_be_hidden()
-        await a.locator("#snap-caption").press_sequentially("so many words about this lake " * 8)  # 240 characters
+        # (Narrow letters: the 200 characters come before the five lines; test_pic_framing.py checks those.)
+        await a.locator("#snap-caption").press_sequentially("it is lit, if ill " * 14)  # 252 characters
         assert await a.locator("#snap-caption").evaluate("e => [...e.value].length") == 200
         await expect(a.locator("#snap-caption-count")).to_have_text("200/200")
         tall = (await a.locator("#snap-caption").bounding_box())["height"]
