@@ -16,6 +16,32 @@ pub struct RateLimit {
     hits: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
+/// The most keys one limit tracks. Past it, windows that have ended go first,
+/// then the oldest ones still running, so memory stays bounded however many
+/// names or addresses a flood makes up. (Evicting a running window forgets
+/// its count; the per-address limits make a flood that large slow to build.)
+pub const MAX_KEYS: usize = 10_000;
+/// Keys longer than this are kept as their SHA-256 instead, so a long key
+/// costs no more memory than a short one.
+const MAX_KEY_BYTES: usize = 128;
+
+/// One attempt taken ahead of time (`reserve`), to give back if it succeeds.
+#[must_use]
+pub struct Reserved {
+    window: Instant,
+}
+
+fn stored_key(key: &str) -> String {
+    if key.len() <= MAX_KEY_BYTES {
+        key.to_string()
+    } else {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(key.as_bytes());
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        format!("sha256:{hex}")
+    }
+}
+
 impl RateLimit {
     pub fn new(limit: u32, window: Duration) -> Self {
         Self {
@@ -27,18 +53,59 @@ impl RateLimit {
 
     /// How many of `wanted` units `key` may use right now (and records them).
     pub fn take(&self, key: &str, wanted: u32) -> u32 {
+        self.take_at(key, wanted).0
+    }
+
+    /// `take`, and when the key's window started.
+    fn take_at(&self, key: &str, wanted: u32) -> (u32, Instant) {
         let now = Instant::now();
+        let key = stored_key(key);
         let mut hits = self.hits.lock().unwrap();
-        if hits.len() > 10_000 {
-            hits.retain(|_, (start, _)| now.duration_since(*start) < self.window);
+        if hits.len() >= MAX_KEYS && !hits.contains_key(&key) {
+            self.make_room(&mut hits, now);
         }
-        let slot = hits.entry(key.to_string()).or_insert((now, 0));
+        let slot = hits.entry(key).or_insert((now, 0));
         if now.duration_since(slot.0) >= self.window {
             *slot = (now, 0);
         }
         let granted = wanted.min(self.limit.saturating_sub(slot.1));
         slot.1 += granted;
-        granted
+        (granted, slot.0)
+    }
+
+    /// Drops ended windows; if that isn't enough, the oldest tenth of the
+    /// rest, so a flood pays for this once per thousand new keys, not on each.
+    fn make_room(&self, hits: &mut HashMap<String, (Instant, u32)>, now: Instant) {
+        hits.retain(|_, (start, _)| now.duration_since(*start) < self.window);
+        if hits.len() < MAX_KEYS {
+            return;
+        }
+        let mut starts: Vec<Instant> = hits.values().map(|(start, _)| *start).collect();
+        let cut = MAX_KEYS / 10;
+        let (_, nth, _) = starts.select_nth_unstable(cut);
+        let cutoff = *nth;
+        hits.retain(|_, (start, _)| *start > cutoff);
+    }
+
+    /// Takes one attempt now, before the slow check it guards, so attempts
+    /// running at the same time can't all slip under the limit. `None` when
+    /// the limit is used up. Give it back with `refund` if the attempt succeeds.
+    pub fn reserve(&self, key: &str) -> Option<Reserved> {
+        match self.take_at(key, 1) {
+            (1, window) => Some(Reserved { window }),
+            _ => None,
+        }
+    }
+
+    /// Gives back a reserved attempt (it succeeded, so it isn't a failure).
+    /// Nothing happens if its window has since ended.
+    pub fn refund(&self, key: &str, reserved: Reserved) {
+        let mut hits = self.hits.lock().unwrap();
+        if let Some(slot) = hits.get_mut(&stored_key(key)) {
+            if slot.0 == reserved.window {
+                slot.1 = slot.1.saturating_sub(1);
+            }
+        }
     }
 
     /// True if one more is allowed (and records it).
@@ -49,14 +116,14 @@ impl RateLimit {
     /// How many `key` has used in its current window, without recording anything.
     pub fn used(&self, key: &str) -> u32 {
         let hits = self.hits.lock().unwrap();
-        hits.get(key)
+        hits.get(&stored_key(key))
             .filter(|(start, _)| start.elapsed() < self.window)
             .map_or(0, |(_, n)| *n)
     }
 
     /// Forgets `key`'s window (an Admin clearing a sign-in lock).
     pub fn clear(&self, key: &str) {
-        self.hits.lock().unwrap().remove(key);
+        self.hits.lock().unwrap().remove(&stored_key(key));
     }
 
     pub fn limit(&self) -> u32 {
@@ -66,7 +133,7 @@ impl RateLimit {
     /// True if `key` has used up its window, without recording anything.
     pub fn exhausted(&self, key: &str) -> bool {
         let hits = self.hits.lock().unwrap();
-        hits.get(key)
+        hits.get(&stored_key(key))
             .is_some_and(|(start, n)| start.elapsed() < self.window && *n >= self.limit)
     }
 }
@@ -155,6 +222,46 @@ mod tests {
         assert_eq!(rl.take("c", 5), 3);
         let short = RateLimit::new(1, Duration::ZERO);
         assert!(short.allow("x") && short.allow("x")); // zero window: always a fresh window
+    }
+
+    #[test]
+    fn reserving_counts_attempts_before_they_finish() {
+        let rl = RateLimit::new(3, Duration::from_secs(60));
+        // Three attempts in flight at once: a fourth is refused before any finishes.
+        let held: Vec<_> = (0..3).map(|_| rl.reserve("ana").unwrap()).collect();
+        assert!(rl.reserve("ana").is_none() && rl.exhausted("ana"));
+        // One succeeded: it gives its attempt back; the failures keep theirs.
+        let mut held = held.into_iter();
+        rl.refund("ana", held.next().unwrap());
+        assert_eq!(rl.used("ana"), 2);
+        assert!(rl.reserve("ana").is_some());
+        assert!(rl.reserve("ana").is_none());
+        // A refund from a window that has ended gives nothing back.
+        let short = RateLimit::new(1, Duration::ZERO);
+        let old = short.reserve("x").unwrap();
+        let _new = short.reserve("x").unwrap();
+        short.refund("x", old);
+        assert_eq!(short.hits.lock().unwrap().get("x").unwrap().1, 1);
+    }
+
+    #[test]
+    fn keys_are_bounded_in_number_and_size() {
+        let rl = RateLimit::new(5, Duration::from_secs(60));
+        let long = "x".repeat(1_000_000);
+        assert!(rl.allow(&long) && rl.used(&long) == 1);
+        assert!(rl
+            .hits
+            .lock()
+            .unwrap()
+            .keys()
+            .all(|k| k.len() <= MAX_KEY_BYTES));
+        for i in 0..MAX_KEYS * 2 {
+            rl.allow(&format!("k{i}"));
+        }
+        let held = rl.hits.lock().unwrap().len();
+        assert!(held <= MAX_KEYS, "{held}");
+        // The newest keys are the ones kept.
+        assert_eq!(rl.used(&format!("k{}", MAX_KEYS * 2 - 1)), 1);
     }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {

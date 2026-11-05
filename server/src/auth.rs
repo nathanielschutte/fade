@@ -12,6 +12,11 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio::sync::Semaphore;
 
 use crate::{
     db::{is_base64, now, UserPublic},
@@ -102,10 +107,55 @@ pub async fn user_for_token(
     Ok(user)
 }
 
+/// Password checks (Argon2) running at once, whole server: one per CPU,
+/// from 2 to 4. Each takes about 19 MiB for its moment, so without a bound a
+/// burst of sign-ins could take the server past its 400 MB memory ceiling
+/// (40 at once reached 840 MB). They're CPU-bound, so more at once than CPUs
+/// buys nothing: production's two vCPUs get two (38 MiB at most), and no
+/// machine more than four (76 MiB).
+pub const ARGON2_AT_ONCE: std::ops::RangeInclusive<usize> = 2..=4;
+/// How long a password check waits for its turn before "busy".
+const ARGON2_WAIT: Duration = Duration::from_secs(5);
+pub const BUSY: &str = "napsack is busy. Try again in a moment.";
+
+fn argon2_permits(cpus: usize) -> usize {
+    cpus.clamp(*ARGON2_AT_ONCE.start(), *ARGON2_AT_ONCE.end())
+}
+
+fn argon2_gate() -> &'static Arc<Semaphore> {
+    static GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        let cpus = std::thread::available_parallelism().map_or(2, |n| n.get());
+        Arc::new(Semaphore::new(argon2_permits(cpus)))
+    })
+}
+
+/// Runs `work` off the async workers once `gate` lets it in, waiting up to
+/// `wait`; past that, 503 busy. The permit goes with the work, so it's held
+/// until the work ends even if the request that asked for it is dropped.
+async fn gated<T: Send + 'static>(
+    gate: &Arc<Semaphore>,
+    wait: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> AppResult<T> {
+    let permit = match tokio::time::timeout(wait, gate.clone().acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        _ => {
+            tracing::warn!("password check refused: too many at once");
+            return Err(AppError::Unavailable(BUSY.into()));
+        }
+    };
+    Ok(tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await?)
+}
+
 /// Argon2 of a high-entropy derived key (an auth key or a recovery auth key),
-/// off the async workers. A leaked database can't be replayed.
+/// off the async workers, a few at a time. A leaked database can't be replayed.
 pub async fn hash_secret(secret: String) -> AppResult<String> {
-    tokio::task::spawn_blocking(move || {
+    gated(argon2_gate(), ARGON2_WAIT, move || {
         let salt = SaltString::generate(&mut OsRng);
         Argon2::default()
             .hash_password(secret.as_bytes(), &salt)
@@ -116,7 +166,7 @@ pub async fn hash_secret(secret: String) -> AppResult<String> {
 }
 
 pub async fn verify_secret(stored: String, given: String) -> AppResult<bool> {
-    Ok(tokio::task::spawn_blocking(move || {
+    gated(argon2_gate(), ARGON2_WAIT, move || {
         PasswordHash::new(&stored)
             .map(|parsed| {
                 Argon2::default()
@@ -125,7 +175,7 @@ pub async fn verify_secret(stored: String, given: String) -> AppResult<bool> {
             })
             .unwrap_or(false)
     })
-    .await?)
+    .await
 }
 
 pub async fn create_session(state: &SharedState, user_id: i64) -> AppResult<String> {
@@ -249,12 +299,26 @@ pub(crate) fn validate_username(name: &str) -> AppResult<()> {
     }
 }
 
+/// A username someone typed to sign in or recover with, checked before it's
+/// counted, logged, or looked up: one that can't exist gets `wrong` at once,
+/// and is never kept (a megabyte "name" would otherwise sit in the limiter
+/// and the log viewer).
+pub(crate) fn typed_username(name: &str, wrong: &'static str) -> AppResult<String> {
+    let name = name.trim();
+    if validate_username(name).is_err() {
+        tracing::info!(length = name.len(), "username malformed");
+        return Err(AppError::bad(wrong));
+    }
+    Ok(name.to_owned())
+}
+
 /// Compare digests rather than raw strings so the check takes the same time either way.
 fn same_secret(a: &str, b: &str) -> bool {
     Sha256::digest(a.as_bytes()) == Sha256::digest(b.as_bytes())
 }
 
 pub const TOO_MANY: &str = "Too many attempts. Wait a few minutes and try again.";
+const WRONG_SIGN_IN: &str = "Wrong username or password.";
 
 /// Sign-in and sign-up attempts per address. Local, un-proxied requests
 /// (development and tests) aren't limited by address.
@@ -273,9 +337,12 @@ pub async fn register(
     Json(req): Json<Register>,
 ) -> AppResult<Json<SessionResponse>> {
     check_ip(&state, &who, "sign-up")?;
+    // First, so nothing below logs or looks up a name that can't exist.
+    let username = req.username.trim().to_string();
+    validate_username(&username)?;
     let invite = match req.invite_token.as_deref() {
         Some(token) => Some(crate::invites::find_valid(&state.db, token).await?.ok_or_else(|| {
-            tracing::info!(ip = %who.ip, username = ?req.username.trim(), "sign-up rejected: invite link not valid");
+            tracing::info!(ip = %who.ip, ?username, "sign-up rejected: invite link not valid");
             AppError::bad("That invite link has expired, been used up, or been turned off.")
         })?),
         None => None,
@@ -283,13 +350,11 @@ pub async fn register(
     if let (Some(expected), None) = (&state.config.invite_code, &invite) {
         let given = req.invite_code.as_deref().unwrap_or("").trim();
         if !same_secret(given, expected) {
-            tracing::info!(ip = %who.ip, username = ?req.username.trim(), "sign-up rejected: wrong invite code");
+            tracing::info!(ip = %who.ip, ?username, "sign-up rejected: wrong invite code");
             return Err(AppError::bad("That invite code isn't valid."));
         }
     }
 
-    let username = req.username.trim().to_string();
-    validate_username(&username)?;
     // Someone's old username stays theirs (usernames.rs).
     if crate::usernames::past_holder(&state.db, &username)
         .await?
@@ -357,17 +422,19 @@ pub async fn login(
     Json(req): Json<Login>,
 ) -> AppResult<Json<SessionResponse>> {
     check_ip(&state, &who, "sign-in")?;
-    // Failed sign-ins per username, whatever address they come from. Checked
-    // before the (slow) password check, so guessing can't burn the CPU either.
-    let account = req.username.trim().to_lowercase();
-    if state.login_fail_limit.exhausted(&account) {
+    let name = typed_username(&req.username, WRONG_SIGN_IN)?;
+    // Failed sign-ins per username, whatever address they come from. An
+    // attempt is counted before the (slow) password check, so guessing can't
+    // burn the CPU, and attempts made at once can't all slip under the limit;
+    // the right password gives its attempt back.
+    let account = name.to_lowercase();
+    let Some(attempt) = state.login_fail_limit.reserve(&account) else {
         tracing::warn!(ip = %who.ip, username = ?account, "sign-in rate limited");
         return Err(AppError::TooManyRequests(TOO_MANY.into()));
-    }
+    };
     let failed = |reason: &str| {
-        state.login_fail_limit.allow(&account);
         tracing::info!(ip = %who.ip, username = ?account, reason, "sign-in failed");
-        AppError::bad("Wrong username or password.")
+        AppError::bad(WRONG_SIGN_IN)
     };
     validate_auth_key(&req.auth_key).map_err(|_| failed("malformed key"))?;
 
@@ -375,17 +442,16 @@ pub async fn login(
         "SELECT id, username, auth_hash, public_key, wrapped_private_key
          FROM users WHERE username = ?",
     )
-    .bind(req.username.trim())
+    .bind(&name)
     .fetch_optional(&state.db)
     .await?;
     let Some((id, username, stored, public_key, wrapped_private_key)) = row else {
         // An old username: its owner signs in with the new one (which isn't
         // said here; they know it).
-        if crate::usernames::past_holder(&state.db, req.username.trim())
+        if crate::usernames::past_holder(&state.db, &name)
             .await?
             .is_some()
         {
-            state.login_fail_limit.allow(&account);
             tracing::info!(ip = %who.ip, username = ?account, "sign-in with an old username");
             return Err(AppError::bad(
                 "That username was changed. Sign in with the new one.",
@@ -401,6 +467,7 @@ pub async fn login(
     if !verify_secret(stored, req.auth_key).await? {
         return Err(failed("wrong password"));
     }
+    state.login_fail_limit.refund(&account, attempt);
     // Said only after the right password, so it reveals nothing to a guesser.
     if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "sign-in refused: account turned off");
@@ -523,6 +590,50 @@ mod tests {
             h,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    /// However many password checks arrive at once, only `permits` run at a
+    /// time; one that can't get a turn in time is turned away as busy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn password_checks_run_a_few_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let gate = Arc::new(Semaphore::new(2));
+        let (running, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let checks: Vec<_> = (0..12)
+            .map(|_| {
+                let (gate, running, most) = (gate.clone(), running.clone(), most.clone());
+                tokio::spawn(async move {
+                    gated(&gate, Duration::from_secs(30), move || {
+                        let now = running.fetch_add(1, SeqCst) + 1;
+                        most.fetch_max(now, SeqCst);
+                        std::thread::sleep(Duration::from_millis(30));
+                        running.fetch_sub(1, SeqCst);
+                    })
+                    .await
+                })
+            })
+            .collect();
+        for check in checks {
+            assert!(check.await.unwrap().is_ok());
+        }
+        assert_eq!(most.load(SeqCst), 2);
+
+        // Both turns taken and not given back in time: busy (503).
+        let _a = gate.clone().acquire_owned().await.unwrap();
+        let _b = gate.clone().acquire_owned().await.unwrap();
+        let busy = gated(&gate, Duration::from_millis(20), || ()).await;
+        assert!(matches!(busy, Err(AppError::Unavailable(m)) if m == BUSY));
+
+        // One per CPU, from 2 to 4: production's two vCPUs get two.
+        assert_eq!([1, 2, 3, 16].map(argon2_permits), [2, 2, 3, 4]);
+    }
+
+    #[test]
+    fn typed_usernames_that_cant_exist_are_refused_first() {
+        assert_eq!(typed_username("  Ana_1 ", WRONG_SIGN_IN).unwrap(), "Ana_1");
+        for bad in ["x".repeat(10_000), "a b".into(), "".into(), "émile".into()] {
+            assert!(typed_username(&bad, WRONG_SIGN_IN).is_err());
+        }
     }
 
     #[test]

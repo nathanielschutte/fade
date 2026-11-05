@@ -98,18 +98,20 @@ pub(crate) async fn require_password(
     auth_key: &str,
 ) -> AppResult<()> {
     let account = me.username.to_lowercase();
-    if state.login_fail_limit.exhausted(&account) {
+    // Counted before the check, so checks made at once can't all slip under
+    // the limit; the right password gives its attempt back (as in auth::login).
+    let Some(attempt) = state.login_fail_limit.reserve(&account) else {
         return Err(AppError::TooManyRequests(auth::TOO_MANY.into()));
-    }
+    };
     validate_auth_key(auth_key)?;
     let stored: String = sqlx::query_scalar("SELECT auth_hash FROM users WHERE id = ?")
         .bind(me.id)
         .fetch_one(&state.db)
         .await?;
     if verify_secret(stored, auth_key.to_owned()).await? {
+        state.login_fail_limit.refund(&account, attempt);
         Ok(())
     } else {
-        state.login_fail_limit.allow(&account);
         tracing::info!(user_id = me.id, "password check failed");
         Err(AppError::bad("Your current password isn't right."))
     }
@@ -131,9 +133,13 @@ pub struct Unlock {
 /// again: under a new password, or for a recovery key.
 pub async fn unlock(
     State(state): State<SharedState>,
+    Extension(who): Extension<ClientInfo>,
     AuthUser(me): AuthUser,
     Json(req): Json<Unlock>,
 ) -> AppResult<Json<Value>> {
+    // A password check, with sign-in's limit per address (main.rs leaves it
+    // out of the write limit for that reason).
+    check_ip(&state, &who, "unlock")?;
     require_password(&state, &me, &req.auth_key).await?;
     let wrapped: String = sqlx::query_scalar("SELECT wrapped_private_key FROM users WHERE id = ?")
         .bind(me.id)
@@ -353,21 +359,23 @@ async fn check_recovery(
     recovery_auth_key: &str,
 ) -> AppResult<(UserPublic, String, String)> {
     check_ip(state, who, "recover")?;
-    let account = username.trim().to_lowercase();
-    if state.login_fail_limit.exhausted(&account) {
+    const NO_MATCH: &str = "That username and recovery key don't match.";
+    let username = auth::typed_username(username, NO_MATCH)?;
+    let account = username.to_lowercase();
+    // Counted before the check; the right key gives it back (as in auth::login).
+    let Some(attempt) = state.login_fail_limit.reserve(&account) else {
         tracing::warn!(ip = %who.ip, username = ?account, "recovery rate limited");
         return Err(AppError::TooManyRequests(auth::TOO_MANY.into()));
-    }
+    };
     let failed = |reason: &str| {
-        state.login_fail_limit.allow(&account);
         tracing::info!(ip = %who.ip, username = ?account, reason, "recovery failed");
-        AppError::bad("That username and recovery key don't match.")
+        AppError::bad(NO_MATCH)
     };
     validate_auth_key(recovery_auth_key).map_err(|_| failed("malformed key"))?;
     let row: Option<RecoveryRow> = sqlx::query_as(
         "SELECT id, username, recovery_hash, recovery_wrapped_key, public_key FROM users WHERE username = ?",
     )
-    .bind(username.trim())
+    .bind(&username)
     .fetch_optional(&state.db)
     .await?;
     let Some((id, name, Some(hash), Some(wrapped), public_key)) = row else {
@@ -376,6 +384,7 @@ async fn check_recovery(
     if !verify_secret(hash, recovery_auth_key.to_owned()).await? {
         return Err(failed("wrong recovery key"));
     }
+    state.login_fail_limit.refund(&account, attempt);
     if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
         tracing::info!(ip = %who.ip, user_id = id, "recovery refused: account turned off");
         return Err(AppError::bad(why));
@@ -528,14 +537,16 @@ pub async fn reset_with_code(
     Json(req): Json<ResetWithCode>,
 ) -> AppResult<Json<SessionResponse>> {
     check_ip(&state, &who, "reset")?;
-    let account = req.username.trim().to_lowercase();
-    if state.login_fail_limit.exhausted(&account) {
+    const NO_MATCH: &str = "That username and reset code don't match, or the code has expired.";
+    let name = auth::typed_username(&req.username, NO_MATCH)?;
+    let account = name.to_lowercase();
+    // Counted before the check; a code that works gives it back (as in auth::login).
+    let Some(attempt) = state.login_fail_limit.reserve(&account) else {
         return Err(AppError::TooManyRequests(auth::TOO_MANY.into()));
-    }
+    };
     let failed = |reason: &str| {
-        state.login_fail_limit.allow(&account);
         tracing::info!(ip = %who.ip, username = ?account, reason, "reset failed");
-        AppError::bad("That username and reset code don't match, or the code has expired.")
+        AppError::bad(NO_MATCH)
     };
     validate_auth_key(&req.new_auth_key)?;
     if !is_base64(&req.public_key, 512) {
@@ -548,7 +559,7 @@ pub async fn reset_with_code(
          WHERE u.username = ? AND c.code_hash = ? AND c.used_at IS NULL AND c.revoked_at IS NULL
            AND c.expires_at > ?",
     )
-    .bind(req.username.trim())
+    .bind(&name)
     .bind(code_hash(&req.code))
     .bind(at)
     .fetch_optional(&state.db)
@@ -557,6 +568,8 @@ pub async fn reset_with_code(
         return Err(failed("no matching code"));
     };
     if let Some(why) = crate::admin_users::refusal(&state.db, id).await? {
+        // The code was right, so it isn't a failed guess.
+        state.login_fail_limit.refund(&account, attempt);
         tracing::info!(ip = %who.ip, user_id = id, "reset refused: account turned off");
         return Err(AppError::bad(why));
     }
@@ -572,6 +585,7 @@ pub async fn reset_with_code(
     if claimed == 0 {
         return Err(failed("code already used"));
     }
+    state.login_fail_limit.refund(&account, attempt);
     keep_history(&mut tx, id, "admin_reset").await?;
     // Passkeys hold copies of the old key, which can't open anything now.
     crate::passkeys::end_for_key_reset(&mut tx, id).await?;

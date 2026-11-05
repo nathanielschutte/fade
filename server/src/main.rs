@@ -670,6 +670,27 @@ fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
+/// Routes with their own, tighter limit per address (`auth::check_ip`), so
+/// the write limit leaves them alone. Every other `/auth/` route (signing
+/// out, say) counts as a write like any other.
+const OWN_ADDRESS_LIMIT: &[&str] = &[
+    "/auth/register",
+    "/auth/login",
+    "/auth/recover/start",
+    "/auth/recover/finish",
+    "/auth/reset",
+    "/auth/unlock",
+    "/auth/passkey/options",
+    "/auth/passkey",
+];
+
+/// Whether `path` (with or without `/api`) skips the per-address write limit:
+/// the routes above, and client logs (their own limit, logs.rs).
+fn skips_write_limit(path: &str) -> bool {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    OWN_ADDRESS_LIMIT.contains(&path) || path == "/logs"
+}
+
 /// Caps API writes per address, so no one can flood the database. Sign-in
 /// and client logs have their own, tighter limits.
 async fn limit_writes(
@@ -678,8 +699,7 @@ async fn limit_writes(
     next: middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = req.uri().path();
-    let exempt = path.contains("/auth/") || path.ends_with("/logs");
+    let exempt = skips_write_limit(req.uri().path());
     if let Err(e) = guard::check_write_room(&state, req.method()) {
         return e.into_response();
     }
@@ -819,7 +839,29 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{apple_app_id, environment};
+    use super::{apple_app_id, environment, skips_write_limit};
+
+    #[test]
+    fn only_routes_with_their_own_limit_skip_the_write_limit() {
+        for own in [
+            "/api/auth/login",
+            "/auth/register",
+            "/api/auth/unlock",
+            "/api/auth/passkey",
+            "/api/logs",
+        ] {
+            assert!(skips_write_limit(own), "{own}");
+        }
+        for write in [
+            "/api/auth/logout",
+            "/api/auth/anything",
+            "/api/me/auth/login",
+            "/api/x/logs",
+            "/api/messages",
+        ] {
+            assert!(!skips_write_limit(write), "{write}");
+        }
+    }
 
     #[test]
     fn apple_app_ids() {

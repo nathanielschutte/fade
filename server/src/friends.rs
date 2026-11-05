@@ -297,6 +297,9 @@ pub async fn send_request(
     AuthUser(me): AuthUser,
     Json(req): Json<AddFriend>,
 ) -> AppResult<Json<Value>> {
+    // A name that can't exist is nobody's, and isn't looked up.
+    let username = crate::auth::typed_username(&req.username, "No one has that username.")
+        .map_err(|_| AppError::not_found("No one has that username."))?;
     if !state.friend_request_limit.allow(&me.id.to_string()) {
         return Err(AppError::TooManyRequests(
             "That's a lot of friend requests for one day. Try again tomorrow.".into(),
@@ -310,7 +313,7 @@ pub async fn send_request(
          WHERE (username = ?1 OR id IN (SELECT user_id FROM past_usernames WHERE username = ?1))
            AND NOT {DEACTIVATED} AND NOT {SYSTEM} AND NOT {BLOCKS_ME}"
     ))
-    .bind(req.username.trim())
+    .bind(&username)
     .bind(me.id)
     .fetch_optional(&state.db)
     .await?
