@@ -490,17 +490,22 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> AppResult<Json<serde_json::Value>> {
     if let Some(token) = bearer_token(&headers) {
+        let hash = hash_token(token);
         // Revoked, not removed: the session row stays as a record.
-        let ended = sqlx::query(
-            "UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+        let ended: Option<i64> = sqlx::query_scalar(
+            "UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL
+             RETURNING user_id",
         )
         .bind(now())
-        .bind(hash_token(token))
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-        crate::push::end_for_session(&state.db, &hash_token(token)).await?;
-        tracing::debug!(ended, "signed out");
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await?;
+        crate::push::end_for_session(&state.db, &hash).await?;
+        // Its live connections close too, as when any other session ends.
+        if let Some(user_id) = ended {
+            state.hub.end_session(user_id, &hash);
+        }
+        tracing::debug!(ended = ended.is_some(), "signed out");
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

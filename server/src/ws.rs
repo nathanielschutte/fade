@@ -70,7 +70,69 @@ struct Conn {
     /// The client says napsack is on screen. While any of a person's sockets
     /// is visible, they see new things in the app, so no push notification.
     visible: bool,
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::Sender<String>,
+}
+
+/// Events waiting to go out on one socket. A client that reads normally keeps
+/// this near empty (events come a few at a time: a message, its read, some
+/// typing); one that stops reading while the server keeps sending would
+/// otherwise grow it without end. Full means it isn't keeping up: the socket
+/// is dropped, and the client's reconnect fetches what it missed, as after
+/// any dropped connection. 256 covers a burst far bigger than real use (an
+/// announcement to everyone, a group of 32 all sending) at a few hundred KB
+/// at most per socket.
+pub const QUEUE: usize = 256;
+
+/// Frames a client may send per `FRAMES_EVERY`, pings included. Real clients
+/// send a ping every 25 seconds, visibility changes, and typing at most
+/// every 1.5 seconds: a few per window. Past this the socket is closed, so a
+/// client can't keep the server answering pings or parsing frames flat out.
+pub const MAX_FRAMES: u32 = 60;
+pub const FRAMES_EVERY: Duration = Duration::from_secs(10);
+
+/// A send that can't finish in this long (the client stopped reading, and
+/// the network buffers are full) ends the socket.
+const SEND_WITHIN: Duration = Duration::from_secs(20);
+
+/// Counts one socket's incoming frames in fixed windows.
+struct FrameBudget {
+    window: std::time::Instant,
+    used: u32,
+}
+
+impl FrameBudget {
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            window: now,
+            used: 0,
+        }
+    }
+
+    /// Whether one more frame, at `now`, is within the budget.
+    fn allow(&mut self, now: std::time::Instant) -> bool {
+        if now.duration_since(self.window) >= FRAMES_EVERY {
+            *self = Self::new(now);
+        }
+        self.used += 1;
+        self.used <= MAX_FRAMES
+    }
+}
+
+/// Queues `text` for each socket in `list`, dropping any whose queue is full
+/// (or whose loop has ended).
+fn queue_for(user_id: i64, list: &mut Vec<Conn>, text: &str) {
+    list.retain(|c| match c.tx.try_send(text.to_owned()) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::warn!(
+                user_id,
+                conn_id = c.id,
+                "socket dropped: not keeping up with its events"
+            );
+            false
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => false,
+    });
 }
 
 /// Tracks open sockets per user. A user can have several (phone + laptop + tabs).
@@ -88,12 +150,8 @@ pub const MAX_CONNS_PER_USER: usize = 10;
 impl Hub {
     /// Returns the connection id, its receiver, and whether this is the
     /// person's first open socket (they just came online).
-    fn register(
-        &self,
-        user_id: i64,
-        session: String,
-    ) -> (u64, mpsc::UnboundedReceiver<String>, bool) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn register(&self, user_id: i64, session: String) -> (u64, mpsc::Receiver<String>, bool) {
+        let (tx, rx) = mpsc::channel(QUEUE);
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut conns = self.conns.lock().unwrap();
         let list = conns.entry(user_id).or_default();
@@ -174,7 +232,7 @@ impl Hub {
         };
         let mut conns = self.conns.lock().unwrap();
         if let Some(list) = conns.get_mut(&user_id) {
-            list.retain(|c| c.tx.send(text.clone()).is_ok());
+            queue_for(user_id, list, &text);
         }
     }
 
@@ -200,8 +258,8 @@ impl Hub {
             return;
         };
         let mut conns = self.conns.lock().unwrap();
-        for list in conns.values_mut() {
-            list.retain(|c| c.tx.send(text.clone()).is_ok());
+        for (user_id, list) in conns.iter_mut() {
+            queue_for(*user_id, list, &text);
         }
     }
 
@@ -322,6 +380,7 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
     ping.tick().await;
 
     let mut client_closed = false;
+    let mut budget = FrameBudget::new(std::time::Instant::now());
     loop {
         tokio::select! {
             incoming = socket.recv() => match incoming {
@@ -330,6 +389,10 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
                     break;
                 }
                 Some(Err(_)) | None => break,
+                Some(Ok(_)) if !budget.allow(std::time::Instant::now()) => {
+                    tracing::warn!(user_id = user.id, conn_id, "socket closed: too many frames");
+                    break;
+                }
                 Some(Ok(WsMessage::Text(text))) => match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::Visibility { visible }) => state.hub.set_visible(user.id, conn_id, visible),
                     Ok(ClientFrame::Typing { to, group }) => {
@@ -339,7 +402,7 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
                         }
                     }
                     Ok(ClientFrame::Ping) => {
-                        if socket.send(WsMessage::Text(r#"{"type":"pong"}"#.into())).await.is_err() {
+                        if !send_within(&mut socket, WsMessage::Text(r#"{"type":"pong"}"#.into())).await {
                             break;
                         }
                     }
@@ -349,14 +412,14 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
             },
             outgoing = rx.recv() => match outgoing {
                 Some(text) => {
-                    if socket.send(WsMessage::Text(text.into())).await.is_err() {
+                    if !send_within(&mut socket, WsMessage::Text(text.into())).await {
                         break;
                     }
                 }
                 None => break,
             },
             _ = ping.tick() => {
-                if socket.send(WsMessage::Ping(Bytes::new())).await.is_err() {
+                if !send_within(&mut socket, WsMessage::Ping(Bytes::new())).await {
                     break;
                 }
             }
@@ -380,9 +443,47 @@ async fn run(mut socket: WebSocket, state: SharedState, ip: String) {
     );
 }
 
+/// Sends, or gives up after `SEND_WITHIN`. False means the socket is done.
+async fn send_within(socket: &mut WebSocket, msg: WsMessage) -> bool {
+    matches!(
+        tokio::time::timeout(SEND_WITHIN, socket.send(msg)).await,
+        Ok(Ok(()))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A socket whose client stops reading is dropped once its queue fills,
+    /// rather than holding events without end; the others carry on.
+    #[test]
+    fn a_socket_that_stops_reading_is_dropped() {
+        let hub = Hub::default();
+        let (_, mut reading, _) = hub.register(7, "a".into());
+        let (_, stuck, _) = hub.register(7, "b".into());
+        for _ in 0..QUEUE {
+            hub.send(7, &Event::FriendsChanged);
+            assert!(reading.try_recv().is_ok());
+        }
+        assert!(!stuck.is_closed(), "full, but not past it");
+        hub.send(7, &Event::FriendsChanged);
+        assert!(stuck.is_closed(), "one past full: dropped");
+        assert!(!reading.is_closed() && reading.try_recv().is_ok());
+        assert_eq!(hub.online(), (1, 1));
+    }
+
+    #[test]
+    fn incoming_frames_are_capped_per_window() {
+        let start = std::time::Instant::now();
+        let mut budget = FrameBudget::new(start);
+        assert!((0..MAX_FRAMES).all(|_| budget.allow(start)));
+        assert!(!budget.allow(start), "one past the cap");
+        assert!(
+            budget.allow(start + FRAMES_EVERY),
+            "a new window starts fresh"
+        );
+    }
 
     #[test]
     fn connections_per_user_are_capped_oldest_first() {
