@@ -1489,7 +1489,9 @@ let leftovers = Promise.resolve();
 async function forgetKept() {
   await leftovers;
   clearNotifications();
-  await Promise.allSettled([keystore.clear(), cache.clear(), forgetCacheStorage()]);
+  // The server's public settings stay (the same for everyone): napsack opens
+  // from them next time even while the server is slow to answer.
+  await Promise.allSettled([keystore.clear(), cache.keepOnly((k) => k === "config"), forgetCacheStorage()]);
   forgetCookies();
   try {
     localStorage.clear();
