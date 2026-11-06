@@ -105,6 +105,17 @@ enum CaptionLook {
         return max(1, Int((height / font.lineHeight).rounded()))
     }
 
+    /// How much of the picture's width the words take, their padding at the sides
+    /// included (0 to 1). Everything here grows with the width, so it's the same at
+    /// any size: what a recipient's screen may cut from the sides (ZoomView.opening).
+    static func span(_ text: String) -> CGFloat {
+        guard !text.isEmpty else { return 0 }
+        let width: CGFloat = 390
+        let used = (text as NSString).boundingRect(with: CGSize(width: width - 2 * size(width), height: .greatestFiniteMagnitude),
+                                                   options: [.usesLineFragmentOrigin], attributes: [.font: font(width)], context: nil).width
+        return min(1, (used.rounded(.up) + 2 * size(width)) / width)
+    }
+
     /// The strip's height on a picture `width` points wide.
     static func height(_ text: String, width: CGFloat) -> CGFloat {
         CGFloat(max(lines(text, width: width), 1)) * size(width) * 1.25 - lineSpacing(width) + size(width)
@@ -136,6 +147,6 @@ extension View {
             .multilineTextAlignment(.center).lineSpacing(CaptionLook.lineSpacing(width))
             .padding(.vertical, size * 0.5).padding(.horizontal, size)
             .frame(width: width)
-            .background(Color.black.opacity(0.55))
+            .background(Color.black.opacity(0.55), ignoresSafeAreaEdges: [])  // its own height, even beside the screen's edge
     }
 }
