@@ -29,9 +29,9 @@ variable "ssh_allowed_cidrs" {
 }
 
 variable "instance_type" {
-  description = "Graviton is the cheapest per vCPU. t4g.nano (512 MB) is plenty for a handful of friends."
+  description = "Graviton is the cheapest per vCPU. t4g.micro (1 GB): room for the account cap's people and their connections (docs/design/mono-scaling.md)."
   type        = string
-  default     = "t4g.nano"
+  default     = "t4g.micro"
 }
 
 variable "domain" {
@@ -90,6 +90,12 @@ variable "group_pic_disk_mb" {
   description = "Max disk for all unopened group pics and videos combined."
   type        = number
   default     = 1536
+}
+
+variable "max_accounts" {
+  description = "Sign-up stops at this many accounts (guard.rs); it follows what the instance can hold (docs/design/mono-scaling.md)."
+  type        = number
+  default     = 300
 }
 
 variable "snap_ttl_hours" {

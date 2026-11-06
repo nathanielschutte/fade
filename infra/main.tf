@@ -49,6 +49,7 @@ locals {
     "FADE_SNAP_DISK_MB=${var.snap_disk_mb}",
     "FADE_GROUP_PIC_DISK_MB=${var.group_pic_disk_mb}",
     "FADE_SNAP_TTL_HOURS=${var.snap_ttl_hours}",
+    "FADE_MAX_ACCOUNTS=${var.max_accounts}",
     # The contact in push notification requests (VAPID); never hardcoded in the server.
     "FADE_PUBLIC_URL=https://${local.domain}",
     # Account deletions leave a marker in the backups bucket (deletion.rs); production only.

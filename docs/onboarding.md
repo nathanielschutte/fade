@@ -168,7 +168,7 @@ The database schema is `server/migrations/`, one numbered file per change, read 
 | `docs/` | This file; [how-napsack-works.md](how-napsack-works.md) (the encryption, and what the server can and can't see); [security.md](security.md) (protections, limits, what to do when attacked) |
 | `spec/` | [api.md](spec/api.md): every endpoint and socket event |
 | `implementation/` | How built features work: [group-encryption](implementation/group-encryption.md), [roles](implementation/roles.md), [admin-users](implementation/admin-users.md), [team-napsack](implementation/team-napsack.md), [friend-graph](implementation/friend-graph.md), [metrics](implementation/metrics.md), [health-monitor](implementation/health-monitor.md), [qr](implementation/qr.md) |
-| `operations/` | Running it: [operations](operations/operations.md) (AWS, settings, shell, cost), [releasing](operations/releasing.md), [backups](operations/backups.md), [staging](operations/staging.md), [domain-move](operations/domain-move.md) |
+| `operations/` | Running it: [operations](operations/operations.md) (AWS, settings, shell, cost), [releasing](operations/releasing.md), [the App Store](operations/app-store.md), [backups](operations/backups.md), [staging](operations/staging.md), [domain-move](operations/domain-move.md) |
 | `design/` | Proposals and plans not built yet: [mobile](design/mobile.md), [mono-scaling](design/mono-scaling.md), [horizontal-scaling](design/horizontal-scaling.md), [email](design/email.md) |
 | `management/` | [plan.md](management/plan.md): the task tracker; [plan-ios.md](management/plan-ios.md): the iOS app's tasks |
 

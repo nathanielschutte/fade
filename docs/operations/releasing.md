@@ -12,6 +12,8 @@ How napsack's pieces are versioned, how each one ships, and the rules that keep 
 
 **1.0 (Nate, 2026-11-05):** the server and the iPhone app both became `1.0.0` together, for the App Store release (`server-v1.0.0`; `ios-v1.0.0` once the App Store approves it). From there each moves on its own, by the compatibility rules below. Android stays `0.x` until it ships.
 
+**The iPhone app's first public version is 1.2.0 (Nate, 2026-11-06):** builds 202 and 207 were `1.0.0` and went to internal testers only; `1.2.0`, with report and block, is the first for external testers (Beta App Review) and the App Store, and it may go up again if more changes go in before the App Store submission. The server moved on separately (`1.1.0`). The tag, `ios-v<version>`, goes on the commit of the build the App Store approves.
+
 The web client is compiled into the server binary, so it always matches the server. Every running server reports what it is at `GET /api/config`: `server_version`, `build` (git short sha, `-dirty` if built from uncommitted code), `api_version`, `message_formats`, and `min_client_versions`. The admin panel shows the same.
 
 ## Compatibility rules
