@@ -502,8 +502,21 @@ async function loadIdentity() {
   const id = await keystore.loadLocal(IDENTITY_KEY).catch(() => null);
   if (!id || id.userId !== state.me.id) return false;
   state.identity = id;
+  await forgetOtherAccounts(state.me.id);
   await loadPins();
   return true;
+}
+
+/** Signed in, and anything another account left here goes before this one
+ * uses anything: pins an older napsack kept at sign-out (before 2026-11-06),
+ * or what a tab still open as someone else wrote. */
+async function forgetOtherAccounts(myId) {
+  const mine = new Set([IDENTITY_KEY, `pins:${myId}`, `pastPins:${myId}`]);
+  await Promise.allSettled([
+    keystore.keepOnly((k) => mine.has(k)),
+    // Kept answers are "<user id>:<what>", beside "me" (checked by its token) and the public "config".
+    cache.keepOnly((k) => !/^\d+:/.test(k) || k.startsWith(`${myId}:`)),
+  ]);
 }
 
 // ---------- auth ----------
@@ -644,6 +657,10 @@ $("#auth-form").addEventListener("submit", async (e) => {
 });
 
 async function startSession(res, privateKey) {
+  // Whatever this browser still holds belongs to no one signed in here: an
+  // earlier account's pins (an older napsack kept them), what a tab that never
+  // signed out wrote. It goes before anything of this account is kept or used.
+  await forgetKept();
   state.token = res.token;
   state.me = res.user;
   state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
@@ -1420,10 +1437,13 @@ $("#recover-form").addEventListener("submit", async (e) => {
 // Signing out, or a session the server ended: everything napsack kept in this
 // browser goes, then the page starts over, so nothing of this account is left
 // for whoever signs in next. Not on the device: the token, the private key,
-// the kept chats (cache.js), settings, this browser's push subscription. Not
-// in memory: the reload leaves no state behind, whatever later code adds to it.
-// Only the pinned keys stay (keystore.js): friends' public keys, which can't
-// open anything. `notice` ("Your session ended") shows on the sign-in screen.
+// the pinned keys (Nate, 2026-11-06: pins go too), the kept chats (cache.js),
+// settings, both databases themselves, anything in Cache Storage or cookies
+// (napsack keeps nothing there, but nothing of the site's stays), this
+// browser's push subscription, and the notifications on screen. Not in memory:
+// the reload leaves no state behind, whatever later code adds to it. Other
+// tabs start over too (the "storage" listener below). `notice` ("Your session
+// ended") is the one thing carried across, to show on the sign-in screen.
 const SIGNED_OUT_NOTICE_KEY = "napsack.signedOutNotice";
 let signingOut = null;
 
@@ -1442,12 +1462,15 @@ async function forgetEverything(notice) {
   clearInterval(conn.heartbeat);
   clearNotifications(); // they name friends
   await Promise.allSettled([
-    keystore.forgetAllButPins(),
-    cache.clear(),
+    keystore.forget(),
+    cache.forget(),
     navigator.serviceWorker?.getRegistration()
       .then((reg) => reg?.pushManager.getSubscription())
       .then((sub) => sub?.unsubscribe()),
   ]);
+  // Emptied first, so even a database another tab is slow to let go of holds nothing meanwhile.
+  await Promise.allSettled([dropDatabases(), forgetCacheStorage()]);
+  forgetCookies();
   try {
     localStorage.clear();
     sessionStorage.clear();
@@ -1456,6 +1479,78 @@ async function forgetEverything(notice) {
   location.reload();
   await new Promise(() => {}); // the page is going; nothing more runs here
 }
+
+// Clearing out what was left before signing in (boot): signing in waits for it,
+// so a deletion still on its way never lands after the new account's key.
+let leftovers = Promise.resolve();
+
+/** Signing in: whatever was kept before goes, without deleting the databases
+ * this page goes on using. */
+async function forgetKept() {
+  await leftovers;
+  clearNotifications();
+  await Promise.allSettled([keystore.clear(), cache.clear(), forgetCacheStorage()]);
+  forgetCookies();
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch { /* storage refused: nothing is kept in it, then */ }
+}
+
+/** Every IndexedDB database of this site (they're all napsack's), deleted. */
+async function dropDatabases({ except = [] } = {}) {
+  let names = [keystore.DB_NAME, cache.DB_NAME];
+  try {
+    names = [...new Set([...names, ...(await indexedDB.databases()).map((d) => d.name).filter(Boolean)])];
+  } catch { /* a browser that can't list them: napsack's own two, then */ }
+  await Promise.allSettled(names.filter((n) => !except.includes(n)).map(dropDatabase));
+}
+
+/** Never hangs: a tab that won't let go only delays the deletion, which then
+ * finishes by itself. (Each database was emptied first.) */
+function dropDatabase(name) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = indexedDB.deleteDatabase(name);
+    } catch {
+      resolve(); // storage refused: nothing was kept
+      return;
+    }
+    req.onsuccess = req.onerror = () => resolve();
+    req.onblocked = () => setTimeout(resolve, 1000);
+  });
+}
+
+/** napsack keeps nothing in Cache Storage (sw.js caches nothing), so this is a
+ * backstop: whatever is there goes. */
+async function forgetCacheStorage() {
+  if (!("caches" in window)) return;
+  for (const name of await caches.keys()) await caches.delete(name);
+}
+
+/** napsack sets no cookies (the session is a header, never a cookie), so this
+ * is a backstop too: any cookie of this site a script can see goes. */
+function forgetCookies() {
+  try {
+    for (const part of document.cookie.split(";")) {
+      const name = part.split("=")[0].trim();
+      if (name) document.cookie = `${name}=; Max-Age=0; Path=/`;
+    }
+  } catch { /* cookies refused: none were kept */ }
+}
+
+// Another tab signed out, or signed in (as anyone): this one starts over too,
+// so it never goes on showing one account while the browser holds another's,
+// or none. (The tab that made the change gets no event of its own.)
+window.addEventListener("storage", (e) => {
+  if (e.storageArea !== localStorage || (e.key !== null && e.key !== TOKEN_KEY) || signingOut) return;
+  let token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch { /* refused: as if gone */ }
+  if (token === state.token) return;
+  $("#app").hidden = true;
+  location.reload();
+});
 
 // Signing out takes two taps, like leaving a group: the first says what it
 // does (everything of the account leaves this browser), the second does it.
@@ -7973,6 +8068,10 @@ async function loadIdentityFor(me) {
     await signOutLocally();
     return;
   }
+  // Signed out, nothing of anyone's should be here: what an older napsack
+  // left (the pins it kept at sign-out, before 2026-11-06), or what a tab
+  // still wrote as another signed out. Only the public settings stay.
+  leftovers = Promise.allSettled([dropDatabases({ except: [cache.DB_NAME] }), cache.keepOnly((k) => k === "config")]);
   showAuth();
   showInviteBanner();
   // Why the last session ended, carried across signing out's reload.

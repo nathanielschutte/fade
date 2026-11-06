@@ -63,7 +63,7 @@ The formats, in the order the iPhone took them: texts (1, 2), pics (1, 2), video
 
 ## Keys on the phone
 
-The private key is unwrapped at sign-in exactly as on the web (from the password, so history works from the first launch). It's then kept encrypted by an AES key that lives in the Android Keystore: never exportable, hardware-backed where the phone has it, usable only while the phone is unlocked. The encrypted copy sits in the app's private files, kept out of backups and device transfer (`dataExtractionRules`), as the iPhone keeps its Keychain item on the one device. Signing out deletes both, along with kept chats and settings, as on the other clients.
+The private key is unwrapped at sign-in exactly as on the web (from the password, so history works from the first launch). It's then kept encrypted by an AES key that lives in the Android Keystore: never exportable, hardware-backed where the phone has it, usable only while the phone is unlocked. The encrypted copy sits in the app's private files, kept out of backups and device transfer (`dataExtractionRules`), as the iPhone keeps its Keychain item on the one device. Signing out deletes both, along with pinned keys, kept chats, and settings, as on the other clients (nothing of the account stays on the device).
 
 ## The server
 

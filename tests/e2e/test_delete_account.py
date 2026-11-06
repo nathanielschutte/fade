@@ -1,14 +1,15 @@
 """Deleting your own account in the web app (deletion.rs, F22): the dialog
 says what goes, the last button works only once the password is filled in and
 the username typed exactly, a wrong password is refused, and then everything
-goes: Ana is signed out with nothing kept, can't sign in again, and her friend
+goes: Ana is signed out with nothing kept in the browser (pins included,
+common.py nothing_kept), can't sign in again, and her friend
 Ben's chat with her disappears from his list. The API's rules are in the smoke
 test (check_deletion); that Admins see a note instead, in test_roles.py.
 Settings come from the environment; see common.py."""
 import asyncio, uuid
 from playwright.async_api import async_playwright, expect
 
-from common import PASSWORD, befriend, launch, row, shot, sign_up
+from common import KEPT, PASSWORD, befriend, launch, nothing_kept, row, shot, sign_up
 
 tag = uuid.uuid4().hex[:5]
 ANA, BEN = f"ana_{tag}", f"ben_{tag}"
@@ -25,6 +26,9 @@ async def main():
         await ben.fill("#composer-input", "see you soon")
         await ben.press("#composer-input", "Enter")
         await expect(row(ana, BEN)).to_contain_text("see you soon", timeout=10000)
+        # Something to forget: her key and her pins (Ben's key).
+        await ana.wait_for_function(f"""async () => (await ({KEPT})()).keys.some((k) => k.startsWith('pins:'))""", timeout=10000)
+        assert "identity" in (await ana.evaluate(KEPT))["keys"]
 
         await ana.click("#my-profile")
         await expect(ana.locator("#delete-admin-note")).to_be_hidden()            # only Admins can't (test_roles.py)
@@ -49,6 +53,7 @@ async def main():
         await submit.click()
         await expect(ana.locator("#auth")).to_be_visible(timeout=20000)
         await expect(ana.locator("#auth-error")).to_contain_text("Your account was deleted")
+        await nothing_kept(ana)
         await expect(row(ben, ANA)).to_have_count(0, timeout=10000)               # live, without a reload
         await ana.fill("#auth-form input[name=username]", ANA)
         await ana.fill("#auth-form input[name=password]", PASSWORD)

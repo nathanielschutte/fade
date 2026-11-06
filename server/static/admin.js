@@ -8,6 +8,12 @@ const TOKEN_KEY = "fade.token";
 const REFRESH_MS = 30_000;
 
 const $ = (sel) => document.querySelector(sel);
+
+// Signed out (or in as someone else) in another tab: this page starts over, so
+// it never goes on showing what the last account could see (app.js does the same).
+window.addEventListener("storage", (e) => {
+  if (e.storageArea === localStorage && (e.key === null || e.key === TOKEN_KEY)) location.reload();
+});
 const fmt = new Intl.NumberFormat();
 const n = (v) => fmt.format(v);
 

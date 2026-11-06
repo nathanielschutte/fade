@@ -226,11 +226,8 @@ async def main():
 
         # Signing out clears the key; a wrong password can't sign in.
         await sign_out(c)  # on the main screen's account bar
-        assert await c.evaluate("""() => new Promise((res) => {
-            const r = indexedDB.open('napsack', 1);
-            r.onsuccess = () => { const g = r.result.transaction('keys').objectStore('keys').get('identity');
-                                  g.onsuccess = () => res(g.result === undefined); };
-        })""")
+        # (The keystore's database is gone entirely: test_sign_out.py checks all of it.)
+        await c.wait_for_function("async () => !(await indexedDB.databases()).some((d) => d.name === 'napsack')", timeout=10000)
         await c.fill("input[name=username]", "sam@example.com")
         await c.fill("input[name=password]", "wrong password!")
         await c.click("#auth-submit")
