@@ -14,6 +14,10 @@ Recipients see the whole photo they're sent, as large as it fits (letterboxed on
 - What's sent is still at most 1280 pixels on its longest side; a crop is never scaled up. On the web it's cut from the picked file itself, not the smaller copy made when it was picked, so a zoomed-in crop stays sharp.
 - **Videos** aren't cropped yet: the iPhone shows a video filling the screen but sends the whole frame (X55).
 
+## Opening it
+
+What's sent is exactly what the sender saw, so a recipient can never see more than that: zoomed all the way out, the viewer shows the whole photo that was sent, and no further. Within that (Nate, 2026-11-06), the iPhone opens a photo **filling the screen**, edge to edge, with no black at its sides, when that cuts off only a little: at most a fifth of its width or height (`ZoomView.fillLimit`). A photo that filling would cut much more of (a wide one on a tall screen) opens whole, as before. It never opens closer than filling, nor so close that the caption's words would leave the screen at the sides (`CaptionLook.span`). A pinch zooms out to the whole photo, or in up to 4 times; a tap away from the size it opened at goes back to it, not on to the next pic. ([X56](../management/plan.md#x56-pics-open-filling-the-screen); the web and Android open whole until they follow.)
+
 ## The caption
 
 One look on every client, set by the picture's width as shown (W) so it covers the same part of the picture at any size, on any screen:
@@ -28,7 +32,7 @@ One look on every client, set by the picture's width as shown (W) so it covers t
 | Wrapping | at spaces; a word too long for a line breaks anywhere |
 | Length | at most 5 lines as the sender writes it, and 200 characters. Return (Enter) finishes it; there are no line breaks in it |
 
-Recipients draw every line it has (another system's font can wrap a little differently; nothing is cut off). While it's being written it's the same strip, the same size, with a cursor; it may be lifted above the keyboard while typing, and goes back to its place after.
+Recipients draw every line it has (another system's font can wrap a little differently; nothing is cut off). Where a photo opened filling the screen runs past its top or bottom, the caption stays on the part that shows, clear of the screen's edges, at the size the picture is shown at; it moves with the picture as it's zoomed out, and hides while it's zoomed in. While it's being written it's the same strip, the same size, with a cursor; it may be lifted above the keyboard while typing, and goes back to its place after.
 
 The "picture" is the part of the photo on screen: for a photo shown whole, the photo; for a zoomed-in one, the part of the screen it covers. That part is what's sent, so the caption sits on the same part of the same picture for recipients.
 

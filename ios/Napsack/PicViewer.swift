@@ -111,26 +111,63 @@ struct PicPage: View {
 }
 
 /// An opened photo, to look at closely (ZoomablePhoto: pinch, drag, double
-/// tap), with its caption where the sender put it on the picture. The
-/// caption hides while it's zoomed in: it would cover what you're looking
-/// at, and no longer sit where they put it.
+/// tap), across the whole screen, with its caption where the sender put it
+/// on the picture. It opens filling the screen when that cuts off only a
+/// little, and zooms out to the whole photo (ZoomView.opening). The caption
+/// hides while it's zoomed in: it would cover what you're looking at, and no
+/// longer sit where they put it.
 struct OpenedPhoto: View {
     let photo: UIImage
     let caption: String
     let y: Double?
-    /// A tap at the usual size (zoomed in, a tap zooms back out instead).
+    /// A tap at the size it opened at (zoomed in or out, a tap goes back to it instead).
     let tapped: () -> Void
     @State private var zoomed = false
+    @State private var picture: CGRect = .zero
 
     var body: some View {
-        ZoomablePhoto(image: photo, zoomed: $zoomed, tapped: tapped)
-            .overlay {
-                Color.clear.aspectRatio(photo.size, contentMode: .fit)  // the picture's own place
-                    .overlay { PicCaption(text: caption, y: y) }
-                    .opacity(zoomed ? 0 : 1)
-                    .animation(.easeOut(duration: 0.15), value: zoomed)
-                    .allowsHitTesting(false)
+        GeometryReader { screen in
+            ZStack {
+                ZoomablePhoto(image: photo, captionSpan: caption.isEmpty ? nil : CaptionLook.span(caption),
+                              zoomed: $zoomed, picture: $picture, tapped: tapped)
+                if !caption.isEmpty, picture.width > 0 {
+                    PlacedCaption(text: caption, y: y, picture: picture, safe: screen.safeAreaInsets)
+                        .opacity(zoomed ? 0 : 1)
+                        .animation(.easeOut(duration: 0.15), value: zoomed)
+                        .allowsHitTesting(false)
+                }
             }
+            .ignoresSafeArea()
+        }
+    }
+}
+
+/// A photo's caption on the picture where it is on screen (`picture`, as it's
+/// zoomed), drawn as it was written (CaptionLook): its size goes with the
+/// picture's. Where the picture runs past the screen's top or bottom (it
+/// opened filling the screen), the caption stays on what shows, clear of the
+/// screen's edges (`safe`).
+struct PlacedCaption: View {
+    let text: String
+    let y: Double?
+    let picture: CGRect
+    let safe: EdgeInsets
+
+    var body: some View {
+        GeometryReader { geo in
+            Text(text)
+                .captionStrip(width: picture.width)
+                .position(x: picture.midX, y: Self.middle(text, y: y, picture: picture, screen: geo.size, safe: safe))
+        }
+    }
+
+    /// Where the strip's middle goes: its place on the picture (CaptionLook.middle), kept
+    /// on the part of the picture that's on screen.
+    static func middle(_ text: String, y: Double?, picture: CGRect, screen: CGSize, safe: EdgeInsets) -> CGFloat {
+        let h = CaptionLook.height(text, width: picture.width)
+        let placed = picture.minY + CaptionLook.middle(y ?? CaptionLook.unplaced, text: text, picture: picture.size)
+        let top = max(picture.minY, safe.top) + h / 2, bottom = min(picture.maxY, screen.height - safe.bottom) - h / 2
+        return top <= bottom ? min(max(placed, top), bottom) : (top + bottom) / 2
     }
 }
 
