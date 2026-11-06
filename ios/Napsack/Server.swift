@@ -146,7 +146,17 @@ struct NetworkTransport: Transport {
         return URLSession(configuration: config)
     }()
 
+    #if DEBUG
+    /// `NAPSACK_UI_TEST_SLOW_OLDER`: milliseconds each page before the newest takes (UI tests only;
+    /// compiled out of Release builds).
+    static let slowOlder = ProcessInfo.processInfo.environment["NAPSACK_UI_TEST_SLOW_OLDER"].flatMap { Int($0) }
+    #endif
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        #if DEBUG
+        // UI tests: older pages as slow as a phone far from the server (ChatUITests).
+        if let ms = Self.slowOlder, request.url?.query?.contains("before=") == true { try await Task.sleep(for: .milliseconds(ms)) }
+        #endif
         let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ServerError.unreachable }
         return (data, http)

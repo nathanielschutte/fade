@@ -22,6 +22,8 @@ import XCTest
         var ids: [String: Int64] = [:]
     }
     static var chat: Chat?
+    /// Two others with 300 texts: six pages (Conversation.page), made the first time a test needs them.
+    static var longChat: Chat?
     /// The app has been launched fresh once this run.
     static var started = false
 
@@ -157,6 +159,46 @@ import XCTest
             try require(moved > 20 || poll(0) { $0.beginningInSight }, "step \(step): the drag scrolled the chat (moved \(Int(moved)))")
         }
         try require(poll(5) { $0.message("Message 1.") != nil }, "the oldest message, at the beginning")
+    }
+
+    /// Flung to the top of what's loaded and left there, one page joins and
+    /// no more: each waits for the next scroll. (Nate saw a chat load page
+    /// after page to its start on his phone: at the top, each page joined
+    /// from its own start, so its rows that ask for the next were in view.)
+    /// Scrolling on still reaches the beginning, a page each time.
+    func testOnePageEachScroll() async throws {
+        let chat = try await longChat()
+        app.launchEnvironment["NAPSACK_UI_TEST_SLOW_OLDER"] = "400"  // as far from the server as a phone can be
+        app.launch()  // again, with it
+        try openChat(chat)
+        try expectInSight(chat.newest, "opening the chat")
+        // Up to the top of what's loaded, and held there: the finger stays down
+        // while the page before comes, as Nate's did.
+        for _ in 1...2 { messages.swipeDown(velocity: .fast) }
+        let start = messages.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 200)), withVelocity: .fast, thenHoldForDuration: 4)
+        try await Task.sleep(for: .seconds(3))  // let go: nothing more should come by itself
+        try require(!poll(0) { $0.beginningInSight }, "held at the top, the chat loaded page after page to its start")
+        try require(poll(0) { $0.message("Long 1.") == nil }, "the oldest text, loaded without scrolling on")
+        for _ in 1...40 {
+            if poll(0, { $0.beginningInSight }) { break }
+            messages.swipeDown(velocity: .fast)
+        }
+        try require(poll(5) { $0.beginningInSight }, "the beginning, scrolling on")
+        try require(poll(5) { $0.message("Long 1.") != nil }, "the oldest text, at the beginning")
+    }
+
+    func longChat() async throws -> Chat {
+        if let chat = Self.longChat { return chat }
+        let server = try XCTUnwrap(TestServer.configured)
+        let me = try await server.newAccount("uil"), friend = try await server.newAccount("pall")
+        try await server.befriend(me, friend)
+        for n in 1...300 {
+            _ = n % 3 == 0 ? try await server.send("Long \(n).", from: me, to: friend) : try await server.send("Long \(n).", from: friend, to: me)
+        }
+        let chat = Chat(server: server, me: me, friend: friend, newest: "Long 300.")
+        Self.longChat = chat
+        return chat
     }
 
     // ---------- holding a message ----------

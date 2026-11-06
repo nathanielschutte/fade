@@ -31,6 +31,15 @@ struct ChatScreen: View {
     @State private var atBottom = true
     /// Whether a finger or a fling is moving the chat (`onScrollPhaseChange`).
     @State private var scrolling = false
+    /// A finger is on the chat, moving it.
+    @State private var touching = false
+    /// Where the top is: at it, or within a screen of it (`TopGap`).
+    @State private var top = TopGap(at: false, near: false)
+    /// A page before came since the last touch: the next waits for one, so a
+    /// chat left at its top doesn't load page after page by itself (Nate saw
+    /// it run to the start on his phone): each new page's rows coming into
+    /// view would ask for the next.
+    @State private var olderWaitsForTouch = false
     /// Said once per chat opened: it was left past its end (ChatScreen's own report).
     @State private var reportedPastEnd = false
     /// Gone to the newest by its id: it's drawn, and the next move puts the end in its place.
@@ -79,6 +88,11 @@ struct ChatScreen: View {
 
     /// The content's height, how far its end is below what's shown, and the
     /// window it's shown in (the visible height, and the inset under the composer and keyboard).
+    struct TopGap: Equatable {
+        let at: Bool
+        let near: Bool
+    }
+
     struct BottomGap: Equatable {
         let height: CGFloat
         let gap: CGFloat
@@ -206,7 +220,24 @@ struct ChatScreen: View {
             atBottom = now.gap <= Self.nearBottom
             if atBottom { newBelow = false }
         }
-        .onScrollPhaseChange { _, phase in scrolling = phase.isScrolling }
+        .onScrollGeometryChange(for: TopGap.self) { geometry in
+            let fromTop = geometry.visibleRect.minY + geometry.contentInsets.top
+            return TopGap(at: fromTop < Self.nearBottom, near: fromTop < geometry.visibleRect.height)
+        } action: { _, now in
+            top = now
+        }
+        .onScrollPhaseChange { before, phase in
+            scrolling = phase.isScrolling
+            touching = phase == .interacting
+            // You scrolling again (a finger, or VoiceOver's scroll, which isn't one; never the
+            // app's own move to keep your place): the next page may come, at once if the top's
+            // already near (the rows that ask for it came into view while it waited).
+            let yours = touching || phase == .tracking || (phase == .animating && UIAccessibility.isVoiceOverRunning)
+            if yours, before != phase, olderWaitsForTouch {
+                olderWaitsForTouch = false
+                if top.near, conversation.loaded, !conversation.reachedStart { Task { await older() } }
+            }
+        }
         .onChange(of: conversation.bubbles.last?.id) { before, after in
             // Newer than what was there (older pages change the first, not the last), and you're reading further up.
             if let before, let after, after > before, !atBottom { newBelow = true }
@@ -702,13 +733,23 @@ struct ChatScreen: View {
         }
     }
 
-    /// The page before the oldest shown, joining above what you're reading.
+    /// The page before the oldest shown, joining above what you're reading:
+    /// one each time you scroll (`olderWaitsForTouch`).
     private func older() async {
+        guard !olderWaitsForTouch else { return }
+        let oldest = conversation.bubbles.first?.id, shown = conversation.bubbles.count
+        let wasAtTop = top.at
         do {
             try await conversation.loadOlder()
         } catch {
             session.noticed(error)
+            return
         }
+        guard conversation.bubbles.count > shown else { return }  // another call's page, or none
+        olderWaitsForTouch = true
+        // At the very top, the scroll view shows what joined from its start; what you
+        // were reading stays where it was instead, the new page above it (not under a finger).
+        if wasAtTop, !touching, let oldest { position.scrollTo(id: oldest, anchor: .top) }
     }
 
     /// The time shows under the last of a run: the next message is someone

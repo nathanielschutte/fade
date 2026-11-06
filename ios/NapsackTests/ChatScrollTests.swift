@@ -21,9 +21,10 @@ import UIKit
         var all: [[String: Any]] = []
     }
 
-    /// `text`: the text size it's drawn at; `words`: each text's words, by its number (from 1).
+    /// `text`: the text size it's drawn at; `words`: each text's words, by its number (from 1);
+    /// `slowOlder`: how long each page before takes to come (a phone far from the server).
     init(texts: Int, size: CGSize = CGSize(width: 402, height: 874), insets: UIEdgeInsets? = nil, text: DynamicTypeSize = .large,
-         words: ((Int) -> String)? = nil) async throws {
+         words: ((Int) -> String)? = nil, slowOlder: Duration? = nil) async throws {
         let list = self.list
         let key = try list.pairKey
         messages = Messages()
@@ -36,7 +37,7 @@ import UIKit
             messages.all.append(m)
         }
         let messages = self.messages
-        let server = StubServer { request in
+        let stub = StubServer { request in
             if request.httpMethod == "POST" { return (200, json(["ok": true])) }
             let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let limit = Int(items.first { $0.name == "limit" }?.value ?? "") ?? 50
@@ -44,6 +45,7 @@ import UIKit
             let page = messages.lock.withLock { messages.all.filter { ($0["id"] as! Int64) < before }.suffix(limit) }
             return (200, json(Array(page)))
         }
+        let server: any Transport = slowOlder.map { Slowed(inner: stub, older: $0) } ?? stub
         let me = list.reader.me
         let account = Account(server: "https://napsack.test", token: "t", user: me, publicKey: list.bob["spki"] as! String,
                               privateKey: list.reader.identity.derRepresentation)
@@ -138,6 +140,17 @@ import UIKit
     }
 }
 
+/// Pages before the newest answered after `older`, the rest at once.
+struct Slowed: Transport {
+    let inner: StubServer
+    let older: Duration
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.url?.query?.contains("before=") == true { try await Task.sleep(for: older) }
+        return try await inner.send(request)
+    }
+}
+
 // Its windows take turns with the other suites' (Hosting.swift).
 extension OnScreen {
 @MainActor @Suite(.serialized) struct ChatScrollTests {
@@ -175,6 +188,31 @@ extension OnScreen {
         await chat.settle()
         #expect(abs(chat.belowBottom) < 1, "the keyboard and a new message at once: \(chat.describe)")
         chat.shoot("chat-keyboard-growth-\(Int(size.width))")
+    }
+
+    /// Left at the very top while the page before comes slowly, as a fling
+    /// leaves it on a phone far from the server: that page joins above what
+    /// you were reading, which stays where it was, and no more come by
+    /// themselves (Nate, 2026-11-06: a chat loaded page after page to its
+    /// start). The next waits for you to scroll (ChatUITests, testOnePageEachScroll).
+    @Test func leftAtTheTopOnePageComesAndNoMore() async throws {
+        let chat = try await ChatOnScreen(texts: 300, slowOlder: .milliseconds(300))
+        defer { chat.close() }
+        let scroll = try #require(chat.scroll)
+        #expect(chat.conversation.bubbles.count == 50, "opens with the newest page")
+        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+        try await chat.until("the page before") { chat.conversation.bubbles.count == 100 }
+        await chat.settle()
+        #expect(scroll.contentOffset.y > scroll.bounds.height, "what you were reading stayed, the page above it: \(chat.describe)")
+        chat.shoot("chat-older-kept-place")
+        // Back at the top each time, as a finger still there leaves it: the rows
+        // that ask for the next page are in view, and still it waits for you.
+        for _ in 1...3 {
+            scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+            await chat.settle()
+            try await Task.sleep(for: .milliseconds(600))  // two pages' time, if each asked for the next
+        }
+        #expect(chat.conversation.bubbles.count == 100, "left at the top, \(chat.conversation.bubbles.count) loaded")
     }
 
     /// Left past its end (a blank screen above the composer, however it came
