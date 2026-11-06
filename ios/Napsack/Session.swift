@@ -24,21 +24,53 @@ protocol AccountStore: Sendable {
     func load() throws -> Account?
     func save(_ account: Account) throws
     func delete() throws
+    /// Signing out: the account, and everything else napsack keeps on the
+    /// phone with it (PhoneData). A stand-in forgets only the account.
+    func forgetEverything()
+    /// Signed in as `account`: what any other account left goes (pins an
+    /// older napsack kept at sign-out).
+    func forgetOtherAccounts(than account: Account)
+}
+
+extension AccountStore {
+    func forgetEverything() { try? delete() }
+    func forgetOtherAccounts(than account: Account) {}
 }
 
 struct KeychainAccountStore: AccountStore {
     let item = "session"
+    /// Where everything else is (the app's own places; a test's own in tests).
+    var phone = PhoneData.phone
 
     func load() throws -> Account? {
-        try Keychain.read(account: item).map { try JSONDecoder().decode(Account.self, from: $0) }
+        try Keychain.read(account: item, service: phone.keychainService).map { try JSONDecoder().decode(Account.self, from: $0) }
     }
 
     func save(_ account: Account) throws {
-        try Keychain.save(JSONEncoder().encode(account), account: item)
+        try Keychain.save(JSONEncoder().encode(account), account: item, service: phone.keychainService)
     }
 
     func delete() throws {
-        try Keychain.delete(account: item)
+        try Keychain.delete(account: item, service: phone.keychainService)
+    }
+
+    /// Every Keychain item (the session, every account's pins), the settings,
+    /// the kept answers and pictures, the temporary files.
+    func forgetEverything() {
+        phone.forget()
+    }
+
+    /// Every Keychain item but the session and this account's pins, and every
+    /// other account's kept answers (ResponseCache keeps each in a folder named by its id).
+    func forgetOtherAccounts(than account: Account) {
+        let mine: Set = [item, KeychainPinStore(server: account.server, service: phone.keychainService).key(account.user.id)]
+        for other in Keychain.accounts(service: phone.keychainService) where !mine.contains(other) {
+            try? Keychain.delete(account: other, service: phone.keychainService)
+        }
+        for folder in (try? FileManager.default.contentsOfDirectory(at: phone.cache, includingPropertiesForKeys: nil)) ?? []
+        where folder.lastPathComponent != String(account.user.id) {
+            try? FileManager.default.removeItem(at: folder)
+        }
     }
 }
 
@@ -123,6 +155,18 @@ enum SignInError: LocalizedError, Equatable {
 
     var account: Account? {
         if case .signedIn(let account) = state { account } else { nil }
+    }
+
+    /// At launch, before anything kept is read (NapsackApp.init): signed out,
+    /// nothing of anyone's should be on the phone, so what an older napsack
+    /// left (the pins it kept at sign-out, before 2026-11-06) goes; signed in,
+    /// whatever another account left goes. A Keychain that can't be read (a
+    /// launch in the background before the phone was first unlocked) says
+    /// nothing either way, so nothing is touched.
+    static func forgetLeftovers(store: any AccountStore = KeychainAccountStore()) {
+        let kept: Account?
+        do { kept = try store.load() } catch { return }
+        if let kept { store.forgetOtherAccounts(than: kept) } else { store.forgetEverything() }
     }
 
     /// At launch: straight in with what the Keychain holds, then confirm with
@@ -224,7 +268,7 @@ enum SignInError: LocalizedError, Equatable {
         }
         let account = Account(server: server.address, token: answer.token, user: answer.user,
                               publicKey: answer.publicKey, privateKey: identity.derRepresentation)
-        try store.save(account)
+        try keepNewSession(account)
         state = .signedIn(account)
     }
 
@@ -274,7 +318,7 @@ enum SignInError: LocalizedError, Equatable {
                               role: account.user.role, hasRecoveryKey: true)
             recoveryKeyToShow = recoveryKey
         }
-        try store.save(account)
+        try keepNewSession(account)
         if inviteToken != nil { FriendLinks.shared.pending = nil }  // used: they're friends already
         if offerPasskey { passkeyOffer = PasskeyOffer(keys: keys, wrapped: answer.wrappedPrivateKey) }
         state = .signedIn(account)
@@ -352,7 +396,7 @@ enum SignInError: LocalizedError, Equatable {
             account.user = Me(id: account.user.id, username: account.user.username, displayName: account.user.displayName,
                               role: account.user.role, hasRecoveryKey: true, avatarId: account.user.avatarId)
         }
-        try store.save(account)
+        try keepNewSession(account)
         state = .signedIn(account)
     }
 
@@ -527,7 +571,7 @@ enum SignInError: LocalizedError, Equatable {
         }
         let account = Account(server: server.address, token: answer.token, user: answer.user,
                               publicKey: answer.publicKey, privateKey: identity.derRepresentation)
-        try store.save(account)
+        try keepNewSession(account)
         state = .signedIn(account)
         reporter.report(.info, "signed in with a passkey")
     }
@@ -644,6 +688,14 @@ enum SignInError: LocalizedError, Equatable {
         updateUser { var me = $0; me.shareActivity = on; return me }
     }
 
+    /// A new session (signed in, signed up, recovered, a passkey): whatever the
+    /// phone still holds belongs to no one signed in, so it goes before
+    /// anything of this account is kept or used (as the web app's startSession).
+    private func keepNewSession(_ account: Account) throws {
+        store.forgetEverything()
+        try store.save(account)
+    }
+
     /// The signed-in person, changed here and in the Keychain.
     private func updateUser(_ change: (Me) -> Me) {
         guard var account else { return }
@@ -661,18 +713,19 @@ enum SignInError: LocalizedError, Equatable {
         endLocally(notice: nil)
     }
 
-    /// Signing out leaves nothing of the account on the phone (CLAUDE.md,
-    /// Security): the account and its key go from the Keychain; the chats, the
-    /// socket, and open chats go with the signed-in screens (NapsackApp); its
-    /// notifications leave Notification Center and the icon; the
-    /// system never kept its requests (NetworkTransport). Pins stay, per
-    /// account, as on the web: public keys, which open nothing.
+    /// Signing out, a session the server ended, and deleting the account leave
+    /// nothing of it on the phone (CLAUDE.md, Security): every Keychain item
+    /// (the account and its key, and every account's pins: Nate, 2026-11-06),
+    /// the settings, the kept chats and pictures, and temporary files
+    /// (PhoneData, through the store); the chats, the socket, and open chats go
+    /// with the signed-in screens (NapsackApp); its notifications leave
+    /// Notification Center and the icon; the system never kept its requests
+    /// (NetworkTransport).
     private func endLocally(notice: String?) {
         if notice != nil { reporter.report(.info, "session ended") }
-        try? store.delete()
+        store.forgetEverything()
         passkeyOffer = nil  // the new account's keys, if it was still offered
-        UserDefaults.standard.removeObject(forKey: ChatList.dismissedAnnouncementKey)  // nothing of theirs stays
-        ResponseCache.wipeAll()  // the kept chats (still encrypted, but theirs) and friends' pictures
+        recoveryKeyToShow = nil  // a new account's, if it was still on screen
         notifications.signedOut()  // delivered ones and the badge; the server stops with the session
         AppLock.shared.signedOut()  // the lock was this account's choice
         self.notice = notice

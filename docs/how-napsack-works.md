@@ -89,7 +89,7 @@ Signing in on a new device:
 3. **Unlock it locally.** The wrap key opens it. A wrong password simply fails here.
 4. **Keep it in the browser.** Stored in IndexedDB as a non-extractable key: page code can use it but can't read it out.
 
-That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. A passkey can do the same instead of the password: see [Passkeys](#passkeys). Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it.
+That's why your whole history appears on a new device: every message was encrypted to the same key pair, and your password gets that key back. A passkey can do the same instead of the password: see [Passkeys](#passkeys). Reloading the page doesn't ask for the password again, because the unlocked key stays in the browser's storage. Signing out deletes it, along with everything else napsack keeps in the browser: both its databases, friends' pinned keys, settings, and the notifications subscription (other open tabs of napsack start over too). The iPhone app does the same with what it keeps on the phone.
 
 **What the app keeps between visits.** So napsack opens at once, even on a slow connection, the browser also keeps the server's last answers in a separate IndexedDB database (`napsack-cache`): your chat list, your groups, the newest page of each chat you've opened, and the settings. They're kept exactly as the server sent them, so message text stays encrypted there and is decrypted only when shown, the same as when it arrives. Pics and videos are never kept (they're view-once). The server's fresh answer replaces what was kept as soon as it arrives, and signing out deletes it all. Names, usernames, and group names are kept too; the server stores those in the clear anyway.
 
@@ -287,6 +287,8 @@ Keys only change when an admin resets an account. When that happened, the warnin
 - **Accept without checking** (two taps), if you'd rather trust it.
 
 Either way, your browser keeps the old key locally, so you can still read everything from before. Old keys only ever come from your own device, never from the server: a server that could hand you an "old key" could also forge old messages under it.
+
+**Pins last until you sign out.** Signing out, an ended session, and deleting your account leave nothing of the account on the device, the pins included (Nate, 2026-11-06), and signing in clears anything another account left there first. Signed in again, the device pins friends' keys afresh, as a new device does: a key changed while you were signed out isn't flagged, and messages sealed under a friend's earlier key can't be read there. Comparing safety codes covers both.
 
 **Safety codes.** Tap *Encrypted* in any chat to see a code like `48663 30443 09844 / 47350 63988 34781`. Both of you see the same code, computed from both public keys (SHA-256 of the two keys, sorted, cut into six five-digit groups). Compare it in person or over a call. If it matches, nobody is in the middle, and pinning keeps it that way.
 

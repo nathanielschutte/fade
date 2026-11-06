@@ -230,6 +230,61 @@ async def no_placeholders(page, scope="body"):
     assert not left, f"still showing a loading placeholder in {scope}: {left}"
 
 
+# Everything napsack could keep in this browser (app.js, forgetEverything):
+# local and session storage, every IndexedDB database and what's in napsack's
+# two, Cache Storage, and the cookies a script sees. Looking never makes a
+# database: an open that would create one is called off.
+KEPT = """async () => {
+  const names = (await indexedDB.databases()).map((d) => d.name);
+  const keys = (db, store) => new Promise((resolve) => {
+    const open = indexedDB.open(db);
+    open.onupgradeneeded = () => open.transaction.abort();  // it isn't there
+    open.onsuccess = () => {
+      const c = open.result;
+      if (!c.objectStoreNames.contains(store)) { c.close(); resolve([]); return; }
+      const r = c.transaction(store).objectStore(store).getAllKeys();
+      r.onsuccess = () => { c.close(); resolve(r.result.map(String)); };
+    };
+    open.onerror = () => resolve(null);
+  });
+  return {
+    local: Object.keys(localStorage), session: Object.keys(sessionStorage), databases: names,
+    cache: await keys('napsack-cache', 'responses'), keys: await keys('napsack', 'keys'),
+    caches: 'caches' in self ? await caches.keys() : [], cookie: document.cookie,
+  };
+}"""
+
+
+def kept_nothing(kept):
+    """Whether `kept` (KEPT's answer) holds nothing of anyone's. The fresh page
+    after signing out keeps the server's public settings again at once (cache
+    key `config`): they're the same for everyone, so they may be there."""
+    return (kept["local"] == [] and kept["session"] == [] and set(kept["databases"]) <= {"napsack-cache"}
+            and set(kept["cache"] or []) <= {"config"} and kept["keys"] is None
+            and kept["caches"] == [] and kept["cookie"] == "")
+
+
+async def nothing_kept(page, timeout=10000):
+    """Nothing of any account is left in `page`'s browser: KEPT finds nothing
+    (waited for: the last deletion may still be finishing as the sign-in
+    screen shows), and the context has no cookies at all, HttpOnly ones
+    included."""
+    try:
+        await page.wait_for_function(f"""async () => {{
+          const kept = await ({KEPT})();
+          return kept.local.length === 0 && kept.session.length === 0
+            && kept.databases.every((n) => n === 'napsack-cache')
+            && (kept.cache || []).every((k) => k === 'config') && kept.keys === null
+            && kept.caches.length === 0 && kept.cookie === '';
+        }}""", timeout=timeout, polling=100)
+    except Exception:
+        pass  # the assert below says what's left
+    kept = await page.evaluate(KEPT)
+    assert kept_nothing(kept), kept
+    assert await page.context.cookies() == [], await page.context.cookies()
+    return kept
+
+
 # One API call with a page's own session, from inside the page: [status, JSON].
 _API = """async ([method, path, body]) => {
   const r = await fetch('/api' + path, { method, headers: { Authorization: 'Bearer ' + localStorage.getItem('fade.token'),

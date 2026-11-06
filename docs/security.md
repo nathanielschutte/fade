@@ -16,7 +16,8 @@ The rules for writing code that keeps all this true are in [CLAUDE.md](../CLAUDE
 - **Direct texts, pics, captions, and reactions are end-to-end encrypted** in the sender's app and decrypted in the recipient's. The server stores ciphertext and can't read it. Neither could anyone who stole the database.
 - **Passwords never reach the server.** The app turns the password into a sign-in key and a separate key that unlocks your messages; the server only ever sees the first, and stores only a slow hash (Argon2) of it. Each check takes about 19 MiB for its moment, so only a few run at once (one per CPU, two to four; two in production), and a burst waits its turn or hears "busy" rather than running the server out of memory.
 - **Neither does a passkey's secret.** Signing in with a passkey (F26) also has to unlock your private key, so each passkey keeps a copy of it, wrapped by a secret only that passkey can produce (WebAuthn's PRF extension). The server stores the passkey's public key (to check its signatures), its id, a signature count, where it's kept ("iCloud Keychain", from its authenticator's well-known id) and when it was added and last used, and the wrapped copy, which it can't open. A passkey that can't produce the secret isn't used at all ([passkeys.md](design/passkeys.md)).
-- **Safety codes** let two friends check nobody is in the middle. A changed key blocks sending until you've decided, and old keys stay on your device so history stays readable.
+- **Safety codes** let two friends check nobody is in the middle. A changed key blocks sending until you've decided, and old keys stay on your device so history stays readable, until you sign out.
+- **Signing out leaves nothing of the account on the device**: the session, the private key, friends' pinned keys, the kept chats, settings, and notifications, in the browser and on the iPhone, after a sign-out, a session the server ended, or deleting the account. Signing in clears anything another account left first.
 - **Reports never carry content.** Reporting a message sends the server its id, kind, and time, which it already has, never what it said ([report-and-block.md](design/report-and-block.md)). You can only report what you were shown, and anything else gets the same answer whether it exists or not. A report's note is the reporter's own words, for Admins.
 - **Not end-to-end encrypted yet:** group chats, profile names and pictures. The server can read those (they're friends-only, enforced by the server). The app says so in every group.
 
@@ -99,6 +100,7 @@ Being honest about the gaps:
 - **The server is a single machine.** If it dies, napsack is down until it's replaced (the data volume and backups survive). Planned: an Auto Scaling group of one ([plan.md](management/plan.md)).
 - **The web app is delivered by the server.** A compromised server could ship code that leaks keys as you type; every browser-based encrypted app shares this. The iOS app, signed and reviewed before install, closes it.
 - **Metadata.** The server sees who talks to whom and when; it needs to, to deliver messages.
+- **A key swapped while you were signed out.** Pins go when you sign out (nothing of the account stays on the device), so after signing in again the app trusts the keys the server hands it then, as on a new device. Comparing safety codes is what catches a swap.
 
 ## When something looks wrong
 

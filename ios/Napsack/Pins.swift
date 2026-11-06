@@ -37,9 +37,9 @@ struct Pins: Codable, Equatable, Sendable {
     }
 }
 
-/// Where each account's pins are kept between launches. They stay when you
-/// sign out (as the web app's do): public keys, which open nothing, kept so a
-/// key swapped while you were away is still caught.
+/// Where the signed-in account's pins are kept between launches. They go
+/// when you sign out, with everything else of the account (Nate, 2026-11-06;
+/// PhoneData): a new sign-in pins afresh, as a new phone would.
 protocol PinStore: Sendable {
     func load(account: Int64) -> Pins
     func save(_ pins: Pins, account: Int64) throws
@@ -50,9 +50,19 @@ struct KeychainPinStore: PinStore {
     /// and production, say) is someone else, whose keys mustn't be mixed in.
     /// (A browser keeps each site's apart by itself.)
     let server: String
+    /// The Keychain service (the app's; a test's own in tests).
+    let service: String
+    /// Which sign-out this was made after: pins asked to be saved once
+    /// another has happened (a load that finished after signing out) are
+    /// never kept, as ResponseCache's writes aren't.
+    private let generation: Int
 
-    init(server: String) {
+    /// `after`: the Keychain's wipes when the session's screens were made
+    /// (ChatList), so a store made later for them still refuses.
+    init(server: String, service: String = Keychain.service, after generation: Int? = nil) {
         self.server = server
+        self.service = service
+        self.generation = generation ?? Keychain.wipes(service: service)
     }
 
     /// `pins:<host>[:port]:<account>`.
@@ -63,11 +73,13 @@ struct KeychainPinStore: PinStore {
     }
 
     func load(account: Int64) -> Pins {
-        (try? Keychain.read(account: key(account))).flatMap { try? JSONDecoder().decode(Pins.self, from: $0) } ?? Pins()
+        guard Keychain.wipes(service: service) == generation else { return Pins() }
+        return (try? Keychain.read(account: key(account), service: service)).flatMap { try? JSONDecoder().decode(Pins.self, from: $0) } ?? Pins()
     }
 
     func save(_ pins: Pins, account: Int64) throws {
-        try Keychain.save(JSONEncoder().encode(pins), account: key(account))
+        guard Keychain.wipes(service: service) == generation else { return }  // signed out since: nothing of that account is kept again
+        try Keychain.save(JSONEncoder().encode(pins), account: key(account), service: service)
     }
 }
 
