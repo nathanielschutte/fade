@@ -12,7 +12,7 @@ variable "dns_zone" {
 variable "instance_type" {
   description = "Load tests are more telling on the same size as production."
   type        = string
-  default     = "t4g.nano"
+  default     = "t4g.micro"
 }
 
 variable "invite_code" {

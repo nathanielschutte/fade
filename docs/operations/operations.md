@@ -50,7 +50,7 @@ The server reads these environment variables. In production they come from an AW
 | `FADE_VIDEO_MAX_KB` | `6144` | Hard cap per encrypted video. The apps work their bitrate out from it (at most 3 Mbit/s of 720p H.264, [video-quality.md](../design/video-quality.md)), so 10 seconds is about 4 MB |
 | `FADE_VIDEO_MAX_SECONDS` | `10` | The longest video a client records (1 to 60) |
 | `FADE_SNAP_DISK_MB` · `FADE_GROUP_PIC_DISK_MB` | `256` · `200` | Disk ceilings for all unopened direct, and group, pics and videos. Production sets 2048 · 1536 for its 5 GB data volume (`snap_disk_mb`, `group_pic_disk_mb`) |
-| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)) |
+| `FADE_MAX_ACCOUNTS` · `FADE_MAX_SESSIONS` | `100` · `10` | Hard caps: accounts in total, signed-in devices per person ([security.md](../security.md)). Production sets 300 accounts (`max_accounts` in `infra/variables.tf`) |
 | `FADE_REQUESTS_PER_ADDRESS` · `FADE_MAX_IN_FLIGHT` · `FADE_MAX_SOCKETS` | `3000` · `200` · `500` | Request budget per address per 10 minutes; requests at once; live connections |
 | `FADE_PUBLIC_URL` | `https://localhost` | The site's address (Terraform sets it); the contact in push requests |
 | `FADE_REPORTS_EMAIL` | unset | Production only (Terraform sets it from `reports_email`, [email.tf](../../infra/email.tf)): each new report is emailed here through SES, from `noreply@` the site's name: who reported whom and a link to System › Reports, nothing else. Unset, or off AWS, nothing is sent |

@@ -16,13 +16,15 @@ Status: **plan, nothing built.** Written 2026-10-23. This is the other path from
 
 Everything is far from its limit. The question is which one gets there first.
 
+**2026-11-06: t4g.micro and 300 accounts** (Nate, for TestFlight's external testers and the App Store). Before it: 37 accounts (6 turned off or deleted), 174 MB of the nano's 412 MB used and 30 MB in swap, a handful of open connections. Raised together, as the summary below says: the instance to t4g.micro (1 GB; `instance_type`, `infra/variables.tf`) and the cap to 300 (`max_accounts`, the same file). The socket cap stays 500 and the app's `MemoryMax=400M` stays: 500 connections at about 175 KB each is under 100 MB on top of napsack's own, well inside 400 MB, which a 1 GB machine can actually spare (changing it would mean the boot script, which replaces the server). Staging moved to t4g.micro too, so its load tests stay telling.
+
 ## What runs out first, in order
 
-### 1. The account cap (100)
+### 1. The account cap (300 since 2026-11-06)
 
-The first wall is one we set. `FADE_MAX_ACCOUNTS=100` exists so an invite link leaking can't fill the server. Raising it is a settings change: `terraform.tfvars`, then `terraform apply` updates the SSM parameter, then a restart of a second or two. It should go up in step with what the machine can hold. The rest of this list says what that is.
+The first wall is one we set. `FADE_MAX_ACCOUNTS` (300 in production, `max_accounts` in `infra/variables.tf`; 100 before 2026-11-06) exists so an invite link leaking can't fill the server. Raising it is a settings change: `max_accounts`, then `terraform apply` updates the SSM parameter, then a restart of a second or two. It should go up in step with what the machine can hold. The rest of this list says what that is.
 
-Before any `terraform apply` that touches the settings parameter, reconcile `FADE_ADMINS`: production's admin list differs from `terraform.tfvars`, and applying would overwrite it ([horizontal-scaling.md](horizontal-scaling.md) planning found this).
+(Admins used to be in the settings parameter, so an apply could overwrite production's list; since 0.28.0 they're their own parameter, `/fade/admins`, outside Terraform ([roles.md](../implementation/roles.md)), and an apply leaves them alone.)
 
 ### 2. Memory (0.5 GB): the first real upgrade
 
@@ -114,15 +116,15 @@ Those are what [horizontal-scaling.md](horizontal-scaling.md) solves. If they ma
 
 | Size | vCPUs | Memory | Baseline per vCPU | Per month | Roughly enough for |
 |---|---|---|---|---|---|
-| t4g.nano (today) | 2 | 0.5 GB | 5% | $3.07 | the 100-account cap |
-| t4g.micro | 2 | 1 GB | 10% | $6.13 | several hundred active people |
+| t4g.nano (until 2026-11-06) | 2 | 0.5 GB | 5% | $3.07 | the 100-account cap |
+| t4g.micro (today) | 2 | 1 GB | 10% | $6.13 | several hundred active people: the 300-account cap |
 | t4g.small | 2 | 2 GB | 20% | $12.26 | a few thousand |
 | t4g.medium | 2 | 4 GB | 20% | $24.53 | many thousands |
 | m7g.medium (not burstable) | 1 | 4 GB | 100% | about $29.80 | steady CPU-heavy load |
 
 The "enough for" column is an estimate from the measurements above. Step 0 replaces it with measured numbers.
 
-**How to step up:** change `instance_type` in tfvars.
+**How to step up:** change `instance_type` (`infra/variables.tf`). Terraform changes it in place: the instance stops and starts (a minute or two offline), keeping its disks and address.
 - **Read the plan first:** Terraform should say **update in-place** (it stops the server, changes the size, and starts it again). The data volume, the Elastic IP and everything on disk stay. `user_data_replace_on_change` only replaces the server when the boot script changes, so don't combine the two in one apply.
 - **Downtime:** about a minute or two. Pick the quietest hour (the Metrics tab's 3-day Requests chart shows it).
 - **Rule 1:** the usual infrastructure checklist: a snapshot first, row counts before and after, and the Metrics tab afterwards.
@@ -149,7 +151,7 @@ The server still needs a way out to push services and AWS: IPv6 through a free e
 | When | Do | Cost |
 |---|---|---|
 | Now | Step 0: measure. Cap journald; limit concurrent password checks; trim WebSocket buffers. Fix the Metrics tab's message for standard credit mode | free |
-| Before raising the 100-account cap | t4g.micro; raise `MemoryMax`, the socket cap and the account cap together | +$3.07/mo |
+| Before raising the 100-account cap | t4g.micro; raise `MemoryMax`, the socket cap and the account cap together. Done 2026-11-06: t4g.micro and 300 accounts (`MemoryMax` and the socket cap already fit; above) | +$3.07/mo |
 | Database passes ~50 MB | Litestream incremental backups (Nate's call on retention) | cents |
 | Data disk passes ~60% | Grow the volume online; raise the pic caps | $0.08/GB/mo |
 | Credits draining for days | Unlimited mode for bursts, or the next size up for steady load | per use, or +$3–12/mo |
