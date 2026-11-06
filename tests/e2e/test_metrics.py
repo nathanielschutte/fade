@@ -167,7 +167,9 @@ async def main():
             outside = await admin.evaluate(OUTSIDE)
             assert not outside, (label, outside)
         await shot(admin, "metrics-credits-1h")
-        await admin.unroute("**/api/admin/metrics*")
+        # Wait for a request still being changed (the last click's, slow on AWS),
+        # or it's let through and then answered twice.
+        await admin.unroute_all(behavior="wait")
 
         # A quick second click mid-load still wins: the charts follow the highlighted range.
         await admin.locator("#m-range .segment", has_text="1 hour").click()
