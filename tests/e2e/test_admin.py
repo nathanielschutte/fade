@@ -146,8 +146,17 @@ async def main():
         await admin.select_option("#log-source", "")
         print("client logs: arrive labeled, redacted, filterable")
 
-        await admin.fill("#log-q", OTHER)
+        # A search typed while another load is on its way isn't lost (it was, before 1.1.0).
+        async def slow(route):
+            await asyncio.sleep(1)
+            await route.continue_()
+        await admin.route("**/api/admin/logs*", slow)
+        await admin.select_option("#log-source", "server")  # a load, slowed
+        await admin.fill("#log-q", OTHER)  # searched while it's still on its way
         await expect(admin.locator("#log-rows")).to_contain_text("account created")
+        await expect(admin.locator("#log-rows tr.log-entry").filter(has_not_text=OTHER)).to_have_count(0)
+        await admin.unroute_all(behavior="wait")
+        await admin.select_option("#log-source", "")
         await expect(admin.locator("#log-rows tr", has_text="account created")).to_have_count(1)
         await admin.fill("#log-q", f"user_id=999999")
         await expect(admin.locator("#log-rows")).to_contain_text("No matching entries")
