@@ -13,6 +13,7 @@ struct NapsackApp: App {
         #if DEBUG
         AppInfo.freshStartIfAsked()  // before anything saved is read (UI tests): the lock reads its setting as it's made
         #endif
+        Session.forgetLeftovers()  // what an older napsack, or another account, left (before the lock reads its setting)
         _session = State(initialValue: Session())
         _lock = State(initialValue: AppLock.shared)
     }

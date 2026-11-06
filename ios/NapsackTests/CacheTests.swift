@@ -114,11 +114,14 @@ import Testing
     }
 
     @Test func signingOutForgetsTheKeptChats() async throws {
-        let cache = ResponseCache(account: 3)  // the real place
+        let phone = try TestPhone()  // a phone of its own (SignOutTests: the app's is ResponseCache.root)
+        defer { phone.clean() }
+        let cache = ResponseCache(account: 3, root: phone.phone.cache)
         cache.write(Data("[]".utf8), "friends")
+        try phone.store.save(account)
         let meAnswer = json(["id": 3, "username": "bob", "display_name": NSNull(), "role": "user", "has_recovery_key": true])
         let server = StubServer { request in request.url!.path == "/api/me" ? (200, meAnswer) : (204, Data()) }
-        let session = Session(transport: server, store: MemoryStore(account), reporter: Reporter(transport: server))
+        let session = Session(transport: server, store: phone.store, reporter: Reporter(transport: server))
         await session.restore(server: "https://napsack.test")
         await session.signOut()
         #expect(cache.read("friends") == nil)

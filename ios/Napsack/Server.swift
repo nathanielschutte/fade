@@ -30,9 +30,7 @@ enum AppInfo {
     /// Release builds never read it (compiled out, and scripts/test-ios.sh checks).
     static func freshStartIfAsked() {
         guard ProcessInfo.processInfo.environment["NAPSACK_FRESH_START"] == "1" else { return }
-        Keychain.deleteAll()
-        ResponseCache.wipeAll()
-        if let app = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: app) }
+        PhoneData.phone.forget()  // what signing out forgets: all of it
     }
     #endif
 

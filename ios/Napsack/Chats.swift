@@ -667,13 +667,21 @@ struct Reader: Sendable {
     /// The list is showing what was kept, until the server answers.
     private(set) var fromCache = false
 
+    /// When the list was made (with the signed-in screen): how many sign-outs
+    /// the Keychain and the kept answers had seen. What a load that finishes
+    /// after a sign-out asks to keep is refused, even by a store or cache made
+    /// only then (KeychainPinStore, ResponseCache).
+    private let pinsSince = Keychain.wipes()
+    private let cacheSince: Int?
+
     init(pinStore: (any PinStore)? = nil, cacheRoot: URL? = ResponseCache.root) {
         self.pinStore = pinStore
         self.cacheRoot = cacheRoot
+        cacheSince = cacheRoot.map { ResponseCache.generation(root: $0) }
     }
 
     func cache(for account: Account) -> ResponseCache? {
-        cacheRoot.map { ResponseCache(account: account.user.id, root: $0) }
+        cacheRoot.map { ResponseCache(account: account.user.id, root: $0, after: cacheSince) }
     }
 
     @ObservationIgnored private var reloading: Task<Void, Never>?
@@ -830,7 +838,7 @@ struct Reader: Sendable {
     private func show(_ account: Account) async throws {
         let identity = try self.identity ?? account.identity()
         self.identity = identity
-        let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore ?? KeychainPinStore(server: account.server))
+        let pinBook = self.pinBook ?? PinBook(account: account.user.id, store: pinStore ?? KeychainPinStore(server: account.server, after: pinsSince))
         self.pinBook = pinBook
         pinBook.see(friends: friendList)
         pinBook.see(senders: groupList.compactMap { m in m.lastMessage.flatMap { m in m.senderPublicKey.map { (m.senderId, $0) } } })

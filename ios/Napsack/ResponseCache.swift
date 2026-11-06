@@ -31,11 +31,18 @@ struct ResponseCache: Sendable {
         URL.applicationSupportDirectory.appending(path: "napsack-cache", directoryHint: .isDirectory)
     }
 
-    init(account: Int64, root: URL = ResponseCache.root) {
+    /// `after`: the root's wipes when the session began (ResponseCache.generation),
+    /// so a cache made later for it still keeps nothing after a sign-out.
+    init(account: Int64, root: URL = ResponseCache.root, after generation: Int? = nil) {
         self.root = root
         directory = root.appending(path: String(account), directoryHint: .isDirectory)
-        generation = Self.writer.generation(root)
+        self.generation = generation ?? Self.writer.generation(root)
         fileExtension = "json"
+    }
+
+    /// How many times `root` has been wiped (signing out).
+    static func generation(root: URL = ResponseCache.root) -> Int {
+        writer.generation(root)
     }
 
     private init(_ directory: URL, root: URL, generation: Int, fileExtension: String) {
