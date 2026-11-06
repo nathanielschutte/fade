@@ -238,7 +238,7 @@ function connectPresence() {
 const LOG_PAGE = 200;
 const LOG_DOM_CAP = 2000;
 const TAIL_MS = 3000;
-const logs = { entries: [], loaded: false, busy: false };
+const logs = { entries: [], loaded: false, busy: false, again: false };
 
 function logClock(ms) {
   const d = new Date(ms);
@@ -327,7 +327,11 @@ async function fetchLogs(params) {
 }
 
 async function loadLogs(mode = "reset") {
-  if (logs.busy) return;
+  if (logs.busy) {
+    // A tail or a page can wait for the next; a new search or filter can't be lost.
+    if (mode === "reset") logs.again = true;
+    return;
+  }
   logs.busy = true;
   try {
     const params = {};
@@ -349,6 +353,7 @@ async function loadLogs(mode = "reset") {
     $("#admin").hidden = false;
   } finally {
     logs.busy = false;
+    if (logs.again) { logs.again = false; loadLogs("reset"); }
   }
 }
 
