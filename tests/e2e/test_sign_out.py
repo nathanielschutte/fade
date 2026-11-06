@@ -119,7 +119,6 @@ async def main():
         await expect(other.locator("#auth")).to_be_visible(timeout=10000)
         await expect(other.locator("#app")).to_be_hidden()
         assert await row(other, CAL).count() == 0
-        await other.close()
         print("signed out: nothing kept, pins included; her other tab signed out too")
 
         # Ben signs in on the same tab while his chat list is slow to come:
@@ -140,7 +139,16 @@ async def main():
         assert await row(ana, CAL).count() == 0
         await ana.unroute("**/api/friends?*")
         await only_theirs(ana, ben_id)
-        print("the next account never sees the last one's chats, name, or pins")
+        # The other tab, signed out all along, follows Ben in. Clearing out what
+        # it found signed out never takes the key Ben's sign-in just kept: the
+        # two take turns (app.js, withKeys), so both tabs stay signed in.
+        await expect(other.locator("#my-name")).to_have_text(BEN, timeout=10000)
+        await ana.reload()
+        await expect(ana.locator("#my-name")).to_have_text(BEN, timeout=10000)
+        await expect(other.locator("#app")).to_be_visible()
+        await only_theirs(ana, ben_id)
+        await other.close()
+        print("the next account never sees the last one's chats, name, or pins; a second tab follows it in")
 
         # Signed in, what another account left (pins an older napsack kept at
         # sign-out) goes as the app opens, before anything of it is used.

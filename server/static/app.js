@@ -657,16 +657,21 @@ $("#auth-form").addEventListener("submit", async (e) => {
 });
 
 async function startSession(res, privateKey) {
+  await leftovers;
   // Whatever this browser still holds belongs to no one signed in here: an
   // earlier account's pins (an older napsack kept them), what a tab that never
   // signed out wrote. It goes before anything of this account is kept or used.
-  await forgetKept();
-  state.token = res.token;
-  state.me = res.user;
-  state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
-  await keystore.saveLocal(IDENTITY_KEY, state.identity);
-  await loadPins();
-  localStorage.setItem(TOKEN_KEY, res.token);
+  // All of it in one turn with the other tabs' (withKeys): a tab clearing out
+  // what it found signed out never lands between this clearing and the new key.
+  await withKeys(async () => {
+    await forgetKept();
+    state.token = res.token;
+    state.me = res.user;
+    state.identity = { userId: res.user.id, privateKey, publicKey: res.public_key };
+    await keystore.saveLocal(IDENTITY_KEY, state.identity);
+    await loadPins();
+    localStorage.setItem(TOKEN_KEY, res.token);
+  });
 }
 
 // ---------- recovery key, password, reset ----------
@@ -1484,10 +1489,16 @@ async function forgetEverything(notice) {
 // so a deletion still on its way never lands after the new account's key.
 let leftovers = Promise.resolve();
 
+/** Signing in, and clearing out what a signed-out tab finds, take turns
+ * across this browser's tabs (Web Locks), so one never lands in the middle
+ * of the other. Without Web Locks (an old browser), each just runs. */
+function withKeys(fn) {
+  return navigator.locks ? navigator.locks.request("napsack-keys", fn) : fn();
+}
+
 /** Signing in: whatever was kept before goes, without deleting the databases
  * this page goes on using. */
 async function forgetKept() {
-  await leftovers;
   clearNotifications();
   // The server's public settings stay (the same for everyone): napsack opens
   // from them next time even while the server is slow to answer.
@@ -8073,7 +8084,14 @@ async function loadIdentityFor(me) {
   // Signed out, nothing of anyone's should be here: what an older napsack
   // left (the pins it kept at sign-out, before 2026-11-06), or what a tab
   // still wrote as another signed out. Only the public settings stay.
-  leftovers = Promise.allSettled([dropDatabases({ except: [cache.DB_NAME] }), cache.keepOnly((k) => k === "config")]);
+  // In its turn (withKeys), and only if no other tab has signed in meanwhile:
+  // what that tab just kept is someone's.
+  leftovers = withKeys(async () => {
+    let token = null;
+    try { token = localStorage.getItem(TOKEN_KEY); } catch { /* refused: nothing kept */ }
+    if (token) return;
+    await Promise.allSettled([dropDatabases({ except: [cache.DB_NAME] }), cache.keepOnly((k) => k === "config")]);
+  }).catch(() => {});
   showAuth();
   showInviteBanner();
   // Why the last session ended, carried across signing out's reload.
