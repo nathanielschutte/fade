@@ -32,12 +32,13 @@ Status: **In progress** · **Up next** · **Planned** · **Needs decision** (blo
 | 8 | [Texts of only emoji, large and without a bubble](#x53-texts-of-only-emoji-large-and-without-a-bubble) | Experience/visual | Nate | In progress | Nate (2026-11-05). Built on the iPhone and the web; live in 1.1.0 (web) and TestFlight build 207 (iPhone). Android later (plan-android.md) |
 | 9 | [Pics open filling the screen](#x56-pics-open-filling-the-screen) | Experience/visual | Nate | In progress | Nate (2026-11-06): no black bars on the recipient's phone; zoom out to the whole picture, never more than was sent. Built on the iPhone: TestFlight build 215 (1.2.0); the web and Android next |
 | 10 | [Android app](plan-android.md): its own task list | Features | Nate | In progress | Nate (2026-11-04): plan it, set up the project, and get a shell app going, as the iOS app started ([F29](#f29-android-app)). The shell is built: a development screen and format 1, `make android` |
-| 11 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
-| 12 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
-| 13 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
-| 14 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
-| 15 | [The web chat can stop following the newest message as the window shrinks](#d22-the-web-chat-can-stop-following-the-newest-message-as-the-window-shrinks) | Debug | – | Planned | Found 2026-11-05 by a flaky test on main's CI: a scroll event racing a resize |
-| 16 | [Pinned keys kept through signing out, locked](#s9-pinned-keys-kept-through-signing-out-locked) | Security | – | Planned | Nate (2026-11-06): a small security enhancement from S8, not now |
+| 11 | [Redesign](#x57-redesign): the iPhone first, the web alongside | Experience/visual | Nate | Needs decision | Nate (2026-11-06): plan a redesign and map where the icons, colors, and other design choices live. The plan and map are in [redesign.md](../design/redesign.md); its decisions come first |
+| 12 | [Group chats: encrypt reactions; refuse plain text](../implementation/group-encryption.md#built) | Features | – | Planned | Phase 1 shipped in 0.21.0; these finish it |
+| 13 | [Scale out: two servers across zones](../design/horizontal-scaling.md) | Infrastructure | – | Needs decision | Design and cost in horizontal-scaling.md; Nate reviews before anything is built |
+| 14 | [Email on napsack.io](#i9-email-on-napsackio) | Infrastructure | – | On hold | Planned in email.md (iCloud+ custom domain recommended); on the back burner (Nate, 2026-10-23) |
+| 15 | [Sign in by scanning from a signed-in device](#f25-sign-in-by-scanning-from-a-signed-in-device) | Features | – | Planned | Nate (2026-11-03); a design doc first |
+| 16 | [The web chat can stop following the newest message as the window shrinks](#d22-the-web-chat-can-stop-following-the-newest-message-as-the-window-shrinks) | Debug | – | Planned | Found 2026-11-05 by a flaky test on main's CI: a scroll event racing a resize |
+| 17 | [Pinned keys kept through signing out, locked](#s9-pinned-keys-kept-through-signing-out-locked) | Security | – | Planned | Nate (2026-11-06): a small security enhancement from S8, not now |
 
 **Done**
 
@@ -701,6 +702,12 @@ Oldest first; newly shipped rows go at the bottom.
 - **Built (iPhone, 2026-11-05).** One to four emoji (spaces between are fine) show at 48 points for one and 36 for two to four, growing with the text size, with no bubble; a reply keeps its quote above them, and reactions and the time stay underneath. Each is held to the reactions' rule (`E2E.isReaction`), and a character that's usually a plain symbol (©, ™, an arrow) only counts with its emoji form. `EmojiOnlyTests` (the rule), `EmojiOnlyLookTests` (pictures).
 - **Built (web, 2026-11-05).** The same rule (`server/static/emoji-only.js`, `emojiOnly`, each emoji held to crypto.js's `isReaction`), for direct and group texts and texts still sending: 3rem for one, 2.25rem for two to four, and no rule beside them (the web's bubble is that rule). A reply keeps its quote above; reactions and the time stay as they are. `shared/crypto/emoji-only.test.js` (the iPhone's cases, in Node), `tests/e2e/test_pic_framing.py` (the look).
 - Left: Android (plan-android.md).
+
+#### X57. Redesign
+- Nate (2026-11-06): plan a redesign of the app, focused on iOS, keeping the web browser app aligned. Map where the icons and the color palette are defined and the other design decisions: purely UI/UX, to coordinate them and learn how to change them.
+- The plan and the map: [redesign.md](../design/redesign.md). Found: the iPhone has no design layer (one named color; everything else is the system's or typed in place), and it follows the phone's light or dark setting while the web and Android are always dark, with no recorded decision. On white, the accent is 1.95:1.
+- **Needs decision (Nate):** the eight in [redesign.md](../design/redesign.md#decisions-for-nate), starting with what should change and whether the iPhone keeps light mode. Nothing visible changes until 1.0 is through review ([F30](#f30-napsack-10-on-the-app-store)).
+- Left: everything. First, the "before" pictures and an iPhone design layer that changes nothing visible.
 
 ### Security
 
