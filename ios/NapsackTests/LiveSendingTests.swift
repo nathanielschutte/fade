@@ -53,9 +53,9 @@ struct LiveSendingTests {
 
         // Ben edits his text and reacts to it; Ana sees both. Then he takes the reaction back.
         let reply = try #require(toAna.bubbles.last)
-        try await toAna.edit(reply, to: "and a reply, edited")
+        await toAna.edit(reply, to: "and a reply, edited").value
         try await toAna.react(try #require(toAna.bubble(reply.id)), "😮")
-        try await toGroup.edit(try #require(toGroup.bubbles.last), to: "the group, edited")
+        await toGroup.edit(try #require(toGroup.bubbles.last), to: "the group, edited").value
         try await toGroup.react(try #require(toGroup.bubbles.last), "👍")
         try await fromBen.catchUp()
         try await group.catchUp()

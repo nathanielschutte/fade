@@ -116,11 +116,14 @@ struct FlashOffer: Equatable, Sendable {
 final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureDelegate, AVCaptureFileOutputRecordingDelegate {
     enum Problem: LocalizedError {
         case noCamera, denied, failed
+        /// Not running, even after getting it going and waiting (D24): another app (a call) has it for now.
+        case paused
         var errorDescription: String? {
             switch self {
             case .noCamera: "No camera found. Choose a photo instead."
             case .denied: "Camera access is blocked. Allow it in Settings › napsack, or choose a photo instead."
             case .failed: "The camera couldn't take that. Try again."
+            case .paused: "The camera is paused while another app uses it. Try again in a moment."
             }
         }
     }
@@ -159,9 +162,16 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// The app's audio while the microphone's in (D21), and whether a call has it (D20).
     private let audio: CameraAudioSession
     private let onCall: @Sendable () -> Bool
-    /// You allowed the microphone (asked as the camera first opens).
+    /// You allowed the microphone (asked as the camera first opens; looked at again as each video starts).
     private var soundAllowed = false
-    private var interruptions: (any NSObjectProtocol)?
+    /// Whether iOS took the microphone from the camera since it opened, and whose it seemed (D24).
+    private var lostMicrophone = CameraAudio.MicrophoneLoss.none
+    /// The interruption under way, if any (nil once it's ended).
+    private var interruption: AVCaptureSession.InterruptionReason?
+    /// A video asked for while the camera was getting going (D24): it starts
+    /// once the camera runs, unless let go meanwhile.
+    private var recordingWaits = false
+    private var interruptions: [any NSObjectProtocol] = []
 
     /// The zoom a camera offers, as the Camera app shows it, and its flash.
     struct Lenses: Equatable, Sendable {
@@ -196,26 +206,35 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
         super.init()
         // napsack sets up its own audio, mixed with others, and only with the microphone in (CameraAudio).
         session.automaticallyConfiguresApplicationAudioSession = false
-        interruptions = NotificationCenter.default.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session,
-                                                               queue: nil) { [weak self] note in
+        interruptions.append(NotificationCenter.default.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session,
+                                                                    queue: nil) { [weak self] note in
             let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int).flatMap(AVCaptureSession.InterruptionReason.init)
             guard let self else { return }
             queue.async { self.interrupted(reason) }
-        }
+        })
+        interruptions.append(NotificationCenter.default.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session,
+                                                                    queue: nil) { [weak self] _ in
+            guard let self else { return }
+            queue.async { self.interruption = nil }
+        })
     }
 
     deinit {
-        if let interruptions { NotificationCenter.default.removeObserver(interruptions) }
+        interruptions.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     /// Interrupted: for the microphone (a call took it), the camera lets it go
     /// and carries on without it; for anything else, iOS resumes it. Only on `queue`.
     private func interrupted(_ reason: AVCaptureSession.InterruptionReason?) {
+        interruption = reason
         let response = CameraAudio.response(to: reason)
         Task { @MainActor in
             Reporter.shared.report(.info, "camera interrupted", ["reason": String(reason?.rawValue ?? -1), "response": "\(response)"])
         }
         guard response == .dropMicrophone else { return }
+        // Whose it was: a call's is free again once the call's over; anything
+        // else's isn't taken again while this camera's open (D24).
+        if microphone != nil { lostMicrophone = onCall() ? .toACall : .toAnotherApp }
         dropMicrophone()
         if !session.isRunning { session.startRunning() }
     }
@@ -224,7 +243,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// up the app's audio for it first. Only on `queue`, inside a configuration.
     private func takeMicrophone() {
         guard microphone == nil,
-              CameraAudio.takesMicrophone(allowed: soundAllowed, onCall: onCall(), inputAvailable: audio.isInputAvailable),
+              CameraAudio.takesMicrophone(allowed: soundAllowed, onCall: onCall(), inputAvailable: audio.isInputAvailable, lost: lostMicrophone),
               let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
               session.canAddInput(input), audio.open() else { return }
         session.addInput(input)
@@ -240,6 +259,99 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             self.microphone = nil
         }
         audio.close()
+    }
+
+    /// Gets the camera going for a capture if it isn't running (D24):
+    /// CameraCapture.steps, then waits for whichever comes first, its
+    /// starting to run or its interruption ending, up to CameraCapture.wait.
+    /// `then` hears, on `queue`, whether it's running now. Only on `queue`.
+    private func whenRunning(_ then: @escaping @Sendable (Bool) -> Void) {
+        let steps = CameraCapture.steps(setUp: configured != nil, running: session.isRunning, interrupted: session.isInterrupted,
+                                        holdsMicrophone: microphone != nil, onCall: onCall(), reason: interruption)
+        if !steps.wait && capturable { return then(true) }
+        // Watched before it's started, so a start that comes at once isn't missed.
+        let waiting = Waiting()
+        let done: @Sendable () -> Void = { [self] in
+            queue.async { [self] in
+                guard waiting.end() else { return }  // the first of them only
+                // Its interruption ended without its running again: once more.
+                if configured != nil, !session.isRunning, !session.isInterrupted { session.startRunning() }
+                then(capturable)
+            }
+        }
+        waiting.observe([AVCaptureSession.didStartRunningNotification, AVCaptureSession.interruptionEndedNotification], of: session, done)
+        if steps.dropMicrophone { dropMicrophone() }
+        // AVFoundation raises an exception for starting inside a configuration; none is open here.
+        if steps.startRunning { session.startRunning() }
+        if capturable {
+            waiting.cancel()
+            return then(true)
+        }
+        queue.asyncAfter(deadline: .now() + CameraCapture.wait) { done() }
+    }
+
+    /// Whether a capture can go now: set up, its picture flowing to the
+    /// outputs (capturing without that raises an exception), running, and not interrupted. Only on `queue`.
+    private var capturable: Bool {
+        CameraCapture.ready(setUp: configured != nil && photo.connection(with: .video)?.isActive == true,
+                            running: session.isRunning, interrupted: session.isInterrupted)
+    }
+
+    /// One wait for the camera to run (whenRunning): its watchers, and whether it's over. Only on `queue`.
+    private final class Waiting: @unchecked Sendable {
+        private var watchers: [any NSObjectProtocol] = []
+        private var over = false
+
+        func observe(_ names: [Notification.Name], of session: AVCaptureSession, _ done: @escaping @Sendable () -> Void) {
+            watchers = names.map { NotificationCenter.default.addObserver(forName: $0, object: session, queue: nil) { _ in done() } }
+        }
+
+        /// The wait's over: true the first time only.
+        func end() -> Bool {
+            guard !over else { return false }
+            cancel()
+            return true
+        }
+
+        func cancel() {
+            over = true
+            watchers.forEach { NotificationCenter.default.removeObserver($0) }
+            watchers = []
+        }
+    }
+
+    /// Where the camera is, for a failed capture's report.
+    var conditions: CameraCapture.Conditions {
+        get async {
+            (try? await run { [self] in
+                CameraCapture.Conditions(running: session.isRunning, interrupted: session.isInterrupted, onCall: onCall(),
+                                         reason: interruption?.rawValue, holdsMicrophone: microphone != nil)
+            }) ?? CameraCapture.Conditions()
+        }
+    }
+
+    /// The microphone's permission as it is now (it may have been allowed
+    /// since the camera opened), and the microphone taken if that means it
+    /// can be: the next video has sound. Only on `queue`, outside a configuration.
+    private func refreshSound() {
+        soundAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        guard microphone == nil, session.isRunning else { return }
+        session.beginConfiguration()
+        takeMicrophone()
+        session.commitConfiguration()
+    }
+
+    /// The microphone was allowed from the camera's screen: taken now, so the next video has sound.
+    func soundAllowedNow() {
+        queue.async { [self] in refreshSound() }
+    }
+
+    /// A recorded video on screen (or gone from it): heard, mixed with others
+    /// (D25). Returns once the app's audio is set, so it plays only then.
+    func reviewing(_ on: Bool) async {
+        _ = try? await run { [self] in
+            if on { audio.review() } else { audio.endReview() }
+        }
     }
 
     static func allowed(_ type: AVMediaType) async -> Bool {
@@ -286,6 +398,8 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
             torch(false)  // never left on once the camera's closed
             if session.isRunning { session.stopRunning() }
             dropMicrophone()  // the next opening decides again (a call may have begun or ended)
+            lostMicrophone = .none
+            recordingWaits = false
         }
     }
 
@@ -368,17 +482,24 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     /// A photo, as JPEG (the front camera's mirrored, as the preview shows it), with the flash as chosen.
+    /// Asked for while the camera isn't running (a call took it for a moment), it gets it going first (D24).
     func takePhoto(flash: Flash = .off) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
-                guard session.isRunning else { return continuation.resume(throwing: Problem.noCamera) }
+                guard photoDone == nil else { return continuation.resume(throwing: CancellationError()) }  // one at a time: the first goes on
                 photoDone = continuation
-                Self.orient(photo.connection(with: .video), mirrored: facing == .front)
-                let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-                // Only a mode the output has now: any other raises an exception.
-                let mode = (configured?.flash ?? .none).photoMode(flash)
-                settings.flashMode = photo.supportedFlashModes.contains(mode) ? mode : .off
-                photo.capturePhoto(with: settings, delegate: self)
+                whenRunning { [self] running in
+                    guard running else {
+                        photoDone = nil
+                        return continuation.resume(throwing: Problem.paused)
+                    }
+                    Self.orient(photo.connection(with: .video), mirrored: facing == .front)
+                    let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                    // Only a mode the output has now: any other raises an exception.
+                    let mode = (configured?.flash ?? .none).photoMode(flash)
+                    settings.flashMode = photo.supportedFlashModes.contains(mode) ? mode : .off
+                    photo.capturePhoto(with: settings, delegate: self)
+                }
             }
         }
     }
@@ -392,22 +513,31 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     }
 
     /// Starts a video, stopping by itself at `seconds`, the torch on while it
-    /// records if `flash` says so. `stopRecording` gives the file.
-    func startRecording(seconds: Int, flash: Flash = .off) {
+    /// records if `flash` says so. `stopRecording` gives the file. Asked for
+    /// while the camera isn't running (a call took it for a moment), it gets
+    /// it going first (D24); `failed` hears if it couldn't, unless it was let
+    /// go meanwhile (then `stopRecording` says so).
+    func startRecording(seconds: Int, flash: Flash = .off, failed: @escaping @MainActor @Sendable (any Error) -> Void = { _ in }) {
         queue.async { [self] in
-            guard session.isRunning, !movie.isRecording, switching == nil else { return }
-            parts.forEach { try? FileManager.default.removeItem(at: $0) }
-            parts = []
-            recorded = 0
-            limit = Double(seconds)
-            stopAfterSwitch = false
-            recordingFlash = flash
-            if microphone == nil {  // without it so far (a call, since ended): this video may have sound
-                session.beginConfiguration()
-                takeMicrophone()
-                session.commitConfiguration()
+            guard !movie.isRecording, switching == nil, !recordingWaits else { return }
+            recordingWaits = true
+            whenRunning { [self] running in
+                guard recordingWaits else { return }  // let go (or thrown away) while it got going
+                recordingWaits = false
+                guard running else {
+                    Task { @MainActor in failed(Problem.paused) }
+                    return
+                }
+                parts.forEach { try? FileManager.default.removeItem(at: $0) }
+                parts = []
+                recorded = 0
+                limit = Double(seconds)
+                stopAfterSwitch = false
+                recordingFlash = flash
+                // Without it so far (a call, since ended; allowed since the camera opened): this video may have sound.
+                refreshSound()
+                startPart()
             }
-            startPart()
         }
     }
 
@@ -447,6 +577,9 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
                     stopAfterSwitch = true  // the part ending now is the last
                 } else if movie.isRecording {
                     movie.stopRecording()
+                } else if recordingWaits {  // let go while the camera was still getting going (D24): it never started
+                    recordingWaits = false
+                    finishMovie(nil, Problem.paused)
                 } else {
                     finishMovie(nil, Problem.failed)
                 }
@@ -459,6 +592,7 @@ final class CameraSession: NSObject, @unchecked Sendable, AVCapturePhotoCaptureD
     /// Stops a recording that was really a tap (D11) and throws it away.
     func discardRecording() {
         queue.async { [self] in
+            recordingWaits = false  // still getting going: it never starts
             if movie.isRecording {
                 discarding = true
                 movie.stopRecording()
@@ -596,6 +730,10 @@ enum Captured: Identifiable {
         case .photo(let image): "p\(ObjectIdentifier(image).hashValue)"
         case .video(let url): url.absoluteString
         }
+    }
+
+    var isVideo: Bool {
+        if case .video = self { true } else { false }
     }
 
     /// A photo picked from the library; nil if it can't be opened. The chat's
@@ -747,15 +885,24 @@ struct MadeReady {
     }
 }
 
-/// What the camera's Send does. The sends seal in a chat's Conversation, on
-/// the main actor; what they're handed was made ready once, off it.
+/// A capture on its way: made ready meanwhile (once, for every chat it goes
+/// to), whether it's a video known from the start.
+struct PicToSend: Sendable {
+    let ready: Task<ReadyToSend, any Error>
+    let isVideo: Bool
+}
+
+/// What the camera's Send does: hands the capture to each chat's
+/// Conversation, which shows it at once and sends it when it can (X57), so
+/// the camera never waits on the network. They throw only for a chat that
+/// isn't there anymore.
 enum CameraSend {
     /// Straight to one chat ("Send to Ben"), from that chat's camera, which
-    /// the chat closes once it's sent; with `more`, a "To Ben +" beside Send
+    /// the chat closes as it's handed over; with `more`, a "To Ben +" beside Send
     /// opens Send to… with that chat picked, to add others (as on the web).
-    case chat(String, @MainActor (ReadyToSend) async throws -> Void, more: AddMore? = nil)
-    /// To chats picked on the next screen, from the Camera tab; `done` says where it went.
-    case pick([ChatRow], @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+    case chat(String, @MainActor (PicToSend) throws -> Void, more: AddMore? = nil)
+    /// To chats picked on the next screen, from the Camera tab; `done` says where it's going.
+    case pick([ChatRow], @MainActor (ChatRow.Kind, PicToSend) throws -> Void, done: (String) -> Void)
 
     /// From a chat's camera, the other chats it can go to as well.
     struct AddMore {
@@ -763,9 +910,9 @@ enum CameraSend {
         let here: ChatRow.Kind
         /// The chats a pic can go to (the chat list's), asked for as they're shown.
         let chats: @MainActor () -> [ChatRow]
-        /// Sends to one chat; throws what went wrong there.
-        let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
-        /// Sent to every chat picked: says where it went.
+        /// Hands it to one chat; throws if that chat's gone.
+        let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
+        /// On its way to every chat picked: says where it's going.
         let done: @MainActor (String) -> Void
 
         /// Only while this chat is one a pic can go to (the list has it, and
@@ -780,8 +927,8 @@ enum CameraSend {
 struct SendElsewhere: Equatable {
     /// The chats a pic can go to now.
     let chats: @MainActor () -> [ChatRow]
-    /// Sends to one of them.
-    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+    /// Hands it to one of them.
+    let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
 
     static func == (_: SendElsewhere, _: SendElsewhere) -> Bool { true }
 }
@@ -825,7 +972,10 @@ struct CameraScreen: View {
     var close: (() -> Void)?
     @State private var camera = CameraSession()
     @State private var lenses = CameraSession.Lenses()
+    /// Why the camera can't open (not allowed, or none): said over it, and the shutter's off.
     @State private var problem: String?
+    /// Why the last capture didn't come (D24): said for a moment, and the shutter keeps working.
+    @State private var note: String?
     @State private var recording = false
     @State private var recordStart: Date?
     @State private var zoom: CGFloat = 1
@@ -866,13 +1016,27 @@ struct CameraScreen: View {
     @State private var muted = false
     /// The video on screen was recorded without sound (D20: a call had the microphone).
     @State private var noSound = false
+    /// Why: the microphone not allowed (the sound button then asks for it, D25), or in use.
+    @State private var noSoundWhy = CameraAudio.NoSound.inUse
+    /// The microphone was refused before: Settings is offered.
+    @State private var offerSettings = false
+    /// The recorded video whose sound is set up (D25): it plays once it is.
+    @State private var heard: URL?
+    @Environment(\.openURL) private var openURL
     /// The flash as chosen (CameraChoice keeps it until the app is quit); each camera uses what it has of it.
     @State private var flash = CameraChoice.shared.flash
 
     /// `offering` stands in for what a camera offers, to look at the screen where there's none (tests);
-    /// `caption` and `framing`, a capture as it's being made ready (tests).
+    /// `caption` and `framing`, a capture as it's being made ready (tests);
+    /// `note`, a capture that didn't come, and `noSound`, a video without sound, and why (tests).
     init(maxSeconds: Int, maxBytes: Int, send: CameraSend, start: Captured? = nil, close: (() -> Void)? = nil,
-         offering: CameraSession.Lenses? = nil, caption: (String, Double)? = nil, framing: Framing? = nil) {
+         offering: CameraSession.Lenses? = nil, caption: (String, Double)? = nil, framing: Framing? = nil,
+         note: String? = nil, noSound: CameraAudio.NoSound? = nil) {
+        _note = State(initialValue: note)
+        if let noSound {
+            _noSound = State(initialValue: true)
+            _noSoundWhy = State(initialValue: noSound)
+        }
         self.maxSeconds = maxSeconds
         self.maxBytes = maxBytes
         self.send = send
@@ -943,20 +1107,21 @@ struct CameraScreen: View {
                     defer { picked = nil }
                     let photo = await Captured.picked(item)
                     guard picks.stillWanted(pick, busy: shot != nil || recording) else { return }  // taken over meanwhile
-                    if let photo { captured(photo, whole: true) } else { problem = "Couldn't open that photo." }
+                    if let photo { captured(photo, whole: true) } else { note = "Couldn't open that photo." }
                 }
             }
             .navigationDestination(isPresented: $choosing) {
                 if let ready = made?.ready {
                     switch send {
                     case .pick(let chats, let go, let done):
-                        SendToScreen(ready: ready, chats: chats, send: go) { words in
+                        SendToScreen(pic: PicToSend(ready: ready, isVideo: shot?.isVideo == true), chats: chats, send: go) { words in
                             retake()
                             done(words)
                         }
                     case .chat(_, _, let more?):
                         // This chat picked to start with; the chat closes the camera once it's sent.
-                        SendToScreen(ready: ready, chats: more.chats(), picked: [more.here], send: more.send, done: more.done)
+                        SendToScreen(pic: PicToSend(ready: ready, isVideo: shot?.isVideo == true), chats: more.chats(), picked: [more.here],
+                                     send: more.send, done: more.done)
                     case .chat:
                         EmptyView()
                     }
@@ -978,6 +1143,11 @@ struct CameraScreen: View {
             }
             .padding(.horizontal, 12).padding(.top, 8)
             Spacer()
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
+                    .padding(10).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 20).padding(.bottom, 12)
+            }
             lensButtons.padding(.bottom, 16)
             // Under the thumb: a photo from the library left of the shutter, and
             // switching cameras right of it (Nate, 2026-11-03: not up top).
@@ -993,6 +1163,26 @@ struct CameraScreen: View {
                     .frame(maxWidth: .infinity)
             }
             .padding(.bottom, 24)
+        }
+        // Said for a moment (D24), or until the camera runs again, whichever's first.
+        .task(id: note) {
+            guard note != nil else { return }
+            try? await Task.sleep(for: .seconds(CameraCapture.noteSeconds))
+            if !Task.isCancelled { note = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureSession.didStartRunningNotification, object: camera.session)
+            .receive(on: DispatchQueue.main)) { _ in note = nil }
+    }
+
+    /// A capture didn't come (D24): said for a moment, the shutter still
+    /// working, and reported with where the camera was, so the log viewer
+    /// (and the journal) has the next one.
+    private func captureFailed(_ kind: CameraCapture.Kind, _ error: any Error) {
+        if error is CancellationError { return }  // a second tap while the first was still being taken
+        note = error.localizedDescription
+        Task {
+            let at = await camera.conditions
+            Reporter.shared.report(.warn, "camera capture failed", CameraCapture.fields(kind, error, at))
         }
     }
 
@@ -1130,17 +1320,24 @@ struct CameraScreen: View {
         recording = true
         recordStart = .now
         zoomAtPress = zoom
-        camera.startRecording(seconds: maxSeconds, flash: lenses.flash.shown(flash))
+        note = nil
+        camera.startRecording(seconds: maxSeconds, flash: lenses.flash.shown(flash)) { error in
+            guard recording else { return }  // let go already: stopping says why
+            recording = false
+            recordStart = nil
+            captureFailed(.video, error)
+        }
     }
 
     private func photo() {
         guard !recording, shot == nil else { return }
+        note = nil
         Task {
             do {
                 let data = try await camera.takePhoto(flash: lenses.flash.shown(flash))
                 guard let image = await Captured.photo(data) else { throw CameraSession.Problem.failed }
                 captured(.photo(image))
-            } catch { problem = error.localizedDescription }
+            } catch { captureFailed(.photo, error) }
         }
     }
 
@@ -1151,7 +1348,7 @@ struct CameraScreen: View {
         Task {
             do {
                 captured(.video(try await camera.stopRecording(maxBytes: maxBytes, seconds: maxSeconds)))
-            } catch { problem = error.localizedDescription }
+            } catch { captureFailed(.video, error) }
         }
     }
 
@@ -1171,14 +1368,18 @@ struct CameraScreen: View {
         zoom = 1
         pinchFrom = 1
         camera.zoom(1)
-        muted = false
+        muted = false  // a video goes with its sound unless it's turned off
         noSound = false
+        note = nil
         if case .video(let url) = media {
             files.keep(url)
             Task {
                 // Recorded without the microphone (not allowed, or a call had it: CameraAudio): it says so, and there's no sound to turn off.
                 guard await VideoEncoder.hasSound(url) else {
-                    if case .video(url) = shot { noSound = true }
+                    if case .video(url) = shot {
+                        noSound = true
+                        noSoundWhy = CameraAudio.whyNoSound(AVCaptureDevice.authorizationStatus(for: .audio))
+                    }
                     return
                 }
                 let quiet = try? await VideoEncoder.withoutSound(url)
@@ -1214,7 +1415,13 @@ struct CameraScreen: View {
                                 PenLayer(image: image.size, box: rect.size, strokes: $strokes, drawing: penOn)
                             }
                         case .video(let url):
-                            LoopingPlayer(url: url, muted: muted)
+                            // Heard (D25): the app's audio is set before it plays, so it neither stops music nor stays silent.
+                            LoopingPlayer(url: url, muted: muted, playing: heard == url)
+                                .task(id: url) {
+                                    await camera.reviewing(true)
+                                    heard = url
+                                }
+                                .onDisappear { Task { await camera.reviewing(false) } }
                         }
                     }
                     .frame(width: rect.width, height: rect.height)
@@ -1376,6 +1583,10 @@ struct CameraScreen: View {
                         if case .video = media, silent != nil {
                             Button { muted.toggle() } label: { Self.round(muted ? "speaker.slash.fill" : "speaker.wave.2.fill") }
                                 .accessibilityLabel(muted ? "Sound off. Tap to send it with sound" : "Sound on. Tap to send it without sound")
+                        } else if case .video = media, noSound, noSoundWhy == .notAllowed {
+                            // No sound because the microphone isn't allowed (D25): turning sound on asks for it, for the next video.
+                            Button { allowMicrophone() } label: { Self.round("speaker.slash.fill") }
+                                .accessibilityLabel("No sound: the microphone is off. Tap to turn it on for your next video")
                         }
                     }
                 }
@@ -1384,7 +1595,7 @@ struct CameraScreen: View {
             Spacer()
             if !penOn && !editingCaption {
                 if noSound, case .video = media {
-                    Label(CameraAudio.noSound, systemImage: "speaker.slash.fill")
+                    Label(CameraAudio.words(noSoundWhy), systemImage: noSoundWhy == .allowedNow ? "mic.fill" : "speaker.slash.fill")
                         .font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center)
                         .padding(10).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 20).padding(.bottom, 8)
@@ -1408,6 +1619,33 @@ struct CameraScreen: View {
                 }
                 .padding(.horizontal, 20).padding(.bottom, 30)
             }
+        }
+        .alert(CameraAudio.settingsTitle, isPresented: $offerSettings) {
+            Button("Open Settings") {
+                if let settings = URL(string: UIApplication.openSettingsURLString) { openURL(settings) }
+            }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text(CameraAudio.settingsWords)
+        }
+    }
+
+    /// The sound button on a video without sound because the microphone isn't
+    /// allowed (D25): asks for it (never asked), or offers Settings (refused
+    /// before). This video stays without; once it's allowed, the next has sound.
+    private func allowMicrophone() {
+        switch CameraAudio.soundTap(AVCaptureDevice.authorizationStatus(for: .audio)) {
+        case .ask:
+            Task {
+                guard await AVCaptureDevice.requestAccess(for: .audio) else { return }
+                noSoundWhy = .allowedNow
+                camera.soundAllowedNow()
+            }
+        case .openSettings:
+            offerSettings = true
+        case .allowed:
+            noSoundWhy = .allowedNow
+            camera.soundAllowedNow()
         }
     }
 
@@ -1494,17 +1732,13 @@ struct CameraScreen: View {
         guard let ready = ready() else { return }
         switch send {
         case .chat(_, let go, _):
-            sending = true
+            sending = true  // once: the chat closes the camera as it takes it
             sendProblem = nil
-            Task {
-                do {
-                    try await go(try await ready.value)
-                    // Sent: the chat closes the camera, with the pic on screen (and Send off) as it goes.
-                } catch {
-                    sending = false
-                    Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
-                    sendProblem = error.localizedDescription
-                }
+            do {
+                try go(PicToSend(ready: ready, isVideo: shot?.isVideo == true))
+            } catch {
+                sending = false
+                sendProblem = error.localizedDescription
             }
         case .pick:
             choosing = true  // made ready while the chats are picked
@@ -1537,15 +1771,19 @@ struct CameraScreen: View {
 }
 
 /// A recorded video filling the screen, looping with its sound (unless it's
-/// to go without), until it's sent or retaken.
+/// to go without), until it's sent or retaken. It starts once `playing`: the
+/// app's audio is set for it by then (D25), as playing under the app's
+/// default would stop music, and the ring switch would mute it.
 struct LoopingPlayer: UIViewRepresentable {
     let url: URL
     var muted = false
+    var playing = true
 
     final class PlayerView: UIView {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         var looper: AVPlayerLooper?
+        var started = false
     }
 
     func makeUIView(context: Context) -> PlayerView {
@@ -1554,13 +1792,16 @@ struct LoopingPlayer: UIViewRepresentable {
         view.looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
         view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspectFill
-        player.isMuted = muted
-        player.play()
+        updateUIView(view, context: context)
         return view
     }
 
     func updateUIView(_ view: PlayerView, context: Context) {
         view.playerLayer.player?.isMuted = muted
+        if playing, !view.started {
+            view.started = true
+            view.playerLayer.player?.play()
+        }
     }
 
     static func dismantleUIView(_ view: PlayerView, coordinator: ()) {
@@ -1573,34 +1814,32 @@ struct LoopingPlayer: UIViewRepresentable {
 /// web app's Send to…), from the Camera tab, or from a chat's camera ("To Ben
 /// +") with that chat picked to start with. Back returns to the camera, the
 /// pic still there. Chats that can't take one (a changed key, a turned-off
-/// account, Team Napsack) aren't offered.
+/// account, Team Napsack) aren't offered. Send hands it to every chat picked
+/// at once (each shows it, and sends it when it can), and is at the bottom
+/// right, under the thumb (Nate, 2026-11-09).
 struct SendToScreen: View {
     /// The capture, being made ready meanwhile: once, for every chat picked.
-    let ready: Task<ReadyToSend, any Error>
+    let pic: PicToSend
     let chats: [ChatRow]
     /// Picked as it opens: listed even when hidden, so it can be unpicked.
     let preselected: [ChatRow.Kind]
-    /// Sends to one chat; throws what went wrong there.
-    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+    /// Hands it to one chat; throws if that chat's gone.
+    let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
     let done: (String) -> Void
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var picked: [ChatRow.Kind]
     @State private var search = ""
-    @State private var sending = false
     @State private var problem: String?
 
-    init(ready: Task<ReadyToSend, any Error>, chats: [ChatRow], picked: [ChatRow.Kind] = [],
-         send: @escaping @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: @escaping (String) -> Void) {
-        self.ready = ready
+    init(pic: PicToSend, chats: [ChatRow], picked: [ChatRow.Kind] = [],
+         send: @escaping @MainActor (ChatRow.Kind, PicToSend) throws -> Void, done: @escaping (String) -> Void) {
+        self.pic = pic
         self.chats = chats
         self.preselected = picked
         self.send = send
         self.done = done
         _picked = State(initialValue: picked)
     }
-
-    /// Chats sent to at once: the uploads overlap, without crowding a phone's connection.
-    static let atOnce = 3
 
     var body: some View {
         List {
@@ -1631,12 +1870,26 @@ struct SendToScreen: View {
         .searchable(text: $search, prompt: "Search")
         .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
         .navigationBarTitleDisplayMode(.inline)
-        // Not back to the camera while it goes: Send there would race this send to the same chat.
-        .navigationBarBackButtonHidden(sending)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack {
+                Spacer()
+                Button { go() } label: {
+                    HStack(spacing: 8) {
+                        Text("Send").font(.headline).lineLimit(1)  // how many, in the title
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .buttonBorderShape(.capsule)
+                .disabled(picked.isEmpty)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)  // whole at the largest text, over the list's rows
+                .accessibilityLabel(picked.isEmpty ? "Send" : "Send to \(picked.count)")
+                .accessibilityIdentifier("send-to-send")
             }
+            .padding(.horizontal, 16).padding(.vertical, 10)
         }
     }
 
@@ -1650,64 +1903,29 @@ struct SendToScreen: View {
             : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
     }
 
-    /// A few chats at a time, each sealed its own copy of the same bytes; what
-    /// failed is said, and only what failed stays picked to try again.
+    /// Hands it to every chat picked, each sealing its own copy of the same
+    /// bytes as it sends. Only a chat that's gone since can't take it: that's
+    /// said, and it alone stays picked.
     private func go() {
-        sending = true
         problem = nil
-        Task {
-            defer { sending = false }
-            let prepared: ReadyToSend
-            do {
-                prepared = try await ready.value
-            } catch {
-                problem = error.localizedDescription
-                return
-            }
-            let kinds = picked
-            let why = await Self.each(kinds, atOnce: Self.atOnce) { kind in try await send(kind, prepared) }
-            let name = { (kind: ChatRow.Kind) in chats.first { $0.kind == kind }?.name ?? "a chat" }
-            let sent = zip(kinds, why).filter { $0.1 == nil }.map { name($0.0) }
-            let failed = zip(kinds, why).compactMap { kind, why in why.map { (kind, $0) } }
-            if failed.isEmpty {
-                let word = prepared.isVideo ? "Video" : "Pic"
-                done(sent.count == 1 ? "\(word) sent to \(sent[0])." : "\(word) sent to \(sent[0]) and \(sent.count - 1) more.")
-            } else {
-                picked = failed.map(\.0)
-                problem = failed.map { "Not sent to \(name($0.0)): \($0.1)" }.joined(separator: "\n")
-            }
+        let kinds = picked
+        let name = { (kind: ChatRow.Kind) in chats.first { $0.kind == kind }?.name ?? "a chat" }
+        var gone: [(ChatRow.Kind, String)] = []
+        for kind in kinds {
+            do { try send(kind, pic) } catch { gone.append((kind, error.localizedDescription)) }
+        }
+        let going = kinds.filter { kind in !gone.contains { $0.0 == kind } }.map(name)
+        if gone.isEmpty {
+            done(Self.words(going, video: pic.isVideo))
+        } else {
+            picked = gone.map(\.0)
+            problem = gone.map { "Not sent to \(name($0.0)): \($0.1)" }.joined(separator: "\n")
         }
     }
 
-    /// Runs `work` for each item, at most `limit` at once; what went wrong
-    /// with each (nil if it went), in the items' order.
-    static func each<Item: Sendable>(_ items: [Item], atOnce limit: Int,
-                                     _ work: @escaping @MainActor (Item) async throws -> Void) async -> [String?] {
-        let attempt: @MainActor (Int) async -> (Int, String?) = { i in
-            do {
-                try await work(items[i])
-                return (i, nil)
-            } catch {
-                return (i, error.localizedDescription)
-            }
-        }
-        return await withTaskGroup(of: (Int, String?).self) { group in
-            var why = [String?](repeating: nil, count: items.count)
-            var next = 0
-            while next < min(max(limit, 1), items.count) {
-                let i = next
-                next += 1
-                group.addTask { await attempt(i) }
-            }
-            while let (i, problem) = await group.next() {
-                why[i] = problem
-                if next < items.count {
-                    let i = next
-                    next += 1
-                    group.addTask { await attempt(i) }
-                }
-            }
-            return why
-        }
+    /// Where it's going, for the note after Send.
+    static func words(_ names: [String], video: Bool) -> String {
+        let word = video ? "video" : "pic"
+        return names.count == 1 ? "Sending your \(word) to \(names[0])." : "Sending your \(word) to \(names[0]) and \(names.count - 1) more."
     }
 }

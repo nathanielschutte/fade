@@ -20,11 +20,11 @@ struct Bubble: Identifiable, Equatable, Sendable {
     let mine: Bool
     /// Groups: who sent it (others only).
     let sender: String?
-    let content: Content
+    var content: Content
     let replyTo: Int64?
     let time: Date
     /// Who reacted with what, oldest first (one each). Direct reactions are opened here.
-    let reactions: [Reaction]
+    var reactions: [Reaction]
     /// The one I gave, if any (the same again takes it back).
     var myReaction: String? = nil
     /// One of my texts that can be edited (format 3 in a group), within the window.
@@ -39,6 +39,9 @@ struct Bubble: Identifiable, Equatable, Sendable {
     var senderId: Int64 = 0
     /// An edited text's words as first sent.
     var original: String? = nil
+    /// An edit of mine on its way, shown in place before the server has it
+    /// (Conversation.shown): still going, or why it wasn't saved.
+    var pendingEdit: Outgoing.Status? = nil
 
     /// Your own texts can be edited for 15 minutes after sending (app.js, `canEdit`).
     static let editWindow: TimeInterval = 15 * 60
@@ -260,6 +263,98 @@ struct Outgoing: Identifiable, Equatable, Sendable {
     let text: String
     let replyTo: Int64?
     var status: Status = .sending
+    /// Its place among everything on its way here, texts and pics, as they were sent.
+    var order = 0
+}
+
+/// A pic or video on its way: shown at once in the chat, until the server has
+/// it. Each goes on its own, as soon as it can (never held behind a text, nor
+/// a text behind a large video).
+struct OutgoingPic: Identifiable, Equatable, Sendable {
+    /// Its row's, on this phone only (the copy's own `client_id` is in its PicSlot).
+    let id: String
+    let isVideo: Bool
+    var status: Outgoing.Status = .sending
+    var order = 0
+}
+
+/// A little time in the background, asked of iOS while something's on its way (Conversation.whileAway).
+@MainActor final class BackgroundTime {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    func begin() {
+        id = UIApplication.shared.beginBackgroundTask(withName: "napsack send") {
+            MainActor.assumeIsolated { self.end() }  // out of time: ended, as iOS asks
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
+}
+
+/// Pics and videos upload a few at a time across every chat, without crowding
+/// a phone's connection; the rest wait their turn, still shown as on their way.
+@MainActor final class PicUploads {
+    static let shared = PicUploads()
+    static let atOnce = 3
+    private(set) var going = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func turn() async {
+        if going < Self.atOnce {
+            going += 1
+            return
+        }
+        await withCheckedContinuation { waiting.append($0) }  // handed its place by `done`
+    }
+
+    func done() {
+        if waiting.isEmpty { going -= 1 } else { waiting.removeFirst().resume() }
+    }
+}
+
+/// What's on its way to a chat, in the order it was sent, for the chat to show under its messages.
+enum Waiting: Identifiable, Equatable {
+    case text(Outgoing)
+    case pic(OutgoingPic)
+
+    var id: String {
+        switch self {
+        case .text(let item): "t" + item.id
+        case .pic(let item): "p" + item.id
+        }
+    }
+
+    var order: Int {
+        switch self {
+        case .text(let item): item.order
+        case .pic(let item): item.order
+        }
+    }
+}
+
+/// My reaction on its way, shown at once (nil: taken back). `turn` tells a newer one from it.
+struct PendingReaction: Equatable, Sendable {
+    let emoji: String?
+    let turn: Int
+}
+
+/// A reaction that couldn't go for the connection's sake: it's taken off again.
+enum ReactionError: LocalizedError {
+    case notSent
+    var errorDescription: String? { "Your reaction wasn't sent: no connection. Try it again." }
+}
+
+/// An edit of one of my texts on its way: the new words show at once, and stay
+/// if it can't go, with Try again, so they're never lost.
+struct PendingEdit: Equatable, Sendable {
+    let text: String
+    /// The same on every try, so a retry is never a second edit.
+    let clientId: String
+    var status: Outgoing.Status = .sending
 }
 
 /// Why napsack won't send.
@@ -272,6 +367,8 @@ enum SendError: LocalizedError, Equatable {
     case notAReaction
     /// A chat picked to send to that isn't there anymore (unfriended, left, or gone from the list).
     case noChat
+    /// Past its deadline (Conversation.textDeadline): the connection's too slow, or gone.
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -281,6 +378,7 @@ enum SendError: LocalizedError, Equatable {
         case .tooLarge: "That's too large to send."
         case .notAReaction: "A reaction is one emoji. Pick another."
         case .noChat: "That chat isn't there anymore."
+        case .timedOut: "The connection is too slow."
         case .memberKeyChanged(let name):
             "\(name)'s safety code changed, so napsack won't send to this group. If you're friends, check it in your chat with them."
         }
@@ -320,12 +418,17 @@ struct OpenedPic: Sendable {
 }
 
 /// An open chat: its history, newest page first, older pages as you scroll
-/// back (plan F3: 50 at a time), each message opened on arrival. Texts you
-/// send wait in an outbox until the server has them (app.js, the outbox),
-/// going one at a time in the order written: a bad connection is tried
-/// again, and a text that still can't go waits as "Not sent" with Try again,
-/// holding the ones after it. Unsent texts are only in memory, never kept.
-/// (Pics and videos go on their own, each as soon as it's ready.)
+/// back (plan F3: 50 at a time), each message opened on arrival.
+///
+/// Nothing you send waits on the network (Nate, 2026-11-09; X57): it shows at
+/// once and goes when it can. Texts wait in an outbox until the server has
+/// them (app.js, the outbox), going one at a time in the order written: a bad
+/// connection is tried again, and a text that still can't go by its deadline
+/// waits as "Not sent" with Try again, holding the ones after it. Pics and
+/// videos go on their own, each as soon as it's ready, a few at a time across
+/// chats (PicUploads). Edits show in place and reactions at once, until the
+/// server answers. What wasn't sent stays, in memory, until it's sent or you
+/// remove it; the chat isn't let go meanwhile (OpenedChats).
 @MainActor @Observable final class Conversation {
     enum Chat: Sendable {
         case friend(Friend)
@@ -367,10 +470,42 @@ struct OpenedPic: Sendable {
     @ObservationIgnored private var lastTypingSent = Date.distantPast
     static let typingFor: TimeInterval = 4
 
-    /// Texts that failed for the connection's sake: they go again on reconnect.
+    /// Pics and videos on their way, oldest first.
+    private(set) var pics: [OutgoingPic] = []
+    /// What each pic is (made ready meanwhile), and the server's limits for it.
+    @ObservationIgnored private var picWork: [String: PicWork] = [:]
+    /// Whose turn it is to upload, across every chat.
+    @ObservationIgnored var uploads = PicUploads.shared
+    /// Each pic's copy for this chat once it's ready: how its own copy is known when it comes back.
+    @ObservationIgnored private var picSlots: [String: PicSlot] = [:]
+    /// Edits of my texts on their way, by message.
+    private(set) var edits: [Int64: PendingEdit] = [:]
+    /// Sealed once per edit, so every try sends the same bytes.
+    @ObservationIgnored private var sealedEdits: [String: SealedEdit] = [:]
+    /// The text each edit is of, as it was when edited.
+    @ObservationIgnored private var editedFrom: [Int64: Bubble] = [:]
+    /// Each message's edits go one at a time, in the order made.
+    @ObservationIgnored private var editing: [Int64: Task<Void, Never>] = [:]
+    /// My reactions on their way, by message: shown at once.
+    private(set) var reacting: [Int64: PendingReaction] = [:]
+    /// Reactions go one at a time, in the order given, so the server ends with the last.
+    @ObservationIgnored private var reactions: Task<Void, Never>?
+    @ObservationIgnored private var reactionCount = 0
+    /// Each thing sent's place in line (Outgoing.order).
+    @ObservationIgnored private var sentCount = 0
+
+    /// Things that failed for the connection's sake (texts' and pics' ids): they go again on reconnect.
     private var offline: Set<String> = []
     /// Waits between tries while the connection is the problem.
     var retryDelays: [Duration] = [.seconds(1), .seconds(3)]
+    /// How long a text, an edit, or a reaction has, tries and waits included,
+    /// before it's "Not sent" (Nate, 2026-11-09: about 15 seconds). Requests
+    /// still going then are cancelled; one the server had anyway comes back
+    /// as itself (its `client_id`), and a retry is never a second copy.
+    var textDeadline: Duration = .seconds(15)
+    /// A pic or video's, from its turn to upload (PicUploads): it's larger,
+    /// up to the server's video cap, and a phone's upload is slower.
+    var picDeadline: Duration = .seconds(60)
 
     init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, cache: ResponseCache? = nil,
          transport: any Transport = NetworkTransport()) {
@@ -642,10 +777,29 @@ struct OpenedPic: Sendable {
 
     /// Puts a text in the outbox, to show at once; `retry` sends it.
     func queue(_ text: String, replyTo: Int64?) -> String {
-        let item = Outgoing(id: Self.newClientId(), text: text, replyTo: replyTo)
+        let item = Outgoing(id: Self.newClientId(), text: text, replyTo: replyTo, order: nextInLine())
         outbox.append(item)
         holdBehindUnsent()
         return item.id
+    }
+
+    private func nextInLine() -> Int {
+        sentCount += 1
+        return sentCount
+    }
+
+    /// Everything on its way here, texts and pics, in the order sent.
+    var waiting: [Waiting] {
+        (outbox.map(Waiting.text) + pics.map(Waiting.pic)).sorted { $0.order < $1.order }
+    }
+
+    /// Nothing on its way, nor waiting as not sent (the chat can be let go).
+    var nothingWaiting: Bool { outbox.isEmpty && pics.isEmpty && edits.isEmpty }
+
+    /// Something here wasn't sent (the chat list says so).
+    var hasUnsent: Bool {
+        let failed = { (status: Outgoing.Status) in if case .failed = status { true } else { false } }
+        return outbox.contains { failed($0.status) } || pics.contains { failed($0.status) } || edits.values.contains { failed($0.status) }
     }
 
     /// Sends a queued text, or tries one that wasn't sent again (with the
@@ -685,7 +839,9 @@ struct OpenedPic: Sendable {
     private func sendInOrder() async {
         if let sending { return await sending.value }
         let task = Task {
-            while let next = outbox.first, next.status == .sending { await attempt(next.id) }
+            await Self.whileAway {
+                while let next = outbox.first, next.status == .sending { await attempt(next.id) }
+            }
             sending = nil  // with no wait since the check: a text queued meanwhile was seen by it
         }
         sending = task
@@ -716,26 +872,59 @@ struct OpenedPic: Sendable {
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
         outbox[i].status = .sending
         offline.remove(id)
-        var failure: (any Error)?
-        for n in 0...retryDelays.count {
-            guard let item = outbox.first(where: { $0.id == id }) else { return }
-            do {
-                let bubble = try await post(item)
-                settle(id, bubble)
-                return
-            } catch {
-                failure = error
-                guard (error as? ServerError)?.retryable == true, n < retryDelays.count else { break }
-                try? await Task.sleep(for: retryDelays[n])
+        let failure: any Error
+        do {
+            let bubble = try await within(textDeadline) { [self] in
+                try await retrying {
+                    // Gone meanwhile (removed, or its own copy came back): nothing more to send.
+                    guard let item = outbox.first(where: { $0.id == id }) else { throw CancellationError() }
+                    return try await post(item)
+                }
             }
+            settle(id, bubble)
+            return
+        } catch {
+            failure = error
         }
         guard let i = outbox.firstIndex(where: { $0.id == id }) else { return }
-        let connection = failure.map { ($0 as? ServerError)?.retryable == true } ?? true
+        let (why, connection) = notSent(failure)
         if connection { offline.insert(id) }
-        Reporter.shared.report(.warn, "send failed", failure.map { Reporter.fields($0, ["group": groupFlag]) } ?? [:])
-        let why = connection ? "no connection." : failure?.localizedDescription ?? "no connection."
-        outbox[i].status = .failed("Not sent: \(why)")
+        outbox[i].status = .failed(why)
         holdBehindUnsent()  // the ones after it wait for it
+    }
+
+    /// Why something wasn't sent, in words, and whether the connection was
+    /// the problem (then it goes again by itself once it's back). Reported.
+    private func notSent(_ failure: any Error, what: String = "text") -> (why: String, connection: Bool) {
+        let timedOut = failure as? SendError == .timedOut
+        let connection = timedOut || (failure as? ServerError)?.retryable == true
+        Reporter.shared.report(.warn, "send failed", Reporter.fields(failure, ["group": groupFlag, "what": what, "timed_out": String(timedOut)]))
+        let why = timedOut ? "the connection is too slow." : connection ? "no connection." : failure.localizedDescription
+        return ("Not sent: \(why)", connection)
+    }
+
+    /// Runs `body` until `deadline`; past it the body is cancelled (its
+    /// request with it) and this throws `SendError.timedOut`.
+    private func within<T: Sendable>(_ deadline: Duration, _ body: @escaping @MainActor @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await body() }
+            group.addTask {
+                try await Task.sleep(for: deadline)
+                throw SendError.timedOut
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
+    /// Lets something on its way finish when napsack is left just after it's
+    /// sent: iOS gives an app that asks a little longer in the background
+    /// (and ends it, as asked, if that runs out first).
+    static func whileAway<T>(_ work: () async -> T) async -> T {
+        let time = BackgroundTime()
+        time.begin()
+        defer { time.end() }
+        return await work()
     }
 
     /// It's in: the server's copy joins the chat, and the outbox lets it go.
@@ -788,6 +977,63 @@ struct OpenedPic: Sendable {
     }
 
     // ---------- sending a photo ----------
+
+    /// What a pic on its way is: being made ready (once, for every chat it goes
+    /// to), and the server's limits then.
+    struct PicWork {
+        let ready: Task<ReadyToSend, any Error>
+        let limits: ServerConfig?
+    }
+
+    /// Puts a pic or video on its way here: it shows at once, and goes when it
+    /// can. The camera doesn't wait for it (X57).
+    @discardableResult func queuePic(_ ready: Task<ReadyToSend, any Error>, isVideo: Bool, limits: ServerConfig?) -> String {
+        let item = OutgoingPic(id: Self.newClientId(), isVideo: isVideo, order: nextInLine())
+        pics.append(item)
+        picWork[item.id] = PicWork(ready: ready, limits: limits)
+        Task { await sendPic(item.id) }
+        return item.id
+    }
+
+    /// Tries a pic that wasn't sent again: the same copy, so the server never has two.
+    func retryPic(_ id: String) async {
+        guard let i = pics.firstIndex(where: { $0.id == id }), case .failed = pics[i].status else { return }
+        pics[i].status = .sending
+        offline.remove(id)
+        await sendPic(id)
+    }
+
+    /// Gives up on a pic that wasn't sent.
+    func removePic(_ id: String) {
+        pics.removeAll { $0.id == id }
+        picWork[id] = nil
+        picSlots[id] = nil
+        offline.remove(id)
+    }
+
+    /// Waits its turn among every chat's uploads, then sends it, by its deadline.
+    private func sendPic(_ id: String) async {
+        guard let work = picWork[id] else { return }
+        await Self.whileAway {
+            let uploads = uploads
+            await uploads.turn()
+            defer { uploads.done() }
+            guard pics.contains(where: { $0.id == id }) else { return }  // its own copy came back meanwhile
+            do {
+                try await within(picDeadline) { [self] in
+                    let ready = try await work.ready.value
+                    picSlots[id] = ready.sends.slot(kind)
+                    try await ready.send(to: self, limits: work.limits)
+                }
+                removePic(id)  // its server copy joined the chat as it went
+            } catch {
+                guard let i = pics.firstIndex(where: { $0.id == id }) else { return }
+                let (why, connection) = notSent(error, what: pics[i].isVideo ? "video" : "pic")
+                if connection { offline.insert(id) }
+                pics[i].status = .failed(why)
+            }
+        }
+    }
 
     /// Sends a photo (a JPEG made on the phone) with its caption sealed in:
     /// format 6 to a friend, 7 to a group (app.js, `sendSnapTo`, `sendGroupPicTo`).
@@ -955,7 +1201,10 @@ struct OpenedPic: Sendable {
     /// a new text from them (to mark it read while it's on screen).
     @discardableResult func arrived(_ m: DirectMessage) -> Bool {
         guard loaded, let friend, [m.senderId, m.recipientId].contains(friend.id) else { return false }
-        if m.senderId == account.user.id, let clientId = m.clientId { _ = discard(clientId) }  // it went
+        if m.senderId == account.user.id, let clientId = m.clientId {  // it went
+            _ = discard(clientId)
+            arrivedPic(clientId)
+        }
         let new = !bubbles.slot(of: m.id).found
         if new { typingUntil[m.senderId] = nil }  // their message is in: they're done typing
         upsert(reader.bubble(m, with: friend, ring: ring))
@@ -965,9 +1214,9 @@ struct OpenedPic: Sendable {
     /// A group message, new or changed, from the socket. Returns whether it's new and someone else's.
     @discardableResult func arrived(_ m: GroupMessage) -> Bool {
         guard loaded, case .group(let group) = chat, m.groupId == group.id else { return false }
-        if m.senderId == account.user.id, let clientId = m.clientId,
-           let id = sealedGroupTexts.first(where: { $0.value.clientId == clientId })?.key {
-            _ = discard(id)
+        if m.senderId == account.user.id, let clientId = m.clientId {
+            if let id = sealedGroupTexts.first(where: { $0.value.clientId == clientId })?.key { _ = discard(id) }
+            arrivedPic(clientId)
         }
         if let pinBook, let key = m.senderPublicKey {
             pinBook.see(senders: [(m.senderId, key)])
@@ -979,58 +1228,182 @@ struct OpenedPic: Sendable {
         return new && m.senderId != account.user.id
     }
 
+    /// One of my pics came back as itself (from another of my devices' view,
+    /// or the server had it though its answer was lost): it's sent.
+    private func arrivedPic(_ clientId: String) {
+        if let id = picSlots.first(where: { $0.value.clientId == clientId || $0.value.sealed?.clientId == clientId })?.key {
+            removePic(id)
+        }
+    }
+
+    /// A message as it shows: with my edit or reaction on its way, before the server has it.
+    func shown(_ bubble: Bubble) -> Bubble {
+        var shown = bubble
+        if let edit = edits[bubble.id], case .text = bubble.content {
+            shown.content = .text(edit.text, edited: true)
+            shown.pendingEdit = edit.status
+        }
+        if let pending = reacting[bubble.id] {
+            shown.reactions.removeAll { $0.user == account.user.id }
+            if let emoji = pending.emoji { shown.reactions.append(Bubble.Reaction(user: account.user.id, emoji: emoji)) }
+            shown.myReaction = pending.emoji
+        }
+        return shown
+    }
+
     /// Reacts to a message; the same emoji again takes it back, another replaces it.
     /// Direct reactions are encrypted; group reactions aren't (each group says so).
+    /// It shows at once; if it can't go by the deadline, it's taken off again and this throws why.
     func react(_ bubble: Bubble, _ emoji: String) async throws {
         guard E2E.isReaction(emoji) else { throw SendError.notAReaction }
-        let server = try Server(account.server, transport: transport)
-        let next = bubble.myReaction == emoji ? nil : emoji
-        switch chat {
-        case .friend(let friend):
+        let id = bubble.id
+        let current = reacting[id].map(\.emoji) ?? (self.bubble(id) ?? bubble).myReaction
+        let next = current == emoji ? nil : emoji
+        var ciphertext: String?
+        if case .friend(let friend) = chat {
             let key = try sendingPairKey(friend)
-            let ciphertext = try next.map { try E2E.encryptReaction(key, $0, sender: account.user.id, recipient: friend.id, message: bubble.id) }
-            upsert(reader.bubble(try await server.react(to: bubble.id, friend: friend.id, ciphertext: ciphertext, token: account.token), with: friend, ring: ring))
-        case .group(let group):
-            upsert(reader.bubble(try await server.react(to: bubble.id, group: group.id, emoji: next, token: account.token), ring: ring))
+            ciphertext = try next.map { try E2E.encryptReaction(key, $0, sender: account.user.id, recipient: friend.id, message: id) }
+        }
+        reactionCount += 1
+        let turn = reactionCount
+        reacting[id] = PendingReaction(emoji: next, turn: turn)
+        defer { if reacting[id]?.turn == turn { reacting[id] = nil } }  // a newer one shows until it's in
+        let before = reactions
+        let going = Task { [self, ciphertext] () async throws -> Bubble in
+            await before?.value
+            return try await within(textDeadline) { [self] in
+                try await retrying { try await postReaction(id, next, ciphertext: ciphertext) }
+            }
+        }
+        reactions = Task { _ = await going.result }
+        do {
+            upsert(try await Self.whileAway { await going.result }.get())
+        } catch {
+            _ = notSent(error, what: "reaction")
+            throw (error as? SendError) == .timedOut || (error as? ServerError)?.retryable == true ? ReactionError.notSent : error
         }
     }
 
-    /// Replaces one of my texts with new words. Every version is kept on the
-    /// server; the newest shows. Tried again while the connection is the
-    /// problem, with the same `client_id`, so a retry isn't a second edit.
-    func edit(_ bubble: Bubble, to text: String) async throws {
+    private func postReaction(_ id: Int64, _ emoji: String?, ciphertext: String?) async throws -> Bubble {
         let server = try Server(account.server, transport: transport)
-        let clientId = Self.newClientId()
         switch chat {
         case .friend(let friend):
-            let ciphertext = try E2E.encryptEdit(try sendingPairKey(friend), text, sender: account.user.id, recipient: friend.id, message: bubble.id)
-            let m = try await retrying { try await server.editText(bubble.id, friend: friend.id, ciphertext: ciphertext, clientId: clientId, token: self.account.token) }
-            upsert(reader.bubble(m, with: friend, ring: ring))
+            return reader.bubble(try await server.react(to: id, friend: friend.id, ciphertext: ciphertext, token: account.token), with: friend, ring: ring)
         case .group(let group):
-            let members = try await server.group(group.id, token: account.token).members
-            var wrapKeys: [Int64: SymmetricKey] = [:]
-            for id in bubble.recipients ?? [] {
-                let key: String
-                if let member = members.first(where: { $0.id == id }) {
-                    key = try sendingKey(member)
-                } else if let known = id == account.user.id ? account.publicKey : reader.pins.current[id] {
-                    key = known  // left the group since: the key I pinned
-                } else {
-                    throw SendError.cantEdit
-                }
-                wrapKeys[id] = try ring.groupWrap(mine: reader.identity, theirs: key, myId: account.user.id, theirId: id)
-            }
-            let sealed = try E2E.encryptGroupEdit(text, message: bubble.id, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
-            let m = try await retrying { try await server.editGroupText(bubble.id, group: group.id, sealed, token: self.account.token) }
-            upsert(reader.bubble(m, ring: ring))
+            return reader.bubble(try await server.react(to: id, group: group.id, emoji: emoji, token: account.token), ring: ring)
         }
     }
 
-    /// Up to three tries while the connection is the problem.
+    /// Replaces one of my texts with new words. They show at once, in place,
+    /// and go when they can; one that can't go by the deadline stays shown as
+    /// not saved, with Try again, so the words are never lost. Every version
+    /// is kept on the server; the newest shows. Each try sends the same sealed
+    /// bytes with the same `client_id`, so a retry isn't a second edit.
+    /// Returns its sending, to wait for if need be.
+    @discardableResult func edit(_ bubble: Bubble, to text: String) -> Task<Void, Never> {
+        edits[bubble.id] = PendingEdit(text: text, clientId: Self.newClientId())
+        editedFrom[bubble.id] = self.bubble(bubble.id) ?? bubble
+        return sendEdit(bubble.id)
+    }
+
+    /// Tries an edit that wasn't saved again.
+    @discardableResult func retryEdit(_ id: Int64) -> Task<Void, Never>? {
+        guard let edit = edits[id], case .failed = edit.status else { return nil }
+        edits[id]?.status = .sending
+        offline.remove(edit.clientId)
+        return sendEdit(id)
+    }
+
+    /// Gives up on an edit that wasn't saved: the text shows as it was. Returns the edit's words.
+    @discardableResult func dropEdit(_ id: Int64) -> String? {
+        guard let edit = edits.removeValue(forKey: id) else { return nil }
+        editedFrom[id] = nil
+        sealedEdits[edit.clientId] = nil
+        offline.remove(edit.clientId)
+        return edit.text
+    }
+
+    /// After the message's edit before it, if one is going.
+    private func sendEdit(_ id: Int64) -> Task<Void, Never> {
+        let before = editing[id]
+        let task = Task {
+            await before?.value
+            await Self.whileAway { await attemptEdit(id) }
+        }
+        editing[id] = task
+        return task
+    }
+
+    private func attemptEdit(_ id: Int64) async {
+        // The text as the server last had it: a group edit is sealed for its own members.
+        guard let edit = edits[id], edit.status == .sending, let bubble = bubble(id) ?? editedFrom[id] else { return }
+        do {
+            let saved = try await within(textDeadline) { [self] in try await retrying { try await postEdit(bubble, edit) } }
+            if edits[id]?.clientId == edit.clientId {
+                edits[id] = nil
+                editedFrom[id] = nil
+                sealedEdits[edit.clientId] = nil
+            }
+            upsert(saved)
+        } catch {
+            guard edits[id]?.clientId == edit.clientId else { return }  // a newer edit meanwhile: it's what shows, and goes
+            let (why, connection) = notSent(error, what: "edit")
+            if connection { offline.insert(edit.clientId) }
+            edits[id]?.status = .failed("Not saved" + why.dropFirst("Not sent".count))
+        }
+    }
+
+    /// An edit sealed once: a direct chat's ciphertext, or a group's sealed copy.
+    enum SealedEdit {
+        case direct(String)
+        case group(E2E.GroupMessage)
+    }
+
+    private func postEdit(_ bubble: Bubble, _ edit: PendingEdit) async throws -> Bubble {
+        let server = try Server(account.server, transport: transport)
+        switch chat {
+        case .friend(let friend):
+            let ciphertext: String
+            if case .direct(let kept) = sealedEdits[edit.clientId] {
+                ciphertext = kept
+            } else {
+                ciphertext = try E2E.encryptEdit(try sendingPairKey(friend), edit.text, sender: account.user.id, recipient: friend.id, message: bubble.id)
+                sealedEdits[edit.clientId] = .direct(ciphertext)
+            }
+            let m = try await server.editText(bubble.id, friend: friend.id, ciphertext: ciphertext, clientId: edit.clientId, token: account.token)
+            return reader.bubble(m, with: friend, ring: ring)
+        case .group(let group):
+            let sealed: E2E.GroupMessage
+            if case .group(let kept) = sealedEdits[edit.clientId] {
+                sealed = kept
+            } else {
+                let members = try await server.group(group.id, token: account.token).members
+                var wrapKeys: [Int64: SymmetricKey] = [:]
+                for id in bubble.recipients ?? [] {
+                    let key: String
+                    if let member = members.first(where: { $0.id == id }) {
+                        key = try sendingKey(member)
+                    } else if let known = id == account.user.id ? account.publicKey : reader.pins.current[id] {
+                        key = known  // left the group since: the key I pinned
+                    } else {
+                        throw SendError.cantEdit
+                    }
+                    wrapKeys[id] = try ring.groupWrap(mine: reader.identity, theirs: key, myId: account.user.id, theirId: id)
+                }
+                sealed = try E2E.encryptGroupEdit(edit.text, message: bubble.id, groupId: group.id, senderId: account.user.id, wrapKeys: wrapKeys)
+                sealedEdits[edit.clientId] = .group(sealed)
+            }
+            let m = try await server.editGroupText(bubble.id, group: group.id, sealed, token: account.token)
+            return reader.bubble(m, ring: ring)
+        }
+    }
+
+    /// Up to three tries while the connection is the problem. A deadline
+    /// passed (cancelled) stops it at once, between tries too.
     private func retrying<T>(_ body: () async throws -> T) async throws -> T {
         for delay in retryDelays {
             do { return try await body() } catch let error as ServerError where error.retryable {
-                try? await Task.sleep(for: delay)
+                try await Task.sleep(for: delay)
             }
         }
         return try await body()
@@ -1104,8 +1477,10 @@ struct OpenedPic: Sendable {
         return url
     }
 
-    /// Back online: texts that couldn't go for the connection's sake go now.
+    /// Back online: what couldn't go for the connection's sake goes now.
     func flush() async {
+        for id in pics.map(\.id) where offline.contains(id) { Task { await retryPic(id) } }
+        for (message, edit) in edits where offline.contains(edit.clientId) { retryEdit(message) }
         for id in outbox.map(\.id) where offline.contains(id) { await retry(id) }
     }
 

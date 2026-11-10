@@ -128,11 +128,45 @@ extension OnScreen {
                     username: "ben"),
         ]
 
+        /// What's on its way (X57): a text going (a small clock), one waiting
+        /// behind one not sent, a pic going and one not sent, an edit not
+        /// saved, and the chat list's row for a chat with something not sent.
+        @Test func onItsWay() async throws {
+            let sending = SendingTests()
+            let down = Conversation(.friend(sending.alice), account: sending.account, reader: sending.reader,
+                                    transport: StubServer { _ in throw URLError(.notConnectedToInternet) })
+            down.retryDelays = [.zero, .zero]
+            await down.send("Are we still on for tonight?", replyTo: nil)
+            let row = ChatRow(kind: .friend(7), name: "alice", preview: "See you then", waiting: nil, time: .now, favorite: false, muted: false,
+                              hidden: false)
+            let edited = Bubble(id: 1, mine: true, sender: nil, content: .text("Running ten minutes late, sorry!", edited: true), replyTo: nil,
+                                time: .now, reactions: [], pendingEdit: .failed("Not saved: no connection."))
+            try await shoot("fit-on-its-way", wait: .milliseconds(200)) {
+                VStack(spacing: 12) {
+                    ChatRowView(row: row, sending: down)
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            BubbleView(bubble: edited, quote: nil, showTime: true, pending: edited.pendingEdit)
+                            NotSentLine(why: "Not saved: no connection.", retry: {}, removeTitle: "Undo", remove: {})
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            OutgoingView(text: Outgoing(id: "a", text: "On my way now", replyTo: nil, status: .sending), quote: nil, retry: {}, remove: {})
+                            OutgoingView(pic: OutgoingPic(id: "b", isVideo: false), retry: {}, remove: {})
+                            OutgoingView(text: Outgoing(id: "c", text: "Can you grab milk?", replyTo: nil, status: .failed("Not sent: the connection is too slow.")),
+                                         quote: nil, retry: {}, remove: {})
+                            OutgoingView(text: Outgoing(id: "d", text: "And bread", replyTo: nil, status: .held), quote: nil, retry: {}, remove: {})
+                            OutgoingView(pic: OutgoingPic(id: "e", isVideo: true, status: .failed("Not sent: no connection.")), retry: {}, remove: {})
+                        }
+                        .padding(.horizontal, 12)
+                    }
+                }
+            }
+        }
+
         /// Send to…, opened from a chat's camera: that chat picked already.
         @Test func sendToFromAChat() async throws {
             try await shoot("fit-send-to-from-chat") {
                 NavigationStack {
-                    SendToScreen(ready: Task { ReadyToSend(media: .photo(Data()), caption: "", y: 0.75) }, chats: Self.sendable,
+                    SendToScreen(pic: PicToSend(ready: Task { ReadyToSend(media: .photo(Data()), caption: "", y: 0.75) }, isVideo: false), chats: Self.sendable,
                                  picked: [.friend(8)], send: { _, _ in }, done: { _ in })
                 }
             }

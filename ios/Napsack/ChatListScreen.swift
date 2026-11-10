@@ -79,7 +79,7 @@ struct ChatListScreen: View {
                 if tab == .camera {
                     // Send picks the chats on the next screen; back returns to the pic.
                     CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
-                                 send: .pick(sendable, { kind, ready in try await send(ready, to: kind) }, done: { words in
+                                 send: .pick(sendable, { kind, pic in try send(pic, to: kind) }, done: { words in
                                      toast = Toast(text: words, undo: nil)
                                      tab = .chats  // where it went, as on the web
                                  }),
@@ -140,7 +140,7 @@ struct ChatListScreen: View {
         if row.opensPics {
             Button { openPics(row) } label: {
                 HStack(spacing: 0) {
-                    ChatRowView(row: row)
+                    ChatRowView(row: row, sending: opened.peek(row.kind))
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")  // as the links' rows
                         .font(.footnote.weight(.semibold))
@@ -151,7 +151,7 @@ struct ChatListScreen: View {
             }
             .foregroundStyle(.primary)
         } else {
-            NavigationLink(value: Screen.chat(row.kind)) { ChatRowView(row: row) }
+            NavigationLink(value: Screen.chat(row.kind)) { ChatRowView(row: row, sending: opened.peek(row.kind)) }
         }
     }
 
@@ -208,7 +208,7 @@ struct ChatListScreen: View {
                 .environment(\.foundMessage, found?.kind == kind ? found?.message : nil)
                 .environment(\.openChatLink, OpenChatLink(run: openLink))
                 // Its camera's "To Ben +": the chats here, to send to as well.
-                .environment(\.sendElsewhere, SendElsewhere(chats: { sendable }, send: { kind, ready in try await send(ready, to: kind) }))
+                .environment(\.sendElsewhere, SendElsewhere(chats: { sendable }, send: { kind, pic in try send(pic, to: kind) }))
         }
     }
 
@@ -414,10 +414,12 @@ struct ChatListScreen: View {
         }
     }
 
-    /// A ready pic or video to one chat: compressed once, sealed for each chat.
-    private func send(_ ready: ReadyToSend, to kind: ChatRow.Kind) async throws {
+    /// A pic or video to one chat: made ready once, sealed for each chat as
+    /// it goes. On its way at once, shown in that chat (and its row says if it
+    /// couldn't go).
+    private func send(_ pic: PicToSend, to kind: ChatRow.Kind) throws {
         guard let chat = conversation(kind) else { throw SendError.noChat }
-        try await ready.send(to: chat, limits: limits)
+        chat.queuePic(pic.ready, isVideo: pic.isVideo, limits: limits)
     }
 
     private func conversation(_ kind: ChatRow.Kind) -> Conversation? {
@@ -581,6 +583,8 @@ struct ChatListScreen: View {
 
 struct ChatRowView: View {
     let row: ChatRow
+    /// The chat, if it's open in the app: something of mine that wasn't sent shows here too.
+    var sending: Conversation? = nil
     @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
@@ -599,10 +603,14 @@ struct ChatRowView: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    Text(row.preview)
-                        .lineLimit(textSize.isAccessibilitySize ? 2 : 1)
-                        .foregroundStyle(row.waiting == nil ? .secondary : .primary)
-                        .fontWeight(row.waiting == nil ? .regular : .semibold)
+                    if sending?.hasUnsent == true {
+                        Label("Not sent", systemImage: "exclamationmark.circle.fill").foregroundStyle(.red)
+                    } else {
+                        Text(row.preview)
+                            .lineLimit(textSize.isAccessibilitySize ? 2 : 1)
+                            .foregroundStyle(row.waiting == nil ? .secondary : .primary)
+                            .fontWeight(row.waiting == nil ? .regular : .semibold)
+                    }
                     Spacer(minLength: 8)
                     if let waiting = row.waiting {
                         Circle()
@@ -699,22 +707,23 @@ struct ReconnectingNote: View {
     func peek(_ kind: ChatRow.Kind) -> Conversation? { chats[kind] }
 
     /// A chat just opened. Past the limit, the longest unopened goes, unless
-    /// it has texts waiting, is `busy` (shown, or in the stack), or is `open`.
+    /// it has something waiting to send (or not sent: it's never lost), is
+    /// `busy` (shown, or in the stack), or is `open`.
     func keep(_ chat: Conversation, as kind: ChatRow.Kind, busy: Set<ChatRow.Kind> = [], open: Conversation? = nil) {
         chats[kind] = chat
         order.removeAll { $0 == kind }
         order.append(kind)
         while chats.count > Self.kept, let old = order.first(where: { k in
             guard let c = chats[k] else { return true }
-            return k != kind && c.outbox.isEmpty && !busy.contains(k) && c !== open
+            return k != kind && c.nothingWaiting && !busy.contains(k) && c !== open
         }) {
             chats[old] = nil
             order.removeAll { $0 == old }
         }
     }
 
-    /// Kept chats with texts still to send (on a reconnect, they go).
-    var waitingToSend: [Conversation] { chats.values.filter { !$0.outbox.isEmpty } }
+    /// Kept chats with something still to send (on a reconnect, it goes).
+    var waitingToSend: [Conversation] { chats.values.filter { !$0.nothingWaiting } }
 
     var count: Int { chats.count }
 }

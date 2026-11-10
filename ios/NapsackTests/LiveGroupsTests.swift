@@ -64,8 +64,8 @@ struct LiveGroupsTests {
         let anas = try await chat(ana)
         await anas.send("first draft", replyTo: nil)
         let text = try #require(anas.bubbles.last)
-        try await anas.edit(text, to: "second draft")
-        try await anas.edit(try #require(anas.bubble(text.id)), to: "final")
+        await anas.edit(text, to: "second draft").value
+        await anas.edit(try #require(anas.bubble(text.id)), to: "final").value
 
         await anas.loadGroupReads()
         #expect(anas.seenBy == nil)
@@ -94,7 +94,7 @@ struct LiveGroupsTests {
         try await toBen.loadNewest()
         await toBen.send("8pm?", replyTo: nil)
         let text = try #require(toBen.bubbles.last)
-        try await toBen.edit(text, to: "8:30?")
+        await toBen.edit(text, to: "8:30?").value
         let edited = try #require(toBen.bubble(text.id))
         #expect(edited.original == "8pm?")
         #expect(try await toBen.versions(of: edited).map(\.text) == ["8pm?", "8:30?"])

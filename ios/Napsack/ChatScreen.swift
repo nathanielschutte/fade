@@ -128,7 +128,7 @@ struct ChatScreen: View {
     /// To the newest message by its id, when it's the last row (no text still going or typing
     /// line below it): a scroll to a row has the list lay the row out. Then `placingEnd`.
     private func drawEnd() -> Bool {
-        guard conversation.outbox.isEmpty, conversation.typingLine == nil,
+        guard conversation.waiting.isEmpty, conversation.typingLine == nil,
               let newest = conversation.bubbles.last?.id else { return false }
         position.scrollTo(id: newest, anchor: .bottom)
         placingEnd = true
@@ -158,14 +158,20 @@ struct ChatScreen: View {
                 }
                 let seenId = conversation.seenId
                 ForEach(conversation.bubbles) { bubble in
-                    message(bubble, seenId: seenId)
+                    message(conversation.shown(bubble), seenId: seenId)  // with my edit or reaction on its way
                 }
-                ForEach(conversation.outbox) { item in
-                    OutgoingView(item: item, quote: item.replyTo.map(quote),
-                                 retry: { Task { await conversation.retry(item.id) } },
-                                 remove: {
-                                     if let text = conversation.discard(item.id), draft.isEmpty { draft = text }  // nothing lost
-                                 })
+                ForEach(conversation.waiting) { waiting in
+                    switch waiting {
+                    case .text(let item):
+                        OutgoingView(text: item, quote: item.replyTo.map(quote),
+                                     retry: { Task { await conversation.retry(item.id) } },
+                                     remove: {
+                                         if let text = conversation.discard(item.id), draft.isEmpty { draft = text }  // nothing lost
+                                     })
+                    case .pic(let item):
+                        OutgoingView(pic: item, retry: { Task { await conversation.retryPic(item.id) } },
+                                     remove: { conversation.removePic(item.id) })
+                    }
                 }
                 if let typing = conversation.typingLine {
                     // Under the newest, where their message will be.
@@ -496,7 +502,7 @@ struct ChatScreen: View {
                 .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 10)
         }
         BubbleView(bubble: bubble, quote: bubble.replyTo.map(quote), showTime: endsARun(bubble, next),
-                   whoReacted: { reactionsOf = ReactionsOpening(message: bubble.id, emoji: $0) })
+                   whoReacted: { reactionsOf = ReactionsOpening(message: bubble.id, emoji: $0) }, pending: bubble.pendingEdit)
             .modifier(HoldForMenu(enabled: holdable(bubble)) { held = bubble })
             .onTapGesture { if let pic = bubble.opening { viewing = pic } }
             .modifier(SwipeToReply(enabled: conversation.canSend && bubble.repliable && held == nil) {
@@ -509,6 +515,16 @@ struct ChatScreen: View {
                 // Near the oldest shown: the page before starts coming now.
                 if index == Self.loadAhead && !conversation.reachedStart { Task { await older() } }
             }
+        if case .failed(let why) = bubble.pendingEdit {
+            // Not saved: the new words stay shown until they go, or are given up on (then back in the box).
+            NotSentLine(why: why, retry: { conversation.retryEdit(bubble.id) }, removeTitle: "Undo") {
+                if let text = conversation.dropEdit(bubble.id), draft.isEmpty, editing == nil, replyingTo == nil {
+                    editing = conversation.bubble(bubble.id)
+                    draft = text
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
         if bubble.id == seenId {
             Text("Seen").font(.caption2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 4)
@@ -533,7 +549,7 @@ struct ChatScreen: View {
         if case .text(let text, _) = bubble.content {
             actions.append(.init(title: "Copy", icon: "doc.on.doc") { UIPasteboard.general.string = text })
         }
-        if case .text(_, true) = bubble.content {
+        if case .text(_, true) = (conversation.bubble(bubble.id) ?? bubble).content {  // edited on the server, not just on its way
             actions.append(.init(title: "Edits", icon: "clock.arrow.circlepath") { versionsOf = bubble })
         }
         if conversation.canSend, bubble.canEdit, case .text(let text, _) = bubble.content {
@@ -610,18 +626,11 @@ struct ChatScreen: View {
         guard !text.isEmpty, conversation.canSend else { return }
         draft = ""
         tapped += 1
+        composing = true  // the box stays ready for the next one
         if let editing {
             self.editing = nil
-            guard case .text(let before, _) = editing.content, before != text else { return }  // nothing changed
-            Task {
-                do {
-                    try await conversation.edit(editing, to: text)
-                } catch {
-                    // Nothing lost: it's back in the box to try again.
-                    if draft.isEmpty { draft = text; self.editing = editing }
-                    trouble(error)
-                }
-            }
+            guard case .text(let before, _) = conversation.shown(editing).content, before != text else { return }  // nothing changed
+            conversation.edit(editing, to: text)  // shown at once; one that can't go stays, with Try again
             return
         }
         let reply = replyingTo?.id
@@ -640,11 +649,11 @@ struct ChatScreen: View {
         // This chat itself, kept: a send still going when the chat's been swapped
         // for another (a notification opened meanwhile) still goes here.
         let chat = conversation, here = conversation.kind, limits = limits
-        return CameraSend.AddMore(here: here, chats: sendElsewhere.chats, send: { kind, ready in
+        return CameraSend.AddMore(here: here, chats: sendElsewhere.chats, send: { kind, pic in
             if kind == here {
-                try await ready.send(to: chat, limits: limits)
+                chat.queuePic(pic.ready, isVideo: pic.isVideo, limits: limits)
             } else {
-                try await sendElsewhere.send(kind, ready)
+                try sendElsewhere.send(kind, pic)
             }
         }, done: { words in
             tapped += 1
@@ -685,10 +694,12 @@ struct ChatScreen: View {
         .fullScreenCover(item: $camera) { opening in
             // Captured, it stays on the camera until it's sent here (Nate, 2026-10-30).
             CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
-                         send: .chat(conversation.title, { ready in
-                             try await ready.send(to: conversation, limits: limits)
+                         send: .chat(conversation.title, { pic in
+                             // On its way at once, shown in the chat: the camera doesn't wait for it (X57).
+                             conversation.queuePic(pic.ready, isVideo: pic.isVideo, limits: limits)
                              tapped += 1
                              camera = nil
+                             goToNewest()
                          }, more: addMore),
                          start: opening.start)
         }
@@ -767,30 +778,42 @@ struct ChatScreen: View {
     }
 }
 
-/// A text on its way, under the chat: "Sending…", or why it wasn't sent and what to do.
+/// Something on its way, under the chat: a text, or a pic or video, shown at
+/// once as it will be, a little faded with a small clock where its time goes
+/// until the server has it (Nate, 2026-11-09: very subtle); or why it wasn't
+/// sent and what to do.
 struct OutgoingView: View {
-    let item: Outgoing
+    let bubble: Bubble
+    let status: Outgoing.Status
     let quote: String?
     let retry: () -> Void
     let remove: () -> Void
 
+    init(text item: Outgoing, quote: String?, retry: @escaping () -> Void, remove: @escaping () -> Void) {
+        bubble = Bubble(id: 0, mine: true, sender: nil, content: .text(item.text, edited: false), replyTo: item.replyTo, time: .now, reactions: [])
+        status = item.status
+        self.quote = quote
+        self.retry = retry
+        self.remove = remove
+    }
+
+    init(pic item: OutgoingPic, retry: @escaping () -> Void, remove: @escaping () -> Void) {
+        bubble = Bubble(id: 0, mine: true, sender: nil, content: .media(item.isVideo ? "Video" : "Pic"), replyTo: nil, time: .now, reactions: [])
+        status = item.status
+        quote = nil
+        self.retry = retry
+        self.remove = remove
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
-            BubbleView(bubble: Bubble(id: 0, mine: true, sender: nil, content: .text(item.text, edited: false), replyTo: item.replyTo,
-                                      time: .now, reactions: []),
-                       quote: quote, showTime: false)
-                .opacity(0.6)
-            switch item.status {
+            BubbleView(bubble: bubble, quote: quote, showTime: false, pending: status)
+                .opacity(status == .sending || status == .held ? 0.75 : 1)
+            switch status {
             case .sending:
-                Text("Sending…").font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
+                EmptyView()
             case .failed(let why):
-                HStack(spacing: 4) {
-                    Text(why)
-                    Button("Try again", action: retry)
-                    Text("·")
-                    Button("Remove", action: remove)
-                }
-                .font(.caption2).foregroundStyle(.red).padding(.horizontal, 4)
+                NotSentLine(why: why, retry: retry, remove: remove)
             case .held:
                 // In order: it goes once the one above is sent, or removed.
                 HStack(spacing: 4) {
@@ -803,6 +826,25 @@ struct OutgoingView: View {
     }
 }
 
+/// Why something of mine wasn't sent (or an edit saved), with Try again and a way to give it up.
+struct NotSentLine: View {
+    let why: String
+    let retry: () -> Void
+    var removeTitle = "Remove"
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill").accessibilityHidden(true)
+            Text(why)
+            Button("Try again", action: retry)
+            Text("·").accessibilityHidden(true)
+            Button(removeTitle, action: remove)
+        }
+        .font(.caption2).foregroundStyle(.red).padding(.horizontal, 4)
+    }
+}
+
 struct BubbleView: View {
     /// Links in texts to it are tappable (ChatLink); nothing else in a text is.
     @Environment(\.ownSite) private var ownSite
@@ -811,6 +853,8 @@ struct BubbleView: View {
     var showTime = true
     /// Tapping a reaction under the message shows who reacted (F21), from that emoji.
     var whoReacted: ((String) -> Void)? = nil
+    /// Mine, on its way (or an edit of it): a small clock where its time goes while it's going.
+    var pending: Outgoing.Status? = nil
     @Environment(\.dynamicTypeSize) private var textSize
     /// The widest a message's row gets, at the usual text size: about 60
     /// letters a line, however wide the screen (the Duo's open one is 669
@@ -861,7 +905,7 @@ struct BubbleView: View {
                     .padding(.horizontal, emoji == nil ? 12 : 4).padding(.vertical, emoji == nil ? 8 : 2)
                     .background(emoji != nil ? Color.clear : bubble.mine ? Color.accentColor.opacity(0.3) : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    if showTime || !bubble.reactions.isEmpty {
+                    if showTime || !bubble.reactions.isEmpty || going {
                         HStack(spacing: 4) {
                             if !bubble.reactions.isEmpty {
                                 // In the order they were first given, as on the web (ReactionSummary).
@@ -878,7 +922,11 @@ struct BubbleView: View {
                                     .accessibilityHint("Shows who reacted")
                                 }
                             }
-                            if showTime { Text(bubble.time.formatted(date: .omitted, time: .shortened)) }
+                            if going {
+                                Image(systemName: "clock").accessibilityLabel("Sending")
+                            } else if showTime {
+                                Text(bubble.time.formatted(date: .omitted, time: .shortened))
+                            }
                         }
                         .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
                     }
@@ -889,6 +937,9 @@ struct BubbleView: View {
             .frame(maxWidth: .infinity, alignment: bubble.mine ? .trailing : .leading)
         }
     }
+
+    /// Still going (or waiting its turn), not yet the server's.
+    private var going: Bool { pending == .sending || pending == .held }
 
     /// How many emoji the text is, when it's shown large (emojiOnly).
     private var emoji: Int? {

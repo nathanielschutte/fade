@@ -23,6 +23,8 @@ struct PicPage: View {
     @State private var photo: UIImage?
     @State private var problem: String?
     @State private var player: AVPlayer?
+    /// The app's audio is set for this video (VideoSound, D25), to put back as it closes.
+    @State private var sounding = false
     /// A video's picture size, upright: its caption sits on the video, not the screen.
     @State private var videoSize: CGSize?
     @State private var shownAt: Date?
@@ -85,8 +87,12 @@ struct PicPage: View {
                 onShown()
                 if let url = pic.video {
                     videoSize = await VideoEncoder.uprightSize(url)
+                    guard !Task.isCancelled else { return }  // closed meanwhile: nothing to play, nothing to put back
                     let player = AVPlayer(url: url)
                     self.player = player
+                    // Heard, even with the ring switch on silent; music lowers meanwhile (D25).
+                    VideoSound.shared.begin()
+                    sounding = true
                     player.play()
                     // Closes when it ends, as on the web.
                     for await _ in NotificationCenter.default.notifications(named: AVPlayerItem.didPlayToEndTimeNotification, object: player.currentItem) {
@@ -104,6 +110,10 @@ struct PicPage: View {
         }
         .onDisappear {
             player?.pause()
+            if sounding {
+                sounding = false
+                VideoSound.shared.end()  // paused first, so it can be let go and the music comes back up
+            }
             if let url = opened?.video { try? FileManager.default.removeItem(at: url) }
             if shownAt != nil { Task { await conversation.confirmOpened(pic) } }
         }

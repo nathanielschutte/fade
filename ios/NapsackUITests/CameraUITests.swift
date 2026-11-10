@@ -29,19 +29,27 @@ extension ChatUITests {
         other.tap()
         try require(app.navigationBars["Send to 2"].waitForExistence(timeout: 5), "both picked")
         shot("send-to-from-a-chat")
-        app.navigationBars.buttons["Send"].tap()
+        app.buttons["send-to-send"].tap()
 
-        let note = app.staticTexts["Pic sent to \(here.username) and 1 more."]
-        try require(note.waitForExistence(timeout: 20), "the camera closed, and a note says where it went")
+        // At once (X57): the camera closes, and a note says where it's going; it uploads meanwhile.
+        let note = app.staticTexts["Sending your pic to \(here.username) and 1 more."]
+        try require(note.waitForExistence(timeout: 10), "the camera closed, and a note says where it's going")
         try require(composer.exists, "back in the chat")
         shot("sent-from-a-chat-to-more")
 
-        // Each has their own copy, from the chat with me.
+        // Each has their own copy, from the chat with me, once it's there.
         for person in [here, also] {
-            let got = try await chat.server.request("chats/\(chat.me.id)/messages", token: person.token)
-            let messages = (got as? [[String: Any]]) ?? ((got as? [String: Any])?["messages"] as? [[String: Any]]) ?? []
-            XCTAssertEqual(messages.filter { $0["kind"] as? String == "snap" }.count, 1, "\(person.username) got the pic, once")
+            var snaps = 0
+            let until = Date().addingTimeInterval(30)
+            while snaps == 0, Date() < until {
+                let got = try await chat.server.request("chats/\(chat.me.id)/messages", token: person.token)
+                let messages = (got as? [[String: Any]]) ?? ((got as? [String: Any])?["messages"] as? [[String: Any]]) ?? []
+                snaps = messages.filter { $0["kind"] as? String == "snap" }.count
+                if snaps == 0 { try await Task.sleep(for: .milliseconds(200)) }
+            }
+            XCTAssertEqual(snaps, 1, "\(person.username) got the pic, once")
         }
+        try require(app.staticTexts["Sent a pic"].waitForExistence(timeout: 10), "in the chat, sent")
     }
 
     /// In iOS's photo picker (out of the app's process, but on its screen): the
