@@ -114,7 +114,7 @@ import Testing
             return (200, json(Self.myText(sealed, edit: body(request)["ciphertext"]!)))
         }
         let chat = sending.chat(.friend(alice), server: server)
-        try await chat.edit(try myBubble(sealed), to: "at 8:30")
+        await chat.edit(try myBubble(sealed), to: "at 8:30").value
         let requests = await server.requests
         #expect(requests.count == 2 && requests[0].url!.path == "/api/chats/7/messages/100/edit")
         #expect(Set(requests.map { body($0)["client_id"] as! String }).count == 1)  // a retry, not a second edit
@@ -152,7 +152,7 @@ import Testing
         let chat = sending.chat(.group(try list.group(nil)), reader: reader, server: server)
         let text = reader.bubble(try ChatListTests.decode(GroupMessage.self, m))
         #expect(text.canEdit && text.recipients == [3, 7])
-        try await chat.edit(text, to: "ready at 6:30")
+        await chat.edit(text, to: "ready at 6:30").value
 
         let b = body(try #require(await server.requests.last))
         #expect(b["recipients"] as? [Int64] == [3, 7])  // not Carl: he wasn't there for it

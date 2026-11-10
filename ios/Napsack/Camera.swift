@@ -598,6 +598,10 @@ enum Captured: Identifiable {
         }
     }
 
+    var isVideo: Bool {
+        if case .video = self { true } else { false }
+    }
+
     /// A photo picked from the library; nil if it can't be opened. The chat's
     /// photo button and the camera's both come this way.
     static func picked(_ item: PhotosPickerItem) async -> Captured? {
@@ -747,15 +751,24 @@ struct MadeReady {
     }
 }
 
-/// What the camera's Send does. The sends seal in a chat's Conversation, on
-/// the main actor; what they're handed was made ready once, off it.
+/// A capture on its way: made ready meanwhile (once, for every chat it goes
+/// to), whether it's a video known from the start.
+struct PicToSend: Sendable {
+    let ready: Task<ReadyToSend, any Error>
+    let isVideo: Bool
+}
+
+/// What the camera's Send does: hands the capture to each chat's
+/// Conversation, which shows it at once and sends it when it can (X57), so
+/// the camera never waits on the network. They throw only for a chat that
+/// isn't there anymore.
 enum CameraSend {
     /// Straight to one chat ("Send to Ben"), from that chat's camera, which
-    /// the chat closes once it's sent; with `more`, a "To Ben +" beside Send
+    /// the chat closes as it's handed over; with `more`, a "To Ben +" beside Send
     /// opens Send to… with that chat picked, to add others (as on the web).
-    case chat(String, @MainActor (ReadyToSend) async throws -> Void, more: AddMore? = nil)
-    /// To chats picked on the next screen, from the Camera tab; `done` says where it went.
-    case pick([ChatRow], @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: (String) -> Void)
+    case chat(String, @MainActor (PicToSend) throws -> Void, more: AddMore? = nil)
+    /// To chats picked on the next screen, from the Camera tab; `done` says where it's going.
+    case pick([ChatRow], @MainActor (ChatRow.Kind, PicToSend) throws -> Void, done: (String) -> Void)
 
     /// From a chat's camera, the other chats it can go to as well.
     struct AddMore {
@@ -763,9 +776,9 @@ enum CameraSend {
         let here: ChatRow.Kind
         /// The chats a pic can go to (the chat list's), asked for as they're shown.
         let chats: @MainActor () -> [ChatRow]
-        /// Sends to one chat; throws what went wrong there.
-        let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
-        /// Sent to every chat picked: says where it went.
+        /// Hands it to one chat; throws if that chat's gone.
+        let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
+        /// On its way to every chat picked: says where it's going.
         let done: @MainActor (String) -> Void
 
         /// Only while this chat is one a pic can go to (the list has it, and
@@ -780,8 +793,8 @@ enum CameraSend {
 struct SendElsewhere: Equatable {
     /// The chats a pic can go to now.
     let chats: @MainActor () -> [ChatRow]
-    /// Sends to one of them.
-    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+    /// Hands it to one of them.
+    let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
 
     static func == (_: SendElsewhere, _: SendElsewhere) -> Bool { true }
 }
@@ -950,13 +963,14 @@ struct CameraScreen: View {
                 if let ready = made?.ready {
                     switch send {
                     case .pick(let chats, let go, let done):
-                        SendToScreen(ready: ready, chats: chats, send: go) { words in
+                        SendToScreen(pic: PicToSend(ready: ready, isVideo: shot?.isVideo == true), chats: chats, send: go) { words in
                             retake()
                             done(words)
                         }
                     case .chat(_, _, let more?):
                         // This chat picked to start with; the chat closes the camera once it's sent.
-                        SendToScreen(ready: ready, chats: more.chats(), picked: [more.here], send: more.send, done: more.done)
+                        SendToScreen(pic: PicToSend(ready: ready, isVideo: shot?.isVideo == true), chats: more.chats(), picked: [more.here],
+                                     send: more.send, done: more.done)
                     case .chat:
                         EmptyView()
                     }
@@ -1494,17 +1508,13 @@ struct CameraScreen: View {
         guard let ready = ready() else { return }
         switch send {
         case .chat(_, let go, _):
-            sending = true
+            sending = true  // once: the chat closes the camera as it takes it
             sendProblem = nil
-            Task {
-                do {
-                    try await go(try await ready.value)
-                    // Sent: the chat closes the camera, with the pic on screen (and Send off) as it goes.
-                } catch {
-                    sending = false
-                    Reporter.shared.report(.warn, "sending a pic failed", Reporter.fields(error))
-                    sendProblem = error.localizedDescription
-                }
+            do {
+                try go(PicToSend(ready: ready, isVideo: shot?.isVideo == true))
+            } catch {
+                sending = false
+                sendProblem = error.localizedDescription
             }
         case .pick:
             choosing = true  // made ready while the chats are picked
@@ -1573,34 +1583,32 @@ struct LoopingPlayer: UIViewRepresentable {
 /// web app's Send to…), from the Camera tab, or from a chat's camera ("To Ben
 /// +") with that chat picked to start with. Back returns to the camera, the
 /// pic still there. Chats that can't take one (a changed key, a turned-off
-/// account, Team Napsack) aren't offered.
+/// account, Team Napsack) aren't offered. Send hands it to every chat picked
+/// at once (each shows it, and sends it when it can), and is at the bottom
+/// right, under the thumb (Nate, 2026-11-09).
 struct SendToScreen: View {
     /// The capture, being made ready meanwhile: once, for every chat picked.
-    let ready: Task<ReadyToSend, any Error>
+    let pic: PicToSend
     let chats: [ChatRow]
     /// Picked as it opens: listed even when hidden, so it can be unpicked.
     let preselected: [ChatRow.Kind]
-    /// Sends to one chat; throws what went wrong there.
-    let send: @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void
+    /// Hands it to one chat; throws if that chat's gone.
+    let send: @MainActor (ChatRow.Kind, PicToSend) throws -> Void
     let done: (String) -> Void
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var picked: [ChatRow.Kind]
     @State private var search = ""
-    @State private var sending = false
     @State private var problem: String?
 
-    init(ready: Task<ReadyToSend, any Error>, chats: [ChatRow], picked: [ChatRow.Kind] = [],
-         send: @escaping @MainActor (ChatRow.Kind, ReadyToSend) async throws -> Void, done: @escaping (String) -> Void) {
-        self.ready = ready
+    init(pic: PicToSend, chats: [ChatRow], picked: [ChatRow.Kind] = [],
+         send: @escaping @MainActor (ChatRow.Kind, PicToSend) throws -> Void, done: @escaping (String) -> Void) {
+        self.pic = pic
         self.chats = chats
         self.preselected = picked
         self.send = send
         self.done = done
         _picked = State(initialValue: picked)
     }
-
-    /// Chats sent to at once: the uploads overlap, without crowding a phone's connection.
-    static let atOnce = 3
 
     var body: some View {
         List {
@@ -1631,12 +1639,26 @@ struct SendToScreen: View {
         .searchable(text: $search, prompt: "Search")
         .navigationTitle(picked.isEmpty ? "Send to…" : "Send to \(picked.count)")
         .navigationBarTitleDisplayMode(.inline)
-        // Not back to the camera while it goes: Send there would race this send to the same chat.
-        .navigationBarBackButtonHidden(sending)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(sending ? "Sending…" : "Send") { go() }.disabled(picked.isEmpty || sending)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack {
+                Spacer()
+                Button { go() } label: {
+                    HStack(spacing: 8) {
+                        Text("Send").font(.headline).lineLimit(1)  // how many, in the title
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .buttonBorderShape(.capsule)
+                .disabled(picked.isEmpty)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)  // whole at the largest text, over the list's rows
+                .accessibilityLabel(picked.isEmpty ? "Send" : "Send to \(picked.count)")
+                .accessibilityIdentifier("send-to-send")
             }
+            .padding(.horizontal, 16).padding(.vertical, 10)
         }
     }
 
@@ -1650,64 +1672,29 @@ struct SendToScreen: View {
             : chats.filter { $0.name.localizedStandardContains(words) || $0.username?.localizedStandardContains(words) == true }
     }
 
-    /// A few chats at a time, each sealed its own copy of the same bytes; what
-    /// failed is said, and only what failed stays picked to try again.
+    /// Hands it to every chat picked, each sealing its own copy of the same
+    /// bytes as it sends. Only a chat that's gone since can't take it: that's
+    /// said, and it alone stays picked.
     private func go() {
-        sending = true
         problem = nil
-        Task {
-            defer { sending = false }
-            let prepared: ReadyToSend
-            do {
-                prepared = try await ready.value
-            } catch {
-                problem = error.localizedDescription
-                return
-            }
-            let kinds = picked
-            let why = await Self.each(kinds, atOnce: Self.atOnce) { kind in try await send(kind, prepared) }
-            let name = { (kind: ChatRow.Kind) in chats.first { $0.kind == kind }?.name ?? "a chat" }
-            let sent = zip(kinds, why).filter { $0.1 == nil }.map { name($0.0) }
-            let failed = zip(kinds, why).compactMap { kind, why in why.map { (kind, $0) } }
-            if failed.isEmpty {
-                let word = prepared.isVideo ? "Video" : "Pic"
-                done(sent.count == 1 ? "\(word) sent to \(sent[0])." : "\(word) sent to \(sent[0]) and \(sent.count - 1) more.")
-            } else {
-                picked = failed.map(\.0)
-                problem = failed.map { "Not sent to \(name($0.0)): \($0.1)" }.joined(separator: "\n")
-            }
+        let kinds = picked
+        let name = { (kind: ChatRow.Kind) in chats.first { $0.kind == kind }?.name ?? "a chat" }
+        var gone: [(ChatRow.Kind, String)] = []
+        for kind in kinds {
+            do { try send(kind, pic) } catch { gone.append((kind, error.localizedDescription)) }
+        }
+        let going = kinds.filter { kind in !gone.contains { $0.0 == kind } }.map(name)
+        if gone.isEmpty {
+            done(Self.words(going, video: pic.isVideo))
+        } else {
+            picked = gone.map(\.0)
+            problem = gone.map { "Not sent to \(name($0.0)): \($0.1)" }.joined(separator: "\n")
         }
     }
 
-    /// Runs `work` for each item, at most `limit` at once; what went wrong
-    /// with each (nil if it went), in the items' order.
-    static func each<Item: Sendable>(_ items: [Item], atOnce limit: Int,
-                                     _ work: @escaping @MainActor (Item) async throws -> Void) async -> [String?] {
-        let attempt: @MainActor (Int) async -> (Int, String?) = { i in
-            do {
-                try await work(items[i])
-                return (i, nil)
-            } catch {
-                return (i, error.localizedDescription)
-            }
-        }
-        return await withTaskGroup(of: (Int, String?).self) { group in
-            var why = [String?](repeating: nil, count: items.count)
-            var next = 0
-            while next < min(max(limit, 1), items.count) {
-                let i = next
-                next += 1
-                group.addTask { await attempt(i) }
-            }
-            while let (i, problem) = await group.next() {
-                why[i] = problem
-                if next < items.count {
-                    let i = next
-                    next += 1
-                    group.addTask { await attempt(i) }
-                }
-            }
-            return why
-        }
+    /// Where it's going, for the note after Send.
+    static func words(_ names: [String], video: Bool) -> String {
+        let word = video ? "video" : "pic"
+        return names.count == 1 ? "Sending your \(word) to \(names[0])." : "Sending your \(word) to \(names[0]) and \(names.count - 1) more."
     }
 }

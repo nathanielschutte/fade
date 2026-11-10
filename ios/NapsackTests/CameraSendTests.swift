@@ -217,48 +217,6 @@ import UIKit
         #expect(SendToScreen.shown(all, search: "", keeping: [.friend(7)]).map(\.kind) == [.friend(7), .group(12)])
         #expect(SendToScreen.shown(all, search: "ca", keeping: [.friend(7)]).map(\.kind) == [.friend(8)])
     }
-
-    /// Send to… goes to a few chats at once, never more; what failed is said
-    /// for that chat, in the order they were picked.
-    @Test(.timeLimit(.minutes(1))) func aFewChatsAtATimeEachSayingHowItWent() async throws {
-        let gate = UploadGate()
-        let all = Array(0..<7)
-        let going = Task { @MainActor in
-            await SendToScreen.each(all, atOnce: SendToScreen.atOnce) { i in
-                await gate.enter()
-                if i == 4 { throw SendError.tooLarge }
-            }
-        }
-        var letGo = 0
-        while letGo < all.count {
-            // Each upload waits at the gate; let one go once all that may be going are there.
-            if gate.waiting.count == min(SendToScreen.atOnce, all.count - letGo) {
-                #expect(gate.inFlight <= SendToScreen.atOnce)
-                gate.waiting.removeFirst().resume()
-                letGo += 1
-            }
-            await Task.yield()
-        }
-        let why = await going.value
-        #expect(gate.most == SendToScreen.atOnce && gate.started == all.count)
-        #expect(why == [nil, nil, nil, nil, "That's too large to send.", nil, nil])
-    }
-}
-
-/// Holds each send until the test lets it go, counting how many are going at once.
-@MainActor final class UploadGate {
-    var waiting: [CheckedContinuation<Void, Never>] = []
-    private(set) var started = 0
-    private(set) var inFlight = 0
-    private(set) var most = 0
-
-    func enter() async {
-        started += 1
-        inFlight += 1
-        most = max(most, inFlight)
-        await withCheckedContinuation { waiting.append($0) }
-        inFlight -= 1
-    }
 }
 
 /// The first `n` uploads fail (then `reset` for more), for a stand-in server's answers.
