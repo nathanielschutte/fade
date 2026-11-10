@@ -53,6 +53,31 @@ extension OnScreen {
                 }
             }
         }
+
+        /// A capture that didn't come (D24), said over the live camera; a video
+        /// without sound (D25): the microphone off, with the sound button that
+        /// asks for it, then allowed; and a call's, with no button.
+        @Test func theCamerasNotesAtEachSize() async throws {
+            let silent = try await TestMovie.make(seconds: 1, sound: false)
+            defer { try? FileManager.default.removeItem(at: silent) }
+            let lenses = CameraSession.Lenses(presets: [0.5, 1, 2, 5], min: 0.5, max: 15)
+            for (name, phone) in [("small", Phone.small), ("large", Phone.large)] {
+                let live = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .pick([], { _, _ in }, done: { _ in }),
+                                                   offering: lenses, note: CameraSession.Problem.paused.localizedDescription),
+                                      size: phone.size, insets: phone.insets)
+                try await Task.sleep(for: .milliseconds(500))
+                try live.save("camera-note-paused-\(name)")
+                live.close()
+                for (why, shown) in [(CameraAudio.NoSound.notAllowed, "mic-off"), (.allowedNow, "mic-allowed"), (.inUse, "call")] {
+                    let review = try Hosted(CameraScreen(maxSeconds: 10, maxBytes: 4 << 20, send: .chat("Ben") { _ in }, start: .video(silent),
+                                                         noSound: why),
+                                            size: phone.size, insets: phone.insets)
+                    try await Task.sleep(for: .milliseconds(500))
+                    try review.save("camera-no-sound-\(shown)-\(name)")
+                    review.close()
+                }
+            }
+        }
     }
 }
 
