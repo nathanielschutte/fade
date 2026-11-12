@@ -2152,13 +2152,16 @@ function chatStatus(chat) {
   const mine = m.sender_id === state.me.id;
   if (m.kind === "snap") {
     const w = mediaWord(m), W = capitalize(w);
-    if (!mine && m.snap_state === "pending") return { text: `New ${w}`, marker: "snap" };
+    const shown = snapStateHere(m); // opened here, before the server's heard (D27)
+    if (!mine && shown === "pending") return { text: `New ${w}`, marker: "snap" };
     const label = mine
       ? { pending: `Sent a ${w}`, opened: `${W} opened`, expired: `${W} expired unopened` }
       : { opened: `${W} viewed`, expired: `${W} expired` };
     // A text from before it can still be unread (the server's count): its
-    // pics viewed from the list (X41), say, or a pic sent from the camera.
-    return { text: label[m.snap_state] || W, marker: chatUnreadShown(chat) > 0 ? "text" : null };
+    // pics viewed from the list (X41), say, or a pic sent from the camera. The
+    // server counts a pic opened here, until it hears, as one of them.
+    const unread = chatUnreadShown(chat) - (shown !== m.snap_state ? 1 : 0);
+    return { text: label[shown] || W, marker: unread > 0 ? "text" : null };
   }
   const body = m.text ?? "Encrypted message";
   if (!mine && !m.read_at && !readingNow("d", chat.id)) return { text: body, marker: "text" };
@@ -3304,8 +3307,9 @@ function emojiLook(text) {
 
 /** A direct pic or video: tap to view it, or what became of it. */
 function snapContent(m, mine) {
-  const canOpen = !mine && m.snap_state === "pending";
-  const label = canOpen ? `Tap to view ${mediaWord(m)}` : snapLabel(m, mine);
+  const known = snapStateHere(m);
+  const canOpen = !mine && known === "pending";
+  const label = canOpen ? `Tap to view ${mediaWord(m)}` : snapLabel({ ...m, snap_state: known }, mine);
   return {
     sig: JSON.stringify(["snap", canOpen, label ?? null]),
     make: () => [canOpen
@@ -4773,7 +4777,7 @@ function groupStatus(g) {
   if (!m) return { text: `${g.member_count} people` };
   if (m.pic) {
     const mine = m.sender_id === state.me.id;
-    const waiting = !mine && !m.pic.discard_reason && !m.pic.viewers.includes(state.me.id);
+    const waiting = !mine && !m.pic.discard_reason && !seenHere(m);
     const what = `sent a ${mediaWord(m)}`;
     return { text: mine ? `You ${what}` : `${personName(m.sender_id, m.sender_name)} ${what}`, marker: waiting ? "snap" : g.unread && !readingNow("g", g.id) ? "text" : null };
   }
@@ -5011,7 +5015,7 @@ function groupContent(m, mine) {
 /** View-once per member. The sender sees how many have opened it. */
 function groupPicLabel(m, mine) {
   const p = m.pic;
-  const seen = p.viewers.includes(state.me.id);
+  const seen = seenHere(m);
   if (!mine && !seen && !p.discard_reason) return { canOpen: true, label: `Tap to view ${mediaWord(m)}` };
   const label = mine
     ? p.discard_reason === "opened" ? "Opened by everyone"
@@ -7487,9 +7491,36 @@ const TAP_GUARD_MS = 600;
 
 /** Whether a group message is a pic or video from someone else I haven't opened. */
 const groupPicWaiting = (m) => Boolean(m.pic) && m.sender_id !== state.me.id
-  && !m.pic.viewers.includes(state.me.id) && !m.pic.discard_reason;
+  && !seenHere(m) && !m.pic.discard_reason;
 /** Whether a direct message is a pic or video from them, unopened. */
-const directPicWaiting = (m) => m.kind === "snap" && m.sender_id !== state.me.id && m.snap_state === "pending";
+const directPicWaiting = (m) => m.kind === "snap" && m.sender_id !== state.me.id && snapStateHere(m) === "pending";
+
+// ---------- shown is opened, here at once (D27) ----------
+// A pic counts as opened the moment it's on screen: its chat and its row in
+// the list stop offering it straight away, before the server's word comes
+// back (confirmOpened tries until it does), and a reload meanwhile, which
+// still says it's waiting, doesn't bring it back. As the iPhone's.
+const openedHere = new Set();
+
+/** How `openedHere` knows a message (direct and group messages are numbered apart). */
+const openedKey = (m) => `${m.group_id ? "g" : "d"}${m.id}`;
+
+/** A direct pic's state as this device knows it: one opened here is opened. */
+function snapStateHere(m) {
+  return m.snap_state === "pending" && m.sender_id !== state.me.id && openedHere.has(openedKey(m)) ? "opened" : m.snap_state;
+}
+
+/** Whether I've seen a group pic: the server says so, or it was opened here. */
+function seenHere(m) {
+  return m.pic.viewers.includes(state.me.id) || openedHere.has(openedKey(m));
+}
+
+/** It's on screen: opened, in the chat and the list, now. */
+function markOpenedHere(m) {
+  openedHere.add(openedKey(m));
+  renderChatList();
+  if (m.group_id ? m.group_id === state.activeGroupId : friendOf(m) === state.activeId) renderMessages();
+}
 
 /** Unopened pics in the open chat (or, from the list, the chat they're in), oldest first. */
 function waitingPics() {
@@ -7508,12 +7539,11 @@ function openPics(first) {
 
 // ---------- pics straight from the chat list (X41) ----------
 // A tap on a chat whose newest message is a pic or video waiting from them
-// shows that chat's waiting pics, back to back, without opening the chat; you
-// are on the list after, as before. Which pics are the server's say, asked as
-// the tap lands (the list may be out of date: opened on another device). Only
-// pics are opened: a text of theirs from before stays unread for the chat, and
-// the row keeps its dot (the server's count). If none was waiting after all,
-// the tap opens the chat, as any other row's.
+// shows that chat's waiting pics at once, back to back, over the list; when
+// the viewer closes, the chat opens (X59), where what's unread is read as in
+// any chat opened. Which pics are the server's say, asked as the tap lands
+// (the list may be out of date: opened on another device). If none was
+// waiting after all, the chat opens straight away.
 
 /** Formats of pics and videos this app opens (loadSnap, loadGroupPic). */
 const DIRECT_PIC_FORMATS = [1, 2, e2e.VIDEO_FORMAT, e2e.IMAGE_FORMAT];
@@ -7534,7 +7564,7 @@ function groupOpensPics(g) {
 }
 
 /** What a screen reader hears of such a row, after its name and newest message. */
-const picsHint = (m) => `Opens the ${mediaWord(m)}, not the chat`;
+const picsHint = (m) => `Opens the ${mediaWord(m)}, then the chat`;
 
 /**
  * Shows the pics waiting in a chat ("d") or group ("g") from the list.
@@ -7546,10 +7576,9 @@ async function picsFromList(kind, id, page = null) {
   const chat = group ? groupById(id) : chatById(id);
   if (!chat) return;
   page ??= getJSON(`/${group ? "groups" : "chats"}/${id}/messages?limit=${pageSize()}`);
-  const unread = chat.unread; // as the tap saw it: whether the group is read after
-  const run = { seen: new Set(), shown: new Set(), fromList: true, pics: [], gone: false, openChat: false };
+  const run = { seen: new Set(), shown: new Set(), fromList: true, pics: [] };
   viewer.run = run;
-  viewer.after = () => afterPicsFromList(kind, id, run, unread);
+  viewer.after = () => afterPicsFromList(kind, id);
   showOpening(group ? chat.name : chatName(chat));
   try {
     run.messages = await page;
@@ -7560,34 +7589,17 @@ async function picsFromList(kind, id, page = null) {
   }
   if (viewer.run !== run) return;
   run.pics = run.messages.filter(group ? groupPicWaiting : directPicWaiting);
-  if (!run.pics.length) { // opened elsewhere meanwhile
-    run.openChat = true;
-    return stopViewer();
-  }
+  if (!run.pics.length) return stopViewer(); // opened elsewhere meanwhile: the chat
   openPic(run.pics[0]);
 }
 
-/** Once the viewer has closed: the chat, if nothing was waiting after all; a group read, if its pics were all that was unread. */
-function afterPicsFromList(kind, id, run, unread) {
-  if (run.openChat) return kind === "g" ? openGroup(id) : openChat(id);
-  // A direct chat's pics are counted read as they're opened (the server's
-  // `unread` counts them); its texts wait for the chat.
-  if (kind !== "g" || !readAfterShowing(run.shown, unread, run.messages || [])) return;
-  // Anything newer than what was asked for came while viewing, unseen.
-  const newest = run.messages[run.messages.length - 1]?.id ?? 0;
-  if ((groupById(id)?.last_message?.id ?? 0) <= newest) markGroupRead(id);
-}
-
 /**
- * Whether a group counts as read after its pics were shown from the list:
- * only if they were all that was unread, its newest `unread` messages from
- * others (groups.rs counts the same). Otherwise a text nobody saw would show
- * as seen ("Seen by"), so it stays unread. As the iPhone's (`readAfterShowing`).
+ * Once the viewer has closed: the chat (X59, Nate 2026-11-12: on the web,
+ * every width; the phone apps stay on the list, where a double tap answers
+ * with a pic). Opening it reads what's unread there, as any chat opened.
  */
-function readAfterShowing(shown, unread, messages) {
-  if (!unread) return false;
-  const theirs = messages.filter((m) => m.sender_id !== state.me.id && m.kind !== "event");
-  return theirs.length >= unread && theirs.slice(-unread).every((m) => shown.has(m.id));
+function afterPicsFromList(kind, id) {
+  return kind === "g" ? openGroup(id) : openChat(id);
 }
 
 /** A pic that can't be shown for a reason other than the connection. */
@@ -7621,6 +7633,7 @@ async function openPic(m) {
   viewer.loading = false;
   if (shown) {
     run.shown.add(m.id);
+    markOpenedHere(m);
     confirmOpened(m);
   }
   else if (viewer.run === run) showViewerProblem("This pic couldn't be shown. It's still unopened.");
@@ -7631,11 +7644,7 @@ function nextPic() {
   if (viewer.url && Date.now() - viewer.shownAt < TAP_GUARD_MS) return;
   const run = viewer.run;
   const next = run && waitingPics().find((m) => !run.seen.has(m.id));
-  if (!next) {
-    // From the list, every one opened elsewhere before it showed: the chat instead.
-    if (run?.fromList && run.gone && !run.shown.size) run.openChat = true;
-    return stopViewer();
-  }
+  if (!next) return stopViewer();
   clearViewer(); // the viewer stays up, saying "Opening…", while the next one loads
   openPic(next);
 }

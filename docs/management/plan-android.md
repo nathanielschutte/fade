@@ -45,6 +45,7 @@ Every format producing exactly the web client's bytes, before anything leans on 
 | Friends' keys pinned; a warning and the safety code when one changes | – | Planned | Mirrors iOS section 2, "Friends' keys pinned" |
 | Sending texts (format 2, format 3 in groups), replies, resending safely (`client_id`), one outbox | – | Planned | Mirrors iOS section 2, "Sending texts", and section 3, "One outbox" |
 | Nothing sent waits on the network: texts, pics, edits, reactions shown at once; not sent after a deadline (15 seconds a text), kept, Try again | – | Planned | Mirrors the iPhone ([X57](plan.md#x57-nothing-sent-waits-on-the-network)) |
+| Unsent texts kept through quitting the app (sealed on the phone, gone on sign-out); an upload given up only once it stops moving, one at a time; requests on a new connection after a bad one | – | Planned | Mirrors the iPhone ([X57](plan.md#x57-nothing-sent-waits-on-the-network), [D26](plan.md#d26-a-pic-that-couldnt-open-on-the-iphone-wouldnt-open-again-until-napsack-was-restarted)) |
 | Live updates over the WebSocket (OkHttp), catching up after a reconnect | – | Planned | Mirrors iOS section 2, "Live updates" |
 | Reactions and edits; typing, "Seen" | – | Planned | Mirrors iOS section 2, "Reactions and edits", and section 8 |
 | Keeping chats on the phone, encrypted, for an instant list and offline | – | Planned | Mirrors iOS section 3, "Keeping chats on the phone" (`ResponseCache`) |
@@ -59,6 +60,7 @@ Every format producing exactly the web client's bytes, before anything leans on 
 | Opening a pic: filling the screen when that cuts off little, zooming out to the whole of it | – | Planned | Mirrors the iPhone ([X56](plan.md#x56-pics-open-filling-the-screen); pic-framing.md, Opening it) |
 | Send to… several friends and groups at once | – | Planned | Mirrors iOS section 10, "Sending a pic or video to several" |
 | Opening pics and videos once (formats 2, 4, 6, 7 and groups'), back to back, then gone; zoom and pan | – | Planned | Mirrors iOS section 10, "Opening pics and videos once", "Zoom and pan" |
+| Pics close on their own (10 seconds a photo, a video its length, a bar running down); counted opened the moment they're shown; from the list, back on the list, and a double tap on a chat answers with a pic | – | Planned | Mirrors the iPhone ([X58](plan.md#x58-pics-close-on-their-own-on-the-iphone), [D27](plan.md#d27-a-chat-can-still-say-new-pic-after-its-pic-was-opened-from-the-list), [X60](plan.md#x60-double-tap-a-chat-on-the-iphone-to-answer-with-a-pic)) |
 | A video sent to you plays out loud, other sound lowered meanwhile; a video without sound because the microphone's off offers it | – | Planned | Mirrors the iPhone ([D25](plan.md#d25-some-videos-arrive-with-no-sound)) |
 | Video encoded as the other apps send it (H.264/AAC MP4, Media3 Transformer) | – | Planned | Mirrors iOS section 10, "Video at 720p" ([video-quality.md](../design/video-quality.md)) |
 

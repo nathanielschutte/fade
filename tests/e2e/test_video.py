@@ -147,7 +147,7 @@ async def main():
         await shot(ben, "video-viewer-phone", full_page=False)
         await expect(ben.locator("#viewer")).to_be_hidden(timeout=15000)  # closes when it ends
         await expect(row(ben, ANA).locator(".chat-status")).to_have_text("Video viewed", timeout=10000)
-        await row(ben, ANA).click()  # now it opens the chat
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)  # then the chat opens (X59)
         await expect(ben.locator(".snap-chip.done", has_text="Viewed")).to_be_visible()
         await expect(ana.locator(".snap-chip.done", has_text="Opened")).to_be_visible(timeout=10000)
         await no_placeholders(ben)

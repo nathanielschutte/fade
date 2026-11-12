@@ -129,8 +129,9 @@ extension Reader {
             let words = mine
                 ? ["pending": "Sent a \(word)", "opened": "\(Word) opened", "expired": "\(Word) expired unopened"]
                 : ["pending": "New \(word)", "opened": "\(Word) viewed", "expired": "\(Word) expired"]
-            content = .media(words[m.snapState ?? ""] ?? Word)
-            if !mine && m.snapState == "pending" { opening = .direct(m) }
+            let state = snapState(m)  // opened here, before the server's heard (D27)
+            content = .media(words[state ?? ""] ?? Word)
+            if !mine && state == "pending" { opening = .direct(m) }
         } else if ![1, 2].contains(m.format) {
             content = .unreadable(Self.tooNew)
         } else if let opened = Self.open(m, keys: keys) {
@@ -187,8 +188,8 @@ extension Reader {
             content = .media(
                 pic.discardReason == "expired" ? "\(Word) expired"
                 : mine ? "Sent a \(word)"
-                : pic.viewers.contains(me.id) ? "\(Word) viewed" : "New \(word)")
-            if !mine && pic.discardReason == nil && !pic.viewers.contains(me.id) { opening = .group(m) }
+                : seen(m) ? "\(Word) viewed" : "New \(word)")
+            if !mine && pic.discardReason == nil && !seen(m) { opening = .group(m) }
         } else if m.format == 0 {
             content = .text(m.body, edited: false)
             replyTo = m.replyTo
@@ -295,11 +296,14 @@ struct OutgoingPic: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Pics and videos upload a few at a time across every chat, without crowding
-/// a phone's connection; the rest wait their turn, still shown as on their way.
+/// Pics and videos upload one at a time across every chat, in the order
+/// sent; the rest wait their turn, still shown as on their way. Uploads at
+/// once share the one connection, so they all finish late, together: one at
+/// a time, on a slow connection the first chat gets its pic about three times
+/// sooner, and the last as soon as before (Nate, 2026-11-12).
 @MainActor final class PicUploads {
     static let shared = PicUploads()
-    static let atOnce = 3
+    static let atOnce = 1
     private(set) var going = 0
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
@@ -314,6 +318,13 @@ struct OutgoingPic: Identifiable, Equatable, Sendable {
     func done() {
         if waiting.isEmpty { going -= 1 } else { waiting.removeFirst().resume() }
     }
+}
+
+/// When something last moved (Conversation.whileMoving), from whichever thread heard it.
+final class LastMoved: Sendable {
+    private let last = Mutex(ContinuousClock.now)
+    var at: ContinuousClock.Instant { last.withLock { $0 } }
+    func now() { last.withLock { $0 = .now } }
 }
 
 /// What's on its way to a chat, in the order it was sent, for the chat to show under its messages.
@@ -457,8 +468,12 @@ struct OpenedPic: Sendable {
     private(set) var reachedStart = false
     private(set) var loadingOlder = false
     private(set) var problem: String?
-    /// Texts on their way, oldest first.
-    private(set) var outbox: [Outgoing] = []
+    /// Texts on their way, oldest first; kept on the phone through quitting napsack (`unsent`).
+    private(set) var outbox: [Outgoing] = [] {
+        didSet { keepUnsent() }
+    }
+    /// Where this chat's unsent texts are kept (UnsentTexts; the chat list's, for the session).
+    @ObservationIgnored var unsent: UnsentTexts?
     /// Sealed once per text, so every try sends the same bytes.
     private var sealedTexts: [String: String] = [:]
     private var sealedGroupTexts: [String: E2E.GroupMessage] = [:]
@@ -503,9 +518,11 @@ struct OpenedPic: Sendable {
     /// still going then are cancelled; one the server had anyway comes back
     /// as itself (its `client_id`), and a retry is never a second copy.
     var textDeadline: Duration = .seconds(15)
-    /// A pic or video's, from its turn to upload (PicUploads): it's larger,
-    /// up to the server's video cap, and a phone's upload is slower.
-    var picDeadline: Duration = .seconds(60)
+    /// A pic or video is given up only once its upload stops moving for this
+    /// long (TransferWatch): a slow upload that keeps going isn't cut off,
+    /// however large (Nate, 2026-11-12). Its clock starts at its turn
+    /// (PicUploads), once it's ready.
+    var picStall: Duration = .seconds(20)
 
     init(_ chat: Chat, account: Account, reader: Reader, pinBook: PinBook? = nil, cache: ResponseCache? = nil,
          transport: any Transport = NetworkTransport()) {
@@ -775,6 +792,31 @@ struct OpenedPic: Sendable {
         await retry(queue(text, replyTo: replyTo))
     }
 
+    /// How UnsentTexts knows this chat.
+    var unsentKey: String {
+        switch chat {
+        case .friend(let friend): "d\(friend.id)"
+        case .group(let group): "g\(group.id)"
+        }
+    }
+
+    /// The outbox as it is now, kept (only its words change what's written, not how each is doing).
+    private func keepUnsent() {
+        unsent?.keep(outbox.map { UnsentTexts.Text(id: $0.id, text: $0.text, replyTo: $0.replyTo) }, for: unsentKey)
+    }
+
+    /// Texts kept from before napsack was last quit (UnsentTexts): shown, and
+    /// sent again in their order, each as the same message (its `client_id`),
+    /// so one the server had already comes back as itself.
+    func restore(_ texts: [UnsentTexts.Text]) {
+        let here = Set(outbox.map(\.id))
+        let kept = texts.filter { !here.contains($0.id) }
+        guard !kept.isEmpty else { return }
+        outbox += kept.map { Outgoing(id: $0.id, text: $0.text, replyTo: $0.replyTo, order: nextInLine()) }
+        holdBehindUnsent()
+        Task { await sendInOrder() }
+    }
+
     /// Puts a text in the outbox, to show at once; `retry` sends it.
     func queue(_ text: String, replyTo: Int64?) -> String {
         let item = Outgoing(id: Self.newClientId(), text: text, replyTo: replyTo, order: nextInLine())
@@ -917,6 +959,30 @@ struct OpenedPic: Sendable {
         }
     }
 
+    /// Runs `body` while its requests keep moving: once nothing has been sent
+    /// or received for `stall` (TransferWatch), it's cancelled (its request
+    /// with it) and this throws `SendError.timedOut`. A request's answer
+    /// arriving counts as moving too.
+    private func whileMoving<T: Sendable>(_ stall: Duration, _ body: @escaping @MainActor @Sendable () async throws -> T) async throws -> T {
+        let moved = LastMoved()
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await TransferWatch.$watcher.withValue({ _ in moved.now() }) {
+                    try await body()
+                }
+            }
+            group.addTask {
+                while true {
+                    let quiet = ContinuousClock.now - moved.at
+                    if quiet >= stall { throw SendError.timedOut }
+                    try await Task.sleep(for: min(stall - quiet, .seconds(1)))
+                }
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
     /// Lets something on its way finish when napsack is left just after it's
     /// sent: iOS gives an app that asks a little longer in the background
     /// (and ends it, as asked, if that runs out first).
@@ -1011,7 +1077,7 @@ struct OpenedPic: Sendable {
         offline.remove(id)
     }
 
-    /// Waits its turn among every chat's uploads, then sends it, by its deadline.
+    /// Waits its turn among every chat's uploads, then sends it, while it keeps moving.
     private func sendPic(_ id: String) async {
         guard let work = picWork[id] else { return }
         await Self.whileAway {
@@ -1020,9 +1086,9 @@ struct OpenedPic: Sendable {
             defer { uploads.done() }
             guard pics.contains(where: { $0.id == id }) else { return }  // its own copy came back meanwhile
             do {
-                try await within(picDeadline) { [self] in
-                    let ready = try await work.ready.value
-                    picSlots[id] = ready.sends.slot(kind)
+                let ready = try await work.ready.value
+                picSlots[id] = ready.sends.slot(kind)
+                try await whileMoving(picStall) { [self] in
                     try await ready.send(to: self, limits: work.limits)
                 }
                 removePic(id)  // its server copy joined the chat as it went
@@ -1418,14 +1484,15 @@ struct OpenedPic: Sendable {
 
     // ---------- pics and videos, opened once ----------
 
-    /// Fetches and decrypts a pic or video sent to me (app.js, `loadSnap`). Fetching doesn't open it;
-    /// `confirmOpened` does, once it's been shown.
+    /// Fetches and decrypts a pic or video sent to me (app.js, `loadSnap`),
+    /// trying again while the connection is the problem (as the web's
+    /// downloads do). Fetching doesn't open it; `opened` does, once it's been shown.
     func open(_ pic: PicToOpen) async throws -> OpenedPic {
         let server = try Server(account.server, transport: transport)
         switch pic {
         case .direct(let m):
             guard let friend else { throw SendError.cantOpen }
-            let sealed = try await server.send("snaps/\(m.id)", token: account.token)
+            let sealed = try await retrying { try await server.send("snaps/\(m.id)", token: account.token) }
             for key in reader.readingKeys(friend, ring: ring) {
                 if m.format == E2E.videoFormat, let v = try? E2E.decryptVideo(key, sealed, sender: m.senderId, recipient: m.recipientId) {
                     return try OpenedPic(image: nil, video: Self.temporaryVideo(v.media, type: v.type), caption: v.caption, y: v.y)
@@ -1440,7 +1507,7 @@ struct OpenedPic: Sendable {
             throw SendError.cantOpen
         case .group(let m):
             guard let id = m.pic?.id, let wrap = m.key else { throw SendError.cantOpen }
-            let sealed = try await server.send("groups/\(m.groupId)/pics/\(id)", token: account.token)
+            let sealed = try await retrying { try await server.send("groups/\(m.groupId)/pics/\(id)", token: account.token) }
             for wrapKey in reader.wrapKeys(from: m.senderId, server: m.senderPublicKey, ring: ring) {
                 let o = E2E.GroupOpening(groupId: m.groupId, senderId: m.senderId, myId: account.user.id,
                                          clientId: m.clientId ?? "", recipients: m.recipients ?? [], wrapKey: wrapKey)
@@ -1458,14 +1525,54 @@ struct OpenedPic: Sendable {
         }
     }
 
-    /// It's been shown: now it's opened, and gone. A repeat is fine.
-    func confirmOpened(_ pic: PicToOpen) async {
-        let server = try? Server(account.server, transport: transport)
-        switch pic {
-        case .direct(let m): _ = try? await server?.send("snaps/\(m.id)/opened", method: "POST", token: account.token)
-        case .group(let m):
-            if let id = m.pic?.id { _ = try? await server?.send("groups/\(m.groupId)/pics/\(id)/opened", method: "POST", token: account.token) }
+    /// It's on screen: opened, here at once and for good (D27). The chat and
+    /// the chat list stop offering it (the session's ReaderMemo, which every
+    /// reader of its messages asks), and the server's told, until it hears
+    /// (`confirmOpened`). Until then a reload still says it's waiting; the
+    /// phone knows better, and never shows it again.
+    func opened(_ pic: PicToOpen) {
+        reader.memo.opened(pic.memoKey)
+        let slot = bubbles.slot(of: pic.messageId)
+        if slot.found, bubbles[slot.index].opening != nil {
+            bubbles[slot.index].opening = nil
+            bubbles[slot.index].content = .media("\(pic.isVideo ? "Video" : "Pic") viewed")
         }
+        picOpened(pic)
+        Task { await confirmOpened(pic) }
+    }
+
+    /// The chat list hears a pic was opened here, to change its row at once.
+    @ObservationIgnored var picOpened: (PicToOpen) -> Void = { _ in }
+
+    /// Waits between tries to tell the server a pic was opened (app.js, `confirmOpened`).
+    var confirmDelays: [Duration] = [.seconds(2), .seconds(4), .seconds(8), .seconds(16)]
+
+    /// Tells the server it was shown, so it's opened and gone; tried while the
+    /// connection is the problem, waiting longer each time. If it never gets
+    /// through, the server counts it opened 15 minutes after it was fetched
+    /// anyway. A repeat is fine.
+    func confirmOpened(_ pic: PicToOpen) async {
+        guard let server = try? Server(account.server, transport: transport) else { return }
+        let path = switch pic {
+        case .direct(let m): "snaps/\(m.id)/opened"
+        case .group(let m): m.pic.map { "groups/\(m.groupId)/pics/\($0.id)/opened" }
+        }
+        guard let path else { return }
+        let confirmed = await Self.whileAway { () -> Bool in
+            for delay in confirmDelays + [nil] {
+                do {
+                    _ = try await server.send(path, method: "POST", token: account.token)
+                    return true
+                } catch let error as ServerError where error.retryable {
+                    guard let delay else { break }
+                    try? await Task.sleep(for: delay)
+                } catch {
+                    return false  // gone already (opened elsewhere, expired): nothing to tell
+                }
+            }
+            return false
+        }
+        if !confirmed { Reporter.shared.report(.warn, "confirming a pic open failed", ["group": groupFlag]) }
         try? await catchUp()
     }
 

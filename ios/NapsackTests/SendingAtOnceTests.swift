@@ -101,13 +101,13 @@ import Testing
         #expect(uploads.count == 4 && clientIds.count == 1, "three tries, then Try again: one pic")
     }
 
-    /// A pic past its deadline is not sent; if its own copy then comes back
-    /// (the server had it after all), it's sent.
-    @Test(.timeLimit(.minutes(1))) func aPicPastItsDeadlineThenFoundIsSent() async throws {
+    /// A pic whose upload stops moving is not sent; if its own copy then
+    /// comes back (the server had it after all), it's sent.
+    @Test(.timeLimit(.minutes(1))) func aPicThatStopsMovingThenFoundIsSent() async throws {
         let server = Hanging(first: 100) { _ in (200, Data()) }
         let chat = chat(server)
         try await chat.loadNewest()
-        chat.picDeadline = .milliseconds(200)
+        chat.picStall = .milliseconds(200)
         chat.queuePic(Task { ReadyToSend(media: .photo(Data(repeating: 7, count: 2000)), caption: "", y: 0.75) }, isVideo: false, limits: nil)
         try await until { chat.pics.first?.status != .sending }
         #expect(chat.pics.map(\.status) == [.failed("Not sent: the connection is too slow.")])

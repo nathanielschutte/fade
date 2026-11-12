@@ -6,7 +6,8 @@ import SwiftUI
 /// message (decrypted here). Pull to refresh. Tapping a row opens the chat,
 /// or, when its newest message is a pic or video waiting from them, shows
 /// the chat's waiting pics right there and comes back to the list (Nate,
-/// 2026-11-02). Swipe a row (or hold it) to favorite, mute, hide, or leave;
+/// 2026-11-02); double tapping one opens the camera for it (X60). Swipe a
+/// row (or hold it) to favorite, mute, hide, or leave;
 /// search finds chats by name or newest message at once, and messages kept
 /// on the phone a moment later (Search.swift). While the app is on screen the
 /// live connection (Live.swift) keeps the list and the open chat current.
@@ -22,6 +23,10 @@ struct ChatListScreen: View {
     /// trying after you leave its chat, and coming back is instant. (Only in
     /// memory, and gone with the session.)
     @State private var opened = OpenedChats()
+    /// Texts not yet sent, kept through quitting napsack (Unsent.swift): read
+    /// as the list opens, each chat with some opened to send them.
+    @State private var unsent: UnsentTexts
+    @State private var restoredUnsent = false
     @State private var settingUpRecovery = false
     /// The announcement you closed, remembered on this phone (and forgotten at sign-out, Session).
     @AppStorage(ChatList.dismissedAnnouncementKey) private var dismissedAnnouncement: Int = 0
@@ -60,11 +65,31 @@ struct ChatListScreen: View {
     @State private var leaving: ChatRow?
     /// A short note at the bottom, with Undo where it can be undone (app.js, `showToast`).
     @State private var toast: Toast?
+    /// The first tap of what may be a double tap: the row, and its chat opening once it's clear no second is coming.
+    @State private var firstTap: FirstTap?
+    /// A double tap's camera, over the list: a pic for that chat (X60).
+    @State private var replying: Reply?
+
+    struct FirstTap {
+        let kind: ChatRow.Kind
+        let opening: Task<Void, Never>
+    }
+
+    struct Reply: Identifiable {
+        let kind: ChatRow.Kind
+        let name: String
+        var id: ChatRow.Kind { kind }
+    }
+
+    /// How long a tap waits for a second before opening its chat: a double tap's second
+    /// tap comes sooner than this (the web waits 350 ms in all; ChatListScreen.tapped).
+    static let doubleTap: Duration = .milliseconds(250)
 
     init(account: Account, notifications: Notifications = .shared) {
         self.account = account
         _live = State(initialValue: Live(account: account))
         _pictures = State(initialValue: Pictures(account: account, kept: ResponseCache(account: account.user.id).pictures))
+        _unsent = State(initialValue: UnsentTexts(account: account.user.id))
         _notifications = State(initialValue: notifications)
     }
 
@@ -136,23 +161,57 @@ struct ChatListScreen: View {
         viewing = PicsFromList(kind: row.kind, conversation: chat, unread: row.kind.groupId.flatMap { list.groups[$0]?.unread } ?? 0)
     }
 
-    @ViewBuilder private func rowLink(_ row: ChatRow) -> some View {
-        if row.opensPics {
-            Button { openPics(row) } label: {
-                HStack(spacing: 0) {
-                    ChatRowView(row: row, sending: opened.peek(row.kind))
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")  // as the links' rows
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .padding(.trailing, 2)
-                }
-                .contentShape(Rectangle())
+    /// A row: a tap opens the chat, or shows the pics waiting (`tapped`); a
+    /// double tap answers with a pic. Buttons, not links: a link can't wait
+    /// for a second tap, and a binding that turned taps aside was made anew
+    /// on every redraw, which wrote over a chat opened from a notification.
+    private func rowLink(_ row: ChatRow) -> some View {
+        Button { tapped(row) } label: {
+            HStack(spacing: 0) {
+                ChatRowView(row: row, sending: opened.peek(row.kind))
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")  // as a link's row
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 2)
             }
-            .foregroundStyle(.primary)
-        } else {
-            NavigationLink(value: Screen.chat(row.kind)) { ChatRowView(row: row, sending: opened.peek(row.kind)) }
+            .contentShape(Rectangle())
         }
+        .foregroundStyle(.primary)
+        .accessibilityActions {
+            if answers(row) { Button("Send a pic") { reply(row) } }
+        }
+    }
+
+    /// A tap on a row (X60). Its newest message a pic waiting: the pics, at
+    /// once (no double tap here: the first tap shows them). Otherwise the chat
+    /// opens a moment later, unless a second tap on the same row comes first:
+    /// then the camera, for that chat.
+    private func tapped(_ row: ChatRow) {
+        let first = firstTap
+        first?.opening.cancel()
+        firstTap = nil
+        if row.opensPics { return openPics(row) }
+        if first?.kind == row.kind { return reply(row) }
+        let kind = row.kind
+        firstTap = FirstTap(kind: kind, opening: Task {
+            try? await Task.sleep(for: Self.doubleTap)
+            guard !Task.isCancelled else { return }
+            firstTap = nil
+            path = [.chat(kind)]
+        })
+    }
+
+    /// Whether a double tap (or "Send a pic") answers this chat with a pic:
+    /// one a pic can go to, with no pic waiting to be seen first.
+    private func answers(_ row: ChatRow) -> Bool {
+        !row.opensPics && sendable.contains { $0.kind == row.kind }
+    }
+
+    /// The camera over the list, for this chat; a chat a pic can't go to opens instead.
+    private func reply(_ row: ChatRow) {
+        guard answers(row), conversation(row.kind) != nil else { return path = [.chat(row.kind)] }
+        replying = Reply(kind: row.kind, name: row.name)
     }
 
     private var chats: some View {
@@ -188,7 +247,20 @@ struct ChatListScreen: View {
                     path = [.chat(kind)]
                 }
             }) { item in
-                PicViewer(waitingIn: item.conversation, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
+                PicViewer(waitingIn: item.conversation, longest: limits?.videoMaxSeconds, nothingWaiting: { openAfterViewing = item.kind }) { shown in shownFromList(item, shown) }
+            }
+            .fullScreenCover(item: $replying) { reply in
+                // Send closes it, and you're on the list, where it says where it's going (X60).
+                CameraScreen(maxSeconds: limits?.videoMaxSeconds ?? 10, maxBytes: limits?.videoMaxBytes ?? 4 << 20,
+                             send: .chat(reply.name, { pic in
+                                 try send(pic, to: reply.kind)
+                                 replying = nil
+                                 toast = Toast(text: SendToScreen.words([reply.name], video: pic.isVideo), undo: nil)
+                             }, more: CameraSend.AddMore(here: reply.kind, chats: { sendable }, send: { kind, pic in try send(pic, to: kind) },
+                                                         done: { words in
+                                                             replying = nil
+                                                             toast = Toast(text: words, undo: nil)
+                                                         })))
             }
             .toolbar { chatsToolbar }
         }
@@ -262,6 +334,7 @@ struct ChatListScreen: View {
             .searchable(text: $search, isPresented: $searching, prompt: "Search")
             .onChange(of: searching) { _, now in if now { prepareSearch() } }
             .onChange(of: list.loaded) { _, loaded in if loaded && searching { prepareSearch() } }  // searched before the list was in
+            .onChange(of: list.loaded, initial: true) { _, loaded in if loaded { restoreUnsent() } }
             .onChange(of: search) { _, text in finder.find(text) }
             // A key accepted in a chat: the list takes it at once (no event comes from the server for it).
             .onChange(of: list.pinBook?.pins) { list.pinsChanged() }
@@ -354,6 +427,9 @@ struct ChatListScreen: View {
                 }
                 .swipeActions(edge: .trailing) { rowActions(row, swiping: true) }
                 .contextMenu {
+                    if answers(row) {
+                        Button("Send a pic", systemImage: "camera") { reply(row) }
+                    }
                     Button(row.favorite ? "Unfavorite" : "Favorite", systemImage: row.favorite ? "star.slash" : "star") {
                         act(row) { try await list.setFavorite(row, !row.favorite, account: account) }
                     }
@@ -405,6 +481,20 @@ struct ChatListScreen: View {
         }
     }
 
+    /// Once the list is in: every chat with texts kept from before napsack
+    /// was quit is opened, in the background, and sends them (its row says
+    /// "Not sent" if they can't go). Once a session.
+    private func restoreUnsent() {
+        guard !restoredUnsent else { return }
+        restoredUnsent = true
+        unsent.load()
+        for (key, texts) in unsent.chats.sorted(by: { $0.key < $1.key }) {
+            // Made now, it restores them itself; one opened already takes any it doesn't have.
+            guard let kind = ChatRow.Kind(unsentKey: key), let chat = conversation(kind) else { continue }
+            chat.restore(texts)
+        }
+    }
+
     /// Chats a pic can go to: not a changed key, a turned-off account, or Team Napsack.
     private var sendable: [ChatRow] {
         list.rows.filter { row in
@@ -438,7 +528,13 @@ struct ChatListScreen: View {
             return kept
         }
         let new = Conversation(chat, account: account, reader: reader, pinBook: list.pinBook, cache: list.cache(for: account))
-        opened.keep(new, as: kind, busy: Set(path.compactMap(\.chat)).union(viewing.map { [$0.kind] } ?? []), open: live.openChat)
+        new.picOpened = { [list] _ in list.picOpened(kind) }
+        // Its unsent texts from before a quit, back before anything new is kept over them.
+        unsent.load()
+        new.unsent = unsent
+        if let kept = unsent.chats[new.unsentKey] { new.restore(kept) }
+        opened.keep(new, as: kind, busy: Set(path.compactMap(\.chat)).union(viewing.map { [$0.kind] } ?? []).union(replying.map { [$0.kind] } ?? []),
+                    open: live.openChat)
         return new
     }
 

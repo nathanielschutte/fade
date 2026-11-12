@@ -52,6 +52,11 @@ struct ResponseCache: Sendable {
         self.fileExtension = fileExtension
     }
 
+    /// The account's unsent texts, sealed (UnsentTexts), beside its answers.
+    var unsent: ResponseCache {
+        ResponseCache(directory.appending(path: "unsent", directoryHint: .isDirectory), root: root, generation: generation, fileExtension: "bin")
+    }
+
     /// The account's kept pictures (images, as the server sent them), beside its answers.
     var pictures: ResponseCache {
         ResponseCache(directory.appending(path: "pictures", directoryHint: .isDirectory), root: root, generation: generation, fileExtension: "img")

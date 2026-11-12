@@ -115,8 +115,7 @@ async def main():
         await ben.click("#viewer")
         await expect(ben.locator("#viewer")).to_be_hidden()
         await expect(ben.locator(".chat-item", has_text=ANA).locator(".chat-status")).to_have_text("Pic viewed", timeout=10000)
-        await ben.locator(".chat-item", has_text=ANA).click()  # now it opens the chat
-        await expect(ben.locator("#chat-title")).to_have_text(ANA)
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)  # then the chat opens (X59)
         print("the friend's photo has the drawing flattened in")
 
         # On a phone the toolbar fits and nothing scrolls sideways.

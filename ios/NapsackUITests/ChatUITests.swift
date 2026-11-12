@@ -393,6 +393,13 @@ import XCTest
 
     /// Signed in (through the sign-in screen, the first time), then into the chat with the friend.
     func openChat(_ chat: Chat) throws {
+        try onTheList(chat)
+        app.staticTexts[chat.friend.username].tap()
+        try require(composer.waitForExistence(timeout: 10), "the chat opened")
+    }
+
+    /// Signed in (through the sign-in screen, the first time), on the chat list with the friend's chat in it.
+    func onTheList(_ chat: Chat) throws {
         let username = app.textFields["Username"]
         let row = app.staticTexts[chat.friend.username]
         let list = app.navigationBars["Chats"]
@@ -422,8 +429,6 @@ import XCTest
             if notNow.exists { notNow.tap() }
             return row.exists && row.isHittable
         }, "signed in, with the chat in the list")
-        row.tap()
-        try require(composer.waitForExistence(timeout: 10), "the chat opened")
     }
 
     /// Profile › Sign out, and yes to "Sign out?".
