@@ -157,6 +157,18 @@ struct ChatRow: Identifiable, Equatable, Sendable {
     var isGroup: Bool { if case .group = kind { true } else { false } }
 }
 
+extension ChatRow.Kind {
+    /// The chat a key of Conversation.unsentKey names ("d12", "g3").
+    init?(unsentKey key: String) {
+        guard let id = Int64(key.dropFirst()) else { return nil }
+        switch key.first {
+        case "d": self = .friend(id)
+        case "g": self = .group(id)
+        default: return nil
+        }
+    }
+}
+
 /// What readers have worked out already, kept between reloads (one per
 /// signed-in list, shared by its open chats): chat keys, which take an ECDH
 /// and an HKDF each, and each row's newest message, opened. Only in memory,
@@ -166,8 +178,20 @@ final class ReaderMemo: Sendable {
         var keys: [String: SymmetricKey] = [:]
         /// By message: what it was opened from (its sealed bytes), and what it says.
         var previews: [String: (sealed: String, text: String)] = [:]
+        /// Pics and videos opened on this phone (PicToOpen.memoKey).
+        var opened: Set<String> = []
     }
     private let state = Mutex(State())
+
+    /// A pic or video was shown here: it's opened, whatever an answer from
+    /// before the server heard says (D27), so it's never offered again.
+    func opened(_ key: String) {
+        state.withLock { _ = $0.opened.insert(key) }
+    }
+
+    func wasOpened(_ key: String) -> Bool {
+        state.withLock { $0.opened.contains(key) }
+    }
 
     /// A key worked out once (`id` names who it's with, and their public key).
     func key(_ id: String, make: () throws -> SymmetricKey) rethrows -> SymmetricKey {
@@ -253,6 +277,17 @@ struct Reader: Sendable {
         return m.kind == "snap" && m.senderId == friend.id && Self.directPicFormats.contains(m.format)
     }
 
+    /// A direct pic's state as this phone knows it: one opened here is
+    /// "opened" before the server has heard (ReaderMemo.opened, D27).
+    func snapState(_ m: DirectMessage) -> String? {
+        m.snapState == "pending" && m.senderId != me.id && memo.wasOpened("d\(m.id)") ? "opened" : m.snapState
+    }
+
+    /// Whether I've seen a group pic: the server says so, or it was opened here.
+    func seen(_ m: GroupMessage) -> Bool {
+        m.pic?.viewers.contains(me.id) == true || memo.wasOpened("g\(m.id)")
+    }
+
     func status(_ friend: Friend) -> (String, ChatRow.Waiting?) {
         if changed.contains(friend.id) { return ("Safety code changed", nil) }
         if friend.deactivated == true { return ("Account turned off", nil) }
@@ -260,13 +295,16 @@ struct Reader: Sendable {
         let mine = m.senderId == me.id
         if m.kind == "snap" {
             let word = m.format == E2E.videoFormat ? "video" : "pic", Word = word.capitalized
-            if !mine && m.snapState == "pending" { return ("New \(word)", .snap) }
+            let state = snapState(m)
+            if !mine && state == "pending" { return ("New \(word)", .snap) }
             let label = mine
                 ? ["pending": "Sent a \(word)", "opened": "\(Word) opened", "expired": "\(Word) expired unopened"]
                 : ["opened": "\(Word) viewed", "expired": "\(Word) expired"]
             // A text from before it can still be unread (the server's count): its
-            // pics viewed from the list, say, or a pic sent from the camera.
-            return (label[m.snapState ?? ""] ?? Word, friend.unread > 0 ? .text : nil)
+            // pics viewed from the list, say, or a pic sent from the camera. The
+            // server counts a pic opened here, until it hears, as one of them.
+            let unread = friend.unread - (state != m.snapState ? 1 : 0)
+            return (label[state ?? ""] ?? Word, unread > 0 ? .text : nil)
         }
         let text = self.text(m, with: friend) ?? "Encrypted message"
         if !mine && m.readAt == nil { return (text, .text) }
@@ -324,7 +362,7 @@ struct Reader: Sendable {
     /// As for a friend: the newest message a group pic or video from someone else, not yet seen by me.
     func opensPics(_ group: GroupSummary) -> Bool {
         guard let m = group.lastMessage, let pic = m.pic, m.senderId != me.id else { return false }
-        return pic.discardReason == nil && !pic.viewers.contains(me.id) && m.key != nil && Self.groupPicFormats.contains(m.format)
+        return pic.discardReason == nil && !seen(m) && m.key != nil && Self.groupPicFormats.contains(m.format)
     }
 
     func status(_ group: GroupSummary) -> (String, ChatRow.Waiting?) {
@@ -332,7 +370,7 @@ struct Reader: Sendable {
         let mine = m.senderId == me.id
         if let pic = m.pic {
             let what = "sent a \(m.format == E2E.groupVideoFormat ? "video" : "pic")"
-            let waiting = !mine && pic.discardReason == nil && !pic.viewers.contains(me.id)
+            let waiting = !mine && pic.discardReason == nil && !seen(m)
             return (mine ? "You \(what)" : "\(name(m.senderId, m.senderName)) \(what)", waiting ? .snap : group.unread > 0 ? .text : nil)
         }
         let text = m.kind == "event"
@@ -640,6 +678,12 @@ struct Reader: Sendable {
     @ObservationIgnored private var changedAt: [ChatRow.Kind: Int] = [:]
     /// Groups left here, and when (in `changes`).
     @ObservationIgnored private var left: [Int64: Int] = [:]
+
+    /// A pic of this chat's was opened on this phone (Conversation.opened):
+    /// its row stops saying it's waiting, at once (D27).
+    func picOpened(_ kind: ChatRow.Kind) {
+        touched(kind)
+    }
 
     private func touched(_ kind: ChatRow.Kind) {
         changes += 1

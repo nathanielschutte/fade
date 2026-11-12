@@ -117,6 +117,13 @@ enum LiveEvent: Sendable {
         if running { return checkAlive() }
         running = true
         connect()
+        // A request found the connection bad, or the network changed: the socket may be dead too.
+        timers["renewed"] = Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: NetworkTransport.Connection.renewed) {
+                guard let self, self.running else { return }
+                self.checkAlive()
+            }
+        }
     }
 
     /// Off screen: the connection goes, and comes back with `start`.

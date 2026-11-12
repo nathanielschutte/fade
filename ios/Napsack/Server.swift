@@ -1,5 +1,7 @@
 import Foundation
+import Network
 import NapsackCrypto
+import Synchronization
 
 /// Who this app is to a server. Every request says `X-Napsack-Client:
 /// ios/<version>+<build>`, so the server can turn away an app older than it
@@ -133,18 +135,114 @@ protocol Transport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
 
+/// How far a request has got: bytes sent and received, of how many (0 when not known).
+struct Transfer: Equatable, Sendable {
+    var sent: Int64 = 0
+    var toSend: Int64 = 0
+    var received: Int64 = 0
+    var toReceive: Int64 = 0
+
+    /// How much of the answer has come, once its size is known.
+    var receivedPart: Double? { toReceive > 0 ? min(1, Double(received) / Double(toReceive)) : nil }
+}
+
+/// Whoever's watching the requests made under it (a pic opening or on its
+/// way) hears how far each has got as it moves (NetworkTransport; a stand-in
+/// transport in tests says it itself).
+enum TransferWatch {
+    @TaskLocal static var watcher: (@Sendable (Transfer) -> Void)?
+}
+
 struct NetworkTransport: Transport {
-    /// The app's one connection to napsack: ephemeral, with no cache and no
+    /// The app's connection to napsack: ephemeral, with no cache and no
     /// cookies, so nothing of an account's requests is ever written to the
-    /// phone by the system (signing out has nothing of it to clear).
-    static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.urlCache = nil
-        config.httpCookieStorage = nil
-        config.httpShouldSetCookies = false
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config)
+    /// phone by the system (signing out has nothing of it to clear). Every
+    /// request shares it, and its connection to the server, until that goes
+    /// bad (`renew`).
+    static var session: URLSession { connection.current }
+
+    /// The session, replaced when its connection goes bad (D26). A
+    /// connection can die without either end hearing (a weak Wi-Fi, a switch
+    /// to cellular), and every request after queues on it until it times
+    /// out: trying again would wait on the same dead one, and only quitting
+    /// napsack made a new one. So a request that fails for the connection's
+    /// sake, or is given up after a few seconds, retires it, and so does a
+    /// change of network: the requests after go out on a new connection, and
+    /// those still going on the old one finish.
+    final class Connection: Sendable {
+        private struct State {
+            var session: URLSession
+            var renewedAt: ContinuousClock.Instant?
+            var renewals = 0
+        }
+        private let state: Mutex<State>
+        /// Not again sooner than this: one bad moment fails several requests at once.
+        static let calm: Duration = .seconds(2)
+        /// Posted when it's been replaced: the live connection checks it's still alive (Live).
+        static let renewed = Notification.Name("napsack.connectionRenewed")
+
+        init() {
+            state = Mutex(State(session: Self.make()))
+        }
+
+        var current: URLSession { state.withLock { $0.session } }
+        /// How many times it's been replaced (tests).
+        var renewals: Int { state.withLock { $0.renewals } }
+
+        /// A new connection for the requests from now on. False if one was made a moment ago.
+        @discardableResult func renew(_ why: String) -> Bool {
+            let old = state.withLock { s -> URLSession? in
+                if let at = s.renewedAt, ContinuousClock.now - at < Self.calm { return nil }
+                let old = s.session
+                s.session = Self.make()
+                s.renewedAt = .now
+                s.renewals += 1
+                return old
+            }
+            guard let old else { return false }
+            old.finishTasksAndInvalidate()  // what's still going on it finishes
+            NotificationCenter.default.post(name: Self.renewed, object: nil)
+            Task { await Reporter.shared.report(.info, "new connection", ["why": why]) }
+            return true
+        }
+
+        static func make() -> URLSession {
+            let config = URLSessionConfiguration.ephemeral
+            config.urlCache = nil
+            config.httpCookieStorage = nil
+            config.httpShouldSetCookies = false
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            return URLSession(configuration: config)
+        }
+    }
+
+    static let connection: Connection = {
+        let connection = Connection()
+        NetworkChanges.shared.start { connection.renew("network changed") }
+        return connection
     }()
+
+    /// The app's, or one of a test's own.
+    var connection: Connection = NetworkTransport.connection
+
+    /// The connection's fault, not the request's: a new connection may well do better.
+    static func connectionFault(_ error: URLError) -> Bool {
+        [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost,
+         .dnsLookupFailed, .secureConnectionFailed, .cannotLoadFromNetwork, .dataNotAllowed,
+         .internationalRoamingOff, .callIsActive].contains(error.code)
+    }
+
+    /// A request given up after this long (a deadline, a pic closed while it
+    /// opened) was likely stuck on its connection, not just unwanted.
+    static let givenUpSlow: Duration = .seconds(3)
+
+    /// Whether a request that ended in `error` after `took` should retire the connection.
+    static func retires(_ error: any Error, took: Duration) -> Bool {
+        if let error = error as? URLError {
+            return connectionFault(error) || (error.code == .cancelled && took >= givenUpSlow)
+        }
+        return error is CancellationError && took >= givenUpSlow
+    }
 
     #if DEBUG
     /// `NAPSACK_UI_TEST_SLOW_OLDER`: milliseconds each page before the newest takes (UI tests only;
@@ -157,9 +255,76 @@ struct NetworkTransport: Transport {
         // UI tests: older pages as slow as a phone far from the server (ChatUITests).
         if let ms = Self.slowOlder, request.url?.query?.contains("before=") == true { try await Task.sleep(for: .milliseconds(ms)) }
         #endif
-        let (data, response) = try await Self.session.data(for: request)
+        let started = ContinuousClock.now
+        let response: URLResponse, data: Data
+        do {
+            if let watcher = TransferWatch.watcher {
+                (data, response) = try await Self.watched(request, on: connection.current, watcher)
+            } else {
+                (data, response) = try await connection.current.data(for: request)
+            }
+        } catch {
+            if Self.retires(error, took: ContinuousClock.now - started) {
+                connection.renew((error as? URLError)?.code == .cancelled || error is CancellationError ? "request given up" : "request failed")
+            }
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw ServerError.unreachable }
         return (data, http)
+    }
+
+    /// The request, telling `watcher` how far it's got a few times a second, whenever that changes.
+    private static func watched(_ request: URLRequest, on session: URLSession,
+                                _ watcher: @escaping @Sendable (Transfer) -> Void) async throws -> (Data, URLResponse) {
+        let tracker = TaskTracker()
+        let watching = Task {
+            var last = Transfer()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let now = tracker.transfer, now != last else { continue }
+                last = now
+                watcher(now)
+            }
+        }
+        defer { watching.cancel() }
+        let answer = try await session.data(for: request, delegate: tracker)
+        if let done = tracker.transfer { watcher(done) }  // its answer came: that's moving too, however quick
+        return answer
+    }
+
+    /// Learns which task a request became, to read how far it's got.
+    private final class TaskTracker: NSObject, URLSessionTaskDelegate, Sendable {
+        private let task = Mutex<URLSessionTask?>(nil)
+
+        func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+            self.task.withLock { $0 = task }
+        }
+
+        var transfer: Transfer? {
+            task.withLock { task in
+                task.map { Transfer(sent: $0.countOfBytesSent, toSend: max(0, $0.countOfBytesExpectedToSend),
+                                    received: $0.countOfBytesReceived, toReceive: max(0, $0.countOfBytesExpectedToReceive)) }
+            }
+        }
+    }
+}
+
+/// Changes of network (Wi-Fi to cellular, back online): a connection made
+/// on the old one may be dead (NetworkTransport.Connection).
+final class NetworkChanges: Sendable {
+    static let shared = NetworkChanges()
+    private let monitor = NWPathMonitor()
+    /// What the network was last: which interfaces, and whether it worked.
+    private let last = Mutex<String?>(nil)
+
+    func start(_ changed: @escaping @Sendable () -> Void) {
+        monitor.pathUpdateHandler = { [self] path in
+            let now = "\(path.status) " + path.availableInterfaces.map(\.name).joined(separator: ",")
+            let before = last.withLock { l in defer { l = now }; return l }
+            // The first is how it is at the start, not a change.
+            if let before, before != now, path.status == .satisfied { changed() }
+        }
+        monitor.start(queue: DispatchQueue(label: "napsack.network-changes", qos: .utility))
     }
 }
 

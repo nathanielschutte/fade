@@ -1874,12 +1874,11 @@ struct SendToScreen: View {
             HStack {
                 Spacer()
                 Button { go() } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Text("Send").font(.headline).lineLimit(1)  // how many, in the title
                         Image(systemName: "paperplane.fill")
                     }
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: 44)
+                    .padding(.horizontal, 4)  // a size smaller (Nate, 2026-11-12): the large control's own height, still a full tap
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)

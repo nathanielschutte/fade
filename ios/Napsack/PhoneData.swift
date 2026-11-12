@@ -10,7 +10,9 @@ import Foundation
 ///   goes: pins too (Nate, 2026-11-06), so a new sign-in pins afresh.
 /// - **Settings** (UserDefaults): the Face ID lock, the announcement you
 ///   closed. The app's whole domain goes.
-/// - **Kept answers and pictures** (ResponseCache), in Application Support.
+/// - **Kept answers and pictures** (ResponseCache), in Application Support,
+///   and beside them texts not yet sent, sealed under a key in the Keychain
+///   (UnsentTexts).
 /// - **Temporary files**: videos opened (Conversation.temporaryVideo),
 ///   recorded, or made smaller to send. Each is deleted once it's used; this
 ///   catches any an interruption left.

@@ -63,7 +63,8 @@ struct KeychainAccountStore: AccountStore {
     /// Every Keychain item but the session and this account's pins, and every
     /// other account's kept answers (ResponseCache keeps each in a folder named by its id).
     func forgetOtherAccounts(than account: Account) {
-        let mine: Set = [item, KeychainPinStore(server: account.server, service: phone.keychainService).key(account.user.id)]
+        let mine: Set = [item, KeychainPinStore(server: account.server, service: phone.keychainService).key(account.user.id),
+                         UnsentTexts.keyName(account.user.id)]  // without it, its unsent texts could never be read again
         for other in Keychain.accounts(service: phone.keychainService) where !mine.contains(other) {
             try? Keychain.delete(account: other, service: phone.keychainService)
         }

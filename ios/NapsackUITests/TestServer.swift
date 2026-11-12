@@ -96,6 +96,25 @@ struct TestServer: Sendable {
         return (stored?["id"] as? NSNumber)?.int64Value ?? 0
     }
 
+    /// A photo from one to the other (format 6, sealed here), as their app sends one.
+    @discardableResult func sendPic(_ jpeg: Data, caption: String = "", from: Person, to: Person) async throws -> Int64 {
+        let key = try E2E.pairKey(mine: from.identity, theirs: to.publicKey, myId: from.id, theirId: to.id)
+        let sealed = try E2E.encryptImage(key, jpeg, caption: caption, sender: from.id, recipient: to.id, y: nil)
+        var parts = URLComponents(url: URL(string: address)!.appending(path: "api/chats/\(to.id)/snaps"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "format", value: String(E2E.imageFormat)), URLQueryItem(name: "client_id", value: UUID().uuidString)]
+        var request = URLRequest(url: parts.url!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(from.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = sealed
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw Failure(description: "POST chats/\(to.id)/snaps: \(status) \(String(decoding: data, as: UTF8.self))")
+        }
+        return ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"] as? NSNumber)?.int64Value ?? 0
+    }
+
     /// A reaction from one to a message in their chat with the other, sealed here (nil takes it back).
     func react(_ emoji: String?, to message: Int64, from: Person, to: Person) async throws {
         let key = try E2E.pairKey(mine: from.identity, theirs: to.publicKey, myId: from.id, theirId: to.id)

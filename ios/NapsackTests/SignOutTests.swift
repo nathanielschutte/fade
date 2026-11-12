@@ -23,7 +23,8 @@ import Testing
     var settings: UserDefaults { UserDefaults(suiteName: phone.defaults)! }
 
     /// What a signed-in account leaves on a phone: its session, its pins, the
-    /// settings, kept chats and pictures, and a video opened a moment ago.
+    /// settings, kept chats and pictures, a text not yet sent (sealed, its key
+    /// in the Keychain), and a video opened a moment ago.
     func fill(_ account: Account) throws {
         try store.save(account)
         leftovers(of: account.user.id, server: account.server)
@@ -40,6 +41,9 @@ import Testing
         let cache = ResponseCache(account: id, root: phone.cache)
         cache.write(Data("[{\"id\":8}]".utf8), "friends")
         cache.pictures.write(Data([1, 2, 3]), "users-8-avatar-1", replacing: "users-8-avatar-", limit: 10)
+        let unsent = UnsentTexts(account: id, cache: cache, keychainService: phone.keychainService)
+        unsent.load()
+        unsent.keep([UnsentTexts.Text(id: "u\(id)", text: "a text not yet sent", replyTo: nil)], for: "d8")
         ResponseCache.settle()
         try? Data("a video".utf8).write(to: phone.temporary.appending(path: "napsack-\(UUID().uuidString).mp4"))
     }
@@ -78,6 +82,7 @@ import Testing
         let kept = phone.phone.kept()
         #expect(kept.contains("keychain: session") && kept.contains { $0.hasPrefix("keychain: pins:") }, "there was something to forget")
         #expect(kept.contains("setting: \(AppLock.enabledKey)") && kept.contains { $0.contains("/cache/") } && kept.contains { $0.contains("/tmp/") })
+        #expect(kept.contains("keychain: \(UnsentTexts.keyName(account.user.id))") && kept.contains { $0.contains("/unsent/") }, "a text not yet sent")
         return (session, account)
     }
 
@@ -151,10 +156,15 @@ import Testing
         phone.leftovers(of: 3, server: "https://napsack.test")
         Session.forgetLeftovers(store: phone.store)
         let keychain = phone.phone.kept().filter { $0.hasPrefix("keychain: ") }
-        #expect(keychain == ["keychain: \(phone.pins(account.server).key(account.user.id))", "keychain: session"])
+        #expect(keychain == ["keychain: \(phone.pins(account.server).key(account.user.id))", "keychain: session",
+                             "keychain: \(UnsentTexts.keyName(account.user.id))"])
         #expect(try phone.store.load() == account)
         #expect(ResponseCache(account: 3, root: phone.phone.cache).read("friends") == nil)
         #expect(ResponseCache(account: account.user.id, root: phone.phone.cache).read("friends") != nil)
+        // This account's unsent texts can still be read: their key stayed.
+        let unsent = UnsentTexts(account: account.user.id, cache: ResponseCache(account: account.user.id, root: phone.phone.cache),
+                                 keychainService: phone.phone.keychainService)
+        #expect(unsent.load() && unsent.chats["d8"]?.map(\.text) == ["a text not yet sent"])
     }
 
     /// A load that finishes after signing out (its answer was on the way)

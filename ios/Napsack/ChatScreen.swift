@@ -716,7 +716,7 @@ struct ChatScreen: View {
             // This one, then the others still waiting after it.
             let waiting = conversation.bubbles.compactMap(\.opening)
             let from = waiting.firstIndex(of: item.pic) ?? 0
-            PicViewer(pics: Array(waiting[from...]), conversation: conversation)
+            PicViewer(pics: Array(waiting[from...]), conversation: conversation, longest: limits?.videoMaxSeconds)
         }
         .sheet(item: $reporting, onDismiss: { if unfriended { dismiss() } }) { target in
             if let account = session.account {
