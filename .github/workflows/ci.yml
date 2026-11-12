@@ -101,7 +101,7 @@ jobs:
           NAPSACK_SHOTS: ${{ runner.temp }}/shots
       - name: Keep screenshots
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screenshots
           path: ${{ runner.temp }}/shots
@@ -147,7 +147,7 @@ jobs:
           bash scripts/release.sh build "$BUILD"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cat dist/fade-server.sha256)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fade-server
           path: dist/fade-server
