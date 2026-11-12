@@ -1,10 +1,10 @@
 """Pics straight from the chat list (X41): a tap on a chat whose newest
 message is a pic or video waiting from them shows the chat's waiting pics,
-back to back, without opening the chat, and leaves you on the list. A text
-of theirs from before stays unread; a group is read after only if its pics
-were all that was unread; a double tap still opens the camera; and pics
-opened elsewhere meanwhile make the tap open the chat instead.
-Settings come from the environment; see common.py."""
+back to back, over the list; when they're done the chat opens (X59), reading
+what was unread there. Each counts as opened the moment it's shown, in the
+list and the chat, before the server has heard (D27). A double tap still
+opens the camera, and pics opened elsewhere meanwhile make the tap open the
+chat straight away. Settings come from the environment; see common.py."""
 import asyncio, re, uuid
 from playwright.async_api import async_playwright, expect
 
@@ -24,6 +24,7 @@ async def view(page, count, tap):
     """Taps through the viewer's `count` pics, waiting for each to show
     (and past the tap guard, app.js), until it closes."""
     viewer = page.locator("#viewer")
+    underneath = await page.locator("#app").get_attribute("class")
     for i in range(count):
         await expect(viewer).to_be_visible(timeout=10000)
         await expect(page.locator("#viewer-hint")).to_have_text(
@@ -32,11 +33,22 @@ async def view(page, count, tap):
             await expect(page.locator("#viewer-count")).to_have_text(f"{i + 1} of {count}")
         else:
             await expect(page.locator("#viewer-count")).to_be_hidden()
-        # The list stays as it was underneath: no chat opened.
-        await expect(page.locator("#app")).not_to_have_class(IN_CHAT)
+        # What's underneath stays as it was while they show: no chat opened yet.
+        await expect(page.locator("#app")).to_have_class(underneath)
         await asyncio.sleep(0.7)  # a tap right as a pic appears is ignored (TAP_GUARD_MS)
         await tap(viewer)
     await expect(viewer).to_be_hidden()
+
+
+async def group_read(page, name):
+    """Waits for the server to have the group read: opening it reads it, a
+    moment after it shows (and the page's CSP rules out wait_for_function)."""
+    for _ in range(100):
+        groups = await api(page, "GET", "/groups")
+        if next(g for g in groups if g["name"] == name)["unread"] == 0:
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"{name} still unread: {groups}")
 
 
 async def say(page, text):
@@ -58,44 +70,60 @@ async def main():
         tap = lambda loc: loc.tap()
 
         # Two pics from Ana: Ben's tap on her row shows both, back to back,
-        # and he's on the list after, with nothing waiting.
+        # then her chat opens; back on the list, nothing waits.
         await row(ana, BEN).click()
         await send_pics(ana, 2)
         ben_row = row(ben, ANA)
         await expect(ben_row.locator(".chat-status")).to_have_text("New pic", timeout=10000)
         # Said to screen readers, which can't see that a tap won't open the chat.
-        await expect(ben_row.locator(".chat-hint")).to_have_text("Opens the pic, not the chat")
+        await expect(ben_row.locator(".chat-hint")).to_have_text("Opens the pic, then the chat")
         await ben_row.tap()
         await expect(ben.locator("#viewer-count")).to_have_text("1 of 2", timeout=10000)
         await expect(ben.locator("#viewer-hint")).to_have_text("Tap for the next one", timeout=10000)
         await shot(ben, "list-pics-viewer-phone", full_page=False)
         await view(ben, 2, tap)
-        await expect(ben.locator("#app")).not_to_have_class(IN_CHAT)
-        await expect(ben.locator("#chat")).to_be_hidden()
+        await expect(ben.locator("#app")).to_have_class(IN_CHAT)
+        await expect(ben.locator("#chat-title")).to_have_text(ANA)
+        await expect(ben.locator("button.snap-chip")).to_have_count(0)
+        await shot(ben, "list-pics-then-chat-phone", full_page=False)
+        await ben.click("#back-button")
         await expect(ben_row.locator(".chat-status")).to_have_text("Pic viewed", timeout=10000)
         await expect(ben_row.locator(".chat-item")).not_to_have_class(UNREAD, timeout=10000)
         await expect(ben_row.locator(".chat-hint")).to_have_text("")
         await no_placeholders(ben, "#viewer")
         await shot(ben, "list-pics-after-phone", full_page=False)
-        print("two pics from the list, back to back; still on the list, nothing waiting")
+        print("two pics from the list, back to back, then the chat; nothing waiting")
 
-        # A text, then a pic: the pic is shown; the text stays unread for the chat.
+        # A text, then a pic: the pic is shown, then the chat opens on the text, which is read.
         await say(ana, f"before the pic {tag}")
         await send_pics(ana, 1)
         await expect(ben_row.locator(".chat-status")).to_have_text("New pic", timeout=10000)
         await ben_row.tap()
         await view(ben, 1, tap)
-        await expect(ben_row.locator(".chat-status")).to_have_text("Pic viewed", timeout=10000)
-        await expect(ben_row.locator(".chat-item")).to_have_class(UNREAD)
-        await expect(ben_row.locator(".marker")).to_have_class(re.compile(r"\btext\b"))
-        chats = await api(ben, "GET", "/friends")
-        assert next(c for c in chats if c["id"] == ana_id)["unread"] == 1, chats
-        # Opening the chat reads it.
-        await ben_row.tap()
         await expect(ben.locator(".msg", has_text=f"before the pic {tag}")).to_be_visible(timeout=10000)
         await ben.click("#back-button")
+        await expect(ben_row.locator(".chat-status")).to_have_text("Pic viewed")
         await expect(ben_row.locator(".chat-item")).not_to_have_class(UNREAD, timeout=10000)
-        print("a text before the pic stays unread")
+        print("a text before the pic: read in the chat that opens after")
+
+        # The server doesn't hear it was opened (the confirmation can't get
+        # through): the row and the chat say it was viewed all the same, at
+        # once, and the chat doesn't offer it again (D27).
+        await send_pics(ana, 1)
+        await expect(ben_row.locator(".chat-status")).to_have_text("New pic", timeout=10000)
+        confirms = re.compile(r"/api/snaps/\d+/opened$")
+        await ben.route(confirms, lambda route: route.abort())
+        await ben_row.tap()
+        await view(ben, 1, tap)
+        await expect(ben.locator("#chat-title")).to_have_text(ANA, timeout=10000)
+        await expect(ben.locator("button.snap-chip")).to_have_count(0)
+        msgs = await api(ben, "GET", f"/chats/{ana_id}/messages?limit=5")
+        assert [m["snap_state"] for m in msgs if m["kind"] == "snap"][-1] == "pending", msgs  # the server hasn't heard
+        await ben.click("#back-button")
+        await expect(ben_row.locator(".chat-status")).to_have_text("Pic viewed")
+        await expect(ben_row.locator(".chat-item")).not_to_have_class(UNREAD)
+        await ben.unroute(confirms)
+        print("shown is opened at once, before the server hears")
 
         # A double tap is still the chat with the camera up, and the pic waits.
         await send_pics(ana, 1)
@@ -114,7 +142,8 @@ async def main():
         # refuses it, and the tap opens the chat instead.
         token = await ben.evaluate("localStorage.getItem('fade.token')")
         msgs = await api(ben, "GET", f"/chats/{ana_id}/messages?limit=10")
-        pic = next(m for m in msgs if m["kind"] == "snap" and m["snap_state"] == "pending")
+        # The newest: the one shown with blocked confirmations above may still be waiting on the server.
+        pic = [m for m in msgs if m["kind"] == "snap" and m["snap_state"] == "pending"][-1]
 
         async def elsewhere(route):
             answer = await route.fetch()  # as it was: the pic still waiting
@@ -137,8 +166,7 @@ async def main():
         await ben.click("#back-button")
         print("opened elsewhere: the tap opens the chat")
 
-        # A group, on a computer: its pics from the list, and it's read after,
-        # since they were all that was unread.
+        # A group, on a computer: its pics from the list, then the group, read.
         await api(ana, "POST", "/groups", {"name": GROUP, "member_ids": [cal_id]})
         ana_group, cal_group = row(ana, GROUP), row(cal, GROUP)
         await ana_group.click()
@@ -151,31 +179,34 @@ async def main():
         await expect(cal.locator("#viewer-from")).to_contain_text(GROUP, timeout=10000)
         await shot(cal, "list-pics-viewer-desktop", full_page=False)
         await view(cal, 2, click)
-        await expect(cal.locator("#chat")).to_be_hidden()
-        await expect(cal.locator("#chat-placeholder")).to_be_visible()
+        await expect(cal.locator("#chat-title")).to_have_text(GROUP)
+        await expect(cal.locator("#chat")).to_be_visible()
         await expect(cal_group.locator(".chat-item")).not_to_have_class(UNREAD, timeout=10000)
-        groups = await api(cal, "GET", "/groups")
-        assert next(g for g in groups if g["name"] == GROUP)["unread"] == 0, groups
+        await group_read(cal, GROUP)
         await shot(cal, "list-pics-after-desktop", full_page=False)
-        print("a group's pics from the list; read after")
+        print("a group's pics from the list, then the group, read")
 
-        # A text before the pic: the group stays unread. (From the keyboard
-        # this time, which shows them at once.)
+        # A text before the pic: shown, then the group opens on the text. (From
+        # the keyboard this time, which shows them at once; from another chat.)
+        await row(cal, ANA).click()
+        await expect(cal.locator("#chat-title")).to_have_text(ANA)
         await say(ana, f"group text {tag}")
         await send_pics(ana, 1)
-        await expect(cal_group.locator(".chat-hint")).to_have_text("Opens the pic, not the chat", timeout=10000)
+        await expect(cal_group.locator(".chat-hint")).to_have_text("Opens the pic, then the chat", timeout=10000)
         await cal_group.locator(".chat-item").focus()
         await cal.keyboard.press("Enter")
         await view(cal, 1, click)
-        await expect(cal_group.locator(".chat-status")).to_have_text(f"{ANA} sent a pic")
-        await expect(cal_group.locator(".chat-item")).to_have_class(UNREAD)
-        groups = await api(cal, "GET", "/groups")
-        assert next(g for g in groups if g["name"] == GROUP)["unread"] == 2, groups
-        print("a group text before the pic stays unread")
+        await expect(cal.locator("#chat-title")).to_have_text(GROUP)
+        await expect(cal.locator(".msg", has_text=f"group text {tag}")).to_be_visible(timeout=10000)
+        await expect(cal_group.locator(".chat-item")).not_to_have_class(UNREAD, timeout=10000)
+        await group_read(cal, GROUP)
+        print("a group text before the pic: read in the group that opens after")
 
         # A double click on a group's pic row: the group, with the camera up.
         await send_pics(ana, 1)
-        await expect(cal_group.locator(".chat-hint")).to_have_text("Opens the pic, not the chat", timeout=10000)
+        await row(cal, ANA).click()  # elsewhere, so the group's own row is what opens it
+        await expect(cal.locator("#chat-title")).to_have_text(ANA)
+        await expect(cal_group.locator(".chat-hint")).to_have_text("Opens the pic, then the chat", timeout=10000)
         await cal_group.dblclick()
         await expect(cal.locator("#camera-dialog")).to_be_visible(timeout=5000)
         await expect(cal.locator("#chat-title")).to_have_text(GROUP)

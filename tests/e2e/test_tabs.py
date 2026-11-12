@@ -116,14 +116,17 @@ async def main():
         await expect(ana.locator("#tab-chats")).to_have_attribute("aria-current", "page")
         print("sent to a friend and a group; a failed one goes on Send again")
 
-        # Ben got one pic in his chat with Ana, and one in the group, with the caption sealed in.
+        # Ben got one pic in his chat with Ana, and one in the group, with the caption
+        # sealed in. Each is its row's newest: a tap shows it, then its chat opens (X41, X59).
         await row(ben, ANA).click()
-        await expect(ben.locator("button.snap-chip")).to_have_count(1, timeout=15000)
+        await expect(ben.locator("#viewer-caption")).to_have_text("summit", timeout=15000)
+        await asyncio.sleep(0.7)  # a tap right as a pic appears is ignored (TAP_GUARD_MS)
+        await ben.click("#viewer")
+        await expect(ben.locator("#chat-title")).to_have_text(ANA, timeout=10000)
+        await expect(ben.locator(".snap-chip")).to_have_count(1)
         await asyncio.sleep(1)
-        await expect(ben.locator("button.snap-chip")).to_have_count(1)  # never twice
+        await expect(ben.locator(".snap-chip")).to_have_count(1)  # never twice
         await row(ben, GROUP).click()
-        await expect(ben.locator("button.snap-chip", has_text="Tap to view pic")).to_have_count(1, timeout=15000)
-        await ben.locator("button.snap-chip").click()
         await expect(ben.locator("#viewer-caption")).to_have_text("summit", timeout=15000)
         # Cal wasn't picked: nothing for him.
         await row(cal, ANA).click()
