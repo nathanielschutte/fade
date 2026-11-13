@@ -4,11 +4,10 @@ import SwiftUI
 /// A pic or video sent to you, shown once (app.js, the viewer): full screen,
 /// its caption where the sender put it; a photo zooms and pans (OpenedPhoto).
 /// It counts as opened the moment it's shown (Conversation.opened); closing
-/// it before then leaves it unopened. Then its time runs (X58): a photo 10
-/// seconds, a video its length, with a bar across the top running down and,
-/// for a photo, a fade at the end, as on the web; then on to the next, or
-/// closed. A tap moves on sooner. Nothing is saved: a video plays from a
-/// temporary file that's deleted when it closes.
+/// it before then leaves it unopened. A tap, any time, moves on to the next
+/// or closes; its time is only a limit (X58): a photo 10 seconds, a video its
+/// length, a bar across the top running down, then on as if tapped. Nothing
+/// is saved: a video plays from a temporary file that's deleted when it closes.
 struct PicPage: View {
     let pic: PicToOpen
     let conversation: Conversation
@@ -21,6 +20,8 @@ struct PicPage: View {
     var onShown: () -> Void = {}
     /// Closes the viewer while it's still opening (a slow connection): it stays unopened.
     var close: (() -> Void)?
+    /// The run's pics fetched ahead (PicsAhead): this one may be ready already.
+    var ahead: PicsAhead?
     /// Shown, and its time up, tapped past, or a video's end: on to the next, or closed.
     let next: () -> Void
     @State private var opened: OpenedPic?
@@ -35,16 +36,12 @@ struct PicPage: View {
     @State private var shownAt: Date?
     /// How long it shows, once its time is running.
     @State private var showing: Double?
-    /// Fading away at the end of its time, as on the web (a photo; not with Reduce Motion).
-    @State private var greyed = false
-    @State private var faded = false
     /// How much of it has come while it opens.
     @State private var arriving = Arriving()
     /// Each Try again: a new request.
     @State private var attempt = 0
     /// Moved on already (its time and a tap can end it together).
     @State private var ended = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Taps this soon after a pic appears don't count: a quick double tap
     /// shouldn't skip past a pic nobody saw (app.js, TAP_GUARD_MS).
@@ -79,7 +76,7 @@ struct PicPage: View {
             if let opened {
                 Group {
                     if let photo {
-                        OpenedPhoto(photo: photo, caption: opened.caption, y: opened.y, greyed: greyed, faded: faded, tapped: tap)
+                        OpenedPhoto(photo: photo, caption: opened.caption, y: opened.y, tapped: tap)
                     } else if let player {
                         // Videos don't zoom: they're short, and close at their end.
                         VideoPlayer(player: player).disabled(true)
@@ -141,25 +138,24 @@ struct PicPage: View {
         attempt += 1
     }
 
-    /// Fetches it, shows it (opened from then on), and starts its time.
+    /// Fetches it (or takes it from what was fetched ahead), shows it (opened
+    /// from then on), and starts its time.
     private func open() async {
         guard opened == nil else { return }
         do {
-            let arriving = arriving, started = ContinuousClock.now
-            // After a moment, how much has come: a slow connection that's moving shows it is.
-            let got = try await TransferWatch.$watcher.withValue({ transfer in
-                guard ContinuousClock.now - started > .seconds(1), let part = transfer.receivedPart else { return }
-                Task { @MainActor in arriving.part = part }
-            }) {
-                try await conversation.open(pic)
+            let ready: ReadyPic
+            if attempt == 0, let handed = ahead?.take(pic) {
+                arriving = handed.arriving  // still coming: how much has, as it comes
+                ready = try await withTaskCancellationHandler { try await handed.ready.value } onCancel: { handed.ready.cancel() }
+            } else {
+                ready = try await Self.ready(pic, in: conversation, arriving: arriving)
             }
-            if let data = got.image, let image = UIImage(data: data) {
-                photo = await image.byPreparingForDisplay() ?? image  // decoded off the main thread, before it shows
-            }
-            guard !Task.isCancelled else {  // closed while it decoded: still unopened
-                if let url = got.video { try? FileManager.default.removeItem(at: url) }
+            guard !Task.isCancelled else {  // closed while it opened: still unopened
+                if let url = ready.opened.video { try? FileManager.default.removeItem(at: url) }
                 return
             }
+            let got = ready.opened
+            photo = ready.photo
             opened = got
             shownAt = Date()
             conversation.opened(pic)
@@ -181,12 +177,7 @@ struct PicPage: View {
                     break
                 }
             } else {
-                let seconds = Self.showFor(video: nil, longest: longest)
-                showing = seconds
-                if !reduceMotion {  // the web's dissolve: grey from 30% of its time, gone by the end
-                    withAnimation(.linear(duration: seconds * 0.7).delay(seconds * 0.3)) { greyed = true }
-                    withAnimation(.linear(duration: seconds * 0.45).delay(seconds * 0.55)) { faded = true }
-                }
+                showing = Self.showFor(video: nil, longest: longest)
             }
         } catch ServerError.refused(_, status: let status) where [404, 410].contains(status) {
             // Opened on another device, or expired, since: on to the next (app.js, `openPic`).
@@ -201,9 +192,76 @@ struct PicPage: View {
     }
 }
 
+extension PicPage {
+    /// Fetched and opened, a photo decoded for showing (off the main thread).
+    /// After a moment, `arriving` says how much has come: a slow connection
+    /// that's moving shows it is.
+    static func ready(_ pic: PicToOpen, in conversation: Conversation, arriving: Arriving) async throws -> ReadyPic {
+        let started = ContinuousClock.now
+        let got = try await TransferWatch.$watcher.withValue({ transfer in
+            guard ContinuousClock.now - started > .seconds(1), let part = transfer.receivedPart else { return }
+            Task { @MainActor in arriving.part = part }
+        }) {
+            try await conversation.open(pic)
+        }
+        var photo: UIImage?
+        if let data = got.image, let image = UIImage(data: data) { photo = await image.byPreparingForDisplay() ?? image }
+        return ReadyPic(opened: got, photo: photo)
+    }
+}
+
+/// A pic fetched and opened, ready to show: a photo already decoded.
+struct ReadyPic: @unchecked Sendable {  // UIImage: not changed once made
+    let opened: OpenedPic
+    let photo: UIImage?
+}
+
 /// How much of a pic has come while it opens (0 to 1), once it's taken a moment.
 @MainActor @Observable final class Arriving {
     var part: Double?
+}
+
+/// The next pic in a run, fetched, opened, and decoded while the one before
+/// it shows, so moving on is quick (Nate, 2026-11-12; X61). Fetching doesn't
+/// open it (only showing it does, Conversation.opened), but the server counts
+/// a pic fetched and never shown as opened 15 minutes on (snaps.rs,
+/// OPEN_GRACE_SECS). So only the next one is fetched, once the one before is
+/// on screen: on the iPhone a run goes on to its end (a tap, or each one's
+/// time), and nothing stops it partway but napsack itself being closed.
+@MainActor final class PicsAhead {
+    struct Ahead {
+        let ready: Task<ReadyPic, any Error>
+        let arriving: Arriving
+    }
+    private var ahead: [Int64: Ahead] = [:]
+
+    func fetch(_ pic: PicToOpen, in conversation: Conversation) {
+        guard ahead[pic.messageId] == nil else { return }
+        let arriving = Arriving()
+        ahead[pic.messageId] = Ahead(ready: Task { try await PicPage.ready(pic, in: conversation, arriving: arriving) }, arriving: arriving)
+    }
+
+    /// Its page takes it, as it opens.
+    func take(_ pic: PicToOpen) -> Ahead? {
+        ahead.removeValue(forKey: pic.messageId)
+    }
+
+    /// The viewer closed: what was fetched and never shown is let go, a
+    /// video's file deleted. Done once the returned task is (with the files it deleted).
+    @discardableResult func letGo() -> Task<[URL], Never> {
+        let left = Array(ahead.values)
+        ahead = [:]
+        left.forEach { $0.ready.cancel() }
+        return Task {
+            var deleted: [URL] = []
+            for one in left {
+                guard let url = try? await one.ready.value.opened.video else { continue }
+                try? FileManager.default.removeItem(at: url)
+                deleted.append(url)
+            }
+            return deleted
+        }
+    }
 }
 
 /// The time a pic has left, running down across the top (app.js, `.viewer-timer`).
@@ -238,9 +296,6 @@ struct OpenedPhoto: View {
     let photo: UIImage
     let caption: String
     let y: Double?
-    /// Its time running out: the picture goes grey, then fades and blurs away (the caption stays, as on the web).
-    var greyed = false
-    var faded = false
     /// A tap at the size it opened at (zoomed in or out, a tap goes back to it instead).
     let tapped: () -> Void
     @State private var zoomed = false
@@ -251,10 +306,6 @@ struct OpenedPhoto: View {
             ZStack {
                 ZoomablePhoto(image: photo, captionSpan: caption.isEmpty ? nil : CaptionLook.span(caption),
                               zoomed: $zoomed, picture: $picture, tapped: tapped)
-                    .saturation(greyed ? 0 : 1)
-                    .blur(radius: faded ? 18 : 0)
-                    .brightness(faded ? -0.2 : 0)
-                    .opacity(faded ? 0 : 1)
                 if !caption.isEmpty, picture.width > 0 {
                     PlacedCaption(text: caption, y: y, picture: picture, safe: screen.safeAreaInsets)
                         .opacity(zoomed ? 0 : 1)
@@ -356,7 +407,8 @@ struct PicHeader: View {
 }
 
 /// Waiting pics and videos, opened back to back (app.js, `openPics`): each
-/// counts as opened once shown; tapping goes on to the next, then closes.
+/// counts as opened once shown; tapping (or each one's time) goes on to the
+/// next, then closes. The next is fetched while one shows (PicsAhead).
 /// From a chat, the ones it shows; from the chat list (`waitingIn`), every
 /// one waiting in the chat's newest page, oldest first, once the server has
 /// said which are still waiting.
@@ -378,6 +430,8 @@ struct PicViewer: View {
     @State private var problem: String?
     /// Each Try again, from the list: asked for again.
     @State private var attempt = 0
+    /// The next pic, fetched while this one shows.
+    @State private var ahead = PicsAhead()
 
     init(pics: [PicToOpen], conversation: Conversation, longest: Int? = nil, done: @escaping (Set<Int64>) -> Void = { _ in }) {
         _pics = State(initialValue: pics)
@@ -410,7 +464,11 @@ struct PicViewer: View {
                     let pic = pics[index]
                     PicPage(pic: pic, conversation: conversation, from: sender(pic),
                             place: pics.count > 1 ? "\(index + 1) of \(pics.count)" : nil, longest: longest,
-                            onShown: { shown.insert(pic.messageId) }, close: { dismiss() }) {
+                            onShown: {
+                                shown.insert(pic.messageId)
+                                if index + 1 < pics.count { ahead.fetch(pics[index + 1], in: conversation) }  // the next, meanwhile
+                            },
+                            close: { dismiss() }, ahead: ahead) {
                         if index + 1 < pics.count { index += 1 } else { dismiss() }
                     }
                     .id(index)  // a fresh page (and its own opening) for each
@@ -454,7 +512,10 @@ struct PicViewer: View {
                 }
             }
         }
-        .onDisappear { done(shown) }
+        .onDisappear {
+            ahead.letGo()
+            done(shown)
+        }
     }
 
     /// Who sent it: the friend, or in a group, the member (as I call them).
