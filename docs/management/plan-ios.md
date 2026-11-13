@@ -132,6 +132,7 @@ What the web app does quietly that the app must do too, before more features lea
 | Task | Who | Status | Notes |
 |---|---|---|---|
 | Create a group: a name and friends | Nate | Done | Nate (2026-10-30): its button looked like "new message"; now a group of people (`person.3`; custom artwork comes later). 2026-10-30: the button on the chat list: a name (up to 40) and friends, the privacy note, then straight into the new group |
+| The chat list's Friends button: two people standing (`figure.2`) | Nate | Built | Nate (2026-11-12), in place of `person.2`. New group stays `person.3` (Nate wasn't sure `person.3.sequence` would be better). TestFlight build 221 |
 | Group info: rename, picture, members (add, remove, leave), the privacy notice | Nate | Done | 2026-10-30: tap the group's title: the notice in the web's words, its picture (`PhotosPicker`, made small here, cleaned by the server), rename (any member), members (the owner removes by swiping; who can, said plainly), add friends, Leave (confirmed) |
 
 ## 10. Pics and videos

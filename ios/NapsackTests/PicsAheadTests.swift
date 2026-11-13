@@ -26,8 +26,9 @@ import UIKit
 
     @Test func theNextIsReadyWithoutAskingAgain() async throws {
         let pic = try waiting(300, video: false)
+        let sealed = pic.sealed, listed = json([pic.listed])
         let server = StubServer { request in
-            request.url!.path == "/api/snaps/300" ? (200, pic.sealed) : (200, json([pic.listed]))
+            request.url!.path == "/api/snaps/300" ? (200, sealed) : (200, listed)
         }
         let chat = sending.chat(.friend(sending.alice), server: server)
         try await chat.loadNewest()
@@ -47,8 +48,9 @@ import UIKit
 
     @Test func closingLetsGoOfWhatWasNeverShown() async throws {
         let pic = try waiting(301, video: true)
+        let sealed = pic.sealed, listed = json([pic.listed])
         let server = StubServer { request in
-            request.url!.path == "/api/snaps/301" ? (200, pic.sealed) : (200, json([pic.listed]))
+            request.url!.path == "/api/snaps/301" ? (200, sealed) : (200, listed)
         }
         let chat = sending.chat(.friend(sending.alice), server: server)
         try await chat.loadNewest()
