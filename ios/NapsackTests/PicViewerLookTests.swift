@@ -4,8 +4,8 @@ import UIKit
 @testable import Napsack
 
 /// Pictures of the pic viewer at the smallest and largest iPhones, to look at:
-/// a pic with its time running down across the top (X58), greying as it ends,
-/// opening on a slow connection (how much has come), and one that couldn't
+/// a pic with its time running down across the top (X58), opening on a slow
+/// connection (how much has come), and one that couldn't
 /// open, with Try again (D26). Only with `NAPSACK_SHOTS` set to a folder:
 ///   TEST_RUNNER_NAPSACK_SHOTS=/tmp/shots ONLY=NapsackTests/OnScreen/PicViewerLookTests bash scripts/test-ios.sh
 extension OnScreen {
@@ -15,19 +15,17 @@ extension OnScreen {
 
         @Test func theViewerAtEachSize() async throws {
             for (name, phone) in [("small", Phone.small), ("large", Phone.large)] {
-                for (shown, greyed) in [("running", false), ("greying", true)] {
-                    let viewer = try Hosted(
-                        ZStack {
-                            Color.black.ignoresSafeArea()
-                            OpenedPhoto(photo: TestPicture.photo(), caption: "Look who's here", y: 0.7, greyed: greyed, tapped: {})
-                        }
-                        .overlay(alignment: .top) { PicHeader(from: "Ana", place: "1 of 2") }
-                        .overlay(alignment: .top) { PicTimer(seconds: 10) },
-                        size: phone.size, insets: phone.insets)
-                    try await Task.sleep(for: .milliseconds(1500))  // a little of its time gone
-                    try viewer.save("viewer-\(shown)-\(name)")
-                    viewer.close()
-                }
+                let viewer = try Hosted(
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        OpenedPhoto(photo: TestPicture.photo(), caption: "Look who's here", y: 0.7, tapped: {})
+                    }
+                    .overlay(alignment: .top) { PicHeader(from: "Ana", place: "1 of 2") }
+                    .overlay(alignment: .top) { PicTimer(seconds: 10) },
+                    size: phone.size, insets: phone.insets)
+                try await Task.sleep(for: .milliseconds(1500))  // a little of its time gone
+                try viewer.save("viewer-running-\(name)")
+                viewer.close()
                 let opening = try Hosted(ZStack { Color.black.ignoresSafeArea(); Opening(close: {}, part: 0.42) }
                                             .overlay(alignment: .top) { PicHeader(from: "Ana", place: nil) },
                                          size: phone.size, insets: phone.insets)

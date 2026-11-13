@@ -381,7 +381,7 @@ struct ChatListScreen: View {
     @ToolbarContentBuilder private var chatsToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Button { path = [.friends] } label: {
-                Image(systemName: "person.2")
+                Image(systemName: "figure.2")  // two people standing together (Nate, 2026-11-12)
                     .overlay(alignment: .topTrailing) {
                         if list.incoming > 0 {
                             Text("\(list.incoming)").font(.caption2.bold()).foregroundStyle(.white)
